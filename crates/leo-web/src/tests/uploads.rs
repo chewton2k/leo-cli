@@ -96,6 +96,7 @@ fn an_upload_cannot_write_originals_through_a_linked_attachment_root() {
                 data: base64::engine::general_purpose::STANDARD.encode("EXAMPLE ORIGINAL"),
             }],
             each: false,
+            into: None,
         }),
     )));
     let job = wait_for(&state, made["id"].as_str().unwrap());
@@ -139,6 +140,7 @@ fn several_files_make_a_note_each_named_from_its_own_file_and_one_failure_spares
             file("lecture 2.pdf"),
         ],
         each: true,
+        into: None,
     };
     let made = json_of(run(start_import(State(state.clone()), Json(body))));
     let job = wait_for(&state, made["id"].as_str().unwrap());
@@ -173,6 +175,7 @@ fn several_files_make_a_note_each_named_from_its_own_file_and_one_failure_spares
             wants: String::new(),
             files: vec![file("broken.pdf"), file("broken.pdf")],
             each: true,
+            into: None,
         }),
     )));
     let failed = wait_for(&state, one["id"].as_str().unwrap());
@@ -217,6 +220,7 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
             data: base64::engine::general_purpose::STANDARD.encode(b"%PDF fake"),
         }],
         each: false,
+        into: None,
     };
     let response = run(start_import(State(state.clone()), Json(body)));
     assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -330,6 +334,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             wants: String::new(),
             files: vec![file()],
             each: false,
+            into: None,
         }),
     ));
     assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -346,6 +351,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             wants: String::new(),
             files: vec![file()],
             each: false,
+            into: None,
         }),
     ));
     let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
@@ -364,6 +370,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             wants: String::new(),
             files: vec![file()],
             each: false,
+            into: None,
         }),
     ));
     assert_eq!(outside.status(), StatusCode::BAD_REQUEST);
@@ -375,6 +382,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             wants: String::new(),
             files: vec![],
             each: false,
+            into: None,
         }),
     ));
     assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
@@ -390,6 +398,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
                 data: "%%%".into(),
             }],
             each: false,
+            into: None,
         }),
     ));
     assert_eq!(garbled.status(), StatusCode::BAD_REQUEST);
@@ -560,6 +569,7 @@ fn uploads_bound_file_count_and_parallel_imports_before_starting_more_workers() 
             })
             .collect(),
         each: false,
+        into: None,
     };
     assert_eq!(
         run(start_import(State(state.clone()), Json(body(21)))).status(),
@@ -580,4 +590,84 @@ fn uploads_bound_file_count_and_parallel_imports_before_starting_more_workers() 
         "done"
     );
     assert_eq!(started.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn files_dropped_on_a_note_are_added_to_it_under_their_own_heading() {
+    use base64::Engine;
+    let (mut state, _d, ids) = state_with(&[("Week 3", "")]);
+    let note = ids[0].clone();
+    let saved = run(crate::routes::notes::update_note(
+        State(state.clone()),
+        Path(note.clone()),
+        Json(
+            serde_json::from_value(serde_json::json!({ "body": "My own notes on heaps." }))
+                .unwrap(),
+        ),
+    ))
+    .expect("the note's own text is saved");
+    assert_eq!(saved.0.body, "My own notes on heaps.");
+    state.importer = Some(Arc::new(
+        |files: Vec<UploadFile>, wants: &str, _: &mut dyn FnMut(&str, usize, usize)| {
+            assert_eq!(files.len(), 2, "files added to a note are read together");
+            assert_eq!(wants, "just the proofs");
+            Ok(Made {
+                title: "Heap proofs".into(),
+                body: "Sift down keeps the heap order.".into(),
+                figures: vec![],
+            })
+        },
+    ));
+    let file = |name: &str| ImportFileBody {
+        name: name.into(),
+        mime: "application/pdf".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(name.as_bytes()),
+    };
+    let body = |into: &str| ImportBody {
+        directory: String::new(),
+        title: None,
+        wants: "just the proofs".into(),
+        files: vec![file("slides.pdf"), file("sheet.pdf")],
+        each: true,
+        into: Some(into.into()),
+    };
+    assert_eq!(
+        run(start_import(State(state.clone()), Json(body("nosuchnote")))).status(),
+        StatusCode::NOT_FOUND
+    );
+    let response = run(start_import(State(state.clone()), Json(body(&note))));
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+    let id = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let job = wait_for(&state, &id);
+    assert_eq!(job.state, "done", "{job:?}");
+    assert_eq!(
+        job.note.as_deref(),
+        Some(note.as_str()),
+        "no new note is made"
+    );
+    let notes = run(state.with_store(|store| Ok(store.notes.clone()))).unwrap();
+    assert_eq!(notes.len(), 1);
+    let body = &notes[0].body;
+    assert!(body.starts_with("My own notes on heaps."), "{body}");
+    assert!(
+        body.contains("## Heap proofs\n\nSift down keeps the heap order."),
+        "{body}"
+    );
+    assert!(
+        body.contains("*From slides.pdf, sheet.pdf, uploaded"),
+        "{body}"
+    );
+    let originals = json_of(run(list_originals(
+        State(state.clone()),
+        Path(note.clone()),
+    )));
+    assert_eq!(
+        originals.as_array().unwrap().len(),
+        2,
+        "the originals stay with the note"
+    );
 }

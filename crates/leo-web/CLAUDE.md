@@ -690,7 +690,18 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   (`run_each`), each named from its own file, with its own original; a file
   that fails is listed in the job's `error` and the rest are still made
   (`notes` lists them, the page opens the folder). "Make one note from all of
-  them" sends them together as before and shows the title field again. Originals are kept in
+  them" sends them together as before and shows the title field again.
+  Adding to a note (2026-11-03, the user's request): on an open note the sheet
+  has a segmented **Add to this note / New note** switch (`#upload-where`).
+  Files dropped on the note default to Add, the rail's Note from a file to New;
+  Add hides the folder, title and one-note-each choices. POST `/api/import`
+  with `into` (a note id, 404 if gone; never `each`) appends the written
+  section at the end under `## <title>` with the usual From/uploaded line
+  (`insert::inserted`), keeps the originals with that note, and the job's
+  `note` is that note. The page flushes the note's draft before starting and
+  again before redrawing it when the job is done. In the note, a drop of only
+  pictures still goes in as pictures (`doc.js`); a drop with any other file goes
+  to the sheet with every file. Originals are kept in
   `<data>/attachments/<note-id>/` (never synced); figures from pptx/docx/PDF
   are offered to the AI (`leo_services::figures`). Originals open in
   `#source-pane` beside the note on desktop (1000px and wider), with Felix

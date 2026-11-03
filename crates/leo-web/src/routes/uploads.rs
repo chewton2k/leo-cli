@@ -102,6 +102,10 @@ pub(crate) struct ImportBody {
     pub(crate) files: Vec<ImportFileBody>,
     #[serde(default)]
     pub(crate) each: bool,
+    /// A note to add the written section to, instead of making a new note
+    /// (files dropped on an open note, 2026-11-03).
+    #[serde(default)]
+    pub(crate) into: Option<String>,
 }
 
 pub(crate) const MOST_WANTS: usize = 2_000;
@@ -307,10 +311,12 @@ struct Missed {
     error: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_upload(
     state: &AppState,
     importer: &Importer,
     dir: &str,
+    into: Option<&str>,
     title: Option<String>,
     wants: &str,
     files: Vec<UploadFile>,
@@ -347,7 +353,7 @@ fn write_upload(
         .and_then(|n| n.rsplit_once('.').map(|(s, _)| s.to_string()))
         .unwrap_or_else(|| "upload".into());
     let made = store_now(state, |store| {
-        if !store.dir_exists(dir) {
+        if into.is_none() && !store.dir_exists(dir) {
             store.create_dir(dir);
         }
         let notes_dir = store.notes_dir.clone();
@@ -364,15 +370,36 @@ fn write_upload(
             };
             attachments::save(&notes_dir, &name, &figure.bytes).ok()
         });
-        let note = store
-            .create_note(title, format!("{}{footer}", body.trim()), vec![], dir)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .id
-            .clone();
+        let written = format!("{}{footer}", body.trim());
+        let note = match into {
+            // Added to an open note: the section goes at the end under its own
+            // heading, so what the user already wrote is untouched.
+            Some(id) => {
+                let note = store.find_note_mut(id).ok_or(StatusCode::NOT_FOUND)?;
+                let section = format!("## {}\n\n{written}", title.replace('\n', " "));
+                note.body = crate::routes::insert::inserted(&note.body, &section, None);
+                note.updated_at = chrono::Utc::now();
+                note.id.clone()
+            }
+            None => store
+                .create_note(title, written, vec![], dir)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .id
+                .clone(),
+        };
         save(store)?;
         Ok((note, store.notes_dir.clone()))
     });
-    let (note, notes_dir) = made.map_err(|_| missed(None, "The note could not be saved."))?;
+    let (note, notes_dir) = made.map_err(|code| {
+        missed(
+            None,
+            if code == StatusCode::NOT_FOUND {
+                "The note to add to is gone. Open another note, or make a new note from the file."
+            } else {
+                "The note could not be saved."
+            },
+        )
+    })?;
     if originals
         .iter_mut()
         .any(|(name, staged)| save_original(&notes_dir, &note, name, staged).is_err())
@@ -382,11 +409,13 @@ fn write_upload(
     Ok(note)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_import(
     state: AppState,
     id: String,
     importer: Importer,
     dir: String,
+    into: Option<String>,
     title: Option<String>,
     wants: String,
     files: Vec<UploadFile>,
@@ -398,7 +427,16 @@ fn run_import(
             job.total = total;
         })
     };
-    let made = write_upload(&state, &importer, &dir, title, &wants, files, &mut step);
+    let made = write_upload(
+        &state,
+        &importer,
+        &dir,
+        into.as_deref(),
+        title,
+        &wants,
+        files,
+        &mut step,
+    );
     set_job(&state, &id, |job| match made {
         Ok(note) => {
             job.state = "done";
@@ -434,7 +472,16 @@ fn run_each(
                 job.total = count;
             })
         };
-        match write_upload(&state, &importer, &dir, None, &wants, vec![file], &mut step) {
+        match write_upload(
+            &state,
+            &importer,
+            &dir,
+            None,
+            None,
+            &wants,
+            vec![file],
+            &mut step,
+        ) {
             Ok(note) => notes.push(note),
             Err(missed) => {
                 notes.extend(missed.note);
@@ -469,6 +516,19 @@ pub(crate) async fn start_import(
             Json(serde_json::json!({ "error": "Choose a file first." })),
         )
             .into_response();
+    }
+    if let Some(note) = body.into.clone() {
+        let found = state
+            .with_store(move |store| Ok(store.notes.iter().any(|n| n.id == note)))
+            .await
+            .unwrap_or(false);
+        if !found {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "The note to add to is gone. Open another note, or make a new note from the file." })),
+            )
+                .into_response();
+        }
     }
     if body.directory.len() > 1_024
         || body.files.len() > MOST_UPLOAD_FILES
@@ -561,9 +621,12 @@ pub(crate) async fn start_import(
             return (code, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    let each = body.each && files.len() > 1;
+    let into = body.into.clone();
+    let each = body.each && files.len() > 1 && into.is_none();
     set_job(&state, &id, |job| {
-        job.label = if each {
+        job.label = if into.is_some() {
+            upload_label(&files).replacen("Making a note from", "Adding to a note from", 1)
+        } else if each {
             format!("Making {} notes, one from each file", files.len())
         } else {
             upload_label(&files)
@@ -584,6 +647,7 @@ pub(crate) async fn start_import(
                         job.clone(),
                         importer,
                         dir,
+                        into,
                         body.title,
                         wants,
                         files,

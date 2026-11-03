@@ -2266,6 +2266,43 @@ test.describe('uploads', () => {
     expect(Buffer.from(sent.files[0].data, 'base64').toString()).toBe('Merge sort splits the list in half.');
   });
 
+  test('files dropped on an open note can be added to it, or still make a new note', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const note = await (await page.request.post('/api/notes', { data: { title: `Week 3 ${Date.now().toString(36)}`, body: 'My own notes on heaps.' } })).json();
+    let sent = null;
+    let polls = 0;
+    await page.route('**/api/import', async (route) => {
+      sent = route.request().postDataJSON();
+      await page.request.patch(`/api/notes/${note.id}`, { data: { body: 'My own notes on heaps.\n\n## Heap proofs\n\nSift down keeps the order.' } });
+      await route.fulfill({ status: 202, json: { id: 'job-into' } });
+    });
+    await page.route('**/api/import/job-into', (route) => {
+      polls += 1;
+      route.fulfill({ json: polls < 2 ? { state: 'working', step: 'Writing the note', done: 0, total: 1 } : { state: 'done', step: '', done: 1, total: 1, note: note.id } });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc')).toContainText('My own notes on heaps.');
+    await dropFiles(page, 'main', [{ name: 'proofs.pdf', type: 'application/pdf', text: '%PDF fake' }, { name: 'board.png', type: 'image/png', text: 'png' }]);
+    const sheet = page.locator('.sheet');
+    await expect(sheet.locator('#upload-list'), 'a mixed drop keeps every file').toContainText('proofs.pdf');
+    await expect(sheet.locator('#upload-list')).toContainText('board.png');
+    await expect(sheet.locator('#upload-heading')).toHaveText('Add a file to this note');
+    await expect(sheet.locator('.upload-where [data-value="add"]'), 'dropped on a note, adding is the default').toHaveAttribute('aria-checked', 'true');
+    await expect(sheet.locator('#upload-dir')).toBeHidden();
+    await expect(sheet.locator('#upload-go')).toHaveText('Add to the note');
+    await sheet.locator('.upload-where [data-value="new"]').click();
+    await expect(sheet.locator('#upload-go')).toHaveText('Make 2 notes');
+    await expect(sheet.locator('#upload-dir')).toBeVisible();
+    await sheet.locator('.upload-where [data-value="add"]').click();
+    await sheet.locator('#upload-wants').fill('just the proofs');
+    await sheet.locator('#upload-go').click();
+    await expect(page.locator('.toast')).toContainText('Added to');
+    await expect(page.locator('#doc')).toContainText('Sift down keeps the order.');
+    await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+    expect(sent).toMatchObject({ into: note.id, each: false, wants: 'just the proofs', title: null });
+    expect(sent.files.map((f) => f.name)).toEqual(['proofs.pdf', 'board.png']);
+  });
+
   test('several files make a note each unless asked for one note, and the folder opens', async ({ page }) => {
     const dir = `each-${test.info().project.name}-${Date.now().toString(36)}`;
     await page.request.post('/api/dirs', { data: { path: dir } });
