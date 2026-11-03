@@ -105,6 +105,26 @@ impl Usage {
             .push_back(elapsed.as_millis().min(u128::from(u64::MAX)) as u64);
     }
 
+    pub fn line(&self) -> String {
+        let held = self.rows.lock().unwrap_or_else(|e| e.into_inner());
+        let (calls, input, cached, output) =
+            held.values().fold((0u64, 0u64, 0u64, 0u64), |t, r| {
+                (t.0 + r.calls, t.1 + r.input, t.2 + r.cached, t.3 + r.output)
+            });
+        drop(held);
+        if calls == 0 {
+            return "No AI requests since Leo started".into();
+        }
+        let tokens = input.saturating_add(output);
+        let kind = if calls == 1 { "request" } else { "requests" };
+        let cache = if cached > 0 {
+            format!(" ({} cached)", short(cached))
+        } else {
+            String::new()
+        };
+        format!("{calls} AI {kind} · {} tokens{cache}", short(tokens))
+    }
+
     pub fn snapshot(&self) -> Vec<Row> {
         let held = self.rows.lock().unwrap_or_else(|e| e.into_inner());
         held.iter()
@@ -134,9 +154,37 @@ impl Usage {
     }
 }
 
+fn short(n: u64) -> String {
+    match n {
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1_000_000.0),
+        n if n >= 1_000 => format!("{}k", n / 1_000),
+        n => n.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_menu_bar_line_adds_up_every_kind_of_work() {
+        let usage = Usage::default();
+        assert_eq!(usage.line(), "No AI requests since Leo started");
+        let spent = Spent {
+            input: 300_000,
+            cached: 210_000,
+            output: 40_000,
+            ..Default::default()
+        };
+        usage.record(
+            Purpose::Answer,
+            Some(&spent),
+            Duration::from_millis(5),
+            false,
+        );
+        usage.record(Purpose::QuickReview, None, Duration::from_millis(5), false);
+        assert_eq!(usage.line(), "2 AI requests · 340k tokens (210k cached)");
+    }
 
     #[test]
     fn usage_separates_work_and_bounds_samples_without_retaining_content() {

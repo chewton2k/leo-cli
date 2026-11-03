@@ -1,7 +1,12 @@
 const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
-const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0 };
-const SIDE_OPEN_KEY = 'leo-side-open';
+const side = { folders: [], loaded: false, mini: false, open: new Set(), revealed: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0 };
+// Folders the user opened with their own hands, kept across restarts. Folders
+// unfolded only to show the open note or folder (`side.revealed`) are not
+// kept, so the explorer reopens exactly as the user left it, closed by default.
+// A new key (2026-11-03): the old one also held every folder browsing had
+// unfolded, so starting from it would keep those open.
+const SIDE_OPEN_KEY = 'leo-side-folders';
 const SIDE_NOTES_PAGE = 100;
 const SIDE_NOTES_FOLDERS = 64;
 const SIDE_NOTES_AUTOMATIC = 32;
@@ -10,6 +15,7 @@ const SIDE_NOTES_TIMEOUT = 10000;
 
 try {
   side.open = new Set(JSON.parse(localStorage.getItem(SIDE_OPEN_KEY) || '[]'));
+  localStorage.removeItem('leo-side-open');
 } catch (e) {}
 
 try {
@@ -42,13 +48,19 @@ function drawSide() {
   const here = sidePlace();
   const chatOpen = document.body.classList.contains('chat-open');
   const dir = sideHere();
+  // Unfold to what is open: again whenever the folder or the open note changes,
+  // so a note opened after Collapse all still shows where it is.
+  const showing = `${dir}\n${state.view === 'note' ? state.session?.note?.id || '' : ''}`;
+  if (showing !== side.showing) {
+    side.showing = showing;
+    side.revealed.clear();
+    side.shut.clear();
+    const parts = dir.split('/').filter(Boolean);
+    for (let i = 1; i <= parts.length; i++) side.revealed.add(parts.slice(0, i).join('/'));
+  }
   if (dir !== side.here) {
     side.here = dir;
     side.target = null;
-    side.shut.clear();
-    const parts = dir.split('/').filter(Boolean);
-    for (let i = 1; i <= parts.length; i++) side.open.add(parts.slice(0, i).join('/'));
-    keepOpenFolders();
   }
   const actionDir = side.target ?? dir;
   let folders = folderTree(dir);
@@ -74,7 +86,6 @@ function drawSide() {
     <div class="side-rail">
       <nav class="side-rail-main" aria-label="Leo tools">
         ${sideRow('new', ICON.plus, 'New note', { attrs: ` data-dir="${esc(actionDir)}"`, hint: actionDir ? `New note in ${folderLabel(actionDir)}` : 'New note' })}
-        ${sideRow('home', ICON.note, 'Notes', { on: ['folder', 'note', 'new'].includes(state.view) })}
         ${sideRow('side-search', ICON.search, 'Search', { hint: `Search every note (${shortcutLabel})` })}
         ${sideRow('quick-leo', ICON.bolt, 'Quick Leo', { hint: `Quick Leo · ask, remind, find or jot anything (${quickLabel})` })}
         ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
@@ -90,13 +101,14 @@ function drawSide() {
       </nav>
     </div>
     <div class="side-explorer" id="side-explorer">
-      <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+      <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><span class="side-group-tools"><button class="side-add side-collapse" data-action="side-collapse" aria-label="Collapse all folders" title="Collapse all folders">${svg('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>')}</button><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></span></div>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
     </div>`;
   const tree = box.querySelector('.side-tree');
   if (tree) tree.scrollTop = kept;
+  revealNoteRow(tree);
   box.querySelector('.side-rail-main').scrollTop = railScroll;
   if (focused) {
     const buttons = [...box.querySelectorAll('button[data-action]')];
@@ -110,7 +122,33 @@ function sideHere() {
 }
 
 function folderShown(path) {
-  return !side.shut.has(path) && side.open.has(path);
+  return !side.shut.has(path) && (side.open.has(path) || side.revealed.has(path));
+}
+
+// Like VS Code's auto reveal: the open note's row is scrolled into the
+// explorer's view once, when it first appears for that note; later redraws keep
+// whatever scroll the user chose. Only the explorer scrolls, never the page.
+function revealNoteRow(tree) {
+  const id = state.view === 'note' ? state.session?.note?.id : null;
+  if (!id) side.shownNote = null;
+  // A hidden explorer has nothing to scroll; try again when it shows.
+  if (!tree || !id || side.shownNote === id || !tree.clientHeight) return;
+  const row = [...tree.querySelectorAll('.side-note[data-id]')].find((el) => el.dataset.id === id);
+  if (!row) return;
+  side.shownNote = id;
+  const at = row.getBoundingClientRect();
+  const view = tree.getBoundingClientRect();
+  if (at.top < view.top) tree.scrollTop -= view.top - at.top;
+  else if (at.bottom > view.bottom) tree.scrollTop += at.bottom - view.bottom;
+}
+
+// Collapse all, as in VS Code and Obsidian: every folder closes and stays closed.
+function collapseFolders() {
+  side.open.clear();
+  side.revealed.clear();
+  side.shut.clear();
+  keepOpenFolders();
+  drawSide();
 }
 
 function keepOpenFolders() {

@@ -50,6 +50,7 @@ async function sidebarFixture(browser, run) {
       const action=el.dataset.action;
       if(action==='open-folder') folderClick(el);
       else if(action==='side-twist') twistFolder(el.dataset.dir,el);
+      else if(action==='side-collapse') collapseFolders();
       else if(action==='side-fold') foldSide();
       else if(action==='side-notes') loadSideNotes(el.dataset.dir,Number(el.dataset.offset||0),true);
       else if(action==='open-note') go(noteHash(el.dataset.id));
@@ -91,7 +92,7 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       await expect(rail.locator('kbd')).toHaveCount(0);
       // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
       await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
-      for(const label of ['New note','Notes','Ask Felix','Search','Quick Leo','Record','Note from a file','Calendar','Boards','Interview practice','Knowledge graph','Settings']) {
+      for(const label of ['New note','Ask Felix','Search','Quick Leo','Record','Note from a file','Calendar','Boards','Interview practice','Knowledge graph','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();
         await expect(button).toHaveAttribute('title',/.+/);
@@ -269,5 +270,81 @@ test('a stalled explorer read times out and offers a working retry', async ({ br
     await expect(group).toContainText('Opening notes');
     await page.evaluate(()=>release());
     await expect(page.locator('.side-note[data-id="course-note"]')).toBeVisible();
+  });
+});
+
+test('nested folders start closed and the explorer reopens as the user left it, not as browsing unfolded it', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    const row = dir=>page.locator('.side-tree .side-row[data-dir="'+dir+'"]');
+    const kept = ()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-folders')||'[]'));
+    await expect(row('Course')).toHaveAttribute('aria-expanded','false');
+    await expect(row('Course/Week 1'), 'nested folders start closed').toHaveCount(0);
+    await page.evaluate(()=>audit.route('Course/Week 1/Lab'));
+    await expect(row('Course/Week 1/Lab'), 'the open folder is shown').toBeVisible();
+    expect(await kept(), 'unfolding to show where you are is not remembered').toEqual([]);
+    await page.reload();
+    await expect(row('Course/Week 1')).toHaveCount(0);
+    await page.locator('[data-action="side-twist"][data-dir="Personal"]').click();
+    await page.locator('[data-action="side-twist"][data-dir="Course"]').click();
+    expect((await kept()).sort()).toEqual(['Course', 'Personal']);
+    await page.reload();
+    await expect(row('Course'), 'a folder the user opened stays open after a restart').toHaveAttribute('aria-expanded','true');
+    await expect(row('Course/Week 1')).toHaveAttribute('aria-expanded','false');
+    await expect(row('Personal')).toHaveAttribute('aria-expanded','true');
+    await page.locator('[data-action="side-twist"][data-dir="Personal"]').click();
+    await page.reload();
+    await expect(row('Personal'), 'and one they closed stays closed').toHaveAttribute('aria-expanded','false');
+    expect(await kept()).toEqual(['Course']);
+  });
+});
+
+test('Collapse all closes every folder for good, and the open note is scrolled into the explorer once', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:600}});
+    await page.goto(url);
+    const row = dir=>page.locator('.side-tree .side-row[data-dir="'+dir+'"]');
+    const kept = ()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-folders')||'[]'));
+    await page.locator('[data-action="side-twist"][data-dir="Course"]').click();
+    await page.locator('[data-action="side-twist"][data-dir="Course/Week 1"]').click();
+    await expect(row('Course/Week 1/Lab')).toBeVisible();
+    await page.locator('.side-group [data-action="side-collapse"]').click();
+    await expect(row('Course/Week 1')).toHaveCount(0);
+    expect(await kept()).toEqual([]);
+    await page.reload();
+    await expect(row('Course')).toHaveAttribute('aria-expanded','false');
+
+    const tree = page.locator('.side-tree');
+    await page.evaluate(()=>audit.note('personal-90','Personal'));
+    const note = page.locator('.side-note[data-id="personal-90"]');
+    await expect(note).toHaveCount(1);
+    const inside = ()=>note.evaluate(el=>{const r=el.getBoundingClientRect(),t=el.closest('.side-tree').getBoundingClientRect();return r.top>=t.top-1&&r.bottom<=t.bottom+1;});
+    await expect.poll(inside, {message:'the open note is scrolled into the explorer'}).toBe(true);
+    const pageScroll = await page.evaluate(()=>window.scrollY);
+    expect(pageScroll, 'only the explorer scrolls').toBe(0);
+    await tree.evaluate(el=>{el.scrollTop=0;});
+    await page.evaluate(()=>audit.draw());
+    expect(await tree.evaluate(el=>el.scrollTop), 'a redraw keeps the scroll the user chose').toBe(0);
+  });
+});
+
+test('old saved folders are dropped, and after Collapse all a newly opened note still shows its folder', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    await page.evaluate(()=>localStorage.setItem('leo-side-open',JSON.stringify(['Course','Course/Week 1','Personal'])));
+    await page.reload();
+    const row = dir=>page.locator('.side-tree .side-row[data-dir="'+dir+'"]');
+    await expect(row('Course'), 'folders opened only by browsing before do not come back').toHaveAttribute('aria-expanded','false');
+    expect(await page.evaluate(()=>localStorage.getItem('leo-side-open'))).toBeNull();
+    await page.evaluate(()=>audit.note('course-note','Course'));
+    await expect(page.locator('.side-note[data-id="course-note"]')).toHaveCount(1);
+    await page.locator('.side-group [data-action="side-collapse"]').click();
+    await expect(row('Course')).toHaveAttribute('aria-expanded','false');
+    await page.evaluate(()=>audit.draw());
+    await expect(row('Course'), 'a redraw does not undo Collapse all').toHaveAttribute('aria-expanded','false');
+    await page.evaluate(()=>audit.note('escaped-note','Course'));
+    await expect(page.locator('.side-note[data-id="escaped-note"]'), 'another note in the same folder unfolds it again').toHaveCount(1);
   });
 });

@@ -252,7 +252,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   }
   await expect(side).toBeVisible();
   await expect(page.locator('#menu')).toBeHidden();
-  await expect(side.locator('[data-action="home"].side-row')).toHaveAttribute('aria-current', 'page');
+  await expect(side.locator('.side-rail [data-action="home"]'), 'notes are opened from the explorer, not a rail button').toHaveCount(0);
   for (const [action, url] of [['map', /#\/map$/], ['settings', /#\/settings$/]]) {
     await side.locator(`[data-action="${action}"]`).click();
     await expect(page).toHaveURL(url);
@@ -566,6 +566,34 @@ test.describe('diagrams', () => {
   });
 });
 
+test('a fresh launch reopens the last note, while reloads and the library stay put', async ({ page, context }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: `Left off ${Date.now().toString(36)}`, body: 'Where I was.' } })).json();
+  await page.goto('/');
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toContainText('Where I was.');
+  await page.goto('/');
+  await expect(page, 'going to the library in the same window stays there').toHaveURL(/\/(#\/)?$/);
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toContainText('Where I was.');
+  const relaunch = await context.newPage();
+  await relaunch.goto('/');
+  await expect(relaunch, 'a new launch goes back to the note').toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await expect(relaunch.locator('#doc')).toContainText('Where I was.');
+  await relaunch.reload();
+  await expect(relaunch).toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await relaunch.close();
+  await page.request.delete(`/api/notes/${note.id}`);
+  const gone = await context.newPage();
+  await gone.goto('/');
+  await expect(gone.locator('.toast')).toContainText('not there any more');
+  await gone.close();
+  const after = await context.newPage();
+  await after.goto('/');
+  await expect(after.locator('.toast'), 'a note that is gone is not reopened on every launch').toHaveCount(0);
+  await expect(after).not.toHaveURL(/#\/n\//);
+  await after.close();
+});
+
 test.describe('drag and drop', () => {
   test('a note and a folder drag into other folders, and Undo puts them back', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
@@ -600,7 +628,7 @@ test.describe('drag and drop', () => {
     expect(await where()).toBe(b);
 
     await page.goto(`/#/f/${b}`);
-    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-row[data-action="home"]'));
+    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
     await expect.poll(where).toBe('');
   });
 
@@ -2298,6 +2326,47 @@ test.describe('uploads', () => {
     expect(Buffer.from(sent.files[0].data, 'base64').toString()).toBe('Merge sort splits the list in half.');
   });
 
+  test('files dropped on an open note can be added to it, or still make a new note', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const note = await (await page.request.post('/api/notes', { data: { title: `Week 3 ${Date.now().toString(36)}`, body: 'My own notes on heaps.' } })).json();
+    let sent = null;
+    let polls = 0;
+    await page.route('**/api/import', async (route) => {
+      sent = route.request().postDataJSON();
+      await route.fulfill({ status: 202, json: { id: 'job-into' } });
+    });
+    await page.route('**/api/import/job-into', (route) => {
+      polls += 1;
+      route.fulfill({ json: polls < 2 ? { state: 'working', step: 'Writing the note', done: 0, total: 1 } : { state: 'done', step: '', done: 1, total: 1, note: note.id, section: '## Heap proofs\n\nSift down keeps the order.' } });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc')).toContainText('My own notes on heaps.');
+    // On the note itself, so the note's own drop handler sees the mixed drop and passes it on.
+    await dropFiles(page, '#doc', [{ name: 'proofs.pdf', type: 'application/pdf', text: '%PDF fake' }, { name: 'board.png', type: 'image/png', text: 'png' }]);
+    const sheet = page.locator('.sheet');
+    await expect(sheet.locator('#upload-list'), 'a mixed drop keeps every file').toContainText('proofs.pdf');
+    await expect(sheet.locator('#upload-list')).toContainText('board.png');
+    await expect(sheet.locator('#upload-heading')).toHaveText('Add a file to this note');
+    await expect(sheet.locator('.upload-where [data-value="add"]'), 'dropped on a note, adding is the default').toHaveAttribute('aria-checked', 'true');
+    await expect(sheet.locator('#upload-dir')).toBeHidden();
+    await expect(sheet.locator('#upload-go')).toHaveText('Add to the note');
+    await sheet.locator('.upload-where [data-value="new"]').click();
+    await expect(sheet.locator('#upload-go')).toHaveText('Make 2 notes');
+    await expect(sheet.locator('#upload-dir')).toBeVisible();
+    await sheet.locator('.upload-where [data-value="add"]').click();
+    await sheet.locator('#upload-wants').fill('just the proofs');
+    await sheet.locator('#upload-go').click();
+    await expect(page.locator('.toast')).toContainText('Added to');
+    await expect(page.locator('#doc')).toContainText('Sift down keeps the order.');
+    await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+    expect(sent).toMatchObject({ into: note.id, each: false, wants: 'just the proofs', title: null });
+    expect(sent.files.map((f) => f.name)).toEqual(['proofs.pdf', 'board.png']);
+    const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+    await expect.poll(async () => (await body()).trim()).toBe('My own notes on heaps.\n\n## Heap proofs\n\nSift down keeps the order.');
+    await page.locator('.toast button', { hasText: 'Undo' }).click();
+    await expect.poll(async () => (await body()).trim()).toBe('My own notes on heaps.');
+  });
+
   test('several files make a note each unless asked for one note, and the folder opens', async ({ page }) => {
     const dir = `each-${test.info().project.name}-${Date.now().toString(36)}`;
     await page.request.post('/api/dirs', { data: { path: dir } });
@@ -3004,7 +3073,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     expect(asked[1].practice, 'a card answer is marked as practice, so it is never nudged into a note change').toBe(true);
     const told = asked[1].messages.at(-1).text;
     expect(told).toContain('Question: What does BFS use?');
-    expect(told).toContain('with the quiz tool');
+    expect(told, 'asking why explains this answer and stops').toContain('do not ask a new practice question');
     expect(told).toContain('My answer: a stack');
     expect(told).toContain('the right answer is a queue');
     expect(told).toContain('why each of the other choices is wrong');
@@ -3082,6 +3151,40 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card.locator('.quiz-hint').first()).toContainText('Set the derivative');
     await expect(card.locator('[data-chat="quiz-hint"]'), 'no more hints once answered').toHaveCount(0);
     expect(asked[3].messages.at(-1).text).toContain('praise me briefly');
+    expect(asked[3].messages.at(-1).text, 'asking why does not jump to the next question').toContain('do not ask a new practice question');
+    await expect(card.locator('[data-chat="quiz-why"]')).toHaveCount(0);
+    await expect(card.locator('[data-chat="quiz-next"]'), 'the explanation leaves Next question for when they are ready').toBeVisible();
+  });
+
+  test('a question typed about a marked answer is answered without moving on', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      if (asked.length === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'multiple_choice', question: 'Which structure does BFS use?', options: ['a queue', 'a stack'], answer: 'a queue', explain: 'Oldest first.' } }, { done: true }]));
+      if (asked.length === 2) return route.fulfill(answerWith([{ sources: [] }, { t: 'A queue hands back the oldest vertex, so levels come out in order.' }, { done: true }]));
+      return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'free_response', question: 'Why does BFS find shortest paths?', options: [], answer: 'Level by level.', explain: '' } }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('quiz me');
+    await chat.locator('#chat-input').press('Enter');
+    const card = chat.locator('.quiz-card').first();
+    await card.locator('.quiz-option', { hasText: 'a queue' }).click();
+    await expect(card.locator('[data-chat="quiz-next"]')).toBeVisible();
+    await chat.locator('#chat-input').fill('why a queue and not a stack?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('levels come out in order');
+    const said = asked[1].messages.at(-1).text;
+    expect(said).toContain('leo marked it right');
+    expect(said).toContain('Do not ask a new practice question unless I ask for one');
+    expect(said).toContain('why a queue and not a stack?');
+    await expect(chat.locator('.quiz-card'), 'no new question until they ask').toHaveCount(1);
+    await card.locator('[data-chat="quiz-next"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveCount(2);
+    const next = asked[2].messages.at(-1).text;
+    expect(next).toContain('Next question, please.');
+    expect(next, 'the result is not told twice').not.toContain('leo marked it');
+    await expect(chat.locator('.msg-next'), 'Next question is a slim divider, not a chat bubble').toHaveCount(1);
+    await expect(chat.locator('.msg.user .bubble', { hasText: 'Next question' })).toHaveCount(0);
   });
 
   test('a fill in the blank and a free answer are marked quickly for what was meant, and Felix explains only when asked', async ({ page }) => {

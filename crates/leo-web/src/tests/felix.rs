@@ -3886,3 +3886,103 @@ fn a_free_answer_is_marked_by_the_quick_model_without_a_full_felix_reply() {
     state.quick = Some(Arc::new(|_: &str, _: &str, _| Ok("no idea".to_string())));
     assert_eq!(mark(&state, "a stack").status(), StatusCode::BAD_GATEWAY);
 }
+
+#[test]
+fn an_idle_chat_is_compacted_so_the_next_message_sends_a_summary_and_the_last_turns() {
+    let (mut state, _dir, _) = state_with(&[]);
+    let writer: crate::graph::Writer = Arc::new(|system: &str, _: &str, _: u32| {
+        assert!(system.contains("You keep the memory of a long study chat"));
+        Ok("They practised heaps and missed sift down.".into())
+    });
+    state.housekeeping = Some(writer);
+    let (streamer, prompts) = scripted(vec!["Sure."]);
+    state.chat = Some(streamer);
+    let id = "chat-compact-001";
+    let compact = |messages: &[chat::Turn], chat: &str| {
+        json_of(run(crate::routes::felix::compact_chat(
+            State(state.clone()),
+            Json(crate::routes::felix::CompactBody {
+                chat: chat.into(),
+                messages: messages.to_vec(),
+            }),
+        )))
+    };
+    let mut messages: Vec<chat::Turn> = (0..10)
+        .map(|i| chat::Turn {
+            role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+            text: format!("turn {i} {}", "about heaps ".repeat(60)),
+        })
+        .collect();
+    assert_eq!(
+        run(crate::routes::felix::compact_chat(
+            State(state.clone()),
+            Json(crate::routes::felix::CompactBody {
+                chat: id.into(),
+                messages: messages.clone(),
+            }),
+        ))
+        .status(),
+        404,
+        "only a saved chat is compacted"
+    );
+    crate::chats::save(
+        &state.chats,
+        id,
+        serde_json::from_value(serde_json::json!({ "mode": "study", "messages": [] })).unwrap(),
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    assert_eq!(
+        compact(&messages[..5], id)["compacting"],
+        false,
+        "a short chat costs less to send again than to summarise"
+    );
+    assert_eq!(compact(&messages, id)["compacting"], true);
+    let started = std::time::Instant::now();
+    while crate::chats::load(&state.chats, id).is_none_or(|c| c.memory.is_none()) {
+        assert!(started.elapsed().as_secs() < 5, "nothing was compacted");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let memory = crate::chats::load(&state.chats, id)
+        .unwrap()
+        .memory
+        .unwrap();
+    assert_eq!(memory.upto, 10 - chat::COMPACT_KEEP);
+    assert_eq!(
+        compact(&messages, id)["compacting"],
+        false,
+        "nothing new to compact"
+    );
+    messages.push(chat::Turn {
+        role: "user".into(),
+        text: "next question please".into(),
+    });
+    let body = chat::ChatBody {
+        messages: messages.clone(),
+        mode: Some("study".into()),
+        note: None,
+        refs: vec![],
+        chat: Some(id.into()),
+        files: vec![],
+        access: None,
+        recent: vec![],
+        practice: false,
+        interview_problem: None,
+        mark: false,
+        selection: None,
+        session: None,
+    };
+    run(async {
+        let response = chat_reply(State(state.clone()), Json(body)).await;
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+    });
+    let prompt = prompts.lock().unwrap()[0].clone();
+    assert!(prompt.contains("They practised heaps and missed sift down."));
+    assert!(
+        !prompt.contains("turn 1 about"),
+        "the summary replaces the older turns"
+    );
+    assert!(prompt.contains("turn 6 about") && prompt.contains("turn 9 about"));
+}
