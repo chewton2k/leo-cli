@@ -76,7 +76,7 @@ What each part covers:
 - **Browser flows** run against leo's real engine (`leo-test-server`) with isolated notes. After
   `cargo build -p leo-host --bin leo-test-server`, run `pnpm --dir crates/leo-web/tests/browser install`,
   `pnpm --dir crates/leo-web/tests/browser exec playwright install chromium`,
-  then `pnpm --dir crates/leo-web/tests/browser test`. CI runs them on Linux.
+  then `pnpm --dir crates/leo-web/tests/browser test`. CI runs them on macOS.
 - **`tests/wording.rs`** fails if any text a user can see names a command that no
   longer exists. If you rename or remove a command, update the text it points
   at, or add the old name to its list.
@@ -137,8 +137,9 @@ queue runs and the daily 09:23 UTC run select every check.
 | A language runner's inputs | Its existing build validation, Rust checks and both browser suites |
 | Shared runtime catalog, dependency or CI configuration | All affected checks; dependencies and CI configuration select everything |
 
-Both browser jobs download the same test-server artifact built earlier in that
-run, and each installs only its own browser. Each job has a timeout. Pull
+Chromium runs in four shards and WebKit in one job. All five jobs download the
+same test-server artifact built once earlier in that run, and each installs only
+its own browser. Each job has a timeout. Pull
 requests restore Rust caches from main without uploading another copy; browser
 dependencies use pnpm's cache. Existing build scripts and release packaging stay
 the same.
@@ -153,14 +154,22 @@ Run the CI planner's regression tests without compiling the app:
 ```sh
 python3 scripts/test_ci_scope.py
 node --test scripts/ci-base.test.cjs
+pnpm --dir crates/leo-web/tests/browser run test:shards
 ```
 
 Measure queue time, job duration and median/p95 time to `CI passed` separately
 when comparing runs. The current pipeline has no instrumented line or branch
 coverage gate. If adding one, collect coverage on scheduled runs first and
 evaluate changed-line coverage against that baseline before adding a threshold.
-Browser sharding needs separate server/data fixtures per shard: the flow tests
-share mutable application state, so increasing workers alone is unsafe.
+Each browser shard starts its own server with a separate temporary data directory.
+Tests within a shard keep one worker because they share mutable application state.
+`fullyParallel` lets Playwright split individual tests, including the large flow
+file, across machines; it does not increase workers. CI checks that the four
+desktop shards are balanced and select every test exactly once, and keeps the
+complete WebKit selection. Each shard retains its HTML report, screenshots and
+failure traces in an artifact named for its project and shard. Every shard must
+pass the existing aggregate `CI passed` gate; a failing shard does not cancel
+its siblings. Retries and test timeouts are unchanged.
 
 ## Releases
 
