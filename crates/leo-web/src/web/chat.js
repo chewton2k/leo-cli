@@ -2221,10 +2221,11 @@
         if (held.length) {
           // The card keeps Next question: a question about the answer ("why?")
           // is answered, and the next practice question waits for the button.
+          const results = held.map((q) => heldSay(q, false).split('\n').slice(0, 3).join('\n'));
           for (const q of held) q.told = true;
           const last = held[held.length - 1];
           const stay = extra.card ? [] : ['Answer my message. Do not ask a new practice question unless I ask for one.'];
-          extra = { ...extra, say: [...held.map((q) => heldSay(q, false).split('\n').slice(0, 3).join('\n')), ...stay, extra.say || question].join('\n'), quiz: extra.quiz || { question: last.question, given: last.given, correct: last.correct, kind: last.kind } };
+          extra = { ...extra, say: [...results, ...stay, extra.say || question].join('\n'), quiz: extra.quiz || { question: last.question, given: last.given, correct: last.correct, kind: last.kind } };
         }
       }
       stopCompacting();
