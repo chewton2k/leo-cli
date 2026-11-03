@@ -201,6 +201,11 @@ test('clicking or dragging over empty time writes a task in place, and Escape le
     await settled(page);
     expect(await page.evaluate(() => window.calls.filter(c => c.method === 'POST').at(-1).body)).toMatchObject({ date: '2026-11-07', time: '12:00', end: '13:30' });
 
+    const quarter = await point(page, '2026-11-05', 14 * 60 + 13.5);
+    await page.mouse.click(quarter.x, quarter.y);
+    await expect(input).toHaveAttribute('aria-label', 'New task, 2 – 3 PM');
+    await input.press('Escape');
+
     const later = await point(page, '2026-11-02', 18 * 60);
     await page.mouse.click(later.x, later.y);
     await page.locator('.cal-compose-input').press('Escape');

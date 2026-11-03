@@ -781,7 +781,9 @@ document.addEventListener('pointerdown', (e) => {
     d = { mode: grip ? 'resize' : item.classList.contains('cal-tray-row') ? 'tray' : 'move', id: task.id, on: task.on || null, task, source: item, col, day: item.dataset.day || null, start: span ? span.start : 0, length: Math.max(CAL_SNAP, length), offset: span ? calMinutesIn(col, e.clientY) - span.start : 0 };
   } else if (e.target.classList.contains('cal-col')) {
     const col = e.target;
-    d = { mode: 'create', col, day: col.dataset.day, start: Math.floor((calMinutesIn(col, e.clientY) + 2) / CAL_SNAP) * CAL_SNAP };
+    const raw = calMinutesIn(col, e.clientY);
+    const slack = raw % 60 >= 58 ? 2 : 0;
+    d = { mode: 'create', col, day: col.dataset.day, start: Math.min(24 * 60 - CAL_SNAP, Math.floor((raw + slack) / CAL_SNAP) * CAL_SNAP) };
   } else if (e.target.classList.contains('cal-cell') || e.target.classList.contains('cal-allday-cell')) {
     d = { mode: 'cell', day: e.target.dataset.day };
   }
