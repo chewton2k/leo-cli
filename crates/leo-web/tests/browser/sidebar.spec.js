@@ -146,6 +146,40 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
   });
 });
 
+test('sidebar and page header dividers align across desktop layouts', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.goto(url);
+    await expect(page.locator('.side-head')).toBeVisible();
+    await page.locator('main').evaluate(el=>el.insertAdjacentHTML('beforeend','<div class="settings-layout"><nav class="settings-nav">Settings</nav></div>'));
+    for(const width of [1000,1280]) for(const theme of ['light','dark']) for(const mac of [false,true]) for(const top of [0,20]) for(const mini of [false,true]) {
+      await page.setViewportSize({width,height:800});
+      await page.evaluate(({theme,mac,top,mini})=>{
+        document.documentElement.dataset.theme=theme;
+        document.documentElement.style.setProperty('--top',top+'px');
+        audit.mac(mac);
+        document.body.classList.toggle('side-mini',mini);
+        document.body.classList.add('on-note');
+        document.querySelector('.bar').classList.add('scrolled');
+      },{theme,mac,top,mini});
+      const head=await page.locator('.side-head').boundingBox(), bar=await page.locator('.bar').boundingBox();
+      expect(Math.abs(head.y+head.height-bar.y-bar.height),JSON.stringify({width,theme,mac,top,mini})).toBeLessThanOrEqual(1);
+      const toggle=await page.locator('.side-fold').boundingBox();
+      expect(toggle.y).toBeGreaterThanOrEqual(top);
+      expect(toggle.y+toggle.height).toBeLessThanOrEqual(head.y+head.height);
+      const row=await page.locator('.bar-row').boundingBox();
+      expect(row.height).toBeGreaterThanOrEqual(40);
+      if(mac&&mini)expect(row.x).toBeGreaterThanOrEqual(84);
+      const settings=await page.locator('.settings-nav').evaluate(el=>({top:parseFloat(getComputedStyle(el).top),gap:parseFloat(getComputedStyle(el.parentElement).columnGap)}));
+      expect(settings.top).toBe(bar.height+settings.gap);
+    }
+    await page.setViewportSize({width:390,height:844});
+    await expect(page.locator('#side')).toBeHidden();
+    expect((await page.locator('.bar').boundingBox()).height).toBe(81);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+});
+
 test('clicking parent folder labels toggles descendants without navigating or disturbing the draft', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page = await context.newPage({viewport:{width:1280,height:800}});

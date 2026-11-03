@@ -268,6 +268,9 @@ reader, seer, meaning, web, room, speech).
   a pointer move with no button ends a drag, and drops check the drag's type. A folder row is highlighted only on its
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
+  The sidebar head and page toolbar share `--bar-height`, including the safe-area
+  inset, so their bottom dividers stay aligned with the explorer open or hidden.
+  Settings uses the same height for its sticky navigation offset.
   `leo-side` hides only the explorer, keeping the rail. The fold slides
   (2026-11-02, the user's call; the one width animation): `--side` is an
   `@property` length that transitions while `body.side-folding` (`MOTION_MS`),
