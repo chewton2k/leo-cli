@@ -3015,10 +3015,9 @@ fn felix_deletes_the_viewed_problem_with_confirmation_and_private_undo_on_both_p
             assert_eq!(card["kind"], "delete_interview_problem");
             assert_eq!(card["challenge"], "problem-first-01");
             assert!(!card.to_string().contains("private key"));
-            assert_eq!(item.problems.len(), if access == "auto" { 1 } else { 2 });
-            let applied = if access == "auto" {
-                card.clone()
-            } else if native {
+            assert_eq!(item.problems.len(), 2, "deleting a problem always asks");
+            assert!(card.get("state").is_none());
+            let applied = if native || access == "auto" {
                 json_of(run(crate::routes::organize::act_route(
                     State(state.clone()),
                     Json(serde_json::from_value(card.clone()).unwrap()),
@@ -3985,4 +3984,325 @@ fn an_idle_chat_is_compacted_so_the_next_message_sends_a_summary_and_the_last_tu
         "the summary replaces the older turns"
     );
     assert!(prompt.contains("turn 6 about") && prompt.contains("turn 9 about"));
+}
+
+fn last_result(prompt: &str) -> &str {
+    prompt.rfind("<tool_result").map_or("", |at| &prompt[at..])
+}
+
+fn sprint(state: &AppState) -> crate::boards::Board {
+    let board = crate::boards::new_board("Sprint", chrono::Utc::now());
+    crate::boards::put_board(&state.chats, &board).unwrap();
+    let made = run(crate::routes::boards::create_card(
+        State(state.clone()),
+        Path(board.id.clone()),
+        Json(serde_json::from_value(serde_json::json!({ "title": "Login" })).unwrap()),
+    ));
+    assert_eq!(made.status(), StatusCode::CREATED);
+    board
+}
+
+fn board_card(state: &AppState, title: &str) -> Option<crate::boards::Card> {
+    crate::boards::all_cards(&state.chats)
+        .into_iter()
+        .find(|c| c.title == title)
+}
+
+fn act(state: &AppState, card: &serde_json::Value) -> serde_json::Value {
+    let response = run(crate::routes::organize::act_route(
+        State(state.clone()),
+        Json(serde_json::from_value(card.clone()).unwrap()),
+    ));
+    assert_eq!(response.status(), StatusCode::OK);
+    json_of(response)
+}
+
+#[test]
+fn felix_reads_and_changes_boards_in_auto_with_undo_and_asks_before_deleting_one() {
+    let (mut state, _d, _) = state_with(&[]);
+    let board = sprint(&state);
+    let (streamer, prompts) = scripted(vec![
+        r#"<tool>{"name":"list_boards"}</tool>"#,
+        r#"<tool>{"name":"open_board"}</tool>"#,
+        r#"<tool>{"name":"add_card","column":"to do","title":"Write tests","priority":"High","top":true}</tool>"#,
+        r#"<tool>{"name":"move_card","card":"login","column":"Done"}</tool>"#,
+        r#"<tool>{"name":"update_card","card":"Write tests","description":"Cover the edge cases"}</tool>"#,
+        r#"<tool>{"name":"delete_board","board":"Sprint"}</tool>"#,
+        "Added the card, moved Login to Done and asked before deleting the board.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "sort out my sprint board", Some("auto"));
+    let prompts = prompts.lock().unwrap();
+    for (i, prompt) in prompts.iter().enumerate().skip(1) {
+        assert!(
+            !last_result(prompt).contains("That did not work"),
+            "turn {i}: {}",
+            last_result(prompt)
+        );
+    }
+    assert!(prompts[0].contains("### add_card") && prompts[0].contains("### delete_board"));
+    assert!(prompts[1].contains("“Sprint”") && prompts[1].contains("To do"));
+    assert!(prompts[2].contains("“Login”"));
+    let shown: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+    assert_eq!(shown.len(), 4);
+    assert!(shown[..3].iter().all(|p| p["state"] == "applied"));
+    assert_eq!(shown[3]["kind"], "delete_board");
+    assert!(
+        shown[3].get("state").is_none(),
+        "deleting a board always asks"
+    );
+    let todo = board.columns[0].id.clone();
+    let done = board.columns[2].id.clone();
+    let tests = board_card(&state, "Write tests").unwrap();
+    assert_eq!(
+        (tests.column.as_str(), tests.priority.as_str()),
+        (todo.as_str(), "high")
+    );
+    assert_eq!(tests.description, "Cover the edge cases");
+    assert_eq!(board_card(&state, "Login").unwrap().column, done);
+    let order: Vec<String> = crate::boards::cards_of(&state.chats, &board)
+        .into_iter()
+        .filter(|c| c.column == todo)
+        .map(|c| c.title)
+        .collect();
+    assert_eq!(order, ["Write tests"]);
+
+    act(&state, &shown[1]["undo"]);
+    assert_eq!(board_card(&state, "Login").unwrap().column, todo);
+    act(&state, &shown[2]["undo"]);
+    assert_eq!(board_card(&state, "Write tests").unwrap().description, "");
+
+    let deleted = act(&state, shown[3]);
+    assert!(crate::boards::board(&state.chats, &board.id).is_none());
+    let restored = act(&state, &deleted["undo"]);
+    assert_eq!(restored["undo"]["kind"], "delete_board");
+    let back = crate::boards::board(&state.chats, &board.id).unwrap();
+    assert_eq!(crate::boards::cards_of(&state.chats, &back).len(), 2);
+    act(&state, &shown[0]["undo"]);
+    assert!(board_card(&state, "Write tests").is_none());
+}
+
+#[test]
+fn board_changes_are_cards_in_ask_refused_in_read_only_and_natively_called_without_failures() {
+    let (mut state, _d, _) = state_with(&[]);
+    let board = sprint(&state);
+    let (streamer, _) = scripted(vec![
+        r#"<tool>{"name":"add_card","board":"sprint","title":"Ship it","subheading":"Friday"}</tool>"#,
+        r#"<tool>{"name":"change_board","columns":"To do | Doing | Review | Done","new_name":"Sprint 2"}</tool>"#,
+        "Suggested.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "add a card and a review column", Some("ask"));
+    let shown: Vec<serde_json::Value> = lines
+        .iter()
+        .filter_map(|l| l.get("proposal").cloned())
+        .collect();
+    assert_eq!(shown.len(), 2, "{lines:?}");
+    assert!(board_card(&state, "Ship it").is_none(), "Ask only suggests");
+    let added = act(&state, &shown[0]);
+    assert_eq!(board_card(&state, "Ship it").unwrap().subheading, "Friday");
+    act(&state, &shown[1]);
+    let changed = crate::boards::board(&state.chats, &board.id).unwrap();
+    let names: Vec<&str> = changed.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        (changed.name.as_str(), names),
+        ("Sprint 2", vec!["To do", "Doing", "Review", "Done"])
+    );
+    assert_eq!(
+        changed.columns[0].id, board.columns[0].id,
+        "a kept column keeps its cards"
+    );
+    let undone = act(&state, &added["undo"]);
+    assert!(board_card(&state, "Ship it").is_none());
+    act(&state, &undone["undo"]);
+    assert!(board_card(&state, "Ship it").is_some());
+
+    let (streamer, prompts) = scripted(vec![
+        r#"<tool>{"name":"add_card","title":"Nope"}</tool>"#,
+        "Switch to Ask or Auto.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "add a card", Some("read"));
+    assert!(lines.iter().all(|l| l.get("proposal").is_none()));
+    assert!(board_card(&state, "Nope").is_none());
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[0].contains("### open_board") && !prompts[0].contains("### add_card"));
+    assert!(prompts[1].contains("read only"));
+
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&results);
+    state.converse = Some(Arc::new(
+        move |_: &chat::Instructions, specs: &[chat::ToolSpec]| {
+            assert!(specs.iter().any(|s| s.name == "move_card"));
+            assert!(specs.iter().all(|s| !s.name.starts_with("interview_")));
+            Some(Box::new(Native {
+                script: vec![
+                    (
+                        "open_board",
+                        serde_json::json!({ "board": "Sprint 2", "card": "Login" }),
+                    ),
+                    (
+                        "move_card",
+                        serde_json::json!({ "card": "Login", "column": "Review", "position": "top" }),
+                    ),
+                    (
+                        "update_card",
+                        serde_json::json!({ "card": "Login", "priority": "urgent" }),
+                    ),
+                    (
+                        "add_card",
+                        serde_json::json!({ "title": "Native", "top": true, "priority": null }),
+                    ),
+                    (
+                        "add_board",
+                        serde_json::json!({ "title": "Thesis", "columns": ["Ideas", "Writing"] }),
+                    ),
+                ],
+                answer: "Done.",
+                results: Arc::clone(&seen),
+                fail: false,
+            }) as Box<dyn chat::Conversation>)
+        },
+    ));
+    let lines = chat_lines_with(&state, "move login to review", Some("auto"));
+    let results = results.lock().unwrap();
+    for result in results.iter() {
+        assert!(!result.starts_with("That did not work"), "{result}");
+    }
+    let review = changed.columns[2].id.clone();
+    let login = board_card(&state, "Login").unwrap();
+    assert_eq!(
+        (login.column.as_str(), login.priority.as_str()),
+        (review.as_str(), "high")
+    );
+    assert!(board_card(&state, "Native").is_some());
+    let thesis = crate::boards::boards(&state.chats)
+        .into_iter()
+        .find(|b| b.name == "Thesis")
+        .unwrap();
+    assert_eq!(
+        thesis
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Ideas", "Writing"]
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l["proposal"]["state"] == "applied")
+            .count(),
+        4
+    );
+}
+
+#[test]
+fn practice_tools_only_run_where_they_are_offered_and_read_only_stops_every_practice_write() {
+    const ID: &str = "practice-guard-01";
+    let (mut state, _d, _) = state_with(&[]);
+    let framework: crate::interview::Framework = serde_json::from_value(serde_json::json!({"title":"Coding", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+    crate::interview::configure(&state.chats, ID, 0, framework).unwrap();
+    let challenge = serde_json::from_value(serde_json::json!({"id":"problem-guard-01", "title":"Pair", "question":"Find the pair.", "minutes":30, "skills":["Approach"], "topics":["Arrays"], "origin":"generated", "sources":[]})).unwrap();
+    crate::interview::set_challenge(&state.chats, ID, challenge).unwrap();
+
+    let (streamer, prompts) = scripted(vec![
+        r#"<tool>{"name":"interview_list"}</tool>"#,
+        r#"<tool>{"name":"interview_problem_delete","data":"{\"interview\":\"practice-guard-01\",\"challenge\":\"problem-guard-01\",\"summary\":\"x\"}"}</tool>"#,
+        r#"<tool>{"name":"add_kard","title":"x"}</tool>"#,
+        "I cannot reach practices from here.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "delete my practice problem", Some("auto"));
+    assert!(lines.iter().all(|l| l.get("proposal").is_none()));
+    assert_eq!(
+        crate::interview::load(&state.chats, ID)
+            .unwrap()
+            .problems
+            .len(),
+        1
+    );
+    let prompts = prompts.lock().unwrap();
+    assert!(!prompts[0].contains("### interview_list"));
+    assert!(prompts[1].contains("works only in an interview practice chat"));
+    assert!(!prompts[1].contains("Practice-guard") && !prompts[1].contains("“Coding”"));
+    assert!(prompts[2].contains("works only in an interview practice chat"));
+    assert!(
+        prompts[3].contains("there is no tool called \"add_kard\"")
+            && prompts[3].contains("add_card")
+    );
+    assert!(!prompts[3].contains("interview_code"));
+    drop(prompts);
+
+    let before = crate::interview::load(&state.chats, ID).unwrap();
+    let (streamer, prompts) = scripted(vec![
+        r#"<tool>{"name":"interview_framework","data":"{\"revision\":1,\"framework\":{\"title\":\"Changed\",\"track\":\"coding\",\"company\":\"\",\"role\":\"\",\"language\":\"Python\",\"style\":\"coach\",\"date\":\"\",\"weekly_minutes\":60,\"skills\":[\"Approach\"],\"wants\":\"\"}}"}</tool>"#,
+        "Switch to Ask to let me change it.",
+    ]);
+    state.chat = Some(streamer);
+    let body = serde_json::from_value(serde_json::json!({"chat":ID, "mode":"interview", "access":"read", "messages":[{"role":"user", "text":"rename my practice"}]})).unwrap();
+    run(async {
+        let response = chat_reply(State(state.clone()), Json(body)).await;
+        axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap()
+    });
+    let after = crate::interview::load(&state.chats, ID).unwrap();
+    assert_eq!(after.framework.title, before.framework.title);
+    assert_eq!(after.revision, before.revision);
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[0].contains("### interview_progress"));
+    assert!(
+        !prompts[0].contains("### interview_framework")
+            && !prompts[0].contains("### interview_code_edit")
+    );
+    assert!(prompts[1].contains("Read only is active"));
+}
+
+#[test]
+fn felix_brings_a_trashed_folder_back_with_its_notes_and_offers_to_trash_it_again() {
+    let (mut state, _d, ids) = state_with(&[("Week one", "cs130"), ("Lab", "cs130/labs")]);
+    let _ = run(move_to_trash(
+        State(state.clone()),
+        Json(
+            serde_json::from_value::<TrashMove>(serde_json::json!({ "dirs": ["cs130"] })).unwrap(),
+        ),
+    ))
+    .unwrap();
+    assert!(state.fresh().find_note(&ids[0]).is_none());
+    let (streamer, prompts) = scripted(vec![
+        r#"<tool>{"name":"restore_folder","folder":"cs130/"}</tool>"#,
+        "It is back.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "bring cs130 back", Some("auto"));
+    let result = last_result(&prompts.lock().unwrap()[1]).to_string();
+    assert!(!result.contains("That did not work"), "{result}");
+    let card = lines.iter().find_map(|l| l.get("proposal")).unwrap();
+    assert_eq!(
+        (card["kind"].as_str(), card["state"].as_str()),
+        (Some("restore_folder"), Some("applied"))
+    );
+    assert_eq!(card["undo"]["kind"], "delete_folder");
+    let store = state.fresh();
+    assert_eq!(store.find_note(&ids[0]).unwrap().directory, "cs130");
+    assert_eq!(store.find_note(&ids[1]).unwrap().directory, "cs130/labs");
+}
+
+#[test]
+fn tool_arguments_that_are_not_text_are_read_as_text() {
+    let call = tools::Call {
+        name: "add_board".into(),
+        args: serde_json::json!({ "title": "Plan", "top": true, "n": 3, "columns": ["A", "B"], "gone": null }),
+    };
+    let fixed = call.normalized();
+    assert_eq!(fixed.text("top"), "yes");
+    assert_eq!(fixed.text("n"), "3");
+    assert_eq!(fixed.text("columns"), r#"["A","B"]"#);
+    assert!(fixed.args["gone"].is_null());
+    assert!(tools::check(&fixed).is_ok());
+    assert_eq!(
+        crate::board_tools::column_names(&fixed.text("columns")).unwrap(),
+        ["A", "B"]
+    );
 }

@@ -1,4 +1,5 @@
 mod backup;
+mod board_tools;
 mod boards;
 mod browse;
 pub mod calc;
