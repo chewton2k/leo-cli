@@ -198,7 +198,7 @@ test('explorer loads direct notes, escapes titles, pages large folders and recov
     await expect(page.locator('.side-note[data-id="personal-104"]')).toHaveAttribute('aria-current','page');
     await expect(row('Personal')).not.toHaveAttribute('aria-current','page');
     await expect(page.locator('#side .side-folder.on')).toHaveCount(0);
-    expect(await row('Personal').evaluate(el=>getComputedStyle(el).userSelect)).toBe('none');
+    expect(await row('Personal').evaluate(el=>{const style=getComputedStyle(el);return style.userSelect==='none'||style.webkitUserSelect==='none';})).toBe(true);
     await page.evaluate(()=>audit.refresh());
     await expect(page.locator('.side-note[data-id="personal-104"]')).toBeVisible();
     await page.locator('[data-action="side-notes"][data-dir="Personal"]').filter({hasText:'Previous'}).click();
