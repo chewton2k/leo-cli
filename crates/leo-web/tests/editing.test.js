@@ -119,10 +119,20 @@ test('a numbered item keeps its number when rendered alone', () => {
   assert.ok(md.render('3. third').includes('<ol start="3">'), md.render('3. third'));
 });
 
+test('list prefixes keep every rendered marker out of the text field', () => {
+  for (const prefix of ['- ', '* ', '+ ', '12. ', '3) ', '- [ ] ', '* [x] ', '2. [X] ', '  - ', '    - [ ] ', '-   [ ] ']) {
+    assert.equal(ed.listPrefix(prefix + '文字 😀'), prefix);
+  }
+  assert.equal(ed.listPrefix('- [ ]'), '- [ ]');
+  for (const plain of ['Plain text', '# Heading', '> Quote', '![alt](a.png)', '-word', '1.word']) assert.equal(ed.listPrefix(plain), '');
+});
+
 test('Enter continues a list, a checklist and a numbered list', () => {
   assert.deepEqual(ed.continueLine('- milk'), { prefix: '- ', exit: false });
   assert.deepEqual(ed.continueLine('  * nested'), { prefix: '  * ', exit: false });
   assert.deepEqual(ed.continueLine('- [x] done'), { prefix: '- [ ] ', exit: false });
+  assert.deepEqual(ed.continueLine('2. [x] done'), { prefix: '3. [ ] ', exit: false });
+  assert.deepEqual(ed.continueLine('3) [ ] pending'), { prefix: '4) [ ] ', exit: false });
   assert.deepEqual(ed.continueLine('9. nine'), { prefix: '10. ', exit: false });
   assert.deepEqual(ed.continueLine('> quoted'), { prefix: '> ', exit: false });
   assert.deepEqual(ed.continueLine('plain'), { prefix: '', exit: false });
@@ -130,6 +140,7 @@ test('Enter continues a list, a checklist and a numbered list', () => {
 
 test('Enter on an empty list item leaves the list', () => {
   assert.deepEqual(ed.continueLine('- '), { prefix: '', exit: true });
+  assert.deepEqual(ed.continueLine('2. [ ] '), { prefix: '', exit: true });
   assert.deepEqual(ed.continueLine('- [ ] '), { prefix: '', exit: true });
   assert.deepEqual(ed.continueLine('  2. '), { prefix: '', exit: true });
 });

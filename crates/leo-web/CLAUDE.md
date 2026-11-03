@@ -169,9 +169,14 @@ reader, seer, meaning, web, room, speech).
   each with `markdown.js` and swaps a tapped block for a textarea of its raw
   lines. Like Obsidian's live preview (2026-11-02, the user's call), nothing
   jumps when a line opens: a heading keeps its size (`data-head`) and a list or
-  task line is shifted so its text stays where it was drawn (the marker hangs
-  left). A selection across lines stays rendered in place: dragging out of the
-  edited line carries on across the lines (`dragAnchor`), Shift+click selects,
+  task line keeps its rendered list container and edits only the text after its
+  marker; checkboxes, numbers, indentation and wrapping stay in place. The hidden
+  Markdown prefix is added to every source/selection offset and retained on save.
+  Select-all and multi-line undo selections keep the blocks rendered. A newly
+  focused source editor retains the rendered text height (scrolling internally
+  for longer inline Markdown); input resumes normal height fitting. Heading
+  source prefixes hang left of the rendered text position. A selection across
+  lines stays rendered in place: dragging out of the edited line carries on across the lines (`dragAnchor`), Shift+click selects,
   copy and cut give the Markdown, and typing, Enter, Delete or paste replace it
   through the raw lines, then only the caret's line stays open.
   Autosave PATCHes 700 ms after the last change with `base` = the loaded
@@ -1337,3 +1342,8 @@ model-download and native-recording display polls pause while hidden; browser-fe
 capture/journaling continues. Automatic status GETs do not reset user-idle time.
 Graph/vector/caption maintenance starts after its first interval and defers while
 the native window is hidden or the capture activity gate is busy.
+
+Application controls and draggable note/folder rows suppress text selection;
+prose and editable fields remain selectable. The page admits native drag starts
+only from its explicit note/folder sources, preventing accidental link, image and
+selection drags while keeping file drops and pointer-driven board/resize actions.

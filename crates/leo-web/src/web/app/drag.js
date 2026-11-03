@@ -93,6 +93,7 @@ document.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', folderLabel(dragging.folder));
     e.dataTransfer.effectAllowed = 'move';
   } else {
+    e.preventDefault();
     return;
   }
   (card || folder).addEventListener('dragend', endDrag, { once: true });

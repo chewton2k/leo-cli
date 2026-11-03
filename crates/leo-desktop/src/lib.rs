@@ -16,6 +16,7 @@ mod shell_path;
 mod shortcut;
 mod shortcut_events;
 mod tray;
+mod update_window;
 mod updates;
 
 use std::sync::Mutex;
@@ -46,6 +47,9 @@ pub fn run() {
         ))
         .invoke_handler(tauri::generate_handler![print_page, dictation_popup])
         .setup(move |app| {
+            let config = leo_core::paths::config_dir().ok();
+            let foreground = config.as_deref().is_some_and(update_window::take);
+            let hidden = update_window::hidden(hidden, foreground);
             #[cfg(target_os = "macos")]
             app.handle().plugin(tauri_nspanel::init())?;
             overlay::create(app.handle())?;
@@ -60,7 +64,6 @@ pub fn run() {
             app.manage(updates);
             app.manage(app_settings.clone());
             app.manage(dictation);
-            let config = leo_core::paths::config_dir().ok();
             let wanted = config
                 .as_deref()
                 .map(port::remembered)
@@ -96,6 +99,7 @@ pub fn run() {
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(480.0, 480.0)
                 .visible(!hidden)
+                .focused(!hidden)
                 .initialization_script(if hidden {
                     "window.__LEO_VISIBLE__ = false;"
                 } else {
@@ -107,6 +111,9 @@ pub fn run() {
                         let visible = window.is_visible().unwrap_or(true)
                             && !window.is_minimized().unwrap_or(false);
                         sync_visible(&window, visible, true);
+                        if visible && update_window::may_open(leo_core::activity::global()) {
+                            let _ = window.set_focus();
+                        }
                     }
                 })
                 // Tauri's own file-drop handler swallows the webview's drag events,
@@ -239,6 +246,9 @@ fn back_up(app: &AppHandle) {
 }
 
 pub(crate) fn show(app: &AppHandle) {
+    if !update_window::may_open(leo_core::activity::global()) {
+        return;
+    }
     if let Some(window) = app.get_webview_window(MAIN) {
         let _ = window.unminimize();
         let _ = window.show();
