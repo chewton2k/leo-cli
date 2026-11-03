@@ -134,7 +134,7 @@ reader, seer, meaning, web, room, speech).
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
   follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
   entrances, hover lifts or sliding gliders. `<details>` slide their height
-  (`slideHeight`); Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
+  (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
   ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
   content. Reduced Motion turns all of it off. Tapping Felix is the one
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
@@ -233,10 +233,25 @@ reader, seer, meaning, web, room, speech).
   below 1200 px to leave room for notes, originals and Felix.
   There is no Top level row (2026-11-02, the user's call: the tree already lists
   top-level notes); the pinned Folders heading is the top-level drop target, and
-  folder and note rows retain drag data. A folder row is highlighted only on its
+  folder and note rows retain drag data. Drops work like a file explorer
+  (2026-11-02, the user's call): every explorer row means its folder (the folder
+  row and chevron, its open children `.side-kids`, a note row means the note's
+  folder, empty tree space the top level), so a note dropped on a note in the
+  explorer moves there (combining stays on library cards). The destination
+  folder's row gets `drop-ok` and its open children `drop-in`; holding a note or
+  folder drag over a closed folder for `SPRING_MS` (600) opens it for that visit
+  (`side.revealed`, never saved); the tree scrolls near its
+  edges; moved folders keep their open state (`moveOpenFolders`). A redraw can
+  replace the dragged row, so `dragend` is also caught on the source element,
+  a pointer move with no button ends a drag, and drops check the drag's type. A folder row is highlighted only on its
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
-  `leo-side` hides only the explorer, keeping the rail. Folders start closed;
+  `leo-side` hides only the explorer, keeping the rail. The fold slides
+  (2026-11-02, the user's call; the one width animation): `--side` is an
+  `@property` length that transitions while `body.side-folding` (`MOTION_MS`),
+  the explorer keeps its width and is clipped, Reduced Motion snaps. The toggle
+  never moves: left of the head over the rail, or on macOS fixed right after the
+  window buttons, in both states. Folders start closed;
   `leo-side-folders` keeps only folders the user opened with their own clicks
   (2026-11-03, the user's call), so the explorer reopens after a restart as
   they left it (the old `leo-side-open`, which also held every folder browsing

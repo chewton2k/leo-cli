@@ -891,6 +891,7 @@ body.on-map main { padding: 0; max-width: none; }
   .felix.think .felix-thought, .felix.sleep .felix-z, .felix.think .felix-thought rect { opacity: 1; }
 }
 
+@property --side { syntax: '<length>'; inherits: true; initial-value: 0px; }
 .side { display: none; }
 @media (min-width: 1000px) {
   body { --side: 284px; padding-left: var(--side); }
@@ -903,16 +904,13 @@ body.on-map main { padding: 0; max-width: none; }
   }
   .side[hidden] { display: none; }
 }
-.side-head { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: var(--top) 6px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.side-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 2px; padding: var(--top) 6px 0; border-bottom: 1px solid var(--line); min-width: 0; }
 @media (min-width: 1000px) and (max-width: 1199px) { body:not(.side-mini) { --side: 240px; } }
 .side-head .brand { padding-left: 8px; }
-html[data-app="mac"] .side-head { justify-content: flex-end; }
 html[data-app="mac"] .side-head .brand { display: none; }
-html[data-app="mac"] body.side-mini .side { grid-template-rows: calc(var(--top) + 88px) minmax(0, 1fr); }
-html[data-app="mac"] body.side-mini .side-head { padding-top: calc(var(--top) + 40px); }
-html[data-app="mac"] body.side-mini .side-head { justify-content: center; }
+html[data-app="mac"] .side-fold { position: fixed; z-index: 1; left: 76px; top: calc(var(--top) + 6px); }
 @media (max-width: 999px) { html[data-app="mac"] .bar { padding-left: 84px; } }
-@media (min-width: 1000px) { html[data-app="mac"] body.side-mini .bar { padding-left: 32px; } }
+@media (min-width: 1000px) { html[data-app="mac"] body.side-mini .bar { padding-left: 72px; } }
 .side-rail { grid-area: 2 / 1; display: flex; flex-direction: column; min-height: 0; padding: 4px; background: var(--bg); border-right: 1px solid var(--line); }
 .side-rail-main { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 .side-rail-main::-webkit-scrollbar { display: none; }
@@ -968,7 +966,11 @@ html[data-app="mac"] body.side-mini .side-head { justify-content: center; }
 @media (min-width: 1000px) { .page-name { display: inline; } }
 body.side-mini .side { grid-template-columns: 52px; }
 body.side-mini .side-explorer, body.side-mini .side-head .brand { display: none; }
-body.side-mini .side-head { justify-content: center; }
+body.side-folding { transition: --side 180ms cubic-bezier(.2, .8, .2, 1); }
+body.side-folding .bar { transition: padding-left 180ms cubic-bezier(.2, .8, .2, 1); }
+body.side-folding .side { grid-template-columns: 52px 232px; }
+body.side-mini.side-folding .side-explorer { display: flex; }
+@media (max-width: 1199px) { body.side-folding .side { grid-template-columns: 52px 188px; } }
 .side-folder { display: none; }
 .side-folder { position: relative; display: flex; align-items: center; padding-left: calc(var(--depth, 0) * 14px); border-radius: 9px; }
 .side-folder .side-row { flex: 1; min-width: 0; padding-left: 4px; }
@@ -1894,6 +1896,7 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .chip.original { text-decoration: none; }
 .chip.original svg { width: 13px; height: 13px; }
 .drop-ok { outline: 2px solid var(--accent) !important; outline-offset: -2px; background: var(--accent-soft) !important; color: var(--text) !important; }
+.side-kids.drop-in { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); border-radius: 0 0 9px 9px; }
 .card[draggable="true"], .folder[draggable="true"], .side-row[draggable="true"] { -webkit-user-drag: element; }
 body.files-over main { position: relative; }
 body.files-over main::after {

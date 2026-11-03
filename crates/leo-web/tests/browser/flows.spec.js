@@ -283,6 +283,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   const full = (await side.boundingBox()).width;
   await side.locator('[data-action="side-fold"]').click();
   await expect(page.locator('body')).toHaveClass(/side-mini/);
+  await expect(page.locator('body')).not.toHaveClass(/side-folding/);
   const narrow = (await side.boundingBox()).width;
   expect(narrow).toBeLessThan(80);
   expect((await page.locator('main').boundingBox()).x).toBeGreaterThanOrEqual(narrow);
@@ -290,6 +291,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await page.reload();
   await expect(page.locator('body')).toHaveClass(/side-mini/);
   await side.locator('[data-action="side-fold"]').click();
+  await expect(page.locator('body')).not.toHaveClass(/side-folding/);
   expect((await side.boundingBox()).width).toBe(full);
 });
 
@@ -3736,9 +3738,11 @@ test('grid and list keep the library and header width in every layout', async ({
       if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
       if (layout === 'chat') {
         await page.locator('[data-action="side-fold"]').click();
+        await expect(page.locator('body')).not.toHaveClass(/side-folding/);
         await page.locator('#chat-toggle').click();
         await expect(page.locator('.chat')).toBeVisible();
       }
+      await expect(page.locator('body')).not.toHaveClass(/side-folding/);
       for (const views of [['grid', 'list'], ['list', 'grid']]) {
         await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
         const before = await bounds();
