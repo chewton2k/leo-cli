@@ -12,15 +12,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks on macOS and Windows, plus `cargo check` on Rust 1.88, and the browser suite as two parallel
-jobs (Chromium and WebKit), each building leo and starting its own server. It
-tests only what a push can affect: `scripts/ci-scope.sh` compares with the last
-release tag (a pull request with its base), so changes to the page alone run
-`cargo test -p leo-web` on macOS and the browser jobs, Rust that the web server
-never runs (the app shell in `crates/leo-desktop`, root `tests/`, install scripts) skips the browser jobs, and
-docs alone run only lint. Comparing with the last release rather than the
-previous push means a cancelled or failed run's changes are still tested. A
-newer push cancels the older run's jobs, but never a release in progress.
+CI (`.github/workflows/ci.yml`) runs on main pushes and pull requests without
+duplicating branch pushes. `scripts/ci-base.cjs` selects the newest successful
+push ancestor or newer release tag; a failed or cancelled push never advances
+the baseline. Pull requests compare with their base. `scripts/ci-scope.sh`
+selects Rust, Node, browser and runner checks independently. Page-only changes
+run Node and both browser suites, without workspace tests or runner rebuilds;
+docs only run formatting and planner regression tests. Both browser jobs use
+one test-server artifact, with separate servers and homes. Nightly, manual,
+merge queue and unknown-input runs test everything. `CI passed` aggregates the
+selected jobs and gates release; the nightly run never releases. See
+CONTRIBUTING.md for the selection table and planner tests. Newer pushes cancel
+older matching check jobs, but never a release in progress.
 Check a run from the terminal, since `gh` is not installed here:
 
 ```sh
@@ -29,6 +32,50 @@ curl -s "https://api.github.com/repos/chewton2k/leo-cli/actions/runs?per_page=3"
 ```
 
 The repository moved to `chewton2k/leo-cli`; `origin` already points there.
+
+## CI audit, 2026-11-02
+
+The audit sampled the 30 most recent CI runs and inspected the step timings of
+[successful PR run 41542664119](https://github.com/chewton2k/leo-cli/actions/runs/41542664119).
+There were 17 distinct commits in that sample; 13 had both push and PR runs.
+The inspected run took 50m57s. Its Intel build started 41m22s after the workflow
+was created, about 36m45s after change detection finished, then ran for 9m34s.
+The Chromium integration step, including dependency/browser installation, took
+13m20s. Two browser jobs independently built the same server. These observations
+identify duplicate work and queue pressure; one run cannot establish median or
+p95 performance, and job timestamps do not expose GitHub's scheduling decisions.
+
+The changes remove duplicate push/PR runs, gate unrelated checks, run cheap
+checks on Ubuntu, reuse one browser-server build and avoid PR Rust cache uploads.
+Both browser engines remain in the PR path for page changes; Rust changes keep
+macOS/Windows tests, MSRV and the Intel build. This is deterministic selection
+by component, with full nightly validation and conservative fallback. It does
+not predict which individual test cases can be omitted.
+
+Published practices support this direction, at very different scales:
+
+| Source | Reported practice | Application here |
+|--------|-------------------|------------------|
+| [Google, Software Engineering at Google, chapter 23](https://abseil.io/resources/swe-book/html/ch23.html) | Fast presubmit tests, asynchronous affected tests, dependency analysis and batching under resource limits | Select by affected component and measure queue time separately |
+| [Meta, Predictive Test Selection, 2018](https://engineering.fb.com/2018/11/21/developer-tools/predictive-test-selection/) | A learned selector ran about one-third of transitively affected tests while catching over 99.9% of problematic changes in its reported deployment | Consider history-based selection only after collecting representative failure data; those historical results are not a guarantee for leo |
+| [Anthropic, Test Impact Analysis, 2026](https://claude.com/blog/agentic-coding-is-straining-ci-heres-how-we-scaled-test-impact-analysis-at-anthropic?trk=public_post_comment-text) | Deterministic selection using result history and package relevance; the history listener itself became a scaling bottleneck | Keep the planner small, bounded, tested and independent of release completion |
+| [OpenAI, Harness Engineering, 2026](https://openai.com/index/harness-engineering/) | Repository-enforced invariants and isolated application environments for agents | Keep executable CI rules and reproducible regression tests alongside the code |
+
+These are first-party accounts, not independent comparisons of current company
+pipelines. They support the principles rather than a promised speedup. Leo's
+planner currently trusts completed successful workflow runs, including release
+completion, or published release tags; decoupling release status is future work.
+
+Next, compare at least 20 comparable page and Rust PR runs, separating cold and
+warm caches, and report median/p95 queue and execution times plus runner minutes.
+The first run of a CI configuration change deliberately selects everything.
+If Chromium remains the long pole, isolate the mutable flow fixtures and then
+measure sharding; simply adding workers would race the shared server state.
+If Rust remains dominant, measure dependency-aware crate selection or compiler
+caching before changing the build system. No Bazel migration is justified by
+this sample. Instrumented line/branch coverage is not configured today: start
+with scheduled collection and a measured baseline, then assess changed-line
+coverage and flake/retry rates before introducing a blocking percentage.
 
 ## Releasing
 

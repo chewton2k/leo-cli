@@ -118,9 +118,49 @@ Before opening a pull request:
       screen (`crates/leo-tui/src/view/help.rs`) and the manual note
       (`crates/leo-core/src/manual.rs`) say so
 
-CI runs the tests on Linux, macOS and Windows, the browser tests, formatting,
-clippy, and a build on the minimum supported Rust version (1.88), skipping what
-a change cannot affect.
+CI runs for pull requests and pushes to `main`; branch pushes do not duplicate
+the pull request run. Branches without a pull request can use Actions → CI →
+Run workflow. Main compares with the newest successful CI ancestor or newer
+release tag, so failed or cancelled pushes remain covered. Pull requests compare
+with their base. Unknown paths, CI configuration changes, manual runs, merge
+queue runs and the daily 09:23 UTC run select every check.
+
+| Change | Checks in addition to formatting and CI selection tests |
+|--------|---------------------------------------------------------|
+| Documentation only | None |
+| Page assets | All JavaScript unit tests, Chromium and WebKit integration suites |
+| JavaScript unit tests only | All JavaScript unit tests |
+| Browser tests only | Chromium and WebKit integration suites |
+| Core, services, host or web Rust | Workspace tests on macOS and Windows, clippy, Rust 1.88 check, Intel macOS build, both browser suites |
+| Desktop, CLI or Rust integration tests | The same Rust checks, without browser suites |
+| Installer or release helper scripts | Rust checks and installer validation, including PowerShell syntax on Windows |
+| A language runner's inputs | Its existing build validation, Rust checks and both browser suites |
+| Shared runtime catalog, dependency or CI configuration | All affected checks; dependencies and CI configuration select everything |
+
+Both browser jobs download the same test-server artifact built earlier in that
+run, and each installs only its own browser. Each job has a timeout. Pull
+requests restore Rust caches from main without uploading another copy; browser
+dependencies use pnpm's cache. Existing build scripts and release packaging stay
+the same.
+
+`CI passed` is the aggregate status check: selected checks must succeed,
+intentionally unselected checks may be skipped, and failures or cancellations
+block release. It is the recommended required check for branch protection.
+The scheduled full run does not publish a release.
+
+Run the CI planner's regression tests without compiling the app:
+
+```sh
+python3 scripts/test_ci_scope.py
+node --test scripts/ci-base.test.cjs
+```
+
+Measure queue time, job duration and median/p95 time to `CI passed` separately
+when comparing runs. The current pipeline has no instrumented line or branch
+coverage gate. If adding one, collect coverage on scheduled runs first and
+evaluate changed-line coverage against that baseline before adding a threshold.
+Browser sharding needs separate server/data fixtures per shard: the flow tests
+share mutable application state, so increasing workers alone is unsafe.
 
 ## Releases
 

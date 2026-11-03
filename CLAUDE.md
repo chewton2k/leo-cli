@@ -30,8 +30,11 @@ workspace-wide `cargo test`, no full Playwright run; the user's call,
 checks (`cargo check`, `cargo fmt`, `cargo clippy`, one crate's or one
 test's run, a single Playwright `-g` test, one node test file), then commit,
 push, and let CI run the full suite. Check CI once; fix a red run with a
-follow-up push. CI tests only what changed since the last release tag
-(`scripts/ci-scope.sh`; DEVELOPER.md says what each kind of change runs).
+follow-up push. CI compares main with the newest verified ancestor (a successful
+CI push or a newer release), and pull requests with their base. Unknown inputs
+and nightly/manual runs test everything; failed and cancelled pushes never
+advance the baseline. `scripts/ci-scope.sh` selects independent Rust, browser,
+Node and runner checks; CONTRIBUTING.md describes the selection.
 
 For website changes, do not build leo or run local Cargo checks/tests; rely on
 CI for compiled and browser validation (the user's call, 2026-10-11). Lightweight
