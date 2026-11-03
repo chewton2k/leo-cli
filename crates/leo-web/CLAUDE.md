@@ -1215,8 +1215,13 @@ editable line blocks (up to 300 headings, excluding code, maths, quotes and tabl
 It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
 the user's call: notes sit in the middle), the note is centred between two 48 px
 gutters and the right one holds a tick per heading (`.outline-ticks`, longer for
-higher levels, the current one in the accent); hovering or focusing it shows the
-outline as a floating card to its left, and a tick jumps to its heading. Note
+higher levels, the current one in the accent). Hovering or focusing the rail
+magnifies nearby bars and previews the heading and a bounded plain-text excerpt
+(up to 24 lines / 800 UTF-16 units, escaped); clicking or Enter/Space jumps there.
+Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Motion
+snaps the bars. All 300 markers fit within the viewport. The existing disclosure
+below the rail opens the full nested outline; narrow panes keep their disclosure.
+Preview updates never redraw the editor, and destroy removes the rail and tooltip. Note
 width preferences still cap the reading column. Headings stay on one line with
 ellipsis and their full title on hover. The outline hides its scrollbar while
 keeping wheel, touch and keyboard scrolling available. The outline gutter is

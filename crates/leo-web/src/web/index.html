@@ -173,22 +173,32 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .note-outline .outline-toggle svg { width: 16px; height: 16px; }
 .note-outline .outline-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
 .note-outline .outline-spacer { flex: none; width: 24px; }
-.note-outline .outline-ticks { display: none; }
+.note-outline .outline-ticks, .note-outline .outline-preview { display: none; }
 @container note (max-width: 899px) {
   .note-outline { background: var(--bg); }
 }
 @container note (min-width: 900px) {
   .note-columns { grid-template-rows: auto; padding-inline: 48px; }
   .note-columns > .note { grid-area: 1 / 1; }
-  .note-outline { justify-self: end; width: 48px; margin-right: -48px; }
-  .note-outline .source-more > summary { display: none; }
-  .note-outline .outline-ticks { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; padding: 10px 12px 10px 0; max-height: calc(100dvh - var(--outline-top, 76px) - 130px); overflow: hidden; cursor: pointer; }
-  .note-outline .outline-ticks span { flex: none; display: block; width: 8px; height: 2px; border-radius: 1px; background: var(--faint); }
-  .note-outline .outline-ticks span[data-level="1"] { width: 18px; }
-  .note-outline .outline-ticks span[data-level="2"] { width: 12px; }
-  .note-outline .outline-ticks span.on { background: var(--accent); }
+  .note-outline { justify-self: end; width: 48px; margin-right: -48px; display: flex; flex-direction: column; }
+  .note-outline .source-more { order: 1; }
+  .note-outline .source-more > summary { width: 36px; justify-content: flex-end; padding: 8px 0; }
+  .note-outline .source-more > summary > svg { display: none; }
+  .note-outline .outline-ticks { display: flex; flex-direction: column; width: 100%; height: min(calc(var(--outline-count) * 12px), calc(100dvh - var(--outline-top, 76px) - 160px)); min-height: 12px; padding: 0 12px 0 0; border: 0; background: transparent; cursor: pointer; }
+  .note-outline .outline-ticks:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .note-outline .outline-ticks span { position: relative; flex: 1; min-height: 0; display: block; width: 100%; transition: transform 150ms ease; transform-origin: right center; }
+  .note-outline .outline-ticks span::after { content: ''; position: absolute; right: 0; top: calc(50% - 1px); width: 8px; height: 2px; border-radius: 1px; background: var(--faint); }
+  .note-outline .outline-ticks span[data-level="1"]::after { width: 18px; }
+  .note-outline .outline-ticks span[data-level="2"]::after { width: 12px; }
+  .note-outline .outline-ticks span.on::after { background: var(--accent); }
+  .note-outline .outline-ticks span[data-distance="0"] { transform: scale(1.6, 2); }
+  .note-outline .outline-ticks span[data-distance="1"] { transform: scale(1.3, 1.5); }
+  .note-outline .outline-ticks span[data-distance="2"] { transform: scale(1.1, 1.2); }
+  .note-outline .outline-preview { display: block; position: absolute; right: 48px; width: 280px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); pointer-events: none; font-size: 13px; line-height: 1.5; color: var(--text); }
+  .outline-preview strong { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
+  .outline-preview > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; margin-top: 4px; color: var(--muted); }
   .note-outline nav { position: absolute; top: 0; right: 40px; width: 280px; max-height: calc(100dvh - var(--outline-top, 76px) - 130px); padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); opacity: 0; pointer-events: none; }
-  .note-outline:hover nav, .note-outline:focus-within nav { opacity: 1; pointer-events: auto; }
+  .note-outline .source-more[open] nav { opacity: 1; pointer-events: auto; }
 }
 .section-title { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 4px 8px; }
 

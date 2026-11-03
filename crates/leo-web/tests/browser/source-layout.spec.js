@@ -175,10 +175,10 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     page.on('pageerror', e => errors.push(e.message));
     await page.setViewportSize({width:1600, height:900});
     await page.goto(`http://127.0.0.1:${server.address().port}`);
-    const nav = page.getByRole('navigation', {name:'Headings'});
+    const nav = page.locator('.note-outline nav');
     await expect(nav.locator('button[data-line]')).toHaveCount(4);
     await expect(nav.getByRole('button', {name:'Ignore code'})).toHaveCount(0);
-    await expect(page.locator('.note-outline details')).toHaveAttribute('open', '');
+    await expect(page.locator('.note-outline details')).not.toHaveAttribute('open', '');
     const rail = await page.locator('.note-outline').evaluate(el => {
       const ticks = el.querySelector('.outline-ticks').getBoundingClientRect(), note = document.querySelector('.note').getBoundingClientRect(), columns = document.querySelector('.note-columns').getBoundingClientRect();
       return {ticks:ticks.left - note.right, centre:(note.left - columns.left) - (columns.right - note.right), count:el.querySelectorAll('.outline-ticks span').length};
@@ -188,7 +188,7 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     expect(rail.count).toBe(4);
     expect(await nav.evaluate(el => getComputedStyle(el).opacity)).toBe('0');
     expect(await nav.evaluate(el => getComputedStyle(el).scrollbarWidth)).toBe('none');
-    await page.locator('.note-outline .outline-ticks').hover();
+    await page.locator('.note-outline summary').click();
     await expect.poll(() => nav.evaluate(el => getComputedStyle(el).opacity)).toBe('1');
     await nav.evaluate(el => { el.style.maxHeight = '64px'; });
     expect(await nav.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);

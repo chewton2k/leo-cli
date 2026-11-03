@@ -128,14 +128,95 @@
     const outlineChevron = outline && outline.querySelector('summary > svg') ? outline.querySelector('summary > svg').outerHTML : '';
     const outlineNav = outline && outline.querySelector('nav');
     const outlineDetails = outline && outline.querySelector('details');
-    const outlineTicks = outlineNav ? document.createElement('div') : null;
+    const outlineTicks = outlineNav ? document.createElement('button') : null;
+    const outlinePreview = outlineNav ? document.createElement('div') : null;
+    let outlineIndex = null;
     if (outlineTicks) {
       outlineTicks.className = 'outline-ticks';
-      outlineTicks.setAttribute('aria-hidden', 'true');
-      outline.appendChild(outlineTicks);
+      outlineTicks.type = 'button';
+      outlineTicks.setAttribute('aria-label', 'Jump to heading: Headings');
+      outlineTicks.setAttribute('aria-describedby', 'outline-preview');
+      outlinePreview.id = 'outline-preview';
+      outlinePreview.className = 'outline-preview';
+      outlinePreview.setAttribute('role', 'tooltip');
+      outlinePreview.hidden = true;
+      outline.append(outlineTicks, outlinePreview);
     }
     const OUTLINE_PAUSE = 300;
     const OUTLINE_WIDE = 900;
+    const MOST_PREVIEW_LINES = 24;
+    const MOST_PREVIEW_CHARS = 800;
+
+    function outlinePeek(index) {
+      outlineIndex = index;
+      for (const [i, tick] of Array.from(outlineTicks.children).entries()) {
+        if (index === null) tick.removeAttribute('data-distance');
+        else tick.dataset.distance = String(Math.min(3, Math.abs(i - index)));
+      }
+      const row = index === null ? null : outlineRows[index];
+      outlinePreview.hidden = !row;
+      if (!row) return;
+      if (outlineWide) outlineDetails.open = false;
+      const title = md.plain(row.text);
+      const end = Math.min(outlineRows[index + 1]?.line ?? lines.length, row.line + 1 + MOST_PREVIEW_LINES);
+      let excerpt = '';
+      for (let line = row.line + 1; line < end && excerpt.length < MOST_PREVIEW_CHARS; line++) {
+        for (const char of lines[line] + '\n') {
+          if (excerpt.length + char.length > MOST_PREVIEW_CHARS) break;
+          excerpt += char;
+        }
+      }
+      const text = md.plain(excerpt);
+      outlinePreview.innerHTML = `<strong>${md.escape(title)}</strong>${text ? `<span>${md.escape(text)}</span>` : ''}`;
+      outlineTicks.setAttribute('aria-label', `Jump to heading: ${title}`);
+      outlinePreview.style.top = '0px';
+      const tick = outlineTicks.children[index].getBoundingClientRect();
+      const rect = outline.getBoundingClientRect();
+      const height = outlinePreview.getBoundingClientRect().height;
+      const top = Math.max(0, Math.min(tick.top + tick.height / 2 - rect.top - height / 2, root.innerHeight - rect.top - height - 12));
+      outlinePreview.style.top = `${top}px`;
+    }
+
+    function outlinePointer(y) {
+      const rect = outlineTicks.getBoundingClientRect();
+      return Math.max(0, Math.min(outlineRows.length - 1, Math.floor((y - rect.top) / rect.height * outlineRows.length)));
+    }
+
+    function outlineEscape(e) {
+      if (e.key !== 'Escape' || outlineIndex === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      outlinePeek(null);
+    }
+
+    function outlineHover(e) {
+      if (e.pointerType === 'touch' || e.buttons) return;
+      const index = outlinePointer(e.clientY);
+      if (index !== outlineIndex) outlinePeek(index);
+    }
+
+    function outlineLeave() {
+      if (document.activeElement !== outlineTicks) outlinePeek(null);
+    }
+
+    function outlineFocus() {
+      if (outlineIndex !== null) return;
+      const current = outlineRows.findIndex(row => String(row.line) === outlineTicks.querySelector('.on')?.dataset.tick);
+      outlinePeek(Math.max(0, current));
+    }
+
+    function outlineBlur() {
+      outlinePeek(null);
+    }
+
+    function outlineKeydown(e) {
+      const index = outlineIndex ?? 0;
+      const next = { ArrowDown: Math.min(outlineRows.length - 1, index + 1), ArrowUp: Math.max(0, index - 1), Home: 0, End: outlineRows.length - 1 }[e.key];
+      if (next !== undefined) {
+        e.preventDefault();
+        outlinePeek(next);
+      }
+    }
 
     function outlineTop() {
       const bar = document.getElementById('bar');
@@ -164,6 +245,7 @@
         else button.removeAttribute('aria-current');
       }
       for (const tick of outlineTicks.children) tick.classList.toggle('on', Boolean(current) && tick.dataset.tick === String(current.line));
+      if (outlineIndex !== null) outlinePeek(outlineIndex);
     }
 
     function outlineScroll() {
@@ -200,7 +282,9 @@
         const focused = active ? { type: active.hasAttribute('data-fold') ? 'fold' : 'line', line: active.dataset.fold || active.dataset.line } : null;
         outlineKey = key;
         outlineNav.innerHTML = outlineList(ed.headingTree(outlineRows));
-        outlineTicks.innerHTML = outlineRows.map((row) => `<span data-tick="${row.line}" data-level="${Math.min(row.level, 3)}"></span>`).join('');
+        outlinePeek(null);
+        outlineTicks.style.setProperty('--outline-count', outlineRows.length);
+        outlineTicks.innerHTML = outlineRows.map((row) => `<span aria-hidden="true" data-tick="${row.line}" data-level="${Math.min(row.level, 3)}"></span>`).join('');
         if (focused) {
           const button = outlineNav.querySelector(`[data-${focused.type}="${focused.line}"]`) || outlineNav.querySelector('button[data-line]');
           if (button) button.focus({ preventScroll: true });
@@ -227,10 +311,13 @@
         }
         return;
       }
-      const button = e.target.closest('button[data-line], [data-tick]');
+      const button = e.target.closest('button[data-line], .outline-ticks');
       if (!button || !outline.contains(button)) return;
+      const index = e.detail ? outlinePointer(e.clientY) : outlineIndex ?? 0;
+      const line = button === outlineTicks ? outlineRows[index]?.line : Number(button.dataset.line);
+      outlinePeek(null);
       stop();
-      const block = container.querySelector(`.blk[data-start="${button.dataset.line || button.dataset.tick}"]`);
+      const block = container.querySelector(`.blk[data-start="${line}"]`);
       if (!block) return;
       block.tabIndex = -1;
       block.focus({ preventScroll: true });
@@ -244,12 +331,19 @@
       const wide = entries[0].contentRect.width >= OUTLINE_WIDE;
       if (wide !== outlineWide) {
         outlineWide = wide;
-        outlineDetails.open = wide;
+        outlineDetails.open = false;
+        outlinePeek(null);
       }
       outlineScroll();
     }) : null;
     if (outlineNav) {
       outline.addEventListener('click', outlineGo);
+      outlineTicks.addEventListener('pointermove', outlineHover);
+      outlineTicks.addEventListener('pointerleave', outlineLeave);
+      outlineTicks.addEventListener('focus', outlineFocus);
+      outlineTicks.addEventListener('blur', outlineBlur);
+      outlineTicks.addEventListener('keydown', outlineKeydown);
+      document.addEventListener('keydown', outlineEscape, true);
       root.addEventListener('scroll', outlineScroll, { passive: true });
       root.addEventListener('resize', outlineScroll);
       if (outlineResize) outlineResize.observe(outline.closest('.note-layout'));
@@ -1102,7 +1196,17 @@
         cancelAnimationFrame(outlineFrame);
         if (outlineResize) outlineResize.disconnect();
         if (editResize) editResize.disconnect();
-        if (outlineNav) outline.removeEventListener('click', outlineGo);
+        if (outlineNav) {
+          outline.removeEventListener('click', outlineGo);
+          outlineTicks.removeEventListener('pointermove', outlineHover);
+          outlineTicks.removeEventListener('pointerleave', outlineLeave);
+          outlineTicks.removeEventListener('focus', outlineFocus);
+          outlineTicks.removeEventListener('blur', outlineBlur);
+          outlineTicks.removeEventListener('keydown', outlineKeydown);
+          document.removeEventListener('keydown', outlineEscape, true);
+          outlineTicks.remove();
+          outlinePreview.remove();
+        }
         root.removeEventListener('scroll', outlineScroll);
         root.removeEventListener('resize', outlineScroll);
         document.removeEventListener('selectionchange', onSelectionChange);
