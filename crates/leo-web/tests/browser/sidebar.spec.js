@@ -90,13 +90,14 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       const railBox = await rail.boundingBox(), explorerBox = await explorer.boundingBox();
       expect(railBox.width).toBeLessThanOrEqual(60);
       expect(railBox.x+railBox.width).toBeLessThanOrEqual(explorerBox.x+1);
+      const add = await rail.getByRole('button',{name:'New note',exact:true}).boundingBox();
       const search = await rail.getByRole('button',{name:'Search',exact:true}).boundingBox();
-      const quick = await rail.getByRole('button',{name:'Quick Leo',exact:true}).boundingBox();
-      expect(quick.y-search.y-search.height).toBeGreaterThanOrEqual(6);
+      expect(search.y-add.y-add.height).toBeGreaterThanOrEqual(6);
+      await expect(rail.getByRole('button',{name:'Quick Leo',exact:true}),'search and Quick Leo are one button').toHaveCount(0);
       await expect(rail.locator('kbd')).toHaveCount(0);
       // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
       await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
-      for(const label of ['New note','Ask Felix','Search','Quick Leo','Record','Note from a file','Calendar','Boards','Interview practice','Knowledge graph','Settings']) {
+      for(const label of ['New note','Ask Felix','Search','Record','Note from a file','Calendar','Boards','Interview practice','Knowledge graph','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();
         await expect(button).toHaveAttribute('title',/.+/);

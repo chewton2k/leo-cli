@@ -376,6 +376,7 @@
     const ask = { kind: 'ask', text };
     const task = { kind: 'task', title: reminder.title || text, date: reminder.date, time: reminder.time };
     const note = { kind: 'note', title: parsed.kind === 'note' ? parsed.title : text };
+    const search = { kind: 'search', text };
     let top = ask;
     if (parsed.kind === 'note') top = note;
     else if (parsed.kind === 'task') top = task;
@@ -385,7 +386,7 @@
     else if (goes.length && words <= 2 && lower.length >= 3 && (!started.length || goes[0].name.toLowerCase().startsWith(lower))) top = goes[0];
     else if (started.length && words <= 4) top = opens[0];
     else if (TODO.test(text) && words >= 2 && words <= 12) top = task;
-    return [top, ask, ...opens, ...shelves, ...talks, ...goes, task, note].filter((row, i, rows) => rows.indexOf(row) === i).slice(0, 8);
+    return [top, ask, ...opens, search, ...shelves, ...talks, ...goes, task, note].filter((row, i, rows) => rows.indexOf(row) === i).slice(0, 8);
   }
 
 

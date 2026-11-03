@@ -61,9 +61,14 @@ reader, seer, meaning, web, room, speech).
   Width checks measure the reading column; its outer wrapper also reserves the
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
-- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J anywhere (Cmd+L
-  belongs to the browser's address bar), the sidebar lightning icon, or the
-  phone menu opens one line (`sheets.js` `quickLeo`). It works like Spotlight
+- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J or Cmd/Ctrl+K
+  anywhere (Cmd+L belongs to the browser's address bar), `/`, the sidebar
+  Search button, the header search button or the phone menu opens one line
+  (`sheets.js` `quickLeo`, toggled by `toggleQuickLeo`). It is also the search
+  bar (2026-11-03, the user's call): every query offers "Search every note",
+  which opens `#/search/<query>`; only that results page shows `#search`. It
+  drops in from the top on desktop. Escape is always `preventDefault`ed in a
+  capture listener, so it closes sheets and never leaves macOS full screen. It works like Spotlight
   (2026-10-19, the user's call): no title, modes or buttons, near the top of
   the screen on desktop. `schedule.quickRank` infers the top result from what
   is typed (`quickParse` dates and times: a reminder, Undo; a question: Ask

@@ -95,8 +95,7 @@ edit it, or delete it — it will not come back.
 ## Getting around
 
 ```
-⌘J        Quick Leo: ask, remind, find or jot anything
-⌘K        search every note
+⌘K or ⌘J  search, ask, remind or jot anything
 New note  top of the sidebar, or the first card in a folder
 Settings  bottom of the sidebar
 ```

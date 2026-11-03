@@ -98,8 +98,8 @@ async function dragBetween(page, source, target) {
 }
 
 async function openSearchBox(page) {
-  if (await page.locator('#side').isHidden()) return page.locator('#search-toggle').click();
-  await page.locator('#side [data-action="side-search"]').click();
+  await page.goto('/#/search/');
+  await expect(page.locator('#search-input')).toBeVisible();
 }
 
 async function dropFiles(page, selector, files) {
@@ -277,8 +277,11 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await page.locator('[data-chat="close"]').click();
 
   await page.keyboard.press('ControlOrMeta+k');
-  await expect(page.locator('#search-input')).toBeFocused();
+  await expect(page.locator('.scrim:not(.scrim-gone) #quick-input')).toBeFocused();
+  await page.evaluate(() => window.addEventListener('keydown', (e) => { window.escaped = e.defaultPrevented; }, { once: true }));
   await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => window.escaped), 'Escape stays with the page, so it never leaves full screen').toBe(true);
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
 
   const full = (await side.boundingBox()).width;
   await side.locator('[data-action="side-fold"]').click();
@@ -5934,7 +5937,7 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
 
   await page.keyboard.press('ControlOrMeta+j');
   await input.fill(`Pay rent ${tag}`);
-  await expect(box.locator('.quick-row')).toHaveCount(3);
+  await expect(box.locator('.quick-row')).toHaveCount(4);
   await expect(top).toContainText('Add to tasks');
   await input.press('ArrowDown');
   await expect(top).toContainText('Ask Felix');
@@ -5954,6 +5957,12 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await input.press('Enter');
   await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
   await expect(page.locator('main h1', { hasText: `Idea ${tag}` })).toBeVisible();
+
+  await page.keyboard.press('ControlOrMeta+k');
+  await input.fill(`Idea ${tag}`);
+  await box.locator('.quick-row', { hasText: 'Search every note' }).click();
+  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/search/Idea ${tag}`);
+  await expect(page.locator('.card').filter({ hasText: `Idea ${tag}` })).toBeVisible();
 
   await page.keyboard.press('ControlOrMeta+j');
   await input.fill('What is a heap?');

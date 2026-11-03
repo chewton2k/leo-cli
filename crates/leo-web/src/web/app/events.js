@@ -7,17 +7,15 @@ document.addEventListener('click', (e) => {
   Promise.resolve(act(el)).catch(fail);
 });
 
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !e.isComposing) e.preventDefault();
+}, true);
+
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && ['j', 'k'].includes(e.key.toLowerCase())) {
     e.preventDefault();
-    searchEverywhere();
-    return;
-  }
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'j') {
-    e.preventDefault();
-    if ($('.scrim:not(.scrim-gone) .quick-leo')) closeSheet();
-    else if (state.view !== 'locked') quickLeo();
+    toggleQuickLeo();
     return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'note') {
@@ -50,8 +48,7 @@ document.addEventListener('keydown', (e) => {
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === '/') {
     e.preventDefault();
-    openSearch('');
-    $('#search-input').focus();
+    toggleQuickLeo();
   } else if (e.key === 'n' && state.view === 'folder') {
     go(state.dir ? `#/new/${enc(state.dir)}` : '#/new');
   }

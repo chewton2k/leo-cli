@@ -121,7 +121,7 @@ const inQuick = (sel) => (quick.root && !quick.root.classList.contains('scrim-go
 function quickLeo() {
   Object.assign(quick, { due: [], rows: [], at: 0, notes: [], chats: [], folders: [], asked: '' });
   quick.root = sheet(`<div class="quick-leo">
-    <label class="quick-bar">${ICON.bolt}<input id="quick-input" placeholder="Ask, remind, find or jot anything…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo" role="combobox" aria-controls="quick-results" aria-expanded="true"><kbd>${quickLabel}</kbd></label>
+    <label class="quick-bar">${ICON.search}<input id="quick-input" placeholder="Search, ask, remind or jot anything…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo" role="combobox" aria-controls="quick-results" aria-expanded="true"><kbd>${quickLabel}</kbd></label>
     <div class="quick-results" id="quick-results" role="listbox" aria-label="Results"></div>
   </div>`);
   const input = inQuick('#quick-input');
@@ -146,6 +146,11 @@ function quickLeo() {
   input.focus();
   loadQuickDue().catch(() => {});
   api('/api/folders').then((all) => { quick.folders = (all || []).map((f) => f.name); drawQuick(); }).catch(() => {});
+}
+
+function toggleQuickLeo() {
+  if ($('.scrim:not(.scrim-gone) .quick-leo')) closeSheet();
+  else if (state.view !== 'locked') quickLeo();
 }
 
 async function quickSearch() {
@@ -182,6 +187,7 @@ function quickLook(row) {
   if (row.kind === 'open') return { icon: ICON.note, label: row.title, hint: 'Open note' };
   if (row.kind === 'folder') return { icon: ICON.folder, label: row.path.split('/').pop(), hint: row.path.includes('/') ? `Folder in ${row.path.split('/').slice(0, -1).join('/')}` : 'Folder' };
   if (row.kind === 'chat') return { icon: ICON.chat, label: row.title, hint: 'Past chat' };
+  if (row.kind === 'search') return { icon: ICON.search, label: row.text, hint: 'Search every note' };
   if (row.kind === 'place') return { icon: ICON[QUICK_PLACES.find((p) => p.hash === row.hash)?.icon] || ICON.folder, label: row.name, hint: 'Go to' };
   return { icon: ICON.plus, label: row.title, hint: 'New note' };
 }
@@ -247,9 +253,9 @@ async function quickGo(at) {
     if (!chat.askNew(row.text)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });
     return;
   }
-  if (row.kind === 'open' || row.kind === 'place' || row.kind === 'folder') {
+  if (row.kind === 'open' || row.kind === 'place' || row.kind === 'folder' || row.kind === 'search') {
     closeSheet();
-    go(row.kind === 'open' ? noteHash(row.id) : row.kind === 'folder' ? folderHash(row.path) : row.hash);
+    go(row.kind === 'open' ? noteHash(row.id) : row.kind === 'folder' ? folderHash(row.path) : row.kind === 'search' ? `#/search/${enc(row.text)}` : row.hash);
     return;
   }
   if (row.kind === 'chat') {
@@ -289,7 +295,7 @@ async function quickGo(at) {
 function menu() {
   const here = state.view === 'folder' ? state.dir : '';
   sheet(`
-    <button class="list-row" data-action="quick-leo">${ICON.bolt}<span class="grow">Quick Leo</span></button>
+    <button class="list-row" data-action="quick-leo">${ICON.search}<span class="grow">Search or ask</span></button>
     <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
     <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
@@ -502,13 +508,11 @@ function openSearch(value) {
   box.hidden = false;
   const input = $('#search-input');
   if (value !== undefined && document.activeElement !== input) input.value = value;
-  $('#search-toggle').innerHTML = ICON.close;
 }
 
 function closeSearch() {
   $('#search').hidden = true;
   $('#search-input').value = '';
-  $('#search-toggle').innerHTML = ICON.search;
 }
 
 let searchTimer;
