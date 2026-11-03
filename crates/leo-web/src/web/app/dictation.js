@@ -20,7 +20,7 @@ function dictationCards(view) {
   </section><section class="set-card"><header><h3>Recent dictations</h3><button class="btn plain sm" data-action="dictation-clear">Clear</button></header><p class="hint">Last 20, on this computer only.</p><div id="dictation-recent">${dictationRecent(view.recent || [])}</div></section>`;
 }
 function dictationRecent(items) {
-  return items.length ? items.map((item) => `<div class="set-row"><span class="grow">${esc(item.text)}</span><button class="btn plain sm" data-action="dictation-copy" data-id="${esc(String(item.id))}">Copy</button></div>`).join('') : '<p class="set-note">Your dictations will appear here.</p>';
+  return items.length ? items.map((item) => `<div class="set-row" data-refresh-key="${esc(String(item.id))}"><span class="grow">${esc(item.text)}</span><button class="btn plain sm" data-action="dictation-copy" data-id="${esc(String(item.id))}">Copy</button></div>`).join('') : '<p class="set-note">Your dictations will appear here.</p>';
 }
 function dictationDraft() {
   const settings = Object.assign({}, state.dictation.settings);
@@ -31,14 +31,14 @@ function dictationDraft() {
   return settings;
 }
 let dictationGeneration = 0;
-async function dictationChange(change) {
-  const mine = seq, generation = ++dictationGeneration;
+async function dictationChange(change, mine = seq) {
+  const generation = mine === seq ? ++dictationGeneration : dictationGeneration;
   const view = await api('/api/dictation', { method: 'POST', body: change });
   if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings') return;
   state.dictation = view;
   updateDictationStatus(view);
   const recent = $('#dictation-recent');
-  if (recent && !recent.contains(document.activeElement)) recent.innerHTML = dictationRecent(view.recent || []);
+  refreshPanel(recent, dictationRecent(view.recent || []));
   const result = $('#dictation-result');
   if (result && change.action === 'save') {
     result.textContent = 'Saved';
@@ -64,23 +64,24 @@ function updateDictationStatus(view) {
   if (cancel) cancel.hidden = !shortcut.recording;
 }
 async function pollDictation(mine, generation) {
-  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !state.dictation) return;
+  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !state.dictation || !appVisible()) return;
   await new Promise((resolve) => setTimeout(resolve, 600));
-  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings') return;
+  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !appVisible()) return;
   try {
     const view = await api('/api/dictation');
     if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings') return;
     state.dictation = view;
     updateDictationStatus(view);
     const recent = $('#dictation-recent');
-    if (recent && !recent.contains(document.activeElement)) recent.innerHTML = dictationRecent(view.recent || []);
+    refreshPanel(recent, dictationRecent(view.recent || []));
   } catch (e) {}
   pollDictation(mine, generation);
 }
 let dictationSaving = Promise.resolve(), dictationTyping = null, dictationSavedTimer = null;
-function saveDictation() {
+function saveDictation(settings = state.dictation && dictationDraft(), mine = seq) {
+  if (!settings) return dictationSaving;
   clearTimeout(dictationTyping);
-  dictationSaving = dictationSaving.catch(() => {}).then(() => dictationChange({ action: 'save', settings: dictationDraft() }));
+  dictationSaving = dictationSaving.catch(() => {}).then(() => dictationChange({ action: 'save', settings }, mine));
   return dictationSaving;
 }
 app.addEventListener('change', (e) => {
@@ -89,7 +90,8 @@ app.addEventListener('change', (e) => {
 app.addEventListener('input', (e) => {
   if (e.target.dataset?.dictation !== 'custom_words') return;
   clearTimeout(dictationTyping);
-  dictationTyping = setTimeout(() => saveDictation().catch(fail), 700);
+  const settings = dictationDraft(), mine = seq;
+  dictationTyping = setTimeout(() => saveDictation(settings, mine).catch(fail), 700);
 });
 function useDictationShortcut() {
   const candidate = state.dictation && state.dictation.shortcut && state.dictation.shortcut.candidate;

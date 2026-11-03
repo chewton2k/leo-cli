@@ -72,10 +72,13 @@ function placeSettingsPill(nav, on) {
   pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.3, .8, .25, 1)' });
 }
 
+const settingsRevealed = new WeakMap();
 function revealSettingsLink() {
   const nav = app.querySelector('.settings-nav'), on = nav?.querySelector('.settings-link.on');
   if (nav) placeSettingsPill(nav, on);
-  if (on && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+  if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;
+  settingsRevealed.set(nav, on.getAttribute('href'));
+  if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
 }
 
 // An iOS-style switch. It stays a real checkbox, so change handlers, forms and tests keep working.

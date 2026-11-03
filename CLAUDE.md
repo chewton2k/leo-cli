@@ -184,7 +184,9 @@ the notes remote.
   doctor) instead of overwriting; deleted notes are trashed only if their file
   is still what leo saw. Writes are temp-file + rename.
 - `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes;
-  refresh keeps undo); the engine reloads the store from disk on every request.
+  refresh keeps undo). Engine mutations reconcile before writing; hot read-only
+  paths use the existing filesystem watcher with a 60 s reconciliation fallback.
+  Returning to the native window forces a check before serving cached reads.
 - `sync::pull` = auto_commit, fetch, `keep_both_notes_with_the_same_name`
   (a `.md` both sides added with different ids → local renamed to
   `Name (2).md` and committed), then merge. git's union driver otherwise glues

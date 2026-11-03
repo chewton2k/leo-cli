@@ -12,10 +12,11 @@ async function showSettings(section) {
   if (section === 'storage') return showStorage();
   const mine = ++seq;
   state = { view: 'settings', dir: '', section };
+  scheduleAppStatus(appPollGeneration);
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
-  app.innerHTML = settingsFrame(section, skeleton(3));
+  refreshPanel(app, settingsFrame(section, skeleton(3)));
   const [page, calendar, speech, dictation] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null)]);
   if (mine !== seq) return;
   state.calendar = calendar;
@@ -284,7 +285,7 @@ function drawSettings(page) {
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
   else if (section === 'updates') content = `<div id="app-updates">${updatesCard(desktopApp)}</div>`;
   else content = '';
-  app.innerHTML = settingsFrame(section, `<div class="settings">${content}</div>`);
+  refreshPanel(app, settingsFrame(section, `<div class="settings">${content}</div>`));
   restoreSettingsFields(fields, segments);
 }
 
@@ -400,7 +401,7 @@ function filterSpeech(el) {
   const section = box.closest('.settings-section') || box.parentElement;
   const before = box.querySelector('.model-filters')?.getBoundingClientRect().top;
   const top = scrollY;
-  box.innerHTML = speechCards(state.speech);
+  refreshPanel(box, speechCards(state.speech));
   if (section) {
     const short = Math.ceil(top + innerHeight - document.documentElement.scrollHeight);
     if (short > 0) section.style.minHeight = `${section.offsetHeight + short}px`;
@@ -414,16 +415,16 @@ let speechPollGeneration = 0;
 function startSpeechPolling(mine) { pollSpeech(mine, ++speechPollGeneration); }
 
 async function pollSpeech(mine, generation) {
-  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings' || !appVisible()) return;
   if (!(state.speech && state.speech.models.some((m) => m.progress && m.progress.state === 'downloading'))) return;
   await new Promise((resolve) => setTimeout(resolve, 1000));
-  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings' || !appVisible()) return;
   try {
     const view = await api('/api/speech');
     if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
     state.speech = view;
     const box = $('#speech-library');
-    if (box && !box.contains(document.activeElement)) box.innerHTML = speechCards(view);
+    refreshPanel(box, speechCards(view));
   } catch (e) { if (mine !== seq) return; }
   pollSpeech(mine, generation);
 }
@@ -435,7 +436,7 @@ async function speechChange(change) {
   if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
   state.speech = view;
   const box = $('#speech-library');
-  if (box) box.innerHTML = speechCards(view);
+  refreshPanel(box, speechCards(view));
   pollSpeech(mine, generation);
 }
 

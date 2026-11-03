@@ -6,7 +6,7 @@ async function showStorage() {
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Storage</button>';
   document.title = 'Storage · leo';
-  app.innerHTML = settingsFrame('storage', skeleton(4));
+  refreshPanel(app, settingsFrame('storage', skeleton(4)));
   const [page, keep] = await Promise.all([api('/api/storage'), api('/api/keep')]);
   if (mine !== seq) return;
   state.keep = keep;
@@ -73,7 +73,7 @@ function drawStorage(page) {
   const bar = shown.map((a) => `<i data-area="${esc(a.id)}" data-name="${esc(a.title)}" data-size="${esc(a.size)}" style="width:${Math.max(0.6, (a.bytes / total) * 100)}%;background:${STORE_COLORS[page.areas.indexOf(a) % STORE_COLORS.length]}"></i>`).join('');
   const legend = page.areas.map((a, i) => `<span class="store-key" data-area="${esc(a.id)}"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
   const areas = storageAreas(page.areas, open);
-  app.innerHTML = settingsFrame('storage', `<div class="settings storage">
+  refreshPanel(app, settingsFrame('storage', `<div class="settings storage">
     <section class="set-card store-total">
       <div class="store-big">${esc(page.total_label)}</div>
       <p class="hint">What Leo keeps on the computer running this server, including the application, downloads and saved data. Browser copies are shown separately below. Sizes are estimates for very large or inaccessible folders.</p>
@@ -100,7 +100,7 @@ function drawStorage(page) {
       <p class="hint">Bring back tasks from an export: pick the <b>tasks.json</b> inside the zip. Tasks you already have are kept when they are newer.</p>
       <label class="btn plain sm">Choose tasks.json<input type="file" id="tasks-restore" accept=".json,application/json" hidden></label>
     </section>
-  </div>`);
+  </div>`));
   for (const [area, id] of selected) { const box = app.querySelector(`input[data-store-item="${CSS.escape(area)}"][value="${CSS.escape(id)}"]:not(:disabled)`); if (box) box.checked = true; }
   if (focused) app.querySelector(`input[data-store-item="${CSS.escape(focused[0])}"][value="${CSS.escape(focused[1])}"]`)?.focus({ preventScroll: true });
   window.scrollTo({left:pageX, top:pageY, behavior:'instant'});
@@ -137,8 +137,8 @@ function storageAreas(areas, open) {
     const pickable = a.actions.some((x) => x.selected);
     const visible = a.items.slice(0, state.storageShown?.[a.id] || STORE_PAGE_ITEMS);
     const items = a.items.length
-      ? `<div class="store-items">${pickable && a.items.length > 1 ? `<label class="store-item store-all"><input type="checkbox" data-store-all="${esc(a.id)}"><span class="grow">${visible.length < a.items.length ? 'Select shown' : 'Select all'}</span></label>` : ''}${visible
-          .map((it) => `<label class="store-item${it.locked ? ' locked' : ''}">${pickable ? `<input type="checkbox" data-store-item="${esc(a.id)}" value="${esc(it.id)}"${it.locked ? ' disabled' : ''}>` : ''}<span class="grow"><span class="store-label">${esc(it.label)}</span><span class="sub">${esc([it.detail, storageWhen(it.when)].filter(Boolean).join(' · '))}</span>${storageItemOpen(a, it)}</span>${it.size ? `<span class="store-size">${esc(it.size)}</span>` : ''}</label>`)
+      ? `<div class="store-items">${pickable && a.items.length > 1 ? `<label data-refresh-key="all" class="store-item store-all"><input type="checkbox" data-store-all="${esc(a.id)}"><span class="grow">${visible.length < a.items.length ? 'Select shown' : 'Select all'}</span></label>` : ''}${visible
+          .map((it) => `<label data-refresh-key="item:${esc(it.id)}" class="store-item${it.locked ? ' locked' : ''}">${pickable ? `<input type="checkbox" data-store-item="${esc(a.id)}" value="${esc(it.id)}"${it.locked ? ' disabled' : ''}>` : ''}<span class="grow"><span class="store-label">${esc(it.label)}</span><span class="sub">${esc([it.detail, storageWhen(it.when)].filter(Boolean).join(' · '))}</span>${storageItemOpen(a, it)}</span>${it.size ? `<span class="store-size">${esc(it.size)}</span>` : ''}</label>`)
           .join('')}</div>`
       : '';
     const actions = a.actions.length
@@ -193,7 +193,7 @@ function drawBrowserStorage() {
     if (area.open) state.storageOpen.add(area.dataset.area);
     else state.storageOpen.delete(area.dataset.area);
   }
-  box.innerHTML = browserStorageCard();
+  refreshPanel(box, browserStorageCard());
   for (const [area, id] of selected) { const selectedBox = box.querySelector(`input[data-store-item="${CSS.escape(area)}"][value="${CSS.escape(id)}"]:not(:disabled)`); if (selectedBox) selectedBox.checked = true; }
   if (focused) box.querySelector(`input[data-store-item="${CSS.escape(focused[0])}"][value="${CSS.escape(focused[1])}"]`)?.focus({preventScroll:true});
   window.scrollTo({left:pageX, top:pageY, behavior:'instant'});
@@ -208,11 +208,14 @@ function storageMore(el) {
 }
 
 const TIP_FOR = 2500;
+const storageBars = new WeakSet();
 
 function storageBarHover() {
   const bar = $('.store-bar');
   const tip = $('#store-tip');
   if (!bar || !tip) return;
+  if (storageBars.has(bar)) return;
+  storageBars.add(bar);
   const card = bar.closest('.store-total');
   const show = (seg, x, y) => {
     for (const el of card.querySelectorAll('.store-bar i.on, .store-key.on')) el.classList.remove('on');

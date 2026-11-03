@@ -540,3 +540,12 @@ The terminal update command fetches the published release installer with HTTPS,
 time/size limits and explicit failure handling before executing it. It never
 pipes a failed curl into an empty successful shell. Model checking still goes
 through the shared catalog library; legacy ONNX installer fixtures are retired.
+
+### Recording energy
+
+Lecture live previews pass PCM directly to the speech engine; they never write
+or synchronize a temporary live.wav. `Controls.preview` optionally carries the
+native window's visibility; false skips new preview passes only. Capture, durable
+segments, final transcription, recovery and the recording activity guard are
+unchanged. An already-running preview finishes; showing the window permits the
+next pass. Dictation and callers without a preview flag retain their behavior.

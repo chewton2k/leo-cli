@@ -1,4 +1,5 @@
-use handy_keys::{Hotkey, HotkeyManager, HotkeyState, KeyboardListener};
+use crate::shortcut_events::{self, Binding, Feed};
+use handy_keys::{Hotkey, KeyEvent};
 use serde_json::{json, Value};
 use std::{
     sync::{
@@ -44,10 +45,12 @@ enum Command {
     Configure(String, mpsc::SyncSender<Result<(), String>>),
     Record(mpsc::SyncSender<Result<(), String>>),
     Resume,
-    Stop,
+    Wake,
+    Key(u64, KeyEvent),
 }
 pub struct Shortcuts {
     tx: mpsc::SyncSender<Command>,
+    stopped: Arc<AtomicBool>,
     status: Arc<Mutex<Value>>,
 }
 impl Shortcuts {
@@ -57,11 +60,18 @@ impl Shortcuts {
         capturing: Arc<AtomicBool>,
         input: Arc<dyn Fn(bool, bool) + Send + Sync>,
     ) -> Self {
-        let (tx, rx) = mpsc::sync_channel(8);
+        let (tx, rx) = mpsc::sync_channel(64);
         let status = Arc::new(Mutex::new(json!({})));
         let state = status.clone();
-        std::thread::spawn(move || run(app, rx, shortcut, capturing, input, state));
-        Self { tx, status }
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = stopped.clone();
+        let sender = tx.clone();
+        std::thread::spawn(move || run(app, rx, sender, shortcut, capturing, input, state, stop));
+        Self {
+            tx,
+            stopped,
+            status,
+        }
     }
     pub fn view(&self) -> Value {
         self.status
@@ -91,23 +101,36 @@ impl Shortcuts {
     pub fn resume(&self) {
         let _ = self.tx.try_send(Command::Resume);
     }
+    pub fn wake(&self) {
+        let _ = self.tx.try_send(Command::Wake);
+    }
     pub fn stop(&self) {
-        let _ = self.tx.try_send(Command::Stop);
+        self.stopped.store(true, Ordering::Release);
+        self.wake();
     }
 }
+impl Drop for Shortcuts {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run(
     app: AppHandle,
     rx: mpsc::Receiver<Command>,
+    tx: mpsc::SyncSender<Command>,
     mut shortcut: String,
     capturing: Arc<AtomicBool>,
     input: Arc<dyn Fn(bool, bool) + Send + Sync>,
     status: Arc<Mutex<Value>>,
+    stopped: Arc<AtomicBool>,
 ) {
-    let mut manager = None;
-    let mut registered = None;
-    let mut cancel = None;
-    let mut listener: Option<KeyboardListener> = None;
-    let mut recorder_since = None;
+    let mut feed: Option<Feed> = None;
+    let mut epoch = 0u64;
+    let mut binding = None;
+    let mut escape = Binding::new("escape".parse().unwrap());
+    let mut recorder_since: Option<Instant> = None;
     let mut candidate = String::new();
     let mut permission = false;
     let mut secure = false;
@@ -117,75 +140,49 @@ fn run(
     let carbon_active = Arc::new(AtomicBool::new(false));
     let mut problem = String::new();
     let mut dirty = true;
-    let mut checked = Instant::now() - Duration::from_secs(2);
-    loop {
-        match rx.recv_timeout(Duration::from_millis(10)) {
-            Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = app.global_shortcut().unregister_all();
-                break;
-            }
-            Ok(Command::Configure(value, done)) => {
+    let mut checked = Instant::now() - shortcut_events::IDLE;
+    let mut first = true;
+    let mut record_done = None;
+    while !stopped.load(Ordering::Acquire) {
+        let command = if first {
+            first = false;
+            Some(Command::Wake)
+        } else {
+            rx.recv_timeout(shortcut_events::IDLE).ok()
+        };
+        let mut key = None;
+        match command {
+            Some(Command::Configure(value, done)) => {
                 shortcut = value;
-                listener = None;
                 recorder_since = None;
                 candidate.clear();
                 dirty = true;
                 let _ = done.send(Ok(()));
             }
-            Ok(Command::Record(done)) => {
+            Some(Command::Record(done)) => {
                 if crate::secure_input::enabled() {
-                    let _=done.send(Err("Close the password field or quit the app holding Secure Input, then record your shortcut again.".into()));
-                    continue;
-                }
-                drop(manager.take());
-                registered = None;
-                cancel = None;
-                let _ = app.global_shortcut().unregister_all();
-                carbon = None;
-                carbon_cancel = false;
-                cancel_active.store(false, Ordering::Release);
-                carbon_active.store(false, Ordering::Release);
-                match KeyboardListener::new() {
-                    Ok(value) => {
-                        listener = Some(value);
-                        recorder_since = Some(Instant::now());
-                        candidate.clear();
-                        let _ = done.send(Ok(()));
-                    }
-                    Err(_) => {
-                        problem="Allow Leo in System Settings → Privacy & Security → Accessibility, then try recording the shortcut again.".into();
-                        let _ = done.send(Err(problem.clone()));
-                        dirty = true;
-                    }
+                    let _ = done.send(Err("Close the password field or quit the app holding Secure Input, then record your shortcut again.".into()));
+                } else if feed.is_none() {
+                    let _ = done.send(Err("Allow Leo in System Settings → Privacy & Security → Accessibility, then try again.".into()));
+                } else {
+                    recorder_since = Some(Instant::now());
+                    candidate.clear();
+                    dirty = true;
+                    record_done = Some(done);
                 }
             }
-            Ok(Command::Resume) => {
-                listener = None;
+            Some(Command::Resume) => {
                 recorder_since = None;
                 dirty = true;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-        if let Some(listener) = &listener {
-            for _ in 0..64 {
-                let Some(event) = listener.try_recv() else {
-                    break;
-                };
-                if event.is_key_down {
-                    if let Ok(hotkey) = event.as_hotkey() {
-                        candidate = hotkey.to_handy_string();
-                    }
+            Some(Command::Key(source, event)) => {
+                if source == epoch {
+                    key = Some(event);
                 }
             }
-            if recorder_since.is_some_and(|t| t.elapsed() > Duration::from_secs(30)) {
-                recorder_since = None;
-                dirty = true;
-            }
+            Some(Command::Wake) | None => {}
         }
-        if recorder_since.is_none() && listener.is_some() {
-            listener = None;
-        }
-        if checked.elapsed() >= Duration::from_secs(1) {
+        if checked.elapsed() >= shortcut_events::IDLE {
             let next = crate::permissions::accessibility();
             let next_secure = crate::secure_input::enabled();
             if next != permission || next_secure != secure {
@@ -195,41 +192,61 @@ fn run(
             }
             checked = Instant::now();
         }
-        if listener.is_none() && dirty {
-            drop(manager.take());
-            registered = None;
-            cancel = None;
+        if recorder_since.is_some_and(|at| at.elapsed() >= Duration::from_secs(30)) {
+            recorder_since = None;
+            dirty = true;
+        }
+        if dirty {
+            drop(feed.take());
+            key = None;
+            epoch = epoch.wrapping_add(1);
+            binding = shortcut.parse().ok().map(Binding::new);
+            carbon_active.store(false, Ordering::Release);
+            cancel_active.store(false, Ordering::Release);
             let _ = app.global_shortcut().unregister_all();
             carbon = None;
             carbon_cancel = false;
-            cancel_active.store(false, Ordering::Release);
             problem.clear();
             if permission {
-                match HotkeyManager::new_with_blocking() {
-                    Ok(value) => match shortcut.parse::<Hotkey>().map_err(|e|e.to_string()).and_then(|key|value.register(key).map_err(|e|e.to_string())) {
-                        Ok(id) => { registered=Some(id); manager=Some(value); }
-                        Err(_) => problem="This shortcut could not be registered. Choose another in Dictation settings.".into(),
-                    },
-                    Err(_) => problem="The shortcut is unavailable. Check Accessibility in Health, then try again.".into(),
+                let sender = tx.clone();
+                let source = epoch;
+                match Feed::start(move |event, stop| {
+                    shortcut_events::deliver(&sender, Command::Key(source, event), stop)
+                }) {
+                    Ok(value) => feed = Some(value),
+                    Err(error) => problem = error,
                 }
             }
-            if secure || !permission {
+            if recorder_since.is_none() && (secure || !permission) {
                 if let Some(shadow) = fallback(&shortcut) {
-                    let use_carbon = carbon_active.clone();
+                    let active = carbon_active.clone();
                     let action = input.clone();
-                    match app.global_shortcut().on_shortcut(shadow.as_str(),move |_,_,event| { if use_carbon.load(Ordering::Acquire) { action(event.state==ShortcutState::Pressed,false); } }) {
+                    match app.global_shortcut().on_shortcut(shadow.as_str(),move |_,_,event| { if active.load(Ordering::Acquire) { action(event.state==ShortcutState::Pressed,false); } }) {
                         Ok(())=>carbon=Some(shadow),
                         Err(_)=>problem="Another app may use this shortcut. Choose another in Dictation settings.".into(),
                     }
-                } else if !permission || shortcut.parse::<Hotkey>().is_ok_and(|h| h.key.is_some()) {
+                } else if !permission
+                    || shortcut
+                        .parse::<Hotkey>()
+                        .is_ok_and(|key| key.key.is_some())
+                {
                     problem="This shortcut is blocked by Secure Input or missing Accessibility. Close the password field or check Health.".into();
                 }
             }
             carbon_active.store(carbon.is_some(), Ordering::Release);
             dirty = false;
         }
-        let wants_carbon_cancel =
-            listener.is_none() && capturing.load(Ordering::Acquire) && (secure || !permission);
+        if let Some(done) = record_done.take() {
+            let result = if feed.is_some() {
+                Ok(())
+            } else {
+                recorder_since = None;
+                Err(problem.clone())
+            };
+            let _ = done.send(result);
+        }
+        let wants_escape = recorder_since.is_none() && capturing.load(Ordering::Acquire);
+        let wants_carbon_cancel = wants_escape && (secure || !permission);
         if wants_carbon_cancel && !carbon_cancel {
             let active = cancel_active.clone();
             let action = input.clone();
@@ -247,33 +264,45 @@ fn run(
             let _ = app.global_shortcut().unregister("escape");
             carbon_cancel = false;
         }
-        if let Some(manager) = &manager {
-            if capturing.load(Ordering::Acquire) && !wants_carbon_cancel && cancel.is_none() {
-                cancel = "escape"
-                    .parse()
-                    .ok()
-                    .and_then(|key| manager.register(key).ok());
-            }
-            if !capturing.load(Ordering::Acquire) || wants_carbon_cancel {
-                if let Some(id) = cancel.take() {
-                    let _ = manager.unregister(id);
+        if let Some(feed) = &feed {
+            let mut blocked = std::collections::HashSet::new();
+            if recorder_since.is_none() {
+                if let Some(binding) = &binding {
+                    blocked.insert(binding.key);
+                }
+                if wants_escape && !wants_carbon_cancel {
+                    blocked.insert(escape.key);
                 }
             }
-            for _ in 0..64 {
-                let Some(event) = manager.try_recv() else {
-                    break;
-                };
-                if Some(event.id) == cancel {
-                    if event.state == HotkeyState::Pressed {
-                        input(true, true);
+            feed.block(blocked, recorder_since.is_some());
+        }
+        if !wants_escape {
+            escape = Binding::new("escape".parse().unwrap());
+        }
+        if let Some(event) = key {
+            if recorder_since.is_some() {
+                if event.is_key_down {
+                    if let Ok(hotkey) = event.as_hotkey() {
+                        candidate = hotkey.to_handy_string();
                     }
-                } else if Some(event.id) == registered && !carbon_active.load(Ordering::Acquire) {
-                    input(event.state == HotkeyState::Pressed, false);
+                }
+            } else if wants_escape && !wants_carbon_cancel && escape.input(event) == Some(true) {
+                input(true, true);
+            } else if !carbon_active.load(Ordering::Acquire) {
+                if let Some(pressed) = binding.as_mut().and_then(|binding| binding.input(event)) {
+                    input(pressed, false);
                 }
             }
         }
-        *status.lock().unwrap_or_else(|e| e.into_inner()) = json!({"recording":listener.is_some(),"candidate":candidate,"accessibility":permission,"secure_input":secure,"fallback":carbon,"problem":problem});
+        let view = json!({"recording":recorder_since.is_some(),"candidate":candidate,"accessibility":permission,"secure_input":secure,"fallback":carbon,"problem":problem});
+        let mut current = status.lock().unwrap_or_else(|e| e.into_inner());
+        if *current != view {
+            *current = view;
+        }
     }
+    cancel_active.store(false, Ordering::Release);
+    carbon_active.store(false, Ordering::Release);
+    let _ = app.global_shortcut().unregister_all();
 }
 
 #[cfg(test)]

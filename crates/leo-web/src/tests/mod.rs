@@ -59,7 +59,10 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
     store.save().unwrap();
     let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, None));
     let state = AppState {
+        visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
+            changes: None,
             store,
             reload: false,
         })),

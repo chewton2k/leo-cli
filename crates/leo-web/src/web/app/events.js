@@ -214,6 +214,7 @@ function drawActivity() {
 
 async function checkActivity() {
   clearTimeout(activity.timer);
+  if (!appVisible()) return;
   try {
     activity.tasks = (await api('/api/activity')).tasks;
     for (const label of [...activity.seen.keys()]) if (!activity.tasks.some((t) => t.label === label)) activity.seen.delete(label);
@@ -222,7 +223,7 @@ async function checkActivity() {
   }
   drawActivity();
   for (const t of activity.tasks) if (t.kind === 'combine' && !t.ready) watchCombine(t.href.slice('#combine/'.length));
-  if (activity.tasks.some((t) => !t.ready)) activity.timer = setTimeout(checkActivity, 1000);
+  if (appVisible() && activity.tasks.some((t) => !t.ready)) activity.timer = setTimeout(checkActivity, 1000);
 }
 
 function closedHeight(box, summary) {

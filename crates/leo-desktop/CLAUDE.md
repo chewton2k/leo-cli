@@ -164,3 +164,18 @@ deadlines; leo-core is a build dependency for the same child-process rules.
 Release preflight signs a disposable probe with the updater key before the
 version bump or native builds. Signer output is suppressed on failure so only
 secret names and corrective steps appear; private values stay in the environment.
+
+## Idle energy
+
+`shortcut_events` owns the raw handy-keys listener and forwards relevant events
+through a bounded queue. The coordinator waits on that queue; the old 10 ms poll
+and handy-keys manager timer are gone. One-second waits cover permission/Secure
+Input checks and receiver shutdown, while key/control messages wake immediately.
+Bindings preserve key/modifier release order, repeats, Fn and side-specific keys;
+Escape eligibility wakes the coordinator explicitly. Feed shutdown clears native
+blockers before joining and cancels a producer waiting on a full queue.
+
+The main window publishes visibility to the engine and page on hide/show,
+minimize/restore and page-load completion. Hidden/minimized lecture previews pause;
+native capture, final transcription and dictation remain active. A finished page
+load resynchronizes visibility in case hide/show happened during navigation.

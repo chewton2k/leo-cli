@@ -1275,7 +1275,14 @@ that centres the current section. Routes stay `#/settings/<section>`; Storage
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
-ready-update banner without replacing focused controls. First-launch setup
+ready-update banner without replacing focused controls. `app/refresh.js` reconciles
+settings and explorer panels by stable keys, retaining native controls, file
+selections and unchanged rows through async updates. Custom select buttons and open
+menus retain their native elements and focus through reconciliation. Dictation autosaves snapshot the draft and page generation
+before queuing or debouncing, so navigation cannot lose edits or update a later page.
+Settings navigation stays between sections; its phone strip recentres only when
+the section changes.
+First-launch setup
 (`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a
 two-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
 with an Access → Speech model stepper. The Access page lists Microphone and macOS
@@ -1312,3 +1319,21 @@ hash. Late missing-note/offline failures cannot redirect, toast or overwrite a
 newer page, including a return to the same route. Cancelling a menu animation
 clears closing state synchronously and detaches its old cancellation callback
 before a new animation can own that state.
+
+## Idle work and freshness
+
+`read_store` accepts an immutable Store callback and coalesces filesystem scans
+using core's Watch. It checks initially, on relevant/rescan notifications, every
+60 seconds and after native foreground return. Missing/broken watchers fall back
+to checking every access. `with_store` and `store_now` always reconcile before
+mutations: a save must never absorb an unread external edit into its fingerprint.
+Tests delay notifications while external files are created/edited before a save.
+
+App-status polling stops when the document or native window is hidden and
+invalidates late responses on visibility changes. Return triggers an immediate
+refresh and one polling chain. Ordinary note views check every 30 s; Settings,
+active updates and permission onboarding keep their responsive cadence. Dictation,
+model-download and native-recording display polls pause while hidden; browser-fed
+capture/journaling continues. Automatic status GETs do not reset user-idle time.
+Graph/vector/caption maintenance starts after its first interval and defers while
+the native window is hidden or the capture activity gate is busy.

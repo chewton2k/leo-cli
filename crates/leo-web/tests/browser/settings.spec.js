@@ -3,6 +3,40 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+test('panel refresh updates controls and keyed rows without resetting native state', async ({ page }) => {
+  await page.setContent('<main id="panel"></main>');
+  await page.addScriptTag({content:fs.readFileSync(path.resolve(__dirname,'../../src/web/app/refresh.js'),'utf8')});
+  const result = await page.evaluate(() => {
+    const box=document.querySelector('#panel');
+    refreshPanel(null,'');
+    refreshPanel(box,'<div data-refresh-key="first"><input id="text" value="before"><textarea id="words">before</textarea><select id="pick"><option value="a" selected>A</option><option value="b">B</option></select><input id="switch" type="checkbox"><input id="file" type="file"><details id="fold"><summary>Details</summary>Keep open</details><button data-action="keep" title="old">Old</button><span id="removed">Remove</span></div><div data-refresh-key="second">Second</div>');
+    const row=box.firstChild, second=box.lastChild, button=box.querySelector('button'), file=box.querySelector('#file');
+    const data=new DataTransfer();data.items.add(new File(['notes'],'fixture.txt'));file.files=data.files;
+    box.querySelector('#fold').open=true;
+    button.focus();
+    refreshPanel(box,'<div data-refresh-key="second">Second updated</div><div data-refresh-key="first"><input id="text" value="after"><textarea id="words">after</textarea><select id="pick"><option value="b" selected>B</option><option value="a">A</option></select><input id="switch" type="checkbox" checked><input id="file" type="file"><details id="fold"><summary>Details</summary>Still open</details><button data-action="keep" disabled>New</button><span id="added">&lt;img src=x&gt;</span></div>');
+    return { rows:box.firstChild===second&&box.lastChild===row,button:box.querySelector('button')===button,file:box.querySelector('#file')===file,fileName:file.files[0].name,text:box.querySelector('#text').value,words:box.querySelector('#words').value,pick:box.querySelector('#pick').value,checked:box.querySelector('#switch').checked,open:box.querySelector('#fold').open,removed:!box.querySelector('#removed'),added:box.querySelector('#added').textContent,image:box.querySelectorAll('img').length,title:button.getAttribute('title'),disabled:button.disabled };
+  });
+  expect(result).toEqual({rows:true,button:true,file:true,fileName:'fixture.txt',text:'after',words:'after',pick:'b',checked:true,open:true,removed:true,added:'<img src=x>',image:0,title:null,disabled:true});
+  await page.evaluate(() => {
+    const box=document.querySelector('#panel');
+    refreshPanel(box,'<button data-action="a">A</button><button data-action="b">B</button>');
+    const active=box.lastChild;active.focus();
+    refreshPanel(box,'<button data-action="b">B changed</button><button data-action="a">A</button>');
+    window.keptButton=active;
+  });
+  await expect(page.getByRole('button',{name:'B changed'})).toBeFocused();
+  expect(await page.evaluate(()=>document.activeElement===window.keptButton)).toBe(true);
+  expect(await page.evaluate(() => {
+    const box=document.querySelector('#panel');
+    refreshPanel(box,'<details data-area="first"><summary>First</summary></details><details data-area="second"><summary>Second</summary></details>');
+    box.firstChild.open=true;
+    const kept=box.lastChild;
+    refreshPanel(box,'<details data-area="second"><summary>Second</summary></details>');
+    return box.firstChild===kept&&!kept.open;
+  })).toBe(true);
+});
+
 test('Settings sections keep drafts and selections across redraws in both themes', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
@@ -13,6 +47,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
     window.errors=[]; window.leoChat={usageRows:()=>[]};
     const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'},{id:'when_idle',label:'When idle'},{id:'off',label:'Off'}]}};
+    let appStatusReads=0;
     async function api(url,options={}) {
       if(url==='/api/settings'&&options.method==='POST') {if(options.body.set==='auto_push') page.backup.auto_push=options.body.value; return {settings:structuredClone(page),message:'Saved'};}
       if(url==='/api/settings') return structuredClone(page);
@@ -20,7 +55,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       if(url==='/api/speech') return {ready:false,models:[],extra_files:[],disk_bytes:0};
       if(url==='/api/dictation') return {settings:{custom_words:[],shortcut:'Option+Space'},recent:[]};
       if(url==='/api/health') return {sections:[{title:'This app',checks:[{name:'Speech model',state:'missing',fix:'Choose a model.',section:'models'}]}]};
-      if(url==='/api/app') return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}};
+      if(url==='/api/app') { appStatusReads++; return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}}; }
       if(url==='/api/storage') return {total:0,total_label:'0 B',areas:[]};
       if(url==='/api/keep') return {trash_choices:[],chat_choices:[],trash_days:30};
       if(url==='/api/trash') return [];
@@ -29,6 +64,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
     ${read('theme.js')}
+    ${read('app/refresh.js')}
     ${read('app/trash.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/select-menu.js')}
@@ -39,7 +75,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     ${read('app/onboarding.js')}
     const route=()=>showSettings(location.hash.split('/')[2] || 'general').catch(fail);
     window.addEventListener('hashchange',route); route();
-    window.audit={redraw:()=>drawSettings(state.settings)};`;
+    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,storage:()=>drawStorage(state.storage),reads:()=>appStatusReads};`;
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
@@ -51,6 +87,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       const page=await browser.newPage({colorScheme:theme,viewport:{width:900,height:850}});
       await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/backup');
       await expect(page.locator('#backup-repository')).toBeVisible();
+      await page.clock.install();
+      await page.evaluate(()=>{window.__LEO_VISIBLE__=false;window.dispatchEvent(new Event('leo-visibility'));});
+      const hiddenReads=await page.evaluate(()=>audit.reads());
+      await page.clock.runFor(10000);
+      expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads);
+      await page.evaluate(()=>{window.__LEO_VISIBLE__=true;window.dispatchEvent(new Event('leo-visibility'));window.dispatchEvent(new Event('leo-visibility'));});
+      expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads+1);
+      await page.clock.resume();
       await expect(page.locator('.settings-nav a')).toHaveCount(10);
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
@@ -71,15 +115,29 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
       await page.locator('#backup-repository').fill('Personal notes 文字');
       await page.locator('#backup-repository').evaluate(el=>{el.focus();el.setSelectionRange(4,8);});
+      const keptField = await page.locator('#backup-repository').elementHandle();
+      const keptNav = await page.locator('.settings-nav').elementHandle();
       await page.evaluate(()=>window.audit.redraw());
+      expect(await keptField.evaluate(el=>el.isConnected)).toBe(true);
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await expect(page.locator('#backup-repository')).toBeFocused();
       expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
       const push=page.getByRole('button',{name:'Push changes'});
       await expect(push).toHaveText('On quit');
+      const keptPush = await push.elementHandle();
+      await push.focus();
+      await page.evaluate(()=>audit.redraw());
+      expect(await keptPush.evaluate(el=>el.isConnected)).toBe(true);
+      await expect(push).toBeFocused();
       expect(await page.locator('select[data-set="auto_push"]').evaluate(el=>getComputedStyle(el).opacity)).toBe('0');
       await push.click();
       const menu=page.getByRole('listbox',{name:'Push changes'});
       await expect(menu).toBeVisible();
+      const keptMenu = await menu.elementHandle();
+      await page.evaluate(()=>audit.redraw());
+      expect(await keptMenu.evaluate(el=>el.isConnected)).toBe(true);
+      await expect(menu).toBeVisible();
+      await expect(menu).toBeFocused();
       await expect(menu.getByRole('option',{name:'On quit'})).toHaveAttribute('aria-selected','true');
       await page.keyboard.press('ArrowDown');
       await page.keyboard.press('Enter');
@@ -105,6 +163,8 @@ test('Settings sections keep drafts and selections across redraws in both themes
       const pillOn=async()=>page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top)+Math.abs(pill.height-on.height);});
       expect(await pillOn()).toBeLessThan(2);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
+      await expect(page.getByRole('heading',{level:1,name:'Dictation'})).toBeVisible();
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
       await expect(page.getByRole('heading',{name:'Recent dictations'})).toBeVisible();
       const gaps=await page.locator('.settings .set-card').evaluateAll(cards=>cards.slice(1).map((card,i)=>card.getBoundingClientRect().top-cards[i].getBoundingClientRect().bottom));
@@ -146,12 +206,21 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();
       await page.getByRole('link',{name:'Updates & about',exact:true}).click();
       await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
+      const updateCard = await page.locator('#app-updates .set-card').first().elementHandle();
+      await page.evaluate(()=>window.audit.status());
+      expect(await updateCard.evaluate(el=>el.isConnected)).toBe(true);
       await page.getByRole('link',{name:'Storage',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
       await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
+      const storageBar = await page.locator('.store-bar').elementHandle();
+      await storageBar.evaluate(el=>{window.storageListeners=0;const add=el.addEventListener;el.addEventListener=function(...args){window.storageListeners++;return add.apply(this,args);};});
+      await page.evaluate(()=>{audit.storage();audit.storage();});
+      expect(await storageBar.evaluate(el=>el.isConnected)).toBe(true);
+      expect(await page.evaluate(()=>window.storageListeners)).toBe(0);
       await page.getByRole('link',{name:'Trash',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
       await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await page.setViewportSize({width:620,height:850});
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       expect(await page.evaluate(()=>window.errors)).toEqual([]);
@@ -195,6 +264,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
       return structuredClone(native);
     }
     ${sheets}
+    ${read('app/refresh.js')}
     ${read('app/app-settings.js')}
     ${read('app/onboarding.js')}
     document.addEventListener('click',event=>{

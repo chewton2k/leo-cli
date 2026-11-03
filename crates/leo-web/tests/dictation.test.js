@@ -76,3 +76,29 @@ test('popup shows committed and tentative words like Handy and keeps them while 
   assert.equal(height(1), 18);
   assert.equal(height(5), 18);
 });
+
+for (const debounced of [false, true]) {
+  test(`${debounced ? 'debounced' : 'queued'} dictation saves keep their draft when navigation replaces page state`, async () => {
+    const listeners = {}, timers = [], calls = [];
+    const field = { dataset: { dictation: 'custom_words' }, value: 'Charlton\n東京' };
+    const context = {
+      app: { addEventListener: (name, listener) => { listeners[name] = listener; }, querySelectorAll: () => [field] },
+      state: { view: 'settings', dictation: { settings: { shortcut: 'fn' } } }, seq: 1,
+      clearTimeout() {}, setTimeout: callback => { timers.push(callback); },
+      api: async (url, options) => { calls.push({ url, ...options }); return { settings: options.body.settings }; },
+      fail: error => { throw error; },
+    };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/dictation.js'), 'utf8'), context);
+    let saving;
+    if (debounced) listeners.input({ target: field });
+    else saving = context.saveDictation();
+    context.state = { view: 'settings', section: 'calendar' };
+    context.seq++;
+    if (debounced) timers.shift()();
+    await (saving || vm.runInContext('dictationSaving', context));
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[0].body.settings)), { shortcut: 'fn', custom_words: ['Charlton', '東京'] });
+    assert.equal(context.state.dictation, undefined);
+  });
+}

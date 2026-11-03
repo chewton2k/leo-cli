@@ -4,6 +4,7 @@ mod boards;
 mod browse;
 pub mod calc;
 mod calendar;
+mod store_refresh;
 pub const CALENDAR_BYTES: u64 = calendar::MOST_BYTES;
 pub mod app_settings;
 pub mod captions;
@@ -213,6 +214,8 @@ pub struct Powers {
 
 #[derive(Clone)]
 struct AppState {
+    visible: Arc<std::sync::atomic::AtomicBool>,
+    refresh_requested: Arc<std::sync::atomic::AtomicBool>,
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
@@ -301,6 +304,10 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
         return false;
     }
     let polling = path == "/api/activity"
+        || matches!(
+            path,
+            "/api/app" | "/api/dictation" | "/api/speech" | "/api/backup" | "/api/tasks"
+        )
         || path == "/api/graph/status"
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
@@ -322,12 +329,17 @@ const GRAPH_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
 const PICTURES_PER_TICK: usize = 4;
 
 async fn keep_graph_current(state: AppState) {
-    let mut tick = tokio::time::interval(GRAPH_CHECK);
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
     let mut read_at = None;
     let mut graphed_at = None;
     loop {
         tick.tick().await;
-        let Ok(seen) = state.with_store(|store| Ok(store.fingerprint())).await else {
+        if !state.visible.load(std::sync::atomic::Ordering::Acquire)
+            || state.capture_activity.busy()
+        {
+            continue;
+        }
+        let Ok(seen) = state.read_store(|store| Ok(store.fingerprint())).await else {
             continue;
         };
         if read_at != Some(seen) {
@@ -335,7 +347,7 @@ async fn keep_graph_current(state: AppState) {
                 let vectors = Arc::clone(&state.vectors);
                 let listed = Arc::clone(&vectors);
                 if let Ok(work) = state
-                    .with_store(move |store| {
+                    .read_store(move |store| {
                         let work = listed.stale(store, vectors::PIECES_PER_TICK);
                         listed.forget_gone(store);
                         Ok(work)
@@ -358,7 +370,7 @@ async fn keep_graph_current(state: AppState) {
             continue;
         }
         let Ok(sources) = state
-            .with_store(|store| Ok(graph::sources(&store.notes)))
+            .read_store(|store| Ok(graph::sources(&store.notes)))
             .await
         else {
             continue;
@@ -375,7 +387,7 @@ async fn keep_graph_current(state: AppState) {
             let captions = Arc::clone(&state.captions);
             let listed = Arc::clone(&captions);
             let Ok(paths) = state
-                .with_store(move |store| {
+                .read_store(move |store| {
                     Ok(captions::uncaptioned(store, &listed, PICTURES_PER_TICK))
                 })
                 .await
@@ -399,6 +411,7 @@ async fn keep_graph_current(state: AppState) {
 struct Storage {
     store: Store,
     reload: bool,
+    changes: Option<store_refresh::Changes>,
 }
 
 impl std::ops::Deref for Storage {
@@ -419,13 +432,33 @@ impl AppState {
         &self,
         work: impl FnOnce(&mut Store) -> Result<R, StatusCode> + Send + 'static,
     ) -> Result<R, StatusCode> {
+        self.access_store(true, work).await
+    }
+
+    async fn read_store<R: Send + 'static>(
+        &self,
+        work: impl FnOnce(&Store) -> Result<R, StatusCode> + Send + 'static,
+    ) -> Result<R, StatusCode> {
+        self.access_store(false, move |store| work(store)).await
+    }
+
+    async fn access_store<R: Send + 'static>(
+        &self,
+        writing: bool,
+        work: impl FnOnce(&mut Store) -> Result<R, StatusCode> + Send + 'static,
+    ) -> Result<R, StatusCode> {
         let state = self.clone();
         tokio::task::spawn_blocking(move || {
             let mut store = state
                 .store
                 .lock()
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            if store.reload || store.changed_on_disk() {
+            let force = state
+                .refresh_requested
+                .swap(false, std::sync::atomic::Ordering::AcqRel);
+            let check =
+                writing || force || store.changes.as_mut().is_none_or(|changes| changes.due());
+            if store.reload || (check && store.changed_on_disk()) {
                 store
                     .refresh()
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -493,6 +526,20 @@ impl Drop for Background {
 }
 
 impl Running {
+    pub fn set_visible(&self, visible: bool) -> bool {
+        let changed = self
+            .state
+            .visible
+            .swap(visible, std::sync::atomic::Ordering::AcqRel)
+            != visible;
+        if changed && visible {
+            self.state
+                .refresh_requested
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        changed
+    }
+
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -600,7 +647,10 @@ pub(crate) async fn start_in(
         sessions::Sessions::load(&places.sessions)?,
     ));
     let state = AppState {
+        visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
+            changes: Some(store_refresh::Changes::new(&notes)),
             store,
             reload: false,
         })),
@@ -1078,6 +1128,11 @@ mod activity_tests {
         assert!(counts_as_use(&Method::GET, "/api/notes"));
         assert!(counts_as_use(&Method::POST, "/api/record/r1/stop"));
         for polled in [
+            "/api/app",
+            "/api/dictation",
+            "/api/speech",
+            "/api/backup",
+            "/api/tasks",
             "/api/activity",
             "/api/graph/status",
             "/api/record/r1",

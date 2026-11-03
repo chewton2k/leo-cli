@@ -20,6 +20,7 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
         return listen_call(listening, heard);
     }
     let Listening {
+        preview,
         recover: _,
         id,
         profile,
@@ -36,6 +37,7 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
         wants,
     } = listening;
     let controls = Controls {
+        preview: Some(preview),
         finish_now,
         stop,
         pause,
@@ -207,6 +209,7 @@ fn write_sources(
 
 fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded> {
     let Listening {
+        preview,
         id,
         profile,
         audio,
@@ -236,6 +239,7 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
             let title = title.clone();
             let directory = directory.clone();
             let controls = Controls {
+                preview: Some(preview.clone()),
                 finish_now: finish_now.clone(),
                 stop: stop.clone(),
                 pause: pause.clone(),
@@ -435,6 +439,7 @@ fn recover(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorde
             ""
         };
         let controls = Controls {
+            preview: Some(listening.preview.clone()),
             finish_now: listening.finish_now.clone(),
             stop: listening.stop.clone(),
             pause: listening.pause.clone(),

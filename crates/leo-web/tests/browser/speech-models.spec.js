@@ -21,6 +21,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
     const esc = text => String(text).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     async function api(url, options={}) { const response=await fetch(url,{method:options.method || 'GET',headers:{'Content-Type':'application/json'},body:options.body ? JSON.stringify(options.body) : undefined}); const data=await response.json(); if(!response.ok) throw new Error(data.error); return data; }
     window.errors=[];
+    ${fs.readFileSync(path.join(web, 'app/refresh.js'), 'utf8')}
     ${option}
     ${helpers}
     $('#speech-library').innerHTML=speechCards(state.speech);

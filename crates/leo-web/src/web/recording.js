@@ -351,6 +351,7 @@
 
     function schedule() {
       clearTimeout(s.poll);
+      if (!fedByBrowser(s.view?.source) && (root.document.visibilityState === 'hidden' || root.__LEO_VISIBLE__ === false)) return;
       if (s.view && (live(s.view) || s.view.state === 'writing')) s.poll = setTimeout(pollNow, POLL_EVERY);
     }
 
@@ -875,9 +876,15 @@
       }
     });
 
-    root.document.addEventListener('visibilitychange', () => {
+    function recordingVisibility() {
       if (root.document.visibilityState === 'visible' && s.mine && live(s.view)) keepAwake();
-    });
+      if (!fedByBrowser(s.view?.source)) {
+        clearTimeout(s.poll);
+        if (root.document.visibilityState !== 'hidden' && root.__LEO_VISIBLE__ !== false) pollNow();
+      }
+    }
+    root.document.addEventListener('visibilitychange', recordingVisibility);
+    root.addEventListener('leo-visibility', recordingVisibility);
 
     return {
       async show(container, options) {

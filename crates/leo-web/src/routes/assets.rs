@@ -4,6 +4,7 @@ use axum::response::{Html, IntoResponse, Response};
 const HTML: &str = include_str!("../web/index.html");
 const APP_JS: &str = concat!(
     "(function () {\n'use strict';\n",
+    include_str!("../web/app/refresh.js"),
     include_str!("../web/app/core.js"),
     include_str!("../web/app/browse.js"),
     include_str!("../web/app/trash.js"),

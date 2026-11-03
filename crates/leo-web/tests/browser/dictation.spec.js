@@ -5,7 +5,7 @@ const http = require('node:http');
 
 test('dictation preferences keep drafts and caret while shortcut and history update', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
-  const source = fs.readFileSync(path.join(web, 'app/settings-navigation.js'), 'utf8') + fs.readFileSync(path.join(web, 'app/dictation.js'), 'utf8');
+  const source = fs.readFileSync(path.join(web, 'app/refresh.js'), 'utf8') + fs.readFileSync(path.join(web, 'app/settings-navigation.js'), 'utf8') + fs.readFileSync(path.join(web, 'app/dictation.js'), 'utf8');
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
   const initial = () => ({ settings: { shortcut: 'option+space', mode: 'both', custom_words: ['Initial'], fillers: true, popup: 'live', top: false }, microphones: ['External microphone'], shortcut: {}, recent: [{ id: 1, text: '<img src=x onerror=bad()>' }] });
   let view = initial();
@@ -51,6 +51,13 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       await expect(page.getByRole('button', { name: /^Save/ })).toHaveCount(0);
       const shortcut = await page.locator('.set-line:has([data-dictation="shortcut"])').evaluate(line => [...line.querySelectorAll('.set-label, input, button:not([hidden])')].map(el => Math.round(el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2)));
       expect(Math.max(...shortcut) - Math.min(...shortcut)).toBeLessThan(3);
+      const copy=page.locator('[data-action="dictation-copy"][data-id="1"]');
+      const keptCopy=await copy.elementHandle();
+      await copy.focus();
+      view.recent.unshift({id:2,text:'Newest dictation'});
+      await expect(page.locator('[data-action="dictation-copy"][data-id="2"]')).toBeVisible();
+      expect(await keptCopy.evaluate(el=>el.isConnected)).toBe(true);
+      await expect(copy).toBeFocused();
       await expect(page.locator('#dictation-recent img')).toHaveCount(0);
       await page.getByRole('button', { name: 'Record shortcut', exact: true }).click();
       await expect(page.locator('#dictation-shortcut-status')).toHaveText('fn');

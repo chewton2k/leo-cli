@@ -14,6 +14,46 @@ fn places() -> (Places, tempfile::TempDir) {
 }
 
 #[tokio::test]
+async fn showing_the_window_reconciles_external_edits_before_the_watcher_delivers() {
+    let (places, _dir) = places();
+    let notes = places.store.notes_dir.clone();
+    let running = start_in(
+        places,
+        StartOptions {
+            port: 0,
+            token: "t".into(),
+        },
+        Powers::default(),
+    )
+    .await
+    .unwrap();
+    assert!(running.set_visible(false));
+    assert!(!running.set_visible(false));
+    assert!(!running
+        .state
+        .visible
+        .load(std::sync::atomic::Ordering::Acquire));
+    running
+        .state
+        .with_store(|store| Ok(store.notes.len()))
+        .await
+        .unwrap();
+    std::fs::write(notes.join("External.md"), "Outside edit").unwrap();
+    assert!(running.set_visible(true));
+    let found = running
+        .state
+        .with_store(|store| Ok(store.notes.iter().any(|note| note.body == "Outside edit")))
+        .await
+        .unwrap();
+    assert!(found);
+    assert!(!running
+        .state
+        .refresh_requested
+        .load(std::sync::atomic::Ordering::Acquire));
+    running.stop().await;
+}
+
+#[tokio::test]
 async fn start_binds_loopback_only() {
     let (places, _dir) = places();
     let running = start_in(

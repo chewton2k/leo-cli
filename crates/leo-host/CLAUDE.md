@@ -10,3 +10,7 @@ Health view. Writing CLI sign-in status is bounded and parsed to a boolean; its
 raw output never reaches the page. `WebSettings::setup_backup` validates repository
 names and refuses to replace an existing remote before invoking gh. Web runs it
 outside the notes lock and serializes setup requests.
+
+Lecture listeners pass the engine's shared preview-visibility flag into recorder
+controls, including both call tracks. This flag never pauses capture or final
+transcription, and recovery continues while the main window is hidden.

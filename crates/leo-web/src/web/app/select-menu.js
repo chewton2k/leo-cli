@@ -63,6 +63,18 @@ function enhanceSelects(root = app) {
   for (const select of root.querySelectorAll(SELECT_MENU_SCOPE)) enhanceSelect(select);
 }
 
+function keepSelectMenu(box, next) {
+  if (!box.matches('.select-control.has-menu')) return;
+  const select = box.querySelector(':scope > select'), desired = next.querySelector(':scope > select');
+  const button = box.querySelector(':scope > .select-menu-button'), list = box.querySelector(':scope > .select-menu');
+  if (!select || !desired || !button || !list || refreshKey(select) !== refreshKey(desired)) return;
+  next.classList.add('has-menu');
+  for (const name of ['data-menu', 'tabindex', 'aria-hidden']) desired.setAttribute(name, select.getAttribute(name));
+  const keptButton = button.cloneNode(true), keptList = list.cloneNode(true);
+  keptButton.querySelector('.select-menu-text').textContent = selectMenuLabel(desired);
+  next.append(keptButton, keptList);
+}
+
 function selectMenuOptions(list) {
   return [...list.querySelectorAll('.select-menu-option:not([aria-disabled="true"])')];
 }

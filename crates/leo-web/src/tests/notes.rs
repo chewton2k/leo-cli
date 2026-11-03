@@ -1,5 +1,40 @@
 use super::*;
 
+#[test]
+fn saving_another_note_preserves_external_creates_and_edits_before_watch_delivery() {
+    for creating in [false, true] {
+        let (state, _dir, ids) = state_with(&[("Local", ""), ("External", "")]);
+        let root = state.fresh().notes_dir.clone();
+        state.store.lock().unwrap().changes = Some(crate::store_refresh::Changes::delayed());
+        if creating {
+            std::fs::write(root.join("Added.md"), "Outside edit").unwrap();
+        } else {
+            let path = root.join("External.md");
+            let mut text = std::fs::read_to_string(&path).unwrap();
+            text.push_str("Outside edit");
+            std::fs::write(path, text).unwrap();
+        }
+        let local = ids[0].clone();
+        run(state.with_store(move |store| {
+            store.find_note_mut(&local).unwrap().body = "Saved in Leo".into();
+            store.save().unwrap();
+            Ok(())
+        }))
+        .unwrap();
+        let seen = run(state.read_store(|store| {
+            Ok(store
+                .notes
+                .iter()
+                .any(|note| note.body.contains("Outside edit")))
+        }))
+        .unwrap();
+        assert!(
+            seen,
+            "external create={creating} was absorbed into an unread fingerprint"
+        );
+    }
+}
+
 /// An ID prefix shared by several notes must not delete all of them.
 #[test]
 fn deleting_by_an_ambiguous_prefix_deletes_nothing() {
