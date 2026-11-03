@@ -228,6 +228,9 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
 - Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
   line each, tombstones for deletes), so the git backup carries them;
   `sync::GITATTRIBUTES` merges them by union and leo-web reads the newest line.
+  A repeating task's moved days live in its `moved` field (original date →
+  new slot); the Calendar page is a Notion-style Day/Week/Month screen beside
+  the explorer: see crates/leo-web/CLAUDE.md.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
   search and the knowledge graph cover it): no `#tag` in `new` (split_new returns (dir,
   title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips

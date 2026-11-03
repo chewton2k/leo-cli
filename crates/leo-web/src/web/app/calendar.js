@@ -1,12 +1,20 @@
 const S = window.leoSchedule;
-const cal = { month: null, selected: null, data: null, loadedAt: 0, timer: 0, polls: 0, showDone: true, gridOpen: false };
+const cal = { view: 'week', selected: null, data: null, loadedAt: 0, timer: 0, polls: 0, showDone: true, failed: false, drag: null, compose: null, stale: false, peek: null, scrolled: '', suppressClick: false };
 const CAL_DONE_KEY = 'leo-calendar-hide-done';
+const CAL_VIEW_KEY = 'leo-calendar-view';
+const CAL_VIEWS = [['day', 'Day'], ['week', 'Week'], ['month', 'Month']];
 try {
   cal.showDone = localStorage.getItem(CAL_DONE_KEY) !== '1';
+  const view = localStorage.getItem(CAL_VIEW_KEY);
+  if (CAL_VIEWS.some(([v]) => v === view)) cal.view = view;
 } catch (e) {
   cal.showDone = true;
 }
 const CAL_POLL_MS = 150000;
+const CAL_HOUR_PX = 48;
+const CAL_SNAP = 15;
+const CAL_HOLD_MS = 300;
+const CAL_MONTH_CHIPS = 3;
 const KIND_LABEL = { assignment: 'Assignment', exam: 'Exam', meeting: 'Meeting', 'follow-up': 'Follow-up', deadline: 'Deadline', other: 'Other' };
 const KIND_ORDER = ['assignment', 'exam', 'meeting', 'follow-up', 'deadline', 'other'];
 
@@ -27,11 +35,13 @@ function monthOf(key) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
+function calDays() {
+  return S.daysOf(cal.view, cal.selected, S.weekStart(calLocale()));
+}
+
 function calWindow() {
-  const grid = S.monthGrid(cal.month.getFullYear(), cal.month.getMonth(), S.weekStart(calLocale()));
-  const from = S.fromKey(grid[0].key);
-  const to = S.addDays(S.fromKey(grid[grid.length - 1].key), 1);
-  return { grid, from: from.toISOString(), to: to.toISOString() };
+  const days = calDays();
+  return { days, from: S.fromKey(days[0]).toISOString(), to: S.addDays(S.fromKey(days[days.length - 1]), 1).toISOString() };
 }
 
 async function showCalendar() {
@@ -40,10 +50,10 @@ async function showCalendar() {
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Calendar</button>';
   document.title = 'Calendar · leo';
-  const today = S.dayKey(new Date());
-  if (!cal.selected) cal.selected = today;
-  cal.month = monthOf(cal.selected);
-  app.innerHTML = '<div class="sched-page" id="sched-page"></div>';
+  if (!cal.selected) cal.selected = S.dayKey(new Date());
+  cal.peek = null;
+  cal.scrolled = '';
+  app.innerHTML = '<div class="cal-page" id="cal-page"><section class="cal-main" id="cal-main" aria-label="Calendar"></section><aside class="cal-side" id="cal-side"></aside></div>';
   drawCalendar();
   await loadSchedule(mine);
 }
@@ -51,7 +61,8 @@ async function showCalendar() {
 async function loadSchedule(mine = seq) {
   if (state.view !== 'calendar') return;
   const { from, to } = calWindow();
-  const asked = cal.month.getTime();
+  const asked = `${cal.view} ${from}`;
+  cal.loadedFor = asked;
   const taskRevision = tasksWin.revision;
   let data;
   try {
@@ -64,14 +75,8 @@ async function loadSchedule(mine = seq) {
     }
     return;
   }
-  if (mine !== seq || state.view !== 'calendar' || asked !== cal.month.getTime()) return;
+  if (mine !== seq || state.view !== 'calendar' || asked !== `${cal.view} ${calWindow().from}`) return;
   if (taskRevision !== tasksWin.revision) data.tasks = tasksWin.tasks || cal.data?.tasks || [];
-  cal.failed = false;
-  cal.data = data;
-  tasksWin.tasks = data.tasks || tasksWin.tasks;
-  cal.loadedAt = Date.now();
-  drawCalendar();
-  drawTasksWindow();
   clearTimeout(cal.timer);
   if (data.refreshing && cal.polls < 6) {
     cal.polls++;
@@ -82,6 +87,22 @@ async function loadSchedule(mine = seq) {
       if (document.visibilityState === 'visible') loadSchedule(mine);
     }, CAL_POLL_MS);
   }
+  if (cal.drag || cal.compose) {
+    cal.stale = true;
+    return;
+  }
+  cal.failed = false;
+  cal.data = data;
+  tasksWin.tasks = data.tasks || tasksWin.tasks;
+  cal.loadedAt = Date.now();
+  drawCalendar();
+  drawTasksWindow();
+}
+
+function calSettled() {
+  if (!cal.stale || cal.drag || cal.compose) return;
+  cal.stale = false;
+  loadSchedule(seq);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -145,194 +166,845 @@ function repeatPicker(box, start, onChange) {
   return days;
 }
 
-function taskLine(task, { showDate = false } = {}) {
-  const time = task.time ? `<span class="sched-time">${esc(S.timeLabel(task.time, calLocale()))}</span>` : '<span class="sched-time"></span>';
-  const kind = task.kind === 'exam' ? '<span class="sched-pill">Exam</span>' : `<span class="sched-kind">${esc(KIND_LABEL[task.kind] || 'Other')}</span>`;
-  const from = task.note ? `<span class="sched-from">${esc(task.note.title || 'Untitled')}</span>` : '<span class="sched-from">Added in Leo</span>';
-  const when = showDate && task.date ? ` · ${esc(S.fromKey(task.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}` : '';
-  const due = task.time && task.kind !== 'meeting' ? ` · Due ${esc(S.timeLabel(task.time, calLocale()))}` : '';
-  const google = task.sent_at || (cal.data && (cal.data.events || []).some((e) => e.task === task.id)) ? '<span class="sched-badge">Google</span>' : '';
-  const missing = task.found === false ? ' · <span class="sched-warn">not found in the note</span>' : '';
-  const repeat = S.repeats(task) ? ` · ${esc(S.repeatLabel(task.repeat, calLocale()))}` : '';
-  const on = task.on ? ` data-on="${esc(task.on)}"` : '';
-  const set = !task.date && !task.done ? `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">Set date</button>` : '';
-  return `<div class="sched-row${task.done ? ' done' : ''}" data-task="${esc(task.id)}" style="--tone: var(${toneOfTask(task)})">
-    ${showDate ? '' : time}
-    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(task.id)}"${on} aria-label="Done: ${esc(task.title)}"${task.done ? ' checked' : ''}>
-    <button type="button" class="sched-main" data-action="task-open" data-id="${esc(task.id)}"${on}><span class="sched-title">${esc(task.title)}</span><span class="sched-sub">${from}${when}${due}${repeat}${missing}</span></button>
-    ${google}${kind}${set}
-  </div>`;
+function calDate(minutes) {
+  const at = new Date(2000, 0, 1);
+  at.setMinutes(Math.min(minutes, 24 * 60 - 1));
+  return at;
 }
 
-function eventLine(event) {
-  const time = event.all_day ? '' : S.timeLabel(new Date(event.start).toTimeString().slice(0, 5), calLocale());
-  const end = event.all_day ? '' : S.timeLabel(new Date(event.end).toTimeString().slice(0, 5), calLocale());
-  const span = event.all_day ? '' : `${time}–${end}`;
-  const place = event.location ? ` · ${esc(event.location)}` : '';
-  const zone = event.zone_unknown ? ' · <span class="sched-warn">time zone unknown</span>' : '';
-  const sub = [span ? esc(span) : 'All day', event.location ? esc(event.location) : ''].filter(Boolean).join(' · ');
-  return `<div class="sched-row sched-event" style="--tone: var(${toneOfEvent(event)})">
-    <span class="sched-time">${esc(time)}</span>
-    <span class="sched-bar" aria-hidden="true"></span>
-    <button type="button" class="sched-main" data-action="event-open" data-id="${esc(event.id)}"><span class="sched-title">${esc(event.title)}</span><span class="sched-sub">${sub}${zone}</span></button>
-  </div>`;
+function calTime(minutes) {
+  return S.timeLabel(S.timeOf(minutes), calLocale());
 }
 
-function calItem(item) {
-  return item.type === 'task' ? taskLine(item.task) : eventLine(item.event);
+function calHour(minutes) {
+  return calDate(minutes).toLocaleTimeString(calLocale(), { hour: 'numeric' });
 }
 
-function drawCalendar() {
-  const box = $('#sched-page');
-  if (!box) return;
-  const today = S.dayKey(new Date());
-  const firstDay = S.weekStart(calLocale());
-  const tasks = (cal.data && cal.data.tasks) || [];
-  const events = (cal.data && cal.data.events) || [];
-  const { grid } = calWindow();
-  const strip = S.weekOf(S.fromKey(cal.selected), firstDay);
-  const ahead7 = S.dayKey(S.addDays(new Date(), 7));
-  const plan = S.plan(tasks, events, today, {
-    from: [grid[0].key, strip[0], today].sort()[0],
-    to: [grid[grid.length - 1].key, strip[6], ahead7].sort()[2],
-  });
-  const monthName = cal.month.toLocaleDateString(calLocale(), { month: 'long', year: 'numeric' });
-  const names = grid.slice(0, 7).map((c) => S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'short' }));
-  const dots = (key) => {
-    const day = plan.byDay.get(key);
-    if (!day) return '';
-    const items = [...day.allDay, ...day.timed].filter((i) => i.type === 'event' || !i.task.done);
-    if (!items.length) return '';
-    const tones = [];
-    for (const i of items) {
-      const tone = i.type === 'event' ? toneOfEvent(i.event) : i.task.date < today ? '--hue-red' : toneOfTask(i.task);
-      if (!tones.includes(tone)) tones.push(tone);
-    }
-    return `<span class="sched-dots" aria-label="${items.length} ${items.length === 1 ? 'item' : 'items'}">${tones.slice(0, 4).map((t) => `<i style="background: var(${t})"></i>`).join('')}</span>`;
-  };
-  const cell = (c) => `<button type="button" class="sched-day${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${c.key === cal.selected ? ' on' : ''}" data-action="cal-pick" data-day="${c.key}" aria-label="${esc(S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' }))}"${c.key === cal.selected ? ' aria-pressed="true"' : ''}><span class="sched-n">${c.day}</span>${dots(c.key)}</button>`;
-  const week = strip.map((key) => {
-    const d = S.fromKey(key);
-    return `<button type="button" class="sched-day strip${key === today ? ' today' : ''}${key === cal.selected ? ' on' : ''}" data-action="cal-pick" data-day="${key}"><span class="sched-wd">${esc(d.toLocaleDateString(calLocale(), { weekday: 'narrow' }))}</span><span class="sched-n">${d.getDate()}</span>${dots(key)}</button>`;
-  }).join('');
-  const day = plan.byDay.get(cal.selected) || { allDay: [], timed: [] };
-  const shown = (list) => list.filter((i) => cal.showDone || i.type === 'event' || !i.task.done);
-  const allDay = shown(day.allDay);
-  const timed = shown(day.timed);
-  const taskCount = [...allDay, ...timed].filter((i) => i.type === 'task').length;
-  const eventCount = allDay.length + timed.length - taskCount;
-  const summary = [taskCount ? plural(taskCount, 'task') : '', eventCount ? plural(eventCount, 'event') : ''].filter(Boolean).join(' · ');
-  const now = new Date();
-  const nowMs = now.getTime();
-  let nowShown = cal.selected !== today;
-  const timedRows = timed.map((item) => {
-    const at = item.type === 'event' ? new Date(item.event.start).getTime() : S.fromKey(item.task.date).getTime() + (() => {
-      const [h, m] = String(item.task.time || '00:00').split(':').map(Number);
-      return ((h || 0) * 60 + (m || 0)) * 60000;
-    })();
-    let line = '';
-    if (!nowShown && at > nowMs) {
-      nowShown = true;
-      line = `<div class="sched-now" aria-label="Now"><span>${esc(now.toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' }))}</span></div>`;
-    }
-    return line + calItem(item);
-  }).join('') + (nowShown || !timed.length ? '' : `<div class="sched-now" aria-label="Now"><span>${esc(now.toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' }))}</span></div>`);
-  const ahead = [];
-  for (let k = 1; k <= 7 && ahead.length < 6; k++) {
-    const key = S.dayKey(S.addDays(new Date(), k));
-    const later = plan.byDay.get(key);
-    if (!later) continue;
-    for (const item of [...later.allDay, ...later.timed]) {
-      if (item.type === 'task' && item.task.done) continue;
-      if (ahead.length >= 6) break;
-      ahead.push({ key, item });
-    }
+function calRange(start, end) {
+  const whole = start % 60 === 0 && end % 60 === 0;
+  try {
+    return new Intl.DateTimeFormat(calLocale(), whole ? { hour: 'numeric' } : { hour: 'numeric', minute: '2-digit' }).formatRange(calDate(start), calDate(end));
+  } catch (e) {
+    return `${calTime(start)} – ${calTime(end)}`;
   }
-  const coming = ahead.length
-    ? `<section class="sched-coming"><h2>Coming up</h2>${ahead.map(({ key, item }) => {
-      const title = item.type === 'event' ? item.event.title : item.task.title;
-      const tone = item.type === 'event' ? toneOfEvent(item.event) : toneOfTask(item.task);
-      const time = item.type === 'event' ? (item.event.all_day ? '' : S.timeLabel(new Date(item.event.start).toTimeString().slice(0, 5), calLocale())) : (item.task.time ? S.timeLabel(item.task.time, calLocale()) : '');
-      const d = S.fromKey(key);
-      return `<button type="button" class="sched-ahead" data-action="cal-pick" data-day="${key}" style="--tone: var(${tone})"><span class="sched-ahead-day"><b>${esc(d.toLocaleDateString(calLocale(), { weekday: 'short' }))}</b>${d.getDate()}</span><span class="sched-ahead-text"><span class="sched-ahead-title">${esc(title)}</span>${time ? `<span class="sched-sub">${esc(time)}</span>` : ''}</span></button>`;
-    }).join('')}</section>`
-    : '';
-  const agenda = allDay.length || timed.length
-    ? `${allDay.length ? `<div class="sched-group">All day</div>${allDay.map(calItem).join('')}` : ''}${timed.length ? `${allDay.length ? '<div class="sched-group">Schedule</div>' : ''}${timedRows}` : ''}`
-    : `<p class="sched-empty">Nothing scheduled</p><button type="button" class="btn plain sm" data-action="task-new" data-day="${cal.selected}">+ Task for this day</button>`;
-  const overdue = plan.overdue.length ? `<section class="sched-list"><h2 class="sched-late">Overdue · ${plan.overdue.length}</h2>${plan.overdue.map((t) => taskLine(t, { showDate: true })).join('')}</section>` : '';
-  const undated = plan.undated.length ? `<section class="sched-list"><h2>No date · ${plan.undated.length}</h2>${plan.undated.map((t) => taskLine(t, { showDate: true })).join('')}</section>` : '';
-  const connect = cal.data && !cal.data.connected ? '<p class="set-note sched-connect">Show your Google Calendar here · <a href="#/settings">Connect it in Settings</a></p>' : '';
-  const heading = S.fromKey(cal.selected).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' });
-  box.innerHTML = `<header class="sched-head">
-      <h1>Calendar</h1>
-      <div class="sched-status" role="status">${calStatus()}</div>
-      <div class="sched-nav">
-        <button type="button" class="btn plain sm" data-action="cal-today">Today</button>
-        <button type="button" class="icon-btn sched-arrow" data-action="cal-prev" aria-label="Previous ${cal.gridOpen || window.matchMedia('(min-width: 600px)').matches ? 'month' : 'week'}">‹</button>
-        <button type="button" class="sched-month" data-action="cal-month">${esc(monthName)}</button>
-        <button type="button" class="icon-btn sched-arrow" data-action="cal-next" aria-label="Next ${cal.gridOpen || window.matchMedia('(min-width: 600px)').matches ? 'month' : 'week'}">›</button>
-        <button type="button" class="btn primary sm" data-action="task-new">+ Task</button>
-      </div>
-    </header>
-    ${connect}
-    <div class="sched-body">
-      <div class="sched-side">
-        <section class="set-card sched-card${cal.gridOpen ? ' open' : ''}" aria-label="${esc(monthName)}">
-          <div class="sched-grid" role="grid">${names.map((n) => `<span class="sched-wd">${esc(n)}</span>`).join('')}${grid.map(cell).join('')}</div>
-        </section>
-        <div class="sched-strip">${week}</div>
-        ${coming}
-        <div class="sched-lists">${overdue}${undated}</div>
-      </div>
-      <section class="sched-agenda" aria-label="${esc(heading)}">
-        <div class="sched-agenda-head">
-          <h2 class="sched-day-head">${esc(heading)}</h2>
-          ${tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn sched-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : ''}
-        </div>
-        ${summary ? `<p class="sched-summary">${summary}</p>` : ''}
-        ${agenda}
-      </section>
-      <div class="sched-lists phone">${overdue}${undated}</div>
-    </div>`;
 }
 
 function calFind(id) {
   return ((cal.data && cal.data.tasks) || []).find((t) => t.id === id) || null;
 }
 
-function calMove(days) {
-  const next = S.addDays(S.fromKey(cal.selected), days);
-  cal.selected = S.dayKey(next);
-  const month = monthOf(cal.selected);
-  if (month.getTime() !== cal.month.getTime()) {
-    cal.month = month;
-    drawCalendar();
-    loadSchedule(seq);
-  } else drawCalendar();
+function calMovable(task) {
+  return Boolean(task) && task.found !== false;
 }
 
-function calShiftMonth(step) {
-  const wide = window.matchMedia('(min-width: 600px)').matches || cal.gridOpen;
-  if (!wide) return calMove(step * 7);
-  const m = new Date(cal.month.getFullYear(), cal.month.getMonth() + step, 1);
-  const keep = Math.min(S.fromKey(cal.selected).getDate(), new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate());
-  cal.month = m;
-  cal.selected = S.dayKey(new Date(m.getFullYear(), m.getMonth(), keep));
+function calShown(item) {
+  return cal.showDone || item.type === 'event' || !item.task.done;
+}
+
+function calPlan(days) {
+  const today = S.dayKey(new Date());
+  return S.plan((cal.data && cal.data.tasks) || [], (cal.data && cal.data.events) || [], today, { from: days[0], to: days[days.length - 1] });
+}
+
+function calLabel(item) {
+  if (item.type === 'event') return item.event.title || 'Untitled';
+  return item.task.title || 'Untitled';
+}
+
+function calAttrs(item, day) {
+  if (item.type === 'event') return `data-kind="event" data-id="${esc(item.event.id)}"`;
+  const t = item.task;
+  const on = t.on ? ` data-on="${esc(t.on)}"` : '';
+  const drag = calMovable(t) ? ' data-drag="move"' : '';
+  return `data-kind="task" data-id="${esc(t.id)}"${on} data-day="${esc(day)}"${drag}`;
+}
+
+function calTone(item) {
+  if (item.type === 'event') return toneOfEvent(item.event);
+  return toneOfTask(item.task);
+}
+
+function calCheck(task) {
+  const on = task.on ? ` data-on="${esc(task.on)}"` : '';
+  return `<input type="checkbox" class="cal-check" data-action="task-done" data-id="${esc(task.id)}"${on} aria-label="Done: ${esc(task.title)}"${task.done ? ' checked' : ''}>`;
+}
+
+function calChip(item, day, { style = '', sub = '', extra = '', tall = false } = {}) {
+  const task = item.type === 'task' ? item.task : null;
+  const kind = task ? 'task' : 'event';
+  const done = task && task.done ? ' done' : '';
+  const peeked = cal.peek && cal.peek.id === (task ? task.id : item.event.id) && (!task || !task.on || cal.peek.on === task.on) ? ' peeked' : '';
+  return `<div class="cal-item ${kind}${done}${peeked}${tall ? ' tall' : ''}" ${calAttrs(item, day)} style="--tone: var(${calTone(item)});${style}">
+    ${task ? calCheck(task) : ''}
+    <button type="button" class="cal-open" data-action="cal-open" ${task ? `data-kind="task" data-id="${esc(task.id)}"${task.on ? ` data-on="${esc(task.on)}"` : ''}` : `data-kind="event" data-id="${esc(item.event.id)}"`} title="${esc(calLabel(item))}${sub ? ` · ${esc(sub)}` : ''}"><span class="cal-title">${esc(calLabel(item))}</span>${sub ? `<span class="cal-sub">${esc(sub)}</span>` : ''}</button>${extra}
+  </div>`;
+}
+
+function calHead(days) {
+  const first = S.fromKey(days[0]);
+  const last = S.fromKey(days[days.length - 1]);
+  const mid = S.fromKey(cal.view === 'month' ? days[15] : cal.selected);
+  let title;
+  if (cal.view === 'day') title = `${esc(mid.toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' }))} <span>${mid.getFullYear()}</span>`;
+  else if (cal.view === 'month' || first.getMonth() === last.getMonth()) title = `${esc(mid.toLocaleDateString(calLocale(), { month: 'long' }))} <span>${mid.getFullYear()}</span>`;
+  else title = `${esc(first.toLocaleDateString(calLocale(), { month: 'short' }))} – ${esc(last.toLocaleDateString(calLocale(), { month: 'short' }))} <span>${last.getFullYear()}</span>`;
+  const unit = { day: 'day', week: 'week', month: 'month' }[cal.view];
+  return `<header class="cal-head">
+    <div class="cal-name">${title}</div>
+    <div class="cal-step">
+      <button type="button" class="icon-btn cal-arrow" data-action="cal-prev" aria-label="Previous ${unit}" title="Previous ${unit} (K)">${ICON.back}</button>
+      <button type="button" class="btn sm" data-action="cal-today" title="Today (T)">Today</button>
+      <button type="button" class="icon-btn cal-arrow next" data-action="cal-next" aria-label="Next ${unit}" title="Next ${unit} (J)">${ICON.back}</button>
+    </div>
+    <div class="cal-status" role="status">${calStatus()}</div>
+    <div class="library-views cal-views" role="group" aria-label="View">${CAL_VIEWS.map(([v, label]) => `<button type="button" class="btn sm plain${cal.view === v ? ' on' : ''}" data-action="cal-view" data-view="${v}" aria-pressed="${cal.view === v}" title="${label} (${label[0]})">${label}</button>`).join('')}</div>
+    <button type="button" class="btn primary sm" data-action="task-new" data-day="${esc(cal.selected)}">${ICON.plus}<span>New</span></button>
+  </header>`;
+}
+
+function calWeekHeads(days, today) {
+  return days.map((key) => {
+    const d = S.fromKey(key);
+    const on = key === today ? ' today' : '';
+    return `<button type="button" class="cal-dayhead${on}" data-action="cal-pick" data-day="${key}" data-to="day" aria-label="${esc(d.toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' }))}"><span>${esc(d.toLocaleDateString(calLocale(), { weekday: 'short' }))}</span><b>${d.getDate()}</b></button>`;
+  }).join('');
+}
+
+function calAllDay(days, plan) {
+  const index = new Map(days.map((k, i) => [k, i]));
+  const spans = [];
+  const seen = new Set();
+  for (const key of days) {
+    const day = plan.byDay.get(key);
+    if (!day) continue;
+    for (const item of day.allDay.filter(calShown)) {
+      if (item.type === 'event') {
+        if (seen.has(item.event.id)) continue;
+        seen.add(item.event.id);
+        const covered = S.eventDays(item.event).filter((k) => index.has(k));
+        if (!covered.length) continue;
+        spans.push({ item, day: covered[0], a: index.get(covered[0]), b: index.get(covered[covered.length - 1]) });
+      } else spans.push({ item, day: key, a: index.get(key), b: index.get(key) });
+    }
+  }
+  const lane = S.lanes(spans);
+  const rows = Math.max(1, ...lane.map((l) => l + 1));
+  const bars = spans.map((s, i) => calChip(s.item, s.day, { style: `grid-column: ${s.a + 1} / ${s.b + 2}; grid-row: ${lane[i] + 1};` })).join('');
+  const cells = days.map((key, i) => `<div class="cal-allday-cell" data-day="${key}" style="grid-column: ${i + 1}; grid-row: 1 / ${rows + 1};"></div>`).join('');
+  return `<div class="cal-allday" style="--cols: ${days.length}; --rows: ${rows};"><span class="cal-allday-label">All day</span><div class="cal-allday-grid">${cells}${bars}</div></div>`;
+}
+
+function calColumn(key, plan, today) {
+  const day = plan.byDay.get(key) || { timed: [] };
+  const items = day.timed.filter(calShown);
+  const spans = items.map((item) => S.spanOn(item, key, CAL_SNAP * 2));
+  const cols = S.dayColumns(spans);
+  const blocks = items.map((item, i) => {
+    const { start, end } = spans[i];
+    const { col, cols: n } = cols[i];
+    const step = Math.min(40, 70 / n);
+    const left = col * step;
+    const width = col === n - 1 ? 100 - left : Math.min(100 - left, step * 1.8);
+    const top = (start / 60) * CAL_HOUR_PX;
+    const height = Math.max(18, ((end - start) / 60) * CAL_HOUR_PX - 2);
+    const short = end - start <= 30;
+    const task = item.type === 'task' ? item.task : null;
+    const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
+    const grip = task && task.source === 'leo' && calMovable(task) ? '<span class="cal-grip" data-drag="resize" aria-hidden="true"></span>' : '';
+    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 });
+  }).join('');
+  let now = '';
+  if (key === today) {
+    const at = new Date();
+    now = `<div class="cal-now" style="top: ${((at.getHours() * 60 + at.getMinutes()) / 60) * CAL_HOUR_PX}px" aria-label="Now"></div>`;
+  }
+  const wknd = [0, 6].includes(S.fromKey(key).getDay()) ? ' weekend' : '';
+  return `<div class="cal-col${wknd}" data-day="${key}">${blocks}${now}</div>`;
+}
+
+function calTimeGrid(days, plan, today) {
+  const hours = Array.from({ length: 23 }, (_, i) => `<span style="top: ${(i + 1) * CAL_HOUR_PX}px">${esc(calHour((i + 1) * 60))}</span>`).join('');
+  return `<div class="cal-week" style="--cols: ${days.length}; --hour: ${CAL_HOUR_PX}px;">
+    <div class="cal-dayheads"><span></span>${calWeekHeads(days, today)}</div>
+    ${calAllDay(days, plan)}
+    <div class="cal-scroll" id="cal-scroll"><div class="cal-hours" aria-hidden="true">${hours}</div><div class="cal-cols">${days.map((k) => calColumn(k, plan, today)).join('')}</div></div>
+  </div>`;
+}
+
+function calMonth(days, plan, today) {
+  const month = S.fromKey(days[15]).getMonth();
+  const names = days.slice(0, 7).map((k) => `<span>${esc(S.fromKey(k).toLocaleDateString(calLocale(), { weekday: 'short' }))}</span>`).join('');
+  const cells = days.map((key) => {
+    const d = S.fromKey(key);
+    const day = plan.byDay.get(key) || { allDay: [], timed: [] };
+    const items = [...day.allDay, ...day.timed].filter(calShown);
+    const shown = items.slice(0, CAL_MONTH_CHIPS).map((item) => {
+      const time = item.type === 'event' ? (item.event.all_day ? '' : calTime(S.spanOn(item, key).start)) : item.task.time ? calTime(S.minutesOf(item.task.time)) : '';
+      return calChip(item, key, { sub: time });
+    }).join('');
+    const more = items.length > CAL_MONTH_CHIPS ? `<button type="button" class="link-btn cal-more" data-action="cal-pick" data-day="${key}" data-to="day">${items.length - CAL_MONTH_CHIPS} more</button>` : '';
+    const cls = `${d.getMonth() === month ? '' : ' out'}${key === today ? ' today' : ''}`;
+    return `<div class="cal-cell${cls}" data-day="${key}"><button type="button" class="cal-num" data-action="cal-pick" data-day="${key}" data-to="day" aria-label="${esc(d.toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' }))}">${d.getDate()}</button>${shown}${more}</div>`;
+  }).join('');
+  return `<div class="cal-month"><div class="cal-month-names">${names}</div><div class="cal-month-grid">${cells}</div></div>`;
+}
+
+function calMini(today) {
+  const at = S.fromKey(cal.selected);
+  const grid = S.monthGrid(at.getFullYear(), at.getMonth(), S.weekStart(calLocale()));
+  const shown = new Set(calDays());
+  const names = grid.slice(0, 7).map((c) => `<span>${esc(S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'narrow' }))}</span>`).join('');
+  return `<section class="cal-mini" aria-label="${esc(at.toLocaleDateString(calLocale(), { month: 'long', year: 'numeric' }))}">
+    <div class="cal-mini-head"><span>${esc(at.toLocaleDateString(calLocale(), { month: 'long', year: 'numeric' }))}</span><button type="button" class="icon-btn cal-arrow" data-action="cal-mini" data-step="-1" aria-label="Previous month">${ICON.back}</button><button type="button" class="icon-btn cal-arrow next" data-action="cal-mini" data-step="1" aria-label="Next month">${ICON.back}</button></div>
+    <div class="cal-mini-grid">${names}${grid.map((c) => `<button type="button" class="cal-mini-day${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${cal.view !== 'month' && shown.has(c.key) ? ' shown' : ''}" data-action="cal-pick" data-day="${c.key}">${c.day}</button>`).join('')}</div>
+  </section>`;
+}
+
+function calTrayRow(task) {
+  const when = task.date ? S.fromKey(task.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }) : '';
+  return `<div class="cal-tray-row" data-kind="task" data-id="${esc(task.id)}"${calMovable(task) ? ' data-drag="tray"' : ''} style="--tone: var(${task.date ? '--hue-red' : toneOfTask(task)})">${calCheck(task)}<button type="button" class="cal-open" data-action="cal-open" data-kind="task" data-id="${esc(task.id)}"><span class="cal-title">${esc(task.title)}</span>${when ? `<span class="cal-sub">${esc(when)}</span>` : ''}</button></div>`;
+}
+
+function calTray(plan, today) {
+  const d = cal.data;
+  const connect = d && !d.connected ? '<p class="set-note cal-connect">Show your Google Calendar here · <a href="#/settings/calendar">Connect it in Settings</a></p>' : '';
+  const list = (title, tasks, late) => tasks.length ? `<section class="cal-tray-list"><h2${late ? ' class="late"' : ''}>${title} <span class="cal-count">${tasks.length}</span></h2>${tasks.slice(0, 50).map(calTrayRow).join('')}</section>` : '';
+  const undated = list('No date', plan.undated, false);
+  const tasks = (d && d.tasks) || [];
+  const toggle = tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn cal-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : '';
+  return `${calMini(today)}${connect}${list('Overdue', plan.overdue, true)}${undated}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}`;
+}
+
+function drawCalendar() {
+  const main = $('#cal-main');
+  if (!main) return;
+  const today = S.dayKey(new Date());
+  const days = calDays();
+  const plan = calPlan(days.includes(today) ? days : [...days, today].sort());
+  const body = cal.view === 'month' ? calMonth(days, plan, today) : calTimeGrid(days, plan, today);
+  const scroll = $('#cal-scroll');
+  const keep = scroll ? scroll.scrollTop : null;
+  main.innerHTML = `${calHead(days)}${body}`;
+  main.dataset.view = cal.view;
+  const box = $('#cal-scroll');
+  if (box) {
+    const place = `${cal.view} ${days[0]}`;
+    if (keep !== null && cal.scrolled === place) box.scrollTop = keep;
+    else {
+      const now = new Date();
+      const hour = days.includes(today) ? Math.max(0, now.getHours() - 1) : 8;
+      box.scrollTop = hour * CAL_HOUR_PX;
+      cal.scrolled = place;
+    }
+  }
+  if (!cal.peek) {
+    const side = $('#cal-side');
+    if (side) {
+      side.classList.remove('peek');
+      side.innerHTML = calTray(plan, today);
+    }
+  }
+}
+
+function calStep(step) {
+  const at = S.fromKey(cal.selected);
+  if (cal.view === 'day') cal.selected = S.dayKey(S.addDays(at, step));
+  else if (cal.view === 'week') cal.selected = S.dayKey(S.addDays(at, step * 7));
+  else {
+    const m = new Date(at.getFullYear(), at.getMonth() + step, 1);
+    const keep = Math.min(at.getDate(), new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate());
+    cal.selected = S.dayKey(new Date(m.getFullYear(), m.getMonth(), keep));
+  }
+  calGo();
+}
+
+function calGo() {
   drawCalendar();
-  loadSchedule(seq);
+  if (cal.loadedFor !== `${cal.view} ${calWindow().from}`) loadSchedule(seq);
 }
 
-app.addEventListener('keydown', (e) => {
-  const day = e.target.closest && e.target.closest('.sched-day');
-  if (!day || state.view !== 'calendar') return;
-  const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
-  if (!step) return;
+function calSetView(view) {
+  if (!CAL_VIEWS.some(([v]) => v === view) || view === cal.view) return;
+  cal.view = view;
+  try {
+    localStorage.setItem(CAL_VIEW_KEY, view);
+  } catch (e) {
+    cal.view = view;
+  }
+  calGo();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (state.view !== 'calendar' || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+  if (e.key === 'Escape') {
+    if (cal.drag) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      calDragCancel();
+      return;
+    }
+    if (cal.peek && !$('.scrim') && !e.target.closest?.('input, textarea, select')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      calClosePeek();
+    }
+    return;
+  }
+  if (e.target.closest?.('input, textarea, select, [contenteditable], .scrim') || $('.scrim')) return;
+  const key = e.key.toLowerCase();
+  const act = { t: () => { cal.selected = S.dayKey(new Date()); calGo(); }, j: () => calStep(1), k: () => calStep(-1), d: () => calSetView('day'), w: () => calSetView('week'), m: () => calSetView('month') }[key];
+  if (!act) return;
   e.preventDefault();
-  calMove(step);
-  const again = app.querySelector(`.sched-day[data-day="${cal.selected}"]:not(.strip)`) || app.querySelector(`.sched-day[data-day="${cal.selected}"]`);
-  if (again) again.focus();
+  act();
 });
+
+const calHM = (t) => (t ? String(t).slice(0, 5) : null);
+
+function calMinutesIn(col, y) {
+  const rect = col.getBoundingClientRect();
+  return ((y - rect.top) / CAL_HOUR_PX) * 60;
+}
+
+function calColumnAt(x, y) {
+  const cols = $('.cal-cols');
+  if (!cols) return null;
+  const box = cols.getBoundingClientRect();
+  const scroll = $('#cal-scroll');
+  const view = scroll ? scroll.getBoundingClientRect() : box;
+  if (y < view.top || y > view.bottom) return null;
+  return [...cols.children].find((c) => {
+    const r = c.getBoundingClientRect();
+    return x >= r.left && x < r.right;
+  }) || null;
+}
+
+function calTargetAt(d) {
+  const { x, y } = d;
+  const col = calColumnAt(x, y);
+  if (col) {
+    const raw = calMinutesIn(col, y);
+    return { day: col.dataset.day, col, minutes: Math.max(0, Math.min(24 * 60 - d.length, S.snap(raw - d.offset, CAL_SNAP))) };
+  }
+  const grid = document.elementFromPoint(x, y)?.closest('.cal-allday-grid');
+  if (grid) {
+    const cells = [...grid.querySelectorAll('.cal-allday-cell')];
+    const cell = cells.find((c) => {
+      const r = c.getBoundingClientRect();
+      return x >= r.left && x < r.right;
+    });
+    if (cell) return { day: cell.dataset.day, cell, minutes: null };
+  }
+  const cell = document.elementFromPoint(x, y)?.closest('.cal-cell');
+  if (cell) return { day: cell.dataset.day, cell, minutes: 'keep' };
+  return null;
+}
+
+function calClearMarks() {
+  for (const el of document.querySelectorAll('.cal-slot')) el.remove();
+  for (const el of document.querySelectorAll('.drop-on')) el.classList.remove('drop-on');
+}
+
+function calSlot(col, start, end) {
+  const slot = document.createElement('div');
+  slot.className = 'cal-slot';
+  slot.style.top = `${(start / 60) * CAL_HOUR_PX}px`;
+  slot.style.height = `${Math.max(16, ((end - start) / 60) * CAL_HOUR_PX - 2)}px`;
+  slot.textContent = calRange(start, end);
+  col.appendChild(slot);
+}
+
+function calDragTask(d) {
+  const base = calFind(d.id);
+  if (!base) return null;
+  if (!d.on || !d.day) return base;
+  return S.occurrences(base, d.day, d.day).find((o) => o.on === d.on) || null;
+}
+
+function calLift() {
+  const d = cal.drag;
+  if (!d || d.live) return;
+  d.live = true;
+  clearTimeout(d.timer);
+  getSelection()?.removeAllRanges();
+  document.addEventListener('touchmove', calHoldStill, { passive: false });
+  document.body.classList.add('cal-dragging');
+  if (d.mode === 'move' || d.mode === 'tray') {
+    d.source?.classList.add('lifted');
+    const ghost = document.createElement('div');
+    ghost.className = 'cal-ghost';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.style.setProperty('--tone', getComputedStyle(d.source).getPropertyValue('--tone') || 'var(--accent)');
+    ghost.textContent = d.task.title || 'Untitled';
+    document.body.appendChild(ghost);
+    d.ghost = ghost;
+  }
+  try { app.setPointerCapture(d.pointer); } catch (e) {}
+  calFollow();
+}
+
+function calHoldStill(e) {
+  if (cal.drag?.live && e.cancelable) e.preventDefault();
+}
+
+function calEdge(d) {
+  const scroll = $('#cal-scroll');
+  if (!scroll) return;
+  const r = scroll.getBoundingClientRect();
+  if (d.y < r.top + 36 && d.y > r.top - 40) scroll.scrollTop -= 12;
+  else if (d.y > r.bottom - 36 && d.y < r.bottom + 40) scroll.scrollTop += 12;
+}
+
+function calFollow() {
+  const d = cal.drag;
+  if (!d || !d.live) return;
+  calEdge(d);
+  calClearMarks();
+  if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)${stillMotion() ? '' : ' rotate(-1.5deg)'}`;
+  if (d.mode === 'resize') {
+    const end = Math.max(d.start + CAL_SNAP, Math.min(24 * 60, S.snap(calMinutesIn(d.col, d.y), CAL_SNAP)));
+    d.target = { day: d.day, minutes: d.start, end };
+    d.source.style.height = `${Math.max(18, ((end - d.start) / 60) * CAL_HOUR_PX - 2)}px`;
+    const sub = d.source.querySelector('.cal-sub');
+    if (sub) sub.textContent = calRange(d.start, end);
+    return;
+  }
+  if (d.mode === 'create') {
+    const now = Math.max(0, Math.min(24 * 60, S.snap(calMinutesIn(d.col, d.y), CAL_SNAP)));
+    const start = Math.min(d.start, now);
+    const end = Math.max(d.start, now, start + CAL_SNAP);
+    d.target = { day: d.day, minutes: start, end };
+    calSlot(d.col, start, end);
+    return;
+  }
+  const at = calTargetAt(d);
+  d.target = at;
+  if (!at) return;
+  if (at.col) calSlot(at.col, at.minutes, at.minutes + d.length);
+  else (at.cell || at.col)?.classList.add('drop-on');
+}
+
+function calDragEnd() {
+  const d = cal.drag;
+  if (!d) return;
+  clearTimeout(d.timer);
+  document.removeEventListener('touchmove', calHoldStill);
+  d.ghost?.remove();
+  d.source?.classList.remove('lifted');
+  calClearMarks();
+  document.body.classList.remove('cal-dragging');
+  cal.drag = null;
+}
+
+function calDragCancel() {
+  const d = cal.drag;
+  calDragEnd();
+  if (d?.live) drawCalendar();
+  calSettled();
+}
+
+function calDrop() {
+  const d = cal.drag;
+  if (!d) return;
+  const target = d.target;
+  calDragEnd();
+  cal.suppressClick = true;
+  setTimeout(() => { cal.suppressClick = false; }, 0);
+  if (!target) {
+    drawCalendar();
+    return calSettled();
+  }
+  if (d.mode === 'create') {
+    drawCalendar();
+    return calCompose(target.day, target.minutes, target.end);
+  }
+  const task = d.task;
+  let next;
+  if (d.mode === 'resize') next = { date: target.day, time: calHM(task.time), end: S.timeOf(target.end) };
+  else if (target.minutes === 'keep') next = { date: target.day, time: calHM(task.time), end: calHM(task.end) };
+  else if (target.minutes === null) next = { date: target.day, time: null, end: null };
+  else {
+    const keepsEnd = task.source === 'leo' && (task.end || !task.time);
+    next = { date: target.day, time: S.timeOf(target.minutes), end: keepsEnd ? S.timeOf(Math.min(24 * 60 - 1, target.minutes + d.length)) : null };
+  }
+  if (next.date === task.date && next.time === calHM(task.time) && next.end === calHM(task.end)) {
+    drawCalendar();
+    return calSettled();
+  }
+  return calMove(task, next);
+}
+
+async function calMove(task, next, scope = null) {
+  const base = calFind(task.id);
+  if (!base) return calSettled();
+  if (S.repeats(base) && !scope) {
+    drawCalendar();
+    return calAskScope(task, next);
+  }
+  return calSave(base, task, next, scope || 'one');
+}
+
+function calAskScope(task, next) {
+  const box = sheet(`<h3>Move “${esc(task.title)}”</h3><p class="hint">It repeats ${esc(S.repeatLabel(task.repeat, calLocale()).toLowerCase())}.</p>
+    <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn" id="cal-move-all">Every time</button><button type="button" class="btn primary" id="cal-move-one">Only this one</button></div>`);
+  $('#cal-move-one', box).addEventListener('click', () => { closeSheet(); calMove(task, next, 'one').catch(fail); });
+  $('#cal-move-all', box).addEventListener('click', () => { closeSheet(); calMove(task, next, 'all').catch(fail); });
+  $('#cal-move-one', box).focus();
+  calSettled();
+}
+
+function calBodies(base, task, next, scope) {
+  if (S.repeats(base) && scope === 'one') {
+    const on = task.on;
+    const was = (base.moved || {})[on] || { date: on, time: base.time, end: base.end };
+    return {
+      body: { occurrence: on, date: next.date, time: next.time, end: next.time ? next.end : null },
+      undo: { occurrence: on, date: was.date, time: calHM(was.time), end: calHM(was.end) },
+      local: (t) => { t.moved = { ...(t.moved || {}), [on]: { date: next.date, time: next.time, end: next.end } }; },
+    };
+  }
+  if (S.repeats(base)) {
+    const shift = Math.round((S.fromKey(next.date) - S.fromKey(task.date)) / 86400000);
+    const start = S.dayKey(S.addDays(S.fromKey(base.date || task.date), shift));
+    const repeat = S.shiftRepeat(base.repeat, shift);
+    return {
+      body: { date: start, time: next.time, end: next.end, repeat },
+      undo: { date: base.date, time: calHM(base.time), end: calHM(base.end), repeat: base.repeat },
+      local: (t) => Object.assign(t, { date: start, time: next.time, end: next.end, repeat }),
+    };
+  }
+  return {
+    body: { ...next },
+    undo: { date: base.date, time: calHM(base.time), end: calHM(base.end), confirm: true },
+    local: (t) => Object.assign(t, next),
+  };
+}
+
+async function calSave(base, task, next, scope) {
+  const { body, undo, local } = calBodies(base, task, next, scope);
+  const before = JSON.parse(JSON.stringify(base));
+  local(base);
+  tasksWin.revision++;
+  drawCalendar();
+  try {
+    const saved = await api(`/api/tasks/${enc(base.id)}`, { method: 'PATCH', body });
+    if (saved && saved.id) {
+      for (const key of Object.keys(base)) if (!(key in saved)) delete base[key];
+      Object.assign(base, saved);
+    }
+  } catch (e) {
+    for (const key of Object.keys(base)) delete base[key];
+    Object.assign(base, before);
+    drawCalendar();
+    calSettled();
+    if (e instanceof Locked) throw e;
+    if (e.status === 409 && e.data && e.data.preview) return saveDate(base, next, false);
+    toast(e.message, { bad: true });
+    return;
+  }
+  calPeekRefresh(base.id);
+  toast(next.date ? `Moved to ${S.fromKey(next.date).toLocaleDateString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric' })}${next.time ? `, ${S.timeLabel(next.time, calLocale())}` : ''}` : 'Date cleared', {
+    action: 'Undo',
+    run: () => api(`/api/tasks/${enc(base.id)}`, { method: 'PATCH', body: undo }).then(() => { loadTasksWindow().catch(() => {}); return loadSchedule(seq); }).then(() => calPeekRefresh(base.id)).catch(fail),
+  });
+  loadTasksWindow().catch(() => {});
+  cal.stale = true;
+  calSettled();
+}
+
+function calCompose(day, start, end) {
+  calCloseCompose();
+  const timed = start !== null && start !== undefined;
+  const host = timed ? app.querySelector(`.cal-col[data-day="${CSS.escape(day)}"]`) : app.querySelector(`.cal-cell[data-day="${CSS.escape(day)}"], .cal-allday-cell[data-day="${CSS.escape(day)}"]`);
+  if (!host) return calSettled();
+  const box = document.createElement('form');
+  box.className = `cal-compose${timed ? '' : ' all-day'}`;
+  if (timed) {
+    box.style.top = `${(start / 60) * CAL_HOUR_PX}px`;
+    box.style.height = `${Math.max(34, ((end - start) / 60) * CAL_HOUR_PX - 2)}px`;
+  }
+  box.innerHTML = `<input class="cal-compose-input" maxlength="300" placeholder="New task" aria-label="New task${timed ? `, ${esc(calRange(start, end))}` : ''}" autocomplete="off">${timed ? `<span class="cal-sub">${esc(calRange(start, end))}</span>` : ''}`;
+  host.appendChild(box);
+  const input = box.querySelector('input');
+  cal.compose = { day, start: timed ? start : null, end: timed ? end : null, box, sent: false };
+  const finish = async () => {
+    const c = cal.compose;
+    if (!c || c.box !== box || c.sent) return;
+    const title = input.value.trim();
+    if (!title) return calCloseCompose();
+    c.sent = true;
+    const body = { title, date: day, time: timed ? S.timeOf(start) : null, end: timed ? S.timeOf(end) : null, kind: 'other' };
+    try {
+      const made = await api('/api/tasks', { method: 'POST', body });
+      toast(`Added “${made.title}”`, { action: 'Undo', run: () => api(`/api/tasks/${enc(made.id)}`, { method: 'DELETE' }).then(() => loadSchedule(seq)).catch(fail) });
+      loadTasksWindow().catch(() => {});
+      cal.stale = true;
+    } catch (e) {
+      if (e instanceof Locked) throw e;
+      toast(e.message, { bad: true });
+    }
+    calCloseCompose();
+  };
+  box.addEventListener('submit', (e) => { e.preventDefault(); finish().catch(fail); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      calCloseCompose();
+    }
+  });
+  input.addEventListener('blur', () => setTimeout(() => finish().catch(fail), 0));
+  input.focus({ preventScroll: true });
+}
+
+function calCloseCompose() {
+  const c = cal.compose;
+  if (!c) return;
+  cal.compose = null;
+  c.box.remove();
+  calSettled();
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (state.view !== 'calendar' || e.button !== 0 || cal.drag || !e.isPrimary) return;
+  if (e.target.closest('.cal-compose')) return;
+  const grip = e.target.closest('.cal-grip');
+  const item = grip ? grip.closest('.cal-item') : e.target.closest('.cal-item[data-drag], .cal-tray-row[data-drag]');
+  const touch = e.pointerType === 'touch';
+  let d = null;
+  if (item) {
+    if (!grip && e.target.closest('input, a, select, textarea')) return;
+    const task = calDragTask({ id: item.dataset.id, on: item.dataset.on || null, day: item.dataset.day || null });
+    if (!task) return;
+    const col = item.closest('.cal-col');
+    const span = col ? S.spanOn({ type: 'task', task }, col.dataset.day, CAL_SNAP * 2) : null;
+    const length = span ? span.end - span.start : task.end && task.time ? S.minutesOf(task.end) - S.minutesOf(task.time) : 60;
+    d = { mode: grip ? 'resize' : item.classList.contains('cal-tray-row') ? 'tray' : 'move', id: task.id, on: task.on || null, task, source: item, col, day: item.dataset.day || null, start: span ? span.start : 0, length: Math.max(CAL_SNAP, length), offset: span ? calMinutesIn(col, e.clientY) - span.start : 0 };
+  } else if (e.target.classList.contains('cal-col')) {
+    const col = e.target;
+    d = { mode: 'create', col, day: col.dataset.day, start: Math.floor(calMinutesIn(col, e.clientY) / CAL_SNAP) * CAL_SNAP };
+  } else if (e.target.classList.contains('cal-cell') || e.target.classList.contains('cal-allday-cell')) {
+    d = { mode: 'cell', day: e.target.dataset.day };
+  }
+  if (!d) return;
+  if (cal.compose) calCloseCompose();
+  cal.drag = { ...d, pointer: e.pointerId, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, live: false, timer: 0, touch };
+  if (touch && d.mode !== 'cell') cal.drag.timer = setTimeout(calLift, CAL_HOLD_MS);
+  else if (!touch) e.preventDefault();
+});
+
+document.addEventListener('pointermove', (e) => {
+  const d = cal.drag;
+  if (!d || e.pointerId !== d.pointer) return;
+  d.x = e.clientX;
+  d.y = e.clientY;
+  if (!d.live) {
+    const far = Math.hypot(d.x - d.startX, d.y - d.startY);
+    if (d.touch) { if (far > 8) calDragEnd(); return; }
+    if (far < 5 || d.mode === 'cell') return;
+    if (!e.buttons) { calDragEnd(); return; }
+    calLift();
+    return;
+  }
+  if (!e.buttons && e.pointerType !== 'touch') { calDrop(); return; }
+  calFollow();
+});
+
+document.addEventListener('pointerup', (e) => {
+  const d = cal.drag;
+  if (!d || e.pointerId !== d.pointer) return;
+  if (d.live) return Promise.resolve(calDrop()).catch(fail);
+  calDragEnd();
+  if (d.mode === 'create') calCompose(d.day, d.start, Math.min(24 * 60, d.start + 60));
+  else if (d.mode === 'cell') calCompose(d.day, null, null);
+  else calSettled();
+});
+
+document.addEventListener('pointercancel', (e) => {
+  const d = cal.drag;
+  if (!d || e.pointerId !== d.pointer) return;
+  if (d.live) calDragCancel();
+  else calDragEnd();
+});
+
+app.addEventListener('lostpointercapture', (e) => {
+  if (cal.drag?.live && e.pointerId === cal.drag.pointer) Promise.resolve(calDrop()).catch(fail);
+});
+
+document.addEventListener('click', (e) => {
+  if (!cal.suppressClick) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+
+function calOpenPeek(kind, id, on = null) {
+  const side = $('#cal-side');
+  if (!side) return;
+  cal.peek = { kind, id, on };
+  side.classList.add('peek');
+  if (kind === 'event') calPeekEvent(side, id);
+  else calPeekTask(side, id, on);
+  drawCalendar();
+}
+
+function calClosePeek() {
+  if (!cal.peek) return;
+  const flush = cal.peek.flush;
+  cal.peek = null;
+  if (flush) flush();
+  drawCalendar();
+}
+
+function calPeekRefresh(id) {
+  if (!cal.peek || cal.peek.id !== id || cal.peek.kind !== 'task') return;
+  const side = $('#cal-side');
+  if (side && !side.contains(document.activeElement)) calPeekTask(side, id, cal.peek.on);
+}
+
+function calPeekBar(where, actions = '') {
+  return `<div class="cal-peek-bar"><span class="cal-peek-where"><span class="cal-dot" aria-hidden="true"></span><span>${esc(where)}</span></span><span class="hint grow" id="cal-peek-saved" role="status"></span>${actions}<button type="button" class="icon-btn" data-action="cal-peek-close" aria-label="Close" title="Close (Esc)">${ICON.close}</button></div>`;
+}
+
+function eventDetailsHtml(event) {
+  const when = event.all_day
+    ? S.fromKey(event.date).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' })
+    : `${new Date(event.start).toLocaleString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} – ${new Date(event.end).toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' })}`;
+  const about = S.eventDetails(event.context);
+  const where = event.location || about.place;
+  const linked = (text) => (/^https?:\/\/\S+$/i.test(text) ? `<a href="${esc(text)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text));
+  return `<div class="set-row"><span class="set-label">When</span><span class="set-value">${esc(when)}</span></div>
+    ${where ? `<div class="set-row"><span class="set-label">Where</span><span class="set-value sched-wrap">${linked(where)}</span></div>` : ''}
+    <div class="set-row"><span class="set-label">Calendar</span><span class="set-value">${esc(event.calendar || 'Google')}</span></div>
+    ${about.organiser ? `<div class="set-row"><span class="set-label">Organiser</span><span class="set-value sched-wrap">${esc(about.organiser)}</span></div>` : ''}
+    ${about.invited.length ? `<div class="set-row"><span class="set-label">Invited</span><span class="set-value sched-people">${about.invited.map((p) => `<span class="chip">${esc(p)}</span>`).join('')}</span></div>` : ''}
+    ${about.description ? `<div class="sched-about prose">${S.richText(about.description)}</div>` : ''}
+    ${event.zone_unknown ? '<p class="set-note warn">This event names a time zone leo does not know, so its time may be off.</p>' : ''}`;
+}
+
+function calEventSoon(event) {
+  return !event.all_day && new Date(event.start) - Date.now() < 15 * 60000 && new Date(event.end) > Date.now();
+}
+
+function calPeekEvent(side, id) {
+  const event = ((cal.data && cal.data.events) || []).find((e) => e.id === id);
+  if (!event) return calClosePeek();
+  side.style.setProperty('--tone', `var(${toneOfEvent(event)})`);
+  side.innerHTML = `${calPeekBar(event.calendar || 'Google Calendar')}<h2 class="cal-peek-title">${esc(event.title)}</h2>${eventDetailsHtml(event)}
+    <p class="hint">Events from your calendar link are read-only here.</p>
+    ${calEventSoon(event) ? '<div class="buttons"><button type="button" class="btn primary" data-action="record">Record this meeting</button></div>' : ''}`;
+}
+
+function calPeekTask(side, id, on) {
+  const task = calFind(id);
+  if (!task) return calClosePeek();
+  const repeating = S.repeats(task);
+  const day = repeating ? on || S.dayKey(new Date()) : null;
+  const slot = repeating ? (task.moved || {})[day] || { date: day, time: task.time, end: task.end } : task;
+  const leo = task.source === 'leo';
+  const doneNow = taskDoneOn(task, day);
+  const dayName = day ? S.fromKey(day).toLocaleDateString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+  const onGoogle = (cal.data && (cal.data.events || []).find((e) => e.task === task.id)) || null;
+  const scope = (cal.peek && cal.peek.scope) || 'one';
+  side.style.setProperty('--tone', `var(${toneOfTask(task)})`);
+  side.innerHTML = `${calPeekBar(task.note ? task.note.title || 'Untitled' : 'Task')}
+    <textarea class="kanban-sheet-title cal-peek-title" id="cal-peek-title" rows="1" maxlength="300" aria-label="Title"${leo ? '' : ' readonly'}>${esc(task.title)}</textarea>
+    ${task.found === false ? '<p class="set-note warn">leo could not find this checkbox in the note any more. Open the note to check it.</p>' : ''}
+    <label class="set-row cal-peek-done"><span class="set-label">${day ? `Done on ${esc(dayName)}` : 'Done'}</span><input type="checkbox" class="cal-check" data-action="task-done" data-id="${esc(task.id)}"${day ? ` data-on="${esc(day)}"` : ''}${doneNow ? ' checked' : ''}></label>
+    ${repeating ? `<div class="set-row"><span class="set-label">Change</span><div class="library-views" role="group" aria-label="Which days change">${[['one', 'This one'], ['all', 'Every time']].map(([v, label]) => `<button type="button" class="btn sm plain${scope === v ? ' on' : ''}" data-cal-scope="${v}" aria-pressed="${scope === v}">${label}</button>`).join('')}</div></div>` : ''}
+    <div class="set-row column cal-peek-when"><span class="set-label">When</span><span class="cal-peek-times">
+      <input class="set-input" type="date" id="cal-peek-date" aria-label="Date" value="${esc(slot.date || '')}">
+      <input class="set-input" type="time" id="cal-peek-start" aria-label="Starts" value="${esc(calHM(slot.time) || '')}"${slot.date ? '' : ' disabled'}>
+      ${leo ? `<span class="hint">to</span><input class="set-input" type="time" id="cal-peek-end" aria-label="Ends" value="${esc(calHM(slot.end) || '')}"${slot.time ? '' : ' disabled'}>` : ''}
+    </span></div>
+    ${leo ? `<div class="set-row column task-repeat" id="cal-peek-repeat"><span class="set-label">Repeat</span>${repeatBubbles(task.repeat || [])}<span class="hint repeat-hint">${esc(repeatHint(task.repeat || []))}</span></div>` : ''}
+    <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="cal-peek-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${task.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${task.kind === k}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
+    <textarea class="cal-peek-about" id="cal-peek-about" rows="4" maxlength="4000" placeholder="Add a description…" aria-label="Description">${esc(task.description || '')}</textarea>
+    <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in Leo'}</span></div>
+    <div class="set-row"><span class="set-label">Google</span><span class="set-value">${onGoogle ? 'On Google Calendar' : task.sent_at ? 'Opened in Google Calendar' : 'Not added'}</span></div>
+    ${repeating && Object.keys(task.moved || {}).length ? '<p class="hint">Google gets the weekly days; days you moved here stay in leo and the .ics file.</p>' : ''}
+    <div class="buttons task-acts">
+      ${task.date && !onGoogle ? `<button type="button" class="btn" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
+      ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
+      ${leo ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}
+    </div>`;
+  const saved = $('#cal-peek-saved', side);
+  const said = (text) => { if (saved) saved.textContent = text; };
+  const patch = async (body) => {
+    said('Saving…');
+    try {
+      const out = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body });
+      if (out && out.id) Object.assign(task, out);
+      else Object.assign(task, body);
+      said('Saved');
+      tasksWin.revision++;
+      drawCalendar();
+      loadTasksWindow().catch(() => {});
+      return true;
+    } catch (e) {
+      said('');
+      if (e instanceof Locked) throw e;
+      toast(e.message, { bad: true });
+      return false;
+    }
+  };
+  const title = $('#cal-peek-title', side);
+  const fit = () => { title.style.height = 'auto'; title.style.height = `${title.scrollHeight}px`; };
+  fit();
+  title.addEventListener('input', fit);
+  title.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); title.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); title.value = task.title; fit(); title.blur(); }
+  });
+  title.addEventListener('blur', () => {
+    const text = title.value.trim();
+    if (!leo || !text || text === task.title) { title.value = task.title; fit(); return; }
+    patch({ title: text }).catch(fail);
+  });
+  const about = $('#cal-peek-about', side);
+  let timer = 0;
+  const flushAbout = () => {
+    clearTimeout(timer);
+    const text = about.value.trim();
+    if (text === (task.description || '')) return;
+    patch({ description: text }).catch(fail);
+  };
+  about.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flushAbout, 600); });
+  about.addEventListener('blur', flushAbout);
+  if (cal.peek) cal.peek.flush = flushAbout;
+  for (const b of side.querySelectorAll('[data-cal-scope]')) {
+    b.addEventListener('click', () => {
+      if (cal.peek) cal.peek.scope = b.dataset.calScope;
+      for (const o of side.querySelectorAll('[data-cal-scope]')) {
+        o.classList.toggle('on', o === b);
+        o.setAttribute('aria-pressed', String(o === b));
+      }
+    });
+  }
+  const when = () => {
+    const date = $('#cal-peek-date', side).value || null;
+    const startBox = $('#cal-peek-start', side);
+    const time = date ? startBox.value || null : null;
+    const endBox = $('#cal-peek-end', side);
+    const end = time && endBox ? endBox.value || null : null;
+    startBox.disabled = !date;
+    if (endBox) endBox.disabled = !time;
+    const next = { date, time, end };
+    if (!date) return repeating ? toast('A repeating task needs a day.', { bad: true }) : calSave(task, task, next, 'one');
+    const occurrence = repeating ? { ...task, ...slot, on: day, date: slot.date } : task;
+    return calSave(task, occurrence, next, repeating ? (cal.peek && cal.peek.scope) || 'one' : 'one');
+  };
+  for (const sel of ['#cal-peek-date', '#cal-peek-start', '#cal-peek-end']) $(sel, side)?.addEventListener('change', () => Promise.resolve(when()).catch(fail));
+  const repeatBox = $('#cal-peek-repeat', side);
+  if (repeatBox) repeatPicker(repeatBox, task.repeat || [], (days) => patch({ repeat: days }).catch(fail));
+  $('#cal-peek-kinds', side).addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-kind]');
+    if (!chip || chip.classList.contains('on')) return;
+    for (const c of side.querySelectorAll('[data-kind]')) {
+      c.classList.toggle('on', c === chip);
+      c.setAttribute('aria-pressed', String(c === chip));
+    }
+    patch({ kind: chip.dataset.kind }).catch(fail);
+  });
+}
 
 function taskDoneOn(task, on) {
   return on ? (task.done_on || []).includes(on) : Boolean(task.done);
@@ -353,16 +1025,8 @@ async function setTaskDone(id, done, on = null) {
     if (done) task.done_on = [...task.done_on, on].sort();
   } else if (task) task.done = done;
   finishTaskInWindow(id, done, on);
-  const rowOf = () => app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]${on ? `:has(.sched-check[data-on="${CSS.escape(on)}"])` : ''}`);
-  const row = rowOf();
-  if (row) row.classList.toggle('done', done);
-  if (done) {
-    toast('Done', { action: 'Undo', run: () => setTaskDone(id, false, on) });
-    setTimeout(() => {
-      const still = rowOf();
-      if (still && !cal.showDone && still.classList.contains('done')) slideHeight(still, still.getBoundingClientRect().height, 0, () => drawCalendar());
-    }, 1200);
-  } else drawCalendar();
+  if (done) toast('Done', { action: 'Undo', run: () => setTaskDone(id, false, on) });
+  drawCalendar();
   if (state.view === 'note' && task && task.note && state.session && state.session.note.id === task.note.id && !saving.unsaved()) showNote(task.note.id);
 }
 
@@ -441,10 +1105,7 @@ async function saveDate(task, pick, confirm) {
   toast(pick.date ? 'Date saved' : 'Date cleared');
   loadTasksWindow().catch(() => {});
   if (state.view === 'calendar') {
-    if (pick.date) {
-      cal.selected = pick.date;
-      cal.month = monthOf(pick.date);
-    }
+    if (pick.date) cal.selected = pick.date;
     await loadSchedule(seq);
   }
 }
@@ -486,10 +1147,7 @@ function newTaskSheet(day = null) {
       toast(`Added “${made.title}”`);
       loadTasksWindow().catch(() => {});
       if (state.view === 'calendar') {
-        if (made.date && !S.repeats(made)) {
-          cal.selected = made.date;
-          cal.month = monthOf(made.date);
-        }
+        if (made.date && !S.repeats(made)) cal.selected = made.date;
         await loadSchedule(seq);
       }
     } catch (e) {
@@ -624,6 +1282,7 @@ async function deleteTask(id) {
   try {
     const gone = await api(`/api/tasks/${enc(id)}`, { method: 'DELETE' });
     closeSheet();
+    if (cal.peek && cal.peek.id === id) calClosePeek();
     if (gone && task && task.source === 'leo') {
       toast(`Deleted “${gone.title}”`, {
         action: 'Undo',
@@ -638,27 +1297,6 @@ async function deleteTask(id) {
     if (e instanceof Locked) throw e;
     toast(e.message, { bad: true });
   }
-}
-
-function eventSheet(id) {
-  const event = ((cal.data && cal.data.events) || []).find((e) => e.id === id);
-  if (!event) return;
-  const when = event.all_day
-    ? S.fromKey(event.date).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' })
-    : `${new Date(event.start).toLocaleString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} – ${new Date(event.end).toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' })}`;
-  const soon = !event.all_day && new Date(event.start) - Date.now() < 15 * 60000 && new Date(event.end) > Date.now();
-  const about = S.eventDetails(event.context);
-  const where = event.location || about.place;
-  const linked = (text) => (/^https?:\/\/\S+$/i.test(text) ? `<a href="${esc(text)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text));
-  sheet(`<h3>${esc(event.title)}</h3>
-    <div class="set-row"><span class="set-label">When</span><span class="set-value">${esc(when)}</span></div>
-    ${where ? `<div class="set-row"><span class="set-label">Where</span><span class="set-value sched-wrap">${linked(where)}</span></div>` : ''}
-    <div class="set-row"><span class="set-label">Calendar</span><span class="set-value">${esc(event.calendar || 'Google')}</span></div>
-    ${about.organiser ? `<div class="set-row"><span class="set-label">Organiser</span><span class="set-value sched-wrap">${esc(about.organiser)}</span></div>` : ''}
-    ${about.invited.length ? `<div class="set-row"><span class="set-label">Invited</span><span class="set-value sched-people">${about.invited.map((p) => `<span class="chip">${esc(p)}</span>`).join('')}</span></div>` : ''}
-    ${about.description ? `<div class="sched-about prose">${S.richText(about.description)}</div>` : ''}
-    ${event.zone_unknown ? '<p class="set-note warn">This event names a time zone leo does not know, so its time may be off.</p>' : ''}
-    <div class="buttons"><button type="button" class="btn plain" data-action="close">Close</button>${soon ? '<button type="button" class="btn primary" data-action="record">Record this meeting</button>' : ''}</div>`);
 }
 
 async function noteTasksSheet() {

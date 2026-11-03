@@ -1964,8 +1964,8 @@ test.describe('readability', () => {
       const tag = `${test.info().project.name}-${scheme}-${Date.now()}`;
       const task = await (await page.request.post('/api/tasks', { data: { title: `Readable task ${tag}` } })).json();
       await page.goto('/#/calendar');
-      await page.locator(`.sched-main[data-id="${task.id}"]:visible`).click();
-      await expect(page.locator('.sheet .btn.danger')).toBeVisible();
+      await page.locator(`.cal-open[data-id="${task.id}"]:visible`).click();
+      await expect(page.locator('#cal-side .btn.danger')).toBeVisible();
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.keyboard.press('Escape');
@@ -4424,46 +4424,42 @@ test.describe('reading', () => {
 });
 
 test.describe('calendar', () => {
-  test('task descriptions can be added, edited, cleared and undone without losing focus', async ({ page }) => {
+  test('task descriptions can be added, edited and cleared beside the calendar without losing focus', async ({ page }) => {
     const title = `Description ${test.info().project.name} ${Date.now().toString(36)}`;
     const details = 'Read chapter 3\nBring café notes; <b>plain text</b>';
+    const saved = async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.title === title);
     await page.goto('/#/calendar');
-    await page.locator('.sched-head [data-action="task-new"]').click();
+    await page.locator('.cal-head [data-action="task-new"]').click();
     await page.locator('#task-title').fill(title);
+    await page.locator('.sheet [data-pick-day=""]').click();
     const description = page.locator('#task-description');
     await expect(description).toHaveAttribute('placeholder', 'Add a description…');
     await description.fill(details);
     await page.locator('#task-add').click();
     await expect(page.locator('.toast')).toContainText(`Added “${title}”`);
-    await page.locator('#sched-page .sched-list:visible .sched-main', { hasText: title }).click();
-    await expect(description).toHaveValue(details);
-    await expect(page.locator('#task-description-save')).toBeDisabled();
-    await description.fill('Revised details');
-    await page.locator('#task-description-save').click();
-    await expect(page.locator('.toast')).toContainText('Description saved');
-    await expect(description).toHaveValue('Revised details');
-    await page.locator('.toast button', { hasText: 'Undo' }).click();
-    await expect(description).toHaveValue(details);
-    await description.fill('');
-    await page.locator('#task-description-save').click();
-    await expect(page.locator('#task-description-save')).toBeDisabled();
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.sheet')).toHaveCount(0);
-    await page.locator('#sched-page .sched-list:visible .sched-main', { hasText: title }).click();
-    await expect(description).toHaveValue('');
-    await expect(description).toHaveAttribute('placeholder', 'Add a description…');
+    await page.locator('#cal-side .cal-tray-row .cal-open', { hasText: title }).click();
+    const about = page.locator('#cal-peek-about');
+    await expect(about).toHaveValue(details);
+    await about.fill('Revised details');
+    await expect.poll(async () => (await saved()).description).toBe('Revised details');
+    await expect(page.locator('#cal-peek-saved')).toHaveText('Saved');
+    await about.fill('');
+    await expect.poll(async () => (await saved()).description).toBe('');
+    await expect(about).toHaveAttribute('placeholder', 'Add a description…');
     await page.route('**/api/tasks/*', async (route) => {
       if (route.request().method() !== 'PATCH') return route.continue();
       await new Promise((resolve) => setTimeout(resolve, 250));
       await route.continue();
     });
-    await description.fill('Saving this');
-    await page.locator('#task-description-save').click();
-    await description.fill('Still typing after Save');
-    await expect(description).toBeFocused();
-    await expect(page.locator('#task-description-save')).toBeEnabled();
-    await expect(description).toHaveValue('Still typing after Save');
-    expect(await page.locator('.sheet').evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await about.fill('Saving this');
+    await page.waitForTimeout(700);
+    await about.pressSequentially(' and still typing');
+    await expect(about).toBeFocused();
+    await expect(about).toHaveValue('Saving this and still typing');
+    await expect.poll(async () => (await saved()).description).toBe('Saving this and still typing');
+    await page.locator('.cal-name').click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#cal-side.peek')).toHaveCount(0);
   });
 
   test('tasks are added, dated, ticked off and sent to Google Calendar from the Calendar page', async ({ page }) => {
@@ -4480,23 +4476,24 @@ test.describe('calendar', () => {
     await page.goto('/');
     await goPlace(page, 'calendar');
     await expect(page).toHaveURL(/#\/calendar$/);
-    const box = page.locator('#sched-page');
-    await expect(box.locator('.sched-head h1')).toHaveText('Calendar');
-    const noDate = box.locator('.sched-list:visible', { hasText: 'No date' });
+    const box = page.locator('#cal-page');
+    await expect(page.locator('#side')).toBeVisible();
+    const noDate = box.locator('.cal-tray-list', { hasText: 'No date' });
     await expect(noDate).toContainText(`Ask tutor ${tag}`);
 
-    await noDate.locator(`.sched-row[data-task="${undated.id}"] [data-action="task-date"]`).click();
-    await page.locator('.sheet [data-pick-day]').filter({ hasText: 'Tomorrow' }).click();
-    await page.locator('.sheet [data-pick-time="09:00"]').click();
-    await page.locator('#pick-save').click();
-    await expect(page.locator('.toast')).toContainText('Date saved');
-    const row = box.locator(`.sched-agenda .sched-row[data-task="${undated.id}"]`);
-    await expect(row).toContainText(`Ask tutor ${tag}`);
-    const saved = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id);
-    expect(saved.time).toBe('09:00:00');
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    await noDate.locator(`.cal-open[data-id="${undated.id}"]`).click();
+    await page.locator('#cal-peek-date').fill(today);
+    await page.locator('#cal-peek-date').dispatchEvent('change');
+    await expect(page.locator('#cal-peek-start')).toBeEnabled();
+    await page.locator('#cal-peek-start').fill('09:00');
+    await page.locator('#cal-peek-start').dispatchEvent('change');
+    await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id).time).toBe('09:00:00');
+    const item = box.locator(`.cal-col .cal-item[data-id="${undated.id}"]`);
+    await expect(item).toContainText(`Ask tutor ${tag}`);
 
-    await row.locator('.sched-main').click();
-    await page.locator('.sheet [data-action="task-google"]').click();
+    await page.locator('#cal-side [data-action="task-google"]').click();
     const opened = await page.evaluate(() => window.__opened);
     expect(opened.length).toBe(1);
     const link = new URL(opened[0]);
@@ -4505,7 +4502,7 @@ test.describe('calendar', () => {
     expect(link.searchParams.get('details')).toContain(`leo-task:${undated.id.slice(0, 12)}`);
     await expect(page.locator('.toast')).toContainText('Opened in Google Calendar');
 
-    await row.locator('.sched-check').click();
+    await item.locator('.cal-check').click();
     await expect(page.locator('.toast')).toContainText('Done');
     await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id).done).toBe(true);
     await page.locator('.toast button', { hasText: 'Undo' }).click();
@@ -4522,11 +4519,11 @@ test.describe('calendar', () => {
     const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
     const note = await (await page.request.post('/api/notes', { data: { title: `Plans ${tag}`, body: 'Ideas\n- [ ] Book the room\nEnd' } })).json();
     await page.goto('/#/calendar');
-    await page.locator('.sched-head [data-action="task-new"]').click();
+    await page.locator('.cal-head [data-action="task-new"]').click();
     await page.locator('#task-title').fill(`Send slides ${tag}`);
     await page.locator('#task-title').press('Enter');
     await expect(page.locator('.toast')).toContainText(`Added “Send slides ${tag}”`);
-    await expect(page.locator('#sched-page .sched-list:visible').getByText(`Send slides ${tag}`)).toBeVisible();
+    await expect(page.locator('#cal-page .cal-item', { hasText: `Send slides ${tag}` })).toBeVisible();
 
     await page.goto(`/#/n/${note.id}`);
     await page.locator('[data-action="note-tasks"]').click();
@@ -6054,8 +6051,8 @@ test('a calendar event shows its organiser, guests and formatted description, wi
   const event = { id: 'event-rich-1', title: 'Data/Algos Interview', start: start.toISOString(), end: end.toISOString(), all_day: false, location: '', calendar: 'Work', context: `Calendar event: Data/Algos Interview\nOrganised by: c_c463e763f192@group.calendar.google.com\nInvited: GoodTime Sync, charlton@ucla.edu\nDescription:\n${description}` };
   await page.route('**/api/schedule?*', (route) => route.fulfill({ json: { connected: true, events: [event], tasks: [], warnings: [] } }));
   await page.goto('/#/calendar');
-  await page.locator('[data-action="event-open"][data-id="event-rich-1"]').first().click();
-  const sheet = page.locator('.sheet');
+  await page.locator('.cal-open[data-id="event-rich-1"]').first().click();
+  const sheet = page.locator('#cal-side.peek');
   await expect(sheet).toContainText('Organiser');
   await expect(sheet).toContainText('A shared calendar');
   await expect(sheet).not.toContainText('group.calendar.google.com');

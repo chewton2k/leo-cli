@@ -38,30 +38,24 @@ const actions = {
   'kanban-open-card': (el) => kanbanCardPanel(el.dataset.card),
   'cal-pick': (el) => {
     cal.selected = el.dataset.day;
-    if (cal.gridOpen && !window.matchMedia('(min-width: 600px)').matches) cal.gridOpen = false;
-    const month = monthOf(cal.selected);
-    if (month.getTime() !== cal.month.getTime()) {
-      cal.month = month;
-      drawCalendar();
-      return loadSchedule(seq);
-    }
-    drawCalendar();
+    if (el.dataset.to) calSetView(el.dataset.to);
+    calGo();
   },
-  'cal-prev': () => calShiftMonth(-1),
-  'cal-next': () => calShiftMonth(1),
+  'cal-prev': () => calStep(-1),
+  'cal-next': () => calStep(1),
   'cal-today': () => {
     cal.selected = S.dayKey(new Date());
-    const month = monthOf(cal.selected);
-    const moved = month.getTime() !== cal.month.getTime();
-    cal.month = month;
-    drawCalendar();
-    if (moved) return loadSchedule(seq);
+    calGo();
   },
-  'cal-month': () => {
-    if (window.matchMedia('(min-width: 600px)').matches) return;
-    cal.gridOpen = !cal.gridOpen;
-    drawCalendar();
+  'cal-view': (el) => calSetView(el.dataset.view),
+  'cal-mini': (el) => {
+    const at = S.fromKey(cal.selected);
+    const m = new Date(at.getFullYear(), at.getMonth() + Number(el.dataset.step), 1);
+    cal.selected = S.dayKey(m);
+    calGo();
   },
+  'cal-open': (el) => calOpenPeek(el.dataset.kind, el.dataset.id, el.dataset.on || null),
+  'cal-peek-close': () => calClosePeek(),
   'cal-retry': () => {
     cal.polls = 0;
     return api('/api/calendar/refresh', { method: 'POST' }).catch(() => null).then(() => loadSchedule(seq));
@@ -85,15 +79,13 @@ const actions = {
     const done = el.dataset.set ? el.dataset.set === '1' : !(task && taskDoneOn(task, on));
     if (el.dataset.set) closeSheet();
     return setTaskDone(id, done, on).then(() => {
-      const box = app.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]${on ? `[data-on="${CSS.escape(on)}"]` : ''}`);
-      if (box) box.checked = done;
+      for (const box of document.querySelectorAll(`.cal-check[data-id="${CSS.escape(id)}"]${on ? `[data-on="${CSS.escape(on)}"]` : ''}`)) box.checked = done;
     });
   },
   'task-date': (el) => dateSheet(el.dataset.id),
   'task-google': (el) => addToGoogle(el.dataset.id),
   'task-delete': (el) => deleteTask(el.dataset.id),
   'task-promote': (el) => promoteTask(el.dataset.line),
-  'event-open': (el) => eventSheet(el.dataset.id),
   'note-tasks': () => noteTasksSheet(),
   'tasks-fold': () => toggleTasksWindow(),
   'source-close': closeSource,

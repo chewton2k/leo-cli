@@ -139,8 +139,6 @@ reader, seer, meaning, web, room, speech).
   `--accent-text` for legible text on colored backgrounds in both themes.
   Chat deletion icons stay fully opaque on touch screens; readability checks
   seed multiple chats so unselected icons are covered too.
-  The calendar's completed-task toggle sits at the right of the agenda's
-  date heading, with the date wrapping on narrow screens.
   Interview section disclosures reuse `source-more` and `ICON.chevron`,
   including the existing keyboard behavior and quick expand/collapse motion.
   Native dropdowns share `select-control` and the same SVG chevron across
@@ -859,6 +857,14 @@ the same idle loop.
   with M T W T F S S bubbles in New task and the task sheet; `date` is when it
   starts (today if unset); `done_on` keeps the days ticked (≤
   `MOST_DONE_DAYS`). PATCH `{done, on}` sets one day. Never overdue.
+  One day moves on its own (2026-11-03, the user's call): `moved` maps the
+  occurrence's original date to `{date, time, end}` (≤ `MOST_MOVED`, oldest
+  dropped; absent when empty, so old files are unchanged). PATCH
+  `{occurrence, date, time, end}` writes it (a move back to the series slot
+  removes it); `on` stays the original date, so done days follow the move.
+  `tasks::occurs_on` (Felix's list_schedule) and `schedule.occurrences` apply
+  it; the .ics adds EXDATE plus a RECURRENCE-ID event per move; the Google
+  link carries the weekly rule only. Felix's `on` still means done only.
   `schedule.plan(tasks, events, today, {from, to})` expands occurrences; the
   Tasks panel shows the next open one; ICS and Google get a weekly RRULE.
 - Event sheet (2026-10-19): `schedule.eventDetails` splits the event
@@ -868,11 +874,31 @@ the same idle loop.
   italics, lists, paragraphs and https/mailto links (`noopener`), dropping
   scripts, styles, images, attributes and other tags, and links bare URLs in
   plain text.
-- Calendar page: colors follow the event title (`--hue-0..7`) and task kind
-  (`TASK_TONES`); month dots, an agenda with a now line, Coming up, Overdue,
-  No date. Completed tasks show by default; "Hide completed" is remembered
-  (`leo-calendar-hide-done`). Add to Google Calendar opens Google's prefilled
-  page (no sign-in).
+- Calendar page (2026-11-03, the user's call: a full screen like Notion
+  Calendar; design in docs/superpowers/2026-11-03-calendar-page-design.md):
+  Day, Week and Month (`leo-calendar-view`; D W M, J/K, T keys) in normal flow
+  beside the rail and explorer (never `position: fixed` over `--side`; a
+  narrow window's peek is fixed but starts at `--side`). Week/Day is an hour
+  grid (`CAL_HOUR_PX` 48, 15-minute snap) with an All day row of spanning bars
+  (`schedule.lanes`), side-by-side overlaps (`schedule.dayColumns`) and a now
+  line; Month shows three chips a day and "n more" (Day view). The right tray
+  holds a mini month, Overdue and No date. Pointer drags (boards' rules: 5 px
+  or a 300 ms touch hold, capture on `#app`, Escape cancels, the click after
+  a drop is swallowed) move a task (Month: day only), resize a Leo task's end
+  by its bottom edge, schedule a tray task, or sweep empty time into an inline
+  composer (a click gives an hour; a month or all-day cell an untimed task).
+  Saves are optimistic with rollback and Undo; a 409 goes through `saveDate`;
+  repeating tasks ask Only this one / Every time (Every time shifts `date` and
+  the weekdays by the day moved). Polls that land mid-drag or mid-compose wait
+  (`cal.stale`). Clicking an item opens a side peek in the tray's place
+  (`#cal-side.peek`, 340 px): title, done, date/start/end with a This one /
+  Every time scope for repeats, repeat days, type, a description that autosaves
+  600 ms after typing and on blur, note, Google, .ics, Delete; events are
+  read-only. Colors follow the event title (`--hue-0..7`) and task kind
+  (`TASK_TONES`). "Hide completed" is remembered (`leo-calendar-hide-done`).
+  Add to Google Calendar opens Google's prefilled page (no sign-in). Tests:
+  `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
+  API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
 - Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /
   Coming up 7 days / No date), folds (`leo-tasks-folded`) to one round icon
   with a count badge (`.tasks-pill`, red when something is overdue) that opens

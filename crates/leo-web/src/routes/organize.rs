@@ -872,20 +872,31 @@ fn schedule(state: &AppState, call: &Call) -> Done {
                 format!("- {when} {}{place} (event in {calendar})", e.title),
             ));
         }
-        for t in all.iter().filter(|t| {
-            (t.repeat.is_empty() && t.date == Some(day))
-                || tasks::repeats_on(&t.repeat, t.date, day)
-        }) {
+        for t in &all {
+            let on = if t.repeat.is_empty() {
+                (t.date == Some(day)).then_some(day)
+            } else {
+                tasks::occurs_on(&t.repeat, t.date, &t.moved, day)
+            };
+            let Some(on) = on else { continue };
+            let mut seen = t.clone();
+            if let Some(slot) = t.moved.get(&on).filter(|_| !t.repeat.is_empty()) {
+                seen.time = slot.time;
+            }
             items.push((
-                t.time
+                seen.time
                     .map(|tm| tm.format("%H:%M").to_string())
                     .unwrap_or_else(|| "00:00".into()),
                 if t.repeat.is_empty() {
                     task_line(t)
                 } else {
-                    let mut on = t.clone();
-                    on.done = t.done_on.contains(&day);
-                    format!("{} · repeats weekly", task_line(&on))
+                    seen.done = t.done_on.contains(&on);
+                    let from = if on == day {
+                        String::new()
+                    } else {
+                        format!(" · moved here from {on} (on: {on})")
+                    };
+                    format!("{} · repeats weekly{from}", task_line(&seen))
                 },
             ));
         }

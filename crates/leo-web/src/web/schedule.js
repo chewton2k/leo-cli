@@ -52,7 +52,12 @@
       return out;
     }
     const start = new Date(event.start);
-    return Number.isNaN(start.getTime()) ? [] : [dayKey(start)];
+    if (Number.isNaN(start.getTime())) return [];
+    const end = new Date(event.end);
+    const out = [dayKey(start)];
+    if (Number.isNaN(end.getTime())) return out;
+    for (let d = addDays(start, 1); d < end && out.length < 31; d = addDays(d, 1)) out.push(dayKey(d));
+    return out;
   }
 
   const BYDAY = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
@@ -69,18 +74,102 @@
     return repeats(task) && task.repeat.includes(weekdayOf(key)) && (!task.date || key >= task.date);
   }
 
-  function occurrence(task, key) {
-    return { ...task, date: key, done: (task.done_on || []).includes(key), on: key };
+  function occurrence(task, key, slot = null) {
+    const at = slot ? { date: slot.date, time: slot.time || null, end: slot.time ? slot.end || null : null } : { date: key };
+    return { ...task, ...at, done: (task.done_on || []).includes(key), on: key, shifted: Boolean(slot) };
   }
 
   function occurrences(task, from, to) {
     const out = [];
     if (!repeats(task)) return out;
+    const moved = task.moved || {};
     for (let d = fromKey(from); dayKey(d) <= to && out.length < 400; d = addDays(d, 1)) {
       const key = dayKey(d);
-      if (repeatsOn(task, key)) out.push(occurrence(task, key));
+      if (repeatsOn(task, key) && !moved[key]) out.push(occurrence(task, key));
+    }
+    for (const [key, slot] of Object.entries(moved)) {
+      if (slot && slot.date >= from && slot.date <= to && repeatsOn(task, key)) out.push(occurrence(task, key, slot));
+    }
+    return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  }
+
+  function minutesOf(time) {
+    const [h, m] = String(time || '0:0').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+
+  function timeOf(minutes) {
+    const at = Math.max(0, Math.min(24 * 60 - 1, Math.round(minutes)));
+    return `${pad(Math.floor(at / 60))}:${pad(at % 60)}`;
+  }
+
+  function snap(minutes, step = 15) {
+    return Math.round(minutes / step) * step;
+  }
+
+  function daysOf(view, key, firstDay = 0) {
+    if (view === 'day') return [key];
+    if (view === 'week') return weekOf(fromKey(key), firstDay);
+    const d = fromKey(key);
+    return monthGrid(d.getFullYear(), d.getMonth(), firstDay).map((c) => c.key);
+  }
+
+  function spanOn(item, key, least = 30) {
+    if (item.type === 'task') {
+      const start = minutesOf(item.task.time);
+      const end = item.task.end ? minutesOf(item.task.end) : 0;
+      return { start, end: Math.min(24 * 60, Math.max(end, start + least)) };
+    }
+    const from = new Date(item.event.start);
+    const to = new Date(item.event.end);
+    const dayStart = fromKey(key).getTime();
+    const dayEnd = addDays(fromKey(key), 1).getTime();
+    const start = from.getTime() <= dayStart ? 0 : from.getHours() * 60 + from.getMinutes();
+    const end = Number.isNaN(to.getTime()) || to.getTime() >= dayEnd ? 24 * 60 : to.getHours() * 60 + to.getMinutes();
+    return { start, end: Math.min(24 * 60, Math.max(end, start + least)) };
+  }
+
+  function dayColumns(spans) {
+    const order = spans.map((s, i) => i).sort((a, b) => spans[a].start - spans[b].start || spans[b].end - spans[a].end);
+    const out = spans.map(() => ({ col: 0, cols: 1 }));
+    let group = [];
+    let ends = [];
+    let groupEnd = -1;
+    const close = () => {
+      for (const i of group) out[i].cols = ends.length;
+      group = [];
+      ends = [];
+    };
+    for (const i of order) {
+      const { start, end } = spans[i];
+      if (start >= groupEnd) close();
+      let col = ends.findIndex((e) => e <= start);
+      if (col < 0) col = ends.length;
+      ends[col] = end;
+      out[i].col = col;
+      group.push(i);
+      groupEnd = Math.max(groupEnd, end);
+    }
+    close();
+    return out;
+  }
+
+  function lanes(spans) {
+    const order = spans.map((s, i) => i).sort((a, b) => spans[a].a - spans[b].a || spans[b].b - spans[a].b);
+    const last = [];
+    const out = spans.map(() => 0);
+    for (const i of order) {
+      let lane = last.findIndex((b) => b < spans[i].a);
+      if (lane < 0) lane = last.length;
+      last[lane] = spans[i].b;
+      out[i] = lane;
     }
     return out;
+  }
+
+  function shiftRepeat(repeat, days) {
+    const by = ((days % 7) + 7) % 7;
+    return [...new Set((repeat || []).map((d) => (d + by) % 7))].sort((a, b) => a - b);
   }
 
   function nextOpen(task, from, to) {
@@ -392,7 +481,7 @@
   }
 
 
-  const api = { quickParse, quickRank, richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
+  const api = { minutesOf, timeOf, snap, daysOf, spanOn, dayColumns, lanes, shiftRepeat, quickParse, quickRank, richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);

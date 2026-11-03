@@ -303,3 +303,54 @@ fn checkbox_descriptions_are_separate_from_the_note_and_survive_date_and_kind_ch
     assert_eq!(listed(&state)[0]["description"], "");
     assert_eq!(listed(&state)[0]["id"], id);
 }
+
+#[test]
+fn one_day_of_a_repeating_task_moves_without_moving_the_rest() {
+    let (state, _d, _ids) = state_with(&[]);
+    let made = json_of(run(create_task(
+        State(state.clone()),
+        Json(
+            serde_json::from_value(serde_json::json!({"title": "Gym", "date": "2026-11-02", "time": "09:00", "repeat": [0, 2]}))
+                .unwrap(),
+        ),
+    )));
+    let id = made["id"].as_str().unwrap();
+    let moved = json_of(change(
+        &state,
+        id,
+        serde_json::json!({"occurrence": "2026-11-04", "date": "2026-11-05", "time": "15:00", "end": "16:00"}),
+    ));
+    assert_eq!(moved["date"], "2026-11-02", "the series keeps its start");
+    assert_eq!(moved["moved"]["2026-11-04"]["date"], "2026-11-05");
+    assert_eq!(moved["moved"]["2026-11-04"]["end"], "16:00:00");
+    let done = json_of(change(
+        &state,
+        id,
+        serde_json::json!({"done": true, "on": "2026-11-04"}),
+    ));
+    assert_eq!(
+        done["done_on"],
+        serde_json::json!(["2026-11-04"]),
+        "done keeps the original day"
+    );
+    assert_eq!(
+        change(
+            &state,
+            id,
+            serde_json::json!({"occurrence": "2026-11-03", "date": "2026-11-05"})
+        )
+        .status(),
+        400,
+        "a Tuesday is not one of its days"
+    );
+    assert_eq!(
+        change(&state, id, serde_json::json!({"occurrence": "2026-11-04"})).status(),
+        400
+    );
+    let back = json_of(change(
+        &state,
+        id,
+        serde_json::json!({"occurrence": "2026-11-04", "date": "2026-11-04", "time": "09:00"}),
+    ));
+    assert!(back.get("moved").is_none(), "{back}");
+}

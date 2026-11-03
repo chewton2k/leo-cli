@@ -54,11 +54,23 @@ pub struct Task {
     pub repeat: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub done_on: Vec<NaiveDate>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub moved: BTreeMap<NaiveDate, Slot>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Slot {
+    pub date: NaiveDate,
+    #[serde(default)]
+    pub time: Option<NaiveTime>,
+    #[serde(default)]
+    pub end: Option<NaiveTime>,
+}
+
 pub const MOST_DONE_DAYS: usize = 400;
+pub const MOST_MOVED: usize = 400;
 
 pub fn clean_repeat(days: &[u8]) -> Vec<u8> {
     let mut out: Vec<u8> = days.iter().copied().filter(|d| *d < 7).collect();
@@ -72,6 +84,32 @@ pub fn repeats_on(repeat: &[u8], start: Option<NaiveDate>, day: NaiveDate) -> bo
     !repeat.is_empty()
         && repeat.contains(&(day.weekday().num_days_from_monday() as u8))
         && start.is_none_or(|start| day >= start)
+}
+
+pub fn occurs_on(
+    repeat: &[u8],
+    start: Option<NaiveDate>,
+    moved: &BTreeMap<NaiveDate, Slot>,
+    day: NaiveDate,
+) -> Option<NaiveDate> {
+    if !moved.contains_key(&day) && repeats_on(repeat, start, day) {
+        return Some(day);
+    }
+    moved
+        .iter()
+        .find(|(on, slot)| slot.date == day && repeats_on(repeat, start, **on))
+        .map(|(on, _)| *on)
+}
+
+pub fn move_occurrence(task: &mut Task, on: NaiveDate, slot: Slot) {
+    if slot.date == on && slot.time == task.time && slot.end == task.end {
+        task.moved.remove(&on);
+    } else {
+        task.moved.insert(on, slot);
+    }
+    while task.moved.len() > MOST_MOVED {
+        task.moved.pop_first();
+    }
 }
 
 const WEEKDAYS: [&str; 7] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
@@ -179,6 +217,8 @@ pub struct Listed {
     pub repeat: Vec<u8>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub done_on: Vec<NaiveDate>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub moved: BTreeMap<NaiveDate, Slot>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -304,6 +344,7 @@ fn listed(
         sent_at,
         repeat: Vec::new(),
         done_on: Vec::new(),
+        moved: BTreeMap::new(),
     }
 }
 
@@ -334,6 +375,7 @@ pub fn standalone(task: &Task, store: Option<&Store>) -> Listed {
         sent_at: task.sent_at,
         repeat: task.repeat.clone(),
         done_on: task.done_on.clone(),
+        moved: task.moved.clone(),
     }
 }
 
@@ -369,25 +411,25 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
         format!("DTSTAMP:{}", stamp.format("%Y%m%dT%H%M%SZ")),
         format!("SUMMARY:{}", escape(&task.title)),
     ];
-    match (task.date, task.time) {
-        (Some(date), Some(time)) => {
-            let at = date.and_time(time);
-            let start = task.end.map_or(at - chrono::Duration::minutes(30), |_| at);
-            let end = task.end.map_or(at, |e| date.and_time(e));
-            lines.push(format!("DTSTART:{}", start.format("%Y%m%dT%H%M%S")));
-            lines.push(format!("DTEND:{}", end.format("%Y%m%dT%H%M%S")));
-        }
-        (Some(date), None) => {
-            lines.push(format!("DTSTART;VALUE=DATE:{}", date.format("%Y%m%d")));
-            lines.push(format!(
-                "DTEND;VALUE=DATE:{}",
-                (date + chrono::Duration::days(1)).format("%Y%m%d")
-            ));
-        }
-        _ => {}
+    if let Some(date) = task.date {
+        lines.extend(when_lines(date, task.time, task.end, "DTSTART", "DTEND"));
     }
+    let mut moves = Vec::new();
     if let Some(rule) = rrule_of(&task.repeat) {
         lines.push(rule);
+        for (on, slot) in &task.moved {
+            let [was, _] = when_lines(*on, task.time, task.end, "", "");
+            lines.push(format!("EXDATE{was}"));
+            moves.push("BEGIN:VEVENT".to_string());
+            moves.push(format!("UID:{}@leo", task.id));
+            moves.push(format!("DTSTAMP:{}", stamp.format("%Y%m%dT%H%M%SZ")));
+            moves.push(format!("RECURRENCE-ID{was}"));
+            moves.push(format!("SUMMARY:{}", escape(&task.title)));
+            moves.extend(when_lines(
+                slot.date, slot.time, slot.end, "DTSTART", "DTEND",
+            ));
+            moves.push("END:VEVENT".into());
+        }
     }
     let from = task
         .note
@@ -404,8 +446,36 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
         task.id.chars().take(12).collect::<String>()
     ));
     lines.push("END:VEVENT".into());
+    lines.extend(moves);
     lines.push("END:VCALENDAR".into());
     lines.join("\r\n") + "\r\n"
+}
+
+fn when_lines(
+    date: NaiveDate,
+    time: Option<NaiveTime>,
+    end: Option<NaiveTime>,
+    start_name: &str,
+    end_name: &str,
+) -> [String; 2] {
+    match time {
+        Some(time) => {
+            let at = date.and_time(time);
+            let start = end.map_or(at - chrono::Duration::minutes(30), |_| at);
+            let stop = end.map_or(at, |e| date.and_time(e));
+            [
+                format!("{start_name}:{}", start.format("%Y%m%dT%H%M%S")),
+                format!("{end_name}:{}", stop.format("%Y%m%dT%H%M%S")),
+            ]
+        }
+        None => [
+            format!("{start_name};VALUE=DATE:{}", date.format("%Y%m%d")),
+            format!(
+                "{end_name};VALUE=DATE:{}",
+                (date + chrono::Duration::days(1)).format("%Y%m%d")
+            ),
+        ],
+    }
 }
 
 pub fn db_of(chats: &Path) -> std::sync::Arc<crate::db::Db> {
@@ -749,6 +819,7 @@ mod tests {
                     updated_at: now,
                     repeat: Vec::new(),
                     done_on: Vec::new(),
+                    moved: BTreeMap::new(),
                     deleted: false,
                 },
                 None,
@@ -786,6 +857,7 @@ mod tests {
             updated_at: at,
             repeat: Vec::new(),
             done_on: Vec::new(),
+            moved: BTreeMap::new(),
             deleted: false,
         }
     }
@@ -956,6 +1028,109 @@ mod tests {
             rrule_of(&[0, 4]).as_deref(),
             Some("RRULE:FREQ=WEEKLY;BYDAY=MO,FR")
         );
+    }
+
+    #[test]
+    fn a_moved_occurrence_keeps_its_original_day_as_its_name() {
+        let monday = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let wednesday = monday + chrono::Duration::days(2);
+        let thursday = monday + chrono::Duration::days(3);
+        let three = NaiveTime::from_hms_opt(15, 0, 0);
+        let mut task = plain("task-0011", "Gym", Utc::now());
+        task.repeat = vec![0, 2];
+        task.date = Some(monday);
+        task.time = NaiveTime::from_hms_opt(9, 0, 0);
+        let none = BTreeMap::new();
+        assert_eq!(
+            occurs_on(&task.repeat, task.date, &none, wednesday),
+            Some(wednesday)
+        );
+        move_occurrence(
+            &mut task,
+            wednesday,
+            Slot {
+                date: thursday,
+                time: three,
+                end: None,
+            },
+        );
+        assert_eq!(
+            occurs_on(&task.repeat, task.date, &task.moved, wednesday),
+            None
+        );
+        assert_eq!(
+            occurs_on(&task.repeat, task.date, &task.moved, thursday),
+            Some(wednesday)
+        );
+        assert_eq!(
+            occurs_on(&task.repeat, task.date, &task.moved, monday),
+            Some(monday)
+        );
+        let (time, end) = (task.time, task.end);
+        move_occurrence(
+            &mut task,
+            wednesday,
+            Slot {
+                date: wednesday,
+                time,
+                end,
+            },
+        );
+        assert!(task.moved.is_empty(), "moving it back forgets the move");
+        for week in 0..(MOST_MOVED as i64 + 5) {
+            let on = monday + chrono::Duration::weeks(week);
+            move_occurrence(
+                &mut task,
+                on,
+                Slot {
+                    date: on,
+                    time: three,
+                    end: None,
+                },
+            );
+        }
+        assert_eq!(task.moved.len(), MOST_MOVED);
+        assert!(
+            !task.moved.contains_key(&monday),
+            "the oldest moves go first"
+        );
+    }
+
+    #[test]
+    fn a_task_without_moves_is_written_exactly_as_before() {
+        let task = plain("task-0012", "Plain", Utc::now());
+        let text = serde_json::to_string(&task).unwrap();
+        assert!(!text.contains("moved"), "{text}");
+        let back: Task = serde_json::from_str(&text).unwrap();
+        assert!(back.moved.is_empty());
+    }
+
+    #[test]
+    fn calendar_files_skip_a_moved_day_and_add_it_where_it_went() {
+        let monday = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let mut task = plain("task-0013", "Gym", Utc::now());
+        task.repeat = vec![0];
+        task.date = Some(monday);
+        task.time = NaiveTime::from_hms_opt(9, 0, 0);
+        task.end = NaiveTime::from_hms_opt(10, 0, 0);
+        let next = monday + chrono::Duration::weeks(1);
+        move_occurrence(
+            &mut task,
+            next,
+            Slot {
+                date: next + chrono::Duration::days(1),
+                time: NaiveTime::from_hms_opt(18, 0, 0),
+                end: NaiveTime::from_hms_opt(19, 0, 0),
+            },
+        );
+        let ics = ics_of(&standalone(&task, None), Utc::now());
+        assert!(ics.contains("EXDATE:20261109T090000\r\n"), "{ics}");
+        assert!(ics.contains("RECURRENCE-ID:20261109T090000\r\n"), "{ics}");
+        assert!(
+            ics.contains("DTSTART:20261110T180000\r\nDTEND:20261110T190000"),
+            "{ics}"
+        );
+        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 2);
     }
 }
 

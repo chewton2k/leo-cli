@@ -131,6 +131,7 @@ pub(crate) async fn create_task(
         updated_at: now,
         repeat,
         done_on: Vec::new(),
+        moved: Default::default(),
         deleted: false,
     };
     if tasks::put(&chats, &task).is_err() {
@@ -169,6 +170,8 @@ pub(crate) struct Change {
     repeat: Option<Vec<u8>>,
     #[serde(default)]
     on: Option<NaiveDate>,
+    #[serde(default)]
+    occurrence: Option<NaiveDate>,
 }
 
 pub(crate) async fn change_task(
@@ -234,7 +237,26 @@ pub(crate) async fn change_task(
                 }
             }
         }
-        if let Some(date) = change.date {
+        if let Some(on) = change.occurrence {
+            if !tasks::repeats_on(&task.repeat, task.date, on) {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "That day is not one of this task's days.",
+                );
+            }
+            let Some(date) = change.date.flatten() else {
+                return error(StatusCode::BAD_REQUEST, "Say which day it moves to.");
+            };
+            tasks::move_occurrence(
+                &mut task,
+                on,
+                tasks::Slot {
+                    date,
+                    time,
+                    end: time.and(end),
+                },
+            );
+        } else if let Some(date) = change.date {
             task.date = date;
             task.time = date.and(time);
             task.end = date.and(time).and(end);
@@ -250,6 +272,12 @@ pub(crate) async fn change_task(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         return Json(serde_json::json!(tasks::standalone(&task, None))).into_response();
+    }
+    if change.occurrence.is_some() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Only repeating tasks have days to move.",
+        );
     }
     let found = state
         .with_store(move |store| {

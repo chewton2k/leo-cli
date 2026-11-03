@@ -179,6 +179,57 @@ test('Google gets a weekly rule starting on the first repeat day', () => {
   assert.equal(link.searchParams.get('dates'), '20261014/20261015');
 });
 
+test('a moved day of a repeating task shows where it went, keeps its name, and frees its old day', () => {
+  const gym = { id: 'g', title: 'Gym', date: '2026-11-02', time: '09:00:00', repeat: [0, 2], done_on: ['2026-11-04'], moved: { '2026-11-04': { date: '2026-11-05', time: '15:00:00', end: '16:00:00' }, '2026-11-03': { date: '2026-11-06', time: null } } };
+  const p = S.plan([gym], [], '2026-11-03', { from: '2026-11-02', to: '2026-11-08' });
+  assert.equal(p.byDay.has('2026-11-04'), false);
+  const moved = p.byDay.get('2026-11-05').timed[0].task;
+  assert.deepEqual([moved.on, moved.time, moved.end, moved.done, moved.shifted], ['2026-11-04', '15:00:00', '16:00:00', true, true]);
+  assert.equal(p.byDay.has('2026-11-06'), false, 'a move of a day that is not one of its days is ignored');
+  assert.equal(p.byDay.get('2026-11-02').timed[0].task.shifted, false);
+  const later = S.occurrences(gym, '2026-11-05', '2026-11-12');
+  assert.deepEqual(later.map((o) => o.date), ['2026-11-05', '2026-11-09', '2026-11-11'], 'a move into the range counts even when its old day is outside it');
+  assert.equal(S.nextOpen(gym, '2026-11-04', '2026-11-12').date, '2026-11-09', 'the done moved day is skipped');
+});
+
+test('day, week and month views cover their days', () => {
+  assert.deepEqual(S.daysOf('day', '2026-11-03'), ['2026-11-03']);
+  assert.deepEqual(S.daysOf('week', '2026-11-04', 1), ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08']);
+  const month = S.daysOf('month', '2026-11-20', 1);
+  assert.equal(month.length, 42);
+  assert.equal(month[0], '2026-10-26');
+  assert.ok(month.length <= 43, 'a month fits the schedule window');
+});
+
+test('times snap to quarter hours and spans never end before they start', () => {
+  assert.equal(S.minutesOf('09:30:00'), 570);
+  assert.equal(S.timeOf(570), '09:30');
+  assert.equal(S.timeOf(24 * 60 + 5), '23:59');
+  assert.equal(S.snap(568), 570);
+  assert.equal(S.snap(562), 555);
+  const due = { type: 'task', task: { time: '23:50', end: null } };
+  assert.deepEqual(S.spanOn(due, '2026-11-03'), { start: 1430, end: 1440 });
+  assert.deepEqual(S.spanOn({ type: 'task', task: { time: '10:00', end: '11:30' } }, '2026-11-03'), { start: 600, end: 690 });
+  const night = { type: 'event', event: { start: new Date(2026, 10, 3, 22, 0).toISOString(), end: new Date(2026, 10, 4, 2, 0).toISOString() } };
+  assert.deepEqual(S.spanOn(night, '2026-11-03'), { start: 1320, end: 1440 });
+  assert.deepEqual(S.spanOn(night, '2026-11-04'), { start: 0, end: 120 });
+  assert.deepEqual(S.eventDays(night.event), ['2026-11-03', '2026-11-04']);
+  assert.deepEqual(S.eventDays({ start: new Date(2026, 10, 3, 9).toISOString(), end: new Date(2026, 10, 3, 10).toISOString() }), ['2026-11-03']);
+});
+
+test('overlapping items share the width, separate clusters do not', () => {
+  const cols = S.dayColumns([{ start: 540, end: 600 }, { start: 570, end: 660 }, { start: 600, end: 630 }, { start: 700, end: 760 }]);
+  assert.deepEqual(cols, [{ col: 0, cols: 2 }, { col: 1, cols: 2 }, { col: 0, cols: 2 }, { col: 0, cols: 1 }]);
+  assert.deepEqual(S.dayColumns([]), []);
+  assert.deepEqual(S.lanes([{ a: 0, b: 2 }, { a: 1, b: 1 }, { a: 3, b: 4 }, { a: 2, b: 5 }]), [0, 1, 0, 1]);
+});
+
+test('moving every day of a repeating task shifts its weekdays', () => {
+  assert.deepEqual(S.shiftRepeat([0, 2], 1), [1, 3]);
+  assert.deepEqual(S.shiftRepeat([6], 1), [0]);
+  assert.deepEqual(S.shiftRepeat([0, 2], -8), [1, 6]);
+});
+
 let failed = 0;
 for (const [name, fn] of cases) {
   try {
