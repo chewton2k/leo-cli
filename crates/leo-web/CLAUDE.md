@@ -909,8 +909,9 @@ the same idle loop.
   read-only. Colors follow the event title (`--hue-0..7`) and task kind
   (`TASK_TONES`). "Hide completed" is remembered (`leo-calendar-hide-done`).
   Add to Google Calendar opens Google's prefilled page (no sign-in).
-  Grid-boundary creation tolerates one CSS pixel of pointer rounding before
-  snapping, and date edits refresh export actions without replacing focused fields.
+  Creation tolerates two minutes of pointer rounding only near drawn hour lines,
+  floors other clicks to their quarter hour and clamps starts inside the day.
+  Date edits refresh Google status and export actions without replacing focused fields.
   A save resolves the current task snapshot after a calendar refresh. Tests:
   `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
   API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
