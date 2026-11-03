@@ -154,11 +154,11 @@ jobs:
           retention-days: 1
 
   browser:
-    name: browser (${{ matrix.project }})
+    name: browser (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.shards }})
     needs: [changes, browser-server]
     if: needs.changes.outputs.browser == 'true'
     concurrency:
-      group: ci-browser-${{ matrix.project }}-${{ github.ref }}
+      group: ci-browser-${{ matrix.project }}-${{ matrix.shard }}-${{ github.ref }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
@@ -166,8 +166,24 @@ jobs:
         include:
           - project: desktop
             browser: chromium
+            shard: 1
+            shards: 4
+          - project: desktop
+            browser: chromium
+            shard: 2
+            shards: 4
+          - project: desktop
+            browser: chromium
+            shard: 3
+            shards: 4
+          - project: desktop
+            browser: chromium
+            shard: 4
+            shards: 4
           - project: webkit
             browser: webkit
+            shard: 1
+            shards: 1
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -185,16 +201,20 @@ jobs:
           node-version: '24'
           cache: pnpm
           cache-dependency-path: crates/leo-web/tests/browser/pnpm-lock.yaml
-      - name: Browser integration tests (${{ matrix.project }})
+      - name: Install browser test dependencies
+        run: pnpm --dir crates/leo-web/tests/browser install --frozen-lockfile
+      - name: Check browser shard coverage
+        if: matrix.project == 'desktop' && matrix.shard == 1
+        run: pnpm --dir crates/leo-web/tests/browser run test:shards
+      - name: Browser integration tests (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.shards }})
         run: |
-          pnpm --dir crates/leo-web/tests/browser install --frozen-lockfile
           pnpm --dir crates/leo-web/tests/browser exec playwright install ${{ matrix.browser }}
-          pnpm --dir crates/leo-web/tests/browser exec playwright test --project=${{ matrix.project }}
+          pnpm --dir crates/leo-web/tests/browser exec playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shards }}
       - name: Browser previews and failure traces
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: browser-previews-${{ matrix.project }}
+          name: browser-previews-${{ matrix.project }}-${{ matrix.shard }}
           path: |
             crates/leo-web/tests/browser/test-results/
             crates/leo-web/tests/browser/playwright-report/

@@ -8,6 +8,7 @@ process.env.LEO_BROWSER_HOME = home;
 module.exports = defineConfig({
   testMatch: ['flows.spec.js', 'runner-lifecycle.spec.js', 'source-layout.spec.js', 'editor-layout.spec.js', 'sidebar.spec.js', 'tasks-layout.spec.js', 'problem-chooser.spec.js', 'speech-models.spec.js', 'dictation.spec.js', 'settings.spec.js', 'boards.spec.js'],
   globalTeardown: './teardown.js',
+  fullyParallel: true,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['list'], ['html',{open:'never'}]] : 'list',

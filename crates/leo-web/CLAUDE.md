@@ -972,7 +972,7 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
 
 ## Testing
 
-- Browser suite: `tests/browser/flows.spec.js` (desktop and phone projects;
+- Browser suite: `tests/browser/flows.spec.js` (desktop and WebKit projects;
   CI retries once, `github` reporter). Every test fails on a page error or a
   programmer-error toast (`guard`). Recording is stubbed; the graph is seeded.
   Coding editor coverage runs each language in its own test and practice id,
@@ -981,6 +981,9 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   and page teardown; Playwright routing can release requests during unload.
   `visual.spec.js` screenshot baselines are local only (`pnpm visual`,
   `pnpm visual:update` rewrites every image).
+  CI splits desktop tests across four machines with `fullyParallel`, keeping
+  one worker and an isolated server/data directory per shard. `pnpm test:shards`
+  checks balanced, complete, nonduplicated test selection; WebKit stays whole.
 - Per the user (2026-10-11): no local Cargo builds for website work and no
   full local runs; quick JS checks and one-test runs only, CI does the rest.
 - Real-model checks (Codex, Claude Code) are what the prompt wording rests on:
