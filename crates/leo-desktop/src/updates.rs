@@ -209,6 +209,9 @@ impl Updates {
                             lease,
                             || leo_services::speech::engine::engine().unload_worker(),
                             || {
+                                if restart {
+                                    crate::update_window::remember(&leo_core::paths::config_dir()?)?;
+                                }
                                 pending
                                     .update
                                     .install(pending.bytes.as_ref().unwrap())
@@ -216,8 +219,24 @@ impl Updates {
                             },
                         );
                         match result {
-                            Ok(lease)=> { *self.installed_lease.lock().unwrap_or_else(|e|e.into_inner())=Some(lease); self.installed.store(true,Ordering::Release); if restart { self.app.restart(); } else { self.app.exit(0); } }
-                            Err(_)=>self.failed("The update could not be installed. Quit and reopen Leo, then try Restart to update again."),
+                            Ok(lease) => {
+                                *self
+                                    .installed_lease
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+                                self.installed.store(true, Ordering::Release);
+                                if restart {
+                                    self.app.restart();
+                                } else {
+                                    self.app.exit(0);
+                                }
+                            }
+                            Err(_) => {
+                                if let Ok(config) = leo_core::paths::config_dir() {
+                                    crate::update_window::take(&config);
+                                }
+                                self.failed("The update could not be installed. Quit and reopen Leo, then try Restart to update again.");
+                            }
                         }
                     } else {
                         drop(lease);

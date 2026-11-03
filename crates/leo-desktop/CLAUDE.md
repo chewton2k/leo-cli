@@ -179,3 +179,9 @@ The main window publishes visibility to the engine and page on hide/show,
 minimize/restore and page-load completion. Hidden/minimized lecture previews pause;
 native capture, final transcription and dictation remain active. A finished page
 load resynchronizes visibility in case hide/show happened during navigation.
+
+Foreground requests (single instance, Dock and tray page commands) are refused
+while the core installation lease is held. Explicit update restarts leave a
+private atomic one-use `update-foreground` marker, consumed only after the
+single-instance check, so `--hidden` from login cannot hide the updated app.
+Failed installation removes the marker and releases the opening restriction.

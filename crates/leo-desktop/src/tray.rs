@@ -107,6 +107,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 /// seconds and runs at most once (`__leoAsked` remembers each click's number).
 fn page(app: &AppHandle, what: &'static str, which: &'static str) {
     static CLICKS: AtomicU64 = AtomicU64::new(0);
+    if !crate::update_window::may_open(leo_core::activity::global()) {
+        return;
+    }
     crate::show(app);
     let click = CLICKS.fetch_add(1, Ordering::Relaxed);
     let app = app.clone();
@@ -119,6 +122,9 @@ fn page(app: &AppHandle, what: &'static str, which: &'static str) {
         .name("leo-tray-page".into())
         .spawn(move || {
             for _ in 0..ASK_TRIES {
+                if !crate::update_window::may_open(leo_core::activity::global()) {
+                    return;
+                }
                 if let Some(window) = app.get_webview_window(crate::MAIN) {
                     let _ = window.eval(&script);
                 }

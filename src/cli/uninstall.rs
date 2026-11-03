@@ -16,6 +16,7 @@ const KNOWN: &[&str] = &[
     "serve-sessions.json",
     "app-sessions.json",
     "app-port",
+    "update-foreground",
     "app-launched",
     "app-cli-dir",
     "app-settings.json",
