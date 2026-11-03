@@ -53,13 +53,21 @@ test('Settings sections keep drafts and selections across redraws in both themes
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
       await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();
-      // The section list is a sidebar pinned to the left edge that stays put while the page scrolls.
+      // The section list is a panel set apart from the window's edge that stays put while the page scrolls,
+      // and the list and the section together sit in the middle of the space beside the explorer.
       const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
       const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
-      const banner=await page.locator('#app-update-banner').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
-      expect(await pinned()).toEqual([0,Math.max(bar,banner)]);
+      const gap=await page.locator('.settings-layout').evaluate(el=>parseFloat(getComputedStyle(el).paddingTop));
+      const [left]=await pinned();
+      expect(left).toBeGreaterThanOrEqual(gap);
+      for(const width of [900,1600]) {
+        await page.setViewportSize({width,height:850});
+        const [start,end]=await page.evaluate(()=>{const main=document.querySelector('main').getBoundingClientRect();return [document.querySelector('.settings-nav').getBoundingClientRect().left-main.left,main.right-document.querySelector('.settings-section').getBoundingClientRect().right];});
+        expect(Math.abs(start-end)).toBeLessThan(2);
+      }
+      await page.setViewportSize({width:900,height:850});
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});
-      expect(await pinned()).toEqual([0,bar]);
+      expect(await pinned()).toEqual([left,Math.round(bar+gap)]);
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
       await page.locator('#backup-repository').fill('Personal notes 文字');
       await page.locator('#backup-repository').evaluate(el=>{el.focus();el.setSelectionRange(4,8);});
