@@ -237,17 +237,23 @@ reader, seer, meaning, web, room, speech).
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
   `leo-side` hides only the explorer, keeping the rail. Folders start closed;
-  `leo-side-open` keeps only folders the user opened with their own clicks
+  `leo-side-folders` keeps only folders the user opened with their own clicks
   (2026-11-03, the user's call), so the explorer reopens after a restart as
-  they left it. Opening a note or folder unfolds its parents for that visit
-  only (`side.revealed`), never into the saved set. Modelled on VS Code and
+  they left it (the old `leo-side-open`, which also held every folder browsing
+  unfolded, is dropped once). Opening a note or folder unfolds its parents for
+  that visit only (`side.revealed`, rebuilt whenever the folder or open note
+  changes), never into the saved set. Modelled on VS Code and
   Obsidian (2026-11-03, the user's call): the Folders heading has Collapse all
   (`collapseFolders`, saved closed); the open note's row is scrolled into the
   explorer once when it first appears (`revealNoteRow`, the explorer only, never
-  the page, so later redraws keep the user's scroll); and a fresh launch reopens
+  the page, skipped while the explorer is hidden, so later redraws keep the
+  user's scroll); and a fresh launch reopens
   where the user left off (`leo-last-place`: the last note, folder, board,
   calendar, graph or practice page, restored only when a new window session
-  opens on the library, never on reloads or in-app navigation). Tree and rail scrolling, focus and note pages survive redraws.
+  opens on the library, never on reloads or in-app navigation). It is kept after
+  every page that drew and when the window hides or quits (`pagehide`), since a
+  new note's id and a deleted note's redirect rewrite the address without a
+  hashchange; a missing note resets it to the library. Tree and rail scrolling, focus and note pages survive redraws.
   Notes use the existing bounded metadata endpoint: 100 per page, four concurrent
   reads with ten-second aborts, 64 cached folders and 32 automatic visible reads.
   Further expanded folders offer Show notes. Late reads check page generation and

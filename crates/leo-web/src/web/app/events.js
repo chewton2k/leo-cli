@@ -87,7 +87,10 @@ async function checkWebsiteBackup() {
   } catch (_) {}
 }
 
-window.addEventListener('pagehide', leaveWebsite);
+window.addEventListener('pagehide', () => {
+  rememberPlace();
+  leaveWebsite();
+});
 window.addEventListener('pageshow', () => { websiteLeaveSent = false; });
 
 window.addEventListener('beforeunload', (e) => {
@@ -99,7 +102,10 @@ window.addEventListener('beforeunload', (e) => {
 // Reopen where you left off, like VS Code and Obsidian: the last note, folder
 // or page is kept, and a fresh launch of the window (a new tab session) that
 // opens on the library goes back there. Reloads and in-app navigation never
-// redirect. A place that is gone shows its usual message.
+// redirect. The place is kept after every page that drew, and again when the
+// window hides or quits, since some moves rewrite the address without a
+// hashchange (a new note getting its id, a deleted note's page closing). A
+// note that turns out to be gone resets it to the library.
 const LAST_PLACE_KEY = 'leo-last-place';
 const LAST_PLACES = /^#\/(n|f|boards|calendar|map|interviews)(\/|$)/;
 function rememberPlace() {
@@ -119,7 +125,6 @@ function reopenLastPlace() {
 }
 
 window.addEventListener('hashchange', () => {
-  rememberPlace();
   const leaving = state.session;
   if (leaving) {
     leaving.doc.stop();
@@ -136,6 +141,7 @@ const busy = () => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
+    rememberPlace();
     leaveWebsite();
     return;
   }
@@ -291,11 +297,13 @@ async function render() {
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');
     if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
+    rememberPlace();
     loadSideFolders();
   } catch (e) {
     if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
     if (e.status === 404 && hash.startsWith('#/n/')) {
       toast('That note is not there any more.', { bad: true });
+      try { localStorage.setItem(LAST_PLACE_KEY, '#/'); } catch (err) {}
       go('#/', { replace: true });
     } else if (e instanceof Offline) {
       app.innerHTML = empty(ICON.cloud, "Can't reach leo", 'Quit leo and open it again.');
@@ -319,7 +327,6 @@ window.addEventListener('afterprint', () => {
   }
 });
 reopenLastPlace();
-rememberPlace();
 route();
 checkActivity();
 checkWebsiteBackup();

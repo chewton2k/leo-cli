@@ -4,7 +4,9 @@ const side = { folders: [], loaded: false, mini: false, open: new Set(), reveale
 // Folders the user opened with their own hands, kept across restarts. Folders
 // unfolded only to show the open note or folder (`side.revealed`) are not
 // kept, so the explorer reopens exactly as the user left it, closed by default.
-const SIDE_OPEN_KEY = 'leo-side-open';
+// A new key (2026-11-03): the old one also held every folder browsing had
+// unfolded, so starting from it would keep those open.
+const SIDE_OPEN_KEY = 'leo-side-folders';
 const SIDE_NOTES_PAGE = 100;
 const SIDE_NOTES_FOLDERS = 64;
 const SIDE_NOTES_AUTOMATIC = 32;
@@ -13,6 +15,7 @@ const SIDE_NOTES_TIMEOUT = 10000;
 
 try {
   side.open = new Set(JSON.parse(localStorage.getItem(SIDE_OPEN_KEY) || '[]'));
+  localStorage.removeItem('leo-side-open');
 } catch (e) {}
 
 try {
@@ -45,13 +48,19 @@ function drawSide() {
   const here = sidePlace();
   const chatOpen = document.body.classList.contains('chat-open');
   const dir = sideHere();
+  // Unfold to what is open: again whenever the folder or the open note changes,
+  // so a note opened after Collapse all still shows where it is.
+  const showing = `${dir}\n${state.view === 'note' ? state.session?.note?.id || '' : ''}`;
+  if (showing !== side.showing) {
+    side.showing = showing;
+    side.revealed.clear();
+    side.shut.clear();
+    const parts = dir.split('/').filter(Boolean);
+    for (let i = 1; i <= parts.length; i++) side.revealed.add(parts.slice(0, i).join('/'));
+  }
   if (dir !== side.here) {
     side.here = dir;
     side.target = null;
-    side.shut.clear();
-    side.revealed.clear();
-    const parts = dir.split('/').filter(Boolean);
-    for (let i = 1; i <= parts.length; i++) side.revealed.add(parts.slice(0, i).join('/'));
   }
   const actionDir = side.target ?? dir;
   let folders = folderTree(dir);
@@ -122,7 +131,8 @@ function folderShown(path) {
 function revealNoteRow(tree) {
   const id = state.view === 'note' ? state.session?.note?.id : null;
   if (!id) side.shownNote = null;
-  if (!tree || !id || side.shownNote === id) return;
+  // A hidden explorer has nothing to scroll; try again when it shows.
+  if (!tree || !id || side.shownNote === id || !tree.clientHeight) return;
   const row = [...tree.querySelectorAll('.side-note[data-id]')].find((el) => el.dataset.id === id);
   if (!row) return;
   side.shownNote = id;

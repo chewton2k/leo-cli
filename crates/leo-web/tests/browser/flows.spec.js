@@ -582,6 +582,16 @@ test('a fresh launch reopens the last note, while reloads and the library stay p
   await relaunch.reload();
   await expect(relaunch).toHaveURL(new RegExp(`#/n/${note.id}$`));
   await relaunch.close();
+  await page.request.delete(`/api/notes/${note.id}`);
+  const gone = await context.newPage();
+  await gone.goto('/');
+  await expect(gone.locator('.toast')).toContainText('not there any more');
+  await gone.close();
+  const after = await context.newPage();
+  await after.goto('/');
+  await expect(after.locator('.toast'), 'a note that is gone is not reopened on every launch').toHaveCount(0);
+  await expect(after).not.toHaveURL(/#\/n\//);
+  await after.close();
 });
 
 test.describe('drag and drop', () => {
