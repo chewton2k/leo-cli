@@ -13,14 +13,15 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(!html.includes('<img'));
   assert.ok(html.includes('東京'));
   assert.ok(html.includes('data-dictation="custom_words"'));
-  assert.ok(html.includes('Lid closed'));
+  for (const retired of ['Lid closed', 'closed_microphone', 'trailing_space', 'data-dictation="enter"']) assert.ok(!html.includes(retired));
   assert.ok(html.includes('class="switch" role="switch"'));
   assert.ok(!/type="checkbox"(?![^>]*class="switch")/.test(html));
   assert.ok(html.includes('<input type="hidden" data-dictation="mode" value="both">'));
   assert.ok(html.includes('role="radiogroup" aria-label="Popup"'));
-  assert.ok(html.includes('data-dictation="writing"'));
-  assert.ok(html.includes('Fastest model on your plan'));
-  assert.ok(html.includes('takes a few seconds longer'));
+  assert.ok(/<input type="checkbox" class="switch" role="switch" data-dictation="writing" data-on="quick">/.test(html));
+  assert.ok(html.includes('Adds a few seconds'));
+  assert.ok(!html.includes('data-action="dictation-save"'));
+  assert.ok(!html.includes('Save after editing'));
   assert.ok(html.includes('>Local<'));
   assert.ok(!html.includes('No writing AI is set up'));
   const unready = context.dictationCards({ settings: { writing: 'quick' }, writing_ready: false, recent: [], shortcut: {} });
@@ -33,7 +34,15 @@ test('dictation controls escape history and preserve explicit text settings', ()
   context.updateDictationStatus({ settings: { writing: 'off' }, shortcut: {} });
   assert.equal(badge.textContent, 'Local');
   const chosen = context.dictationCards({ settings: { writing: 'selected' }, recent: [], shortcut: {} });
-  assert.ok(/<option[^>]*>Your writing model/.test(chosen) || chosen.includes('Your writing model'));
+  assert.ok(chosen.includes('data-dictation="writing" data-on="selected" checked'));
+  const fields = (checked, on) => [{ dataset: { dictation: 'writing', on }, type: 'checkbox', checked }];
+  context.state = { dictation: { settings: { writing: 'selected' } } };
+  context.app.querySelectorAll = () => fields(false, 'selected');
+  assert.equal(context.dictationDraft().writing, 'off');
+  context.app.querySelectorAll = () => fields(true, 'selected');
+  assert.equal(context.dictationDraft().writing, 'selected');
+  context.app.querySelectorAll = () => fields(true, 'quick');
+  assert.equal(context.dictationDraft().writing, 'quick');
 });
 test('popup live and minimal states keep useful errors and timers', () => {
   const { display } = require('../../leo-desktop/dist/dictation.js');

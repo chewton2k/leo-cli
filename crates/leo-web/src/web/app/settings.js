@@ -396,8 +396,18 @@ function speechModelRow(model) {
 function filterSpeech(el) {
   state.speechFilter = el.dataset.filter;
   const box = $('#speech-library');
-  if (box) box.innerHTML = speechCards(state.speech);
-  box?.querySelector(`[data-filter="${CSS.escape(state.speechFilter)}"]`)?.focus({ preventScroll: true });
+  if (!box) return;
+  const section = box.closest('.settings-section') || box.parentElement;
+  const before = box.querySelector('.model-filters')?.getBoundingClientRect().top;
+  const top = scrollY;
+  box.innerHTML = speechCards(state.speech);
+  if (section) {
+    const short = Math.ceil(top + innerHeight - document.documentElement.scrollHeight);
+    if (short > 0) section.style.minHeight = `${section.offsetHeight + short}px`;
+  }
+  const after = box.querySelector('.model-filters')?.getBoundingClientRect().top;
+  if (before != null && after != null) scrollBy(0, after - before);
+  box.querySelector(`[data-filter="${CSS.escape(state.speechFilter)}"]`)?.focus({ preventScroll: true });
 }
 
 let speechPollGeneration = 0;

@@ -112,7 +112,21 @@ reader, seer, meaning, web, room, speech).
   never a bare checkbox; `segmented` (a pill that slides to the pick) for
   choices of two to four short options, either a hidden `field` input that
   fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
-  longer or open-ended lists stay `<select>`. Redraws keep the pill where it
+  longer or open-ended lists stay `<select>`, which inside Settings
+  `select-menu.js` draws as a custom listbox (2026-11-02, the user's call: no
+  system menus). The `<select>` stays underneath, invisible and unclickable, as
+  the value: change handlers, drafts and `selectOption` keep working; its
+  `value` setter keeps the button label in step, the redraw after a save gives
+  focus back to the new button, and forced colors keeps the native control.
+  Settings motion: the menu unfolds like the model picker; the section list's
+  highlight is one pill that glides to the new section (260 ms, started from
+  where the old pill is drawn, so the placeholder-then-content double draw
+  does not cut it off; hidden under 760 px); a section switch has one 180 ms
+  arrival leaning the way you moved; "Saved" fades. Labels are 500 weight in
+  the text color. Pressing a menu's button keeps focus where it is (WebKit
+  does not focus clicked buttons, which made a second press reopen it).
+  Speech model filters keep the filter bar where it was on screen and hold
+  the section's height so a shorter list cannot snap the page up. Redraws keep the pill where it
   was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).
@@ -1238,7 +1252,10 @@ provides settings, devices and native actions. The existing database owns the
 `dictations` table: insert and twenty-row eviction share a transaction; Copy
 resolves a stored ID and discards page-supplied text; Clear removes local rows.
 Nothing becomes a note or sync file. Card polling updates shortcut status and
-history only; fields, drafts, focus and caret survive. Local popup rendering
+history only; fields, drafts, focus and caret survive. There is no Save button
+(2026-11-02, the user's call): every change saves at once and Custom words saves
+700 ms after typing stops, in order (`saveDictation` chains saves so the last
+wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
 Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels
@@ -1247,8 +1264,11 @@ no card title repeating the page title, flat cards (border, no shadow), labels
 on one line with controls hugging their content at the right edge; a card under
 500 px stacks segmented rows (container query), and switch rows stay inline on
 phones. Writing AI uses a pen icon, never a sparkle.
-Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
-left of the content (sticky under the bar, its own scroll), grouped Leo / Your
+Settings (2026-11-02, the user's call) is a sidebar beside the content: a
+rounded panel set apart from the explorer by a gap on every side (sticky under
+the bar, its own scroll), panel and section centred together at any width,
+every card 20 px from the next (a section's wrapper `<div id>` is
+`display: contents`, so its cards share that gap), grouped Leo / Your
 notes / Data / This app, each section with an icon and a page heading with a
 one-line description; under 760 px it becomes a sideways-scrolling chip strip
 that centres the current section. Routes stay `#/settings/<section>`; Storage

@@ -20,7 +20,7 @@ mod tests {
     fn defaults_are_local_and_filler_removal_is_on() {
         let s = Settings::default();
         assert!(s.fillers);
-        assert!(!s.trailing_space && !s.enter && !s.sounds);
+        assert!(!s.sounds);
         assert_eq!(s.mode, Mode::Both);
         assert!(s.validate().is_ok());
     }

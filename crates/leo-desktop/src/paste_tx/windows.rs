@@ -3,16 +3,13 @@ use std::thread;
 use std::time::Instant;
 
 use log::{error, info, warn};
-use tauri::Manager;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{
     SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
 
 use super::{evaluate, send_chord, TxState, WaitDecision};
-use crate::clipboard::send_return_key;
-use crate::input::EnigoState;
-use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod};
+use crate::settings::{ClipboardHandling, PasteMethod};
 use windows::Win32::Foundation::GlobalFree;
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardOwner,
@@ -87,9 +84,6 @@ pub(super) struct WinTxShared {
     snapshot: Mutex<Vec<SavedFormat>>,
     sequence: Mutex<u32>,
     owner: std::sync::atomic::AtomicUsize,
-    app_handle: tauri::AppHandle,
-    auto_submit: bool,
-    auto_submit_key: AutoSubmitKey,
     preserve_transcript: bool,
 }
 
@@ -101,24 +95,6 @@ fn wide(s: &str) -> Vec<u16> {
 
 unsafe fn shared_ptr(hwnd: HWND) -> *const WinTxShared {
     GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WinTxShared
-}
-
-fn send_auto_submit(shared: &WinTxShared) {
-    {
-        let mut st = match shared.state.lock() {
-            Ok(st) => st,
-            Err(_) => return,
-        };
-        if st.auto_submit_sent {
-            return;
-        }
-        st.auto_submit_sent = true;
-    }
-    if let Some(enigo_state) = shared.app_handle.try_state::<EnigoState>() {
-        enigo_state.0.with(|enigo| {
-            let _ = send_return_key(enigo, shared.auto_submit_key);
-        });
-    }
 }
 
 unsafe fn render_text(shared: &WinTxShared) {
@@ -218,16 +194,9 @@ fn flush_pending() {
     let Some(previous) = previous else {
         return;
     };
-    let receipt = {
-        let mut st = match previous.state.lock() {
-            Ok(st) => st,
-            Err(_) => return,
-        };
-        st.cancelled = true;
-        st.any_receipt_after_injection()
-    };
-    if previous.auto_submit && receipt {
-        send_auto_submit(&previous);
+    match previous.state.lock() {
+        Ok(mut st) => st.cancelled = true,
+        Err(_) => return,
     }
     let sequence = *previous.sequence.lock().unwrap();
     let still_ours = unsafe { GetClipboardSequenceNumber() } == sequence;
@@ -490,7 +459,7 @@ unsafe fn publish_formats() -> Result<(), String> {
 
 fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
     let now = Instant::now();
-    let (finish, submit) = {
+    let finish = {
         let mut st = match shared.state.lock() {
             Ok(st) => st,
             Err(_) => return,
@@ -498,8 +467,7 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
         if !(shared.current)() {
             st.cancelled = true;
         }
-        let submit = super::should_submit(&st);
-        let finish = if st.cancelled {
+        if st.cancelled {
             true
         } else {
             match evaluate(&st, now) {
@@ -509,8 +477,7 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
                     true
                 }
             }
-        };
-        (finish, submit)
+        }
     };
     if !finish {
         return;
@@ -535,10 +502,6 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
         info!("[reliable-paste] settling: chord injection failed, restoring quickly");
     } else {
         info!("[reliable-paste] settling: no read within timeout, restoring anyway");
-    }
-
-    if shared.auto_submit && submit {
-        send_auto_submit(shared);
     }
 
     let sequence = *shared.sequence.lock().unwrap();
@@ -656,13 +619,11 @@ fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
 
 pub(super) fn run(
     text: &str,
-    app_handle: &tauri::AppHandle,
+    _app_handle: &tauri::AppHandle,
     enigo: &mut enigo::Enigo,
-    auto_submit: bool,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<(), String> {
     let paste_method = &PasteMethod::CtrlV;
-    let auto_submit_key = AutoSubmitKey::Enter;
     let clipboard_handling = ClipboardHandling::Restore;
 
     let shared = Arc::new(WinTxShared {
@@ -675,9 +636,6 @@ pub(super) fn run(
         snapshot: Mutex::new(Vec::new()),
         sequence: Mutex::new(0),
         owner: std::sync::atomic::AtomicUsize::new(0),
-        app_handle: app_handle.clone(),
-        auto_submit,
-        auto_submit_key,
         preserve_transcript: clipboard_handling == ClipboardHandling::CopyToClipboard,
     });
 

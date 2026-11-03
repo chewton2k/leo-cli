@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 function helpers() {
-  const context = { esc: value => String(value).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), localStorage: { getItem: () => 'dictation', setItem() {} }, document: { addEventListener() {} }, svg: paths => `<svg>${paths}</svg>`, ICON: {} };
+  const context = { esc: value => String(value).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), localStorage: { getItem: () => 'dictation', setItem() {} }, document: { addEventListener() {} }, app: { querySelector: () => null }, svg: paths => `<svg>${paths}</svg>`, ICON: {} };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), context);
   return context;
@@ -20,6 +20,8 @@ test('all grouped Settings routes resolve, with Storage and Trash under Data', (
   assert.ok(!html.includes('Phone'));
   assert.ok(html.includes('Storage content'));
   assert.ok(html.includes('<h1>Storage</h1>'));
+  assert.ok(html.includes('<span class="settings-nav-pill" aria-hidden="true"></span>'));
+  assert.ok(html.includes('class="settings-section arrive"'));
   assert.equal((html.match(/class="settings-link/g) || []).length, 10);
   assert.equal((html.match(/<svg>/g) || []).length, 7, 'every section without a shared icon draws its own');
 });
