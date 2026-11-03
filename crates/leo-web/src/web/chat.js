@@ -1225,8 +1225,10 @@
         const response = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, { credentials: 'same-origin' });
         if (!response.ok || state.id !== chat) return;
         const split = splitFiles(await response.json(), state.messages);
+        const known = new Set([...split.waiting, ...split.sent].map((d) => d.id));
+        const added = state.files.filter((f) => f.status === 'reading' || (f.id && !known.has(f.id)));
         state.sent = split.sent;
-        state.files = split.waiting.map((d) => ({ ...d, status: 'ready' }));
+        state.files = [...split.waiting.map((d) => ({ ...d, status: 'ready' })), ...added];
         drawRefs();
       } catch (e) {
         state.files = state.id === chat ? state.files : [];
