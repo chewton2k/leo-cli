@@ -84,6 +84,8 @@ const diagramSource = (fig) => {
 };
 
 function showDiagram(fig, svg) {
+  // One picture per figure, whichever pass gets there first or last.
+  for (const old of fig.querySelectorAll('.diagram-art, .diagram-error')) old.remove();
   const art = document.createElement('div');
   art.className = 'diagram-art';
   art.innerHTML = svg;
@@ -128,6 +130,9 @@ async function drawDiagrams() {
     diagrams.scheme = scheme;
   }
   for (const fig of waitingDiagrams()) {
+    // Another pass may have claimed this figure while this one waited for
+    // Mermaid to load; drawing it again would put two pictures in it.
+    if (fig.dataset.drawn) continue;
     const source = diagramSource(fig);
     const key = `${scheme}\n${source}`;
     fig.dataset.drawn = 'working';
