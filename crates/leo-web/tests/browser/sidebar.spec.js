@@ -675,23 +675,29 @@ test('sidebar folding waits for the actual transition rather than a timer', asyn
     await page.clock.install();
     await page.goto(url);
     const body=page.locator('body'), side=page.locator('#side');
-    for(const expected of [52,284]) {
+    await page.evaluate(()=>document.addEventListener('click',event=>{
+      if(!event.target.closest('.side-fold'))return;
+      document.body.getAnimations().find(run=>run.transitionProperty==='--side')?.pause();
+    }));
+    async function fold() {
       await page.locator('.side-fold').click();
-      await body.evaluate(el=>{const run=el.getAnimations().find(a=>a.transitionProperty==='--side');run.pause();});
+      expect(await body.evaluate(el=>el.getAnimations().find(run=>run.transitionProperty==='--side')?.playState)).toBe('paused');
+    }
+    for(const expected of [52,284]) {
+      await fold();
       await page.clock.runFor(300);
       await expect(body).toHaveClass(/side-folding/);
       await body.evaluate(el=>{for(const run of el.getAnimations())if(run.transitionProperty==='--side')run.finish();});
       await expect(body).not.toHaveClass(/side-folding/);
       expect((await side.boundingBox()).width).toBe(expected);
     }
-    await page.locator('.side-fold').click();
+    await fold();
     await body.evaluate(el=>{
       const run=el.getAnimations().find(a=>a.transitionProperty==='--side');
-      run.pause();run.currentTime=90;
+      run.currentTime=90;
       getComputedStyle(el).getPropertyValue('--side');
     });
-    await page.locator('.side-fold').click();
-    await body.evaluate(el=>{const run=el.getAnimations().find(a=>a.transitionProperty==='--side');run.pause();});
+    await fold();
     await page.clock.runFor(300);
     await expect(body).toHaveClass(/side-folding/);
     await body.evaluate(el=>{for(const run of el.getAnimations())if(run.transitionProperty==='--side')run.finish();});

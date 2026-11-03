@@ -281,7 +281,9 @@ reader, seer, meaning, web, room, speech).
   `@property` length that transitions while `body.side-folding` (`MOTION_MS`),
   the explorer keeps its width and is clipped, Reduced Motion snaps. Folding ends
   after the actual `--side` transition settles, including interrupted or reversed
-  transitions; a timer cannot finish it early. The toggle
+  transitions; a timer cannot finish it early. Animation tests pause the native
+  transition in the click event, before browser protocol latency can let it end.
+  The toggle
   never moves: left of the head over the rail, or on macOS fixed right after the
   window buttons, in both states. Folders start closed;
   `leo-side-folders` keeps only folders the user opened with their own clicks
