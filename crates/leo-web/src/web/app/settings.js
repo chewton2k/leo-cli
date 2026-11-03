@@ -12,6 +12,7 @@ async function showSettings(section) {
   if (section === 'storage') return showStorage();
   const mine = ++seq;
   state = { view: 'settings', dir: '', section };
+  scheduleAppStatus(appPollGeneration);
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
@@ -404,10 +405,10 @@ let speechPollGeneration = 0;
 function startSpeechPolling(mine) { pollSpeech(mine, ++speechPollGeneration); }
 
 async function pollSpeech(mine, generation) {
-  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings' || !appVisible()) return;
   if (!(state.speech && state.speech.models.some((m) => m.progress && m.progress.state === 'downloading'))) return;
   await new Promise((resolve) => setTimeout(resolve, 1000));
-  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings' || !appVisible()) return;
   try {
     const view = await api('/api/speech');
     if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;

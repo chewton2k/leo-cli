@@ -15,6 +15,7 @@ mod secure_input;
 mod settings;
 mod shell_path;
 mod shortcut;
+mod shortcut_events;
 mod tray;
 mod updates;
 
@@ -75,6 +76,7 @@ pub fn run() {
             let port = started.as_ref().map(|r| r.port()).unwrap_or(0);
             let address = match &started {
                 Ok(running) => {
+                    running.set_visible(!hidden);
                     if let Some(config) = &config {
                         let _ = port::remember(config, running.port());
                     }
@@ -95,7 +97,19 @@ pub fn run() {
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(480.0, 480.0)
                 .visible(!hidden)
+                .initialization_script(if hidden {
+                    "window.__LEO_VISIBLE__ = false;"
+                } else {
+                    "window.__LEO_VISIBLE__ = true;"
+                })
                 .initialization_script(PRINT)
+                .on_page_load(|window, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                        let visible = window.is_visible().unwrap_or(true)
+                            && !window.is_minimized().unwrap_or(false);
+                        sync_visible(&window, visible, true);
+                    }
+                })
                 .on_navigation(move |url| {
                     if links::stays_inside(url, port) {
                         return true;
@@ -144,7 +158,13 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = handle.hide();
+                    set_visible(&handle, false);
                     back_up(handle.app_handle());
+                }
+                if let WindowEvent::Focused(_) | WindowEvent::Resized(_) = event {
+                    let visible = handle.is_visible().unwrap_or(true)
+                        && !handle.is_minimized().unwrap_or(false);
+                    set_visible(&handle, visible);
                 }
             });
             tray::build(app.handle())?;
@@ -219,7 +239,30 @@ pub(crate) fn show(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN) {
         let _ = window.unminimize();
         let _ = window.show();
+        set_visible(&window, true);
         let _ = window.set_focus();
+    }
+}
+
+fn set_visible(window: &tauri::WebviewWindow, visible: bool) {
+    sync_visible(window, visible, false);
+}
+
+fn sync_visible(window: &tauri::WebviewWindow, visible: bool, force: bool) {
+    let changed = window
+        .app_handle()
+        .state::<Engine>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|held| held.as_ref().map(|running| running.set_visible(visible)))
+        .unwrap_or(false);
+    if changed || force {
+        let _ = window.eval(if visible {
+            "window.__LEO_VISIBLE__ = true; window.dispatchEvent(new Event('leo-visibility'));"
+        } else {
+            "window.__LEO_VISIBLE__ = false; window.dispatchEvent(new Event('leo-visibility'));"
+        });
     }
 }
 

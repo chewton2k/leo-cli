@@ -69,6 +69,7 @@ pub struct Pending {
 }
 
 pub struct Listening {
+    pub preview: Arc<AtomicBool>,
     pub recover: Option<String>,
     pub id: String,
     pub profile: leo_core::recording::Profile,
@@ -453,6 +454,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
         });
     }
     let listening = Listening {
+        preview: state.visible.clone(),
         recover: body.recover,
         id: id.clone(),
         profile,
@@ -975,6 +977,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
         });
     }
     let listening = Listening {
+        preview: state.visible.clone(),
         recover: None,
         id: id.clone(),
         profile: meta.profile,

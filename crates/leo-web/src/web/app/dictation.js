@@ -59,9 +59,9 @@ function updateDictationStatus(view) {
   if (cancel) cancel.hidden = !shortcut.recording;
 }
 async function pollDictation(mine, generation) {
-  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !state.dictation) return;
+  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !state.dictation || !appVisible()) return;
   await new Promise((resolve) => setTimeout(resolve, 600));
-  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings') return;
+  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !appVisible()) return;
   try {
     const view = await api('/api/dictation');
     if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings') return;

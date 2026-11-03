@@ -211,7 +211,7 @@ pub(crate) async fn list_notes(
 ) -> Result<Response, StatusCode> {
     let brief = params.brief;
     let (total, notes) = state
-        .with_store(move |store| {
+        .read_store(move |store| {
             let limit = params.limit.unwrap_or(100).min(1000);
             let mut notes = if let Some(ref dir) = params.dir {
                 directory(store, dir)?;
@@ -268,7 +268,7 @@ pub(crate) async fn get_note(
     Path(id): Path<String>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
     state
-        .with_store(move |store| {
+        .read_store(move |store| {
             let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
             Ok(Json(NoteResponse {
                 recorded: crate::tools::has_transcript(&store.notes_dir, &note.id),
@@ -449,7 +449,7 @@ pub(crate) async fn search_notes(
         .unwrap_or_default()
     };
     state
-        .with_store(move |store| {
+        .read_store(move |store| {
             let cache = graphs.load();
             let words: Vec<String> = q
                 .split_whitespace()
@@ -491,7 +491,7 @@ pub(crate) async fn list_dirs(
     Query(params): Query<DirParams>,
 ) -> Result<Json<Vec<DirResponse>>, StatusCode> {
     state
-        .with_store(move |store| {
+        .read_store(move |store| {
             let parent = params.parent.unwrap_or_default();
             directory(store, &parent)?;
             Ok(Json(
@@ -519,7 +519,7 @@ pub(crate) async fn list_folders(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DirResponse>>, StatusCode> {
     state
-        .with_store(|store| {
+        .read_store(|store| {
             let mut all = store.directories.clone();
             all.sort_by_key(|d| d.to_lowercase());
             Ok(Json(

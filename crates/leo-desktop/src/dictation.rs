@@ -131,6 +131,12 @@ impl Dictation {
     fn update(&self, id: u64, value: Value) -> bool {
         self.change(id, |state| *state = value)
     }
+    fn set_escape(&self, active: bool) {
+        self.escape.store(active, Ordering::Release);
+        if let Some(keys) = self.shortcut.get() {
+            keys.wake();
+        }
+    }
     fn phase(&self, id: u64, phase: &str) {
         self.change(id, |state| state["state"] = json!(phase));
     }
@@ -170,7 +176,7 @@ impl Dictation {
             stop.store(true, Ordering::Release);
         }
         self.capturing.store(false, Ordering::Release);
-        self.escape.store(false, Ordering::Release);
+        self.set_escape(false);
         engine().cancel();
         self.idle();
         let _ = self.tx.try_send(Event::Cancel);
@@ -245,7 +251,7 @@ impl Dictation {
                         stop.store(true, Ordering::Release);
                     }
                     self.capturing.store(false, Ordering::Release);
-                    self.escape.store(false, Ordering::Release);
+                    self.set_escape(false);
                     engine().cancel();
                     self.idle();
                 }
@@ -276,7 +282,7 @@ impl Dictation {
         let stop = Arc::new(AtomicBool::new(false));
         *self.stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(stop.clone());
         self.capturing.store(true, Ordering::Release);
-        self.escape.store(true, Ordering::Release);
+        self.set_escape(true);
         self.update(
             id,
             json!({"state":"listening","seconds":0,"levels":[],"committed":"","tentative":""}),
@@ -286,7 +292,7 @@ impl Dictation {
         std::thread::spawn(move || {
             let result = activity.and_then(|_activity| this.capture(id, &settings, &stop));
             if this.generation.current(id) {
-                this.escape.store(false, Ordering::Release);
+                this.set_escape(false);
                 match result {
                     Ok(Finish::Problem(message)) => {
                         this.update(id, json!({"state":"error","message":message}));

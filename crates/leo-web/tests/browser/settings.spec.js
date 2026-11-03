@@ -47,13 +47,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
     window.errors=[]; window.leoChat={usageRows:()=>[]};
     const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'}]}};
+    let appStatusReads=0;
     async function api(url) {
       if(url==='/api/settings') return structuredClone(page);
       if(url==='/api/calendar') return {calendars:[],events:[]};
       if(url==='/api/speech') return {ready:false,models:[],extra_files:[],disk_bytes:0};
       if(url==='/api/dictation') return {settings:{custom_words:[],shortcut:'Option+Space'},recent:[]};
       if(url==='/api/health') return {sections:[{title:'This app',checks:[{name:'Speech model',state:'missing',fix:'Choose a model.',section:'models'}]}]};
-      if(url==='/api/app') return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}};
+      if(url==='/api/app') { appStatusReads++; return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}}; }
       if(url==='/api/storage') return {total:0,total_label:'0 B',areas:[]};
       if(url==='/api/keep') return {trash_choices:[],chat_choices:[],trash_days:30};
       if(url==='/api/trash') return [];
@@ -72,7 +73,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     ${read('app/onboarding.js')}
     const route=()=>showSettings(location.hash.split('/')[2] || 'general').catch(fail);
     window.addEventListener('hashchange',route); route();
-    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,storage:()=>drawStorage(state.storage)};`;
+    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,storage:()=>drawStorage(state.storage),reads:()=>appStatusReads};`;
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
@@ -84,6 +85,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       const page=await browser.newPage({colorScheme:theme,viewport:{width:900,height:850}});
       await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/backup');
       await expect(page.locator('#backup-repository')).toBeVisible();
+      await page.clock.install();
+      await page.evaluate(()=>{window.__LEO_VISIBLE__=false;window.dispatchEvent(new Event('leo-visibility'));});
+      const hiddenReads=await page.evaluate(()=>audit.reads());
+      await page.clock.runFor(10000);
+      expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads);
+      await page.evaluate(()=>{window.__LEO_VISIBLE__=true;window.dispatchEvent(new Event('leo-visibility'));window.dispatchEvent(new Event('leo-visibility'));});
+      expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads+1);
+      await page.clock.resume();
       await expect(page.locator('.settings-nav a')).toHaveCount(10);
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
@@ -201,6 +210,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
       return structuredClone(native);
     }
     ${sheets}
+    ${read('app/refresh.js')}
     ${read('app/app-settings.js')}
     ${read('app/onboarding.js')}
     document.addEventListener('click',event=>{

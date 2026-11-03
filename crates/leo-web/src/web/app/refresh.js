@@ -1,3 +1,7 @@
+function appVisible() {
+  return document.visibilityState !== 'hidden' && window.__LEO_VISIBLE__ !== false;
+}
+
 function refreshKey(node) {
   if (node.nodeType !== 1) return null;
   for (const name of ['id', 'data-refresh-key', 'data-kids', 'data-model-row', 'data-task-card', 'data-settings-section', 'data-dictation', 'data-key-input', 'data-app-pref', 'data-keep', 'data-export']) {

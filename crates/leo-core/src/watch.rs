@@ -16,10 +16,10 @@ impl Watch {
         let broken = Arc::new(AtomicBool::new(false));
         let root = notes_dir.to_path_buf();
         let (seen, failed) = (Arc::clone(&touched), Arc::clone(&broken));
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+        let mut watcher = RecommendedWatcher::new(
+            move |event: notify::Result<notify::Event>| match event {
                 Ok(event) => {
-                    if event.paths.iter().any(|path| counts(&root, path)) {
+                    if event.need_rescan() || event.paths.iter().any(|path| counts(&root, path)) {
                         seen.store(true, Ordering::Relaxed);
                     }
                 }
@@ -27,8 +27,10 @@ impl Watch {
                     failed.store(true, Ordering::Relaxed);
                     seen.store(true, Ordering::Relaxed);
                 }
-            })
-            .ok()?;
+            },
+            notify::Config::default().with_follow_symlinks(false),
+        )
+        .ok()?;
         watcher.watch(notes_dir, RecursiveMode::Recursive).ok()?;
         Some(Watch {
             _watcher: watcher,

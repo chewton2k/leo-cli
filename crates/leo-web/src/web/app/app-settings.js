@@ -1,5 +1,33 @@
 let desktopApp = null;
 let appPollGeneration = 0;
+let appPollTimer = 0;
+let appPollVisible = null;
+const APP_STATUS_ACTIVE_MS = 2500;
+const APP_STATUS_IDLE_MS = 30000;
+function scheduleAppStatus(generation) {
+  if (generation !== appPollGeneration) return;
+  clearTimeout(appPollTimer);
+  appPollTimer = 0;
+  if (!appVisible()) return;
+  const active = state.view === 'settings' || ['checking', 'downloading', 'installing'].includes(desktopApp?.updates?.state);
+  const delay = onboardingHere(0) ? ONBOARDING_POLL_MS : active ? APP_STATUS_ACTIVE_MS : APP_STATUS_IDLE_MS;
+  appPollTimer = setTimeout(() => pollAppStatus(generation), delay);
+}
+function appVisibilityChanged() {
+  const visible = appVisible();
+  if (visible === appPollVisible) return;
+  appPollVisible = visible;
+  clearTimeout(appPollTimer);
+  appPollTimer = 0;
+  const generation = ++appPollGeneration;
+  if (typeof checkActivity === 'function') checkActivity();
+  if (!visible) return;
+  pollAppStatus(generation);
+  if (state.view === 'settings') {
+    if (typeof startSpeechPolling === 'function') startSpeechPolling(seq);
+    if (state.section === 'dictation' && typeof pollDictation === 'function') pollDictation(seq, ++dictationGeneration);
+  }
+}
 function nativeGeneralCard(view) {
   if (!view) return '';
   const p = view.preferences || {};
@@ -26,7 +54,7 @@ async function appChange(change) {
     updateAppStatus();
     if (state.view === 'settings' && state.section === 'health') loadHealth().catch(fail);
     return view;
-  } finally { if (generation === appPollGeneration) setTimeout(() => pollAppStatus(generation), 2500); }
+  } finally { scheduleAppStatus(generation); }
 }
 
 function updateAppStatus() {
@@ -45,16 +73,15 @@ function updateAppStatus() {
   }
 }
 async function pollAppStatus(generation) {
-  if (generation !== appPollGeneration) return;
+  if (generation !== appPollGeneration || !appVisible()) return;
   try {
     const view = await api('/api/app');
     if (generation !== appPollGeneration) return;
     desktopApp = view;
     updateAppStatus();
     maybeOnboarding();
-  } catch (e) { return; }
-  // The permission page checks quickly so a checkmark follows the system dialog.
-  setTimeout(() => pollAppStatus(generation), onboardingHere(0) ? ONBOARDING_POLL_MS : 2500);
+  } catch (e) {}
+  scheduleAppStatus(generation);
 }
 async function setupBackup() {
   const field = $('#backup-repository');
@@ -74,7 +101,11 @@ app.addEventListener('change', (event) => {
   const field = event.target.closest('[data-app-pref]');
   if (field) appChange({ action: 'preference', field: field.dataset.appPref, value: field.checked }).catch(fail);
 });
-if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('DOMContentLoaded', () => pollAppStatus(++appPollGeneration), { once: true });
+document.addEventListener('visibilitychange', appVisibilityChanged);
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('DOMContentLoaded', appVisibilityChanged, { once: true });
+  window.addEventListener('leo-visibility', appVisibilityChanged);
+}
 
 
 function updatesCard(view) {

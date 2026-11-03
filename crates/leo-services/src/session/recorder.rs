@@ -58,6 +58,15 @@ pub struct Controls {
     pub pause: Arc<AtomicBool>,
     pub points: Arc<Mutex<Vec<Jotted>>>,
     pub wants: Arc<Mutex<Option<String>>>,
+    pub preview: Option<Arc<AtomicBool>>,
+}
+
+impl Controls {
+    fn preview_enabled(&self) -> bool {
+        self.preview
+            .as_ref()
+            .is_none_or(|visible| visible.load(Ordering::Acquire))
+    }
 }
 
 pub struct Request {
@@ -221,22 +230,12 @@ fn live_pace() -> Duration {
     }
 }
 
-fn hear(dir: &Path, samples: &[i16], emit: &dyn Fn(Event)) -> Option<String> {
-    struct TempWav(std::path::PathBuf);
-    impl Drop for TempWav {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let path = TempWav(dir.join("live.wav"));
-    wav::write(&path.0, samples).ok()?;
+fn hear(samples: &[i16]) -> Option<String> {
     let selected = crate::speech::library::library().ok()?.selected().ok()?;
     let pcm = samples.iter().map(|s| *s as f32 / 32768.0).collect();
     let text = crate::speech::engine::engine()
         .transcribe(selected, pcm, crate::speech::engine::Priority::Live)
         .ok()?;
-    drop(path);
-    let _ = emit;
     Some(if live::is_silence_artifact(&text) {
         String::new()
     } else {
@@ -244,7 +243,7 @@ fn hear(dir: &Path, samples: &[i16], emit: &dyn Fn(Event)) -> Option<String> {
     })
 }
 
-fn roll(capture: &Capture, dir: &Path, state: &mut Live, emit: &dyn Fn(Event), fed: bool) {
+fn roll(capture: &Capture, state: &mut Live, emit: &dyn Fn(Event), fed: bool) {
     let rate = wav::RATE as u64;
     let from = state.settled_at.max(state.base);
     let (start, samples) = capture.tail(from, (LIVE_MOST_SECS * rate) as usize);
@@ -286,7 +285,7 @@ fn roll(capture: &Capture, dir: &Path, state: &mut Live, emit: &dyn Fn(Event), f
             samples.len() - (live::SETTLE_KEEP_SECS * rate) as usize,
             (rate / 10) as usize,
         );
-        let Some(settled) = hear(dir, &samples[..cut], emit) else {
+        let Some(settled) = hear(&samples[..cut]) else {
             state.interval = live::backoff(state.interval);
             return;
         };
@@ -295,7 +294,7 @@ fn roll(capture: &Capture, dir: &Path, state: &mut Live, emit: &dyn Fn(Event), f
         state.tail.clear();
         open = &samples[cut..];
     }
-    match hear(dir, open, emit) {
+    match hear(open) {
         Some(text) => {
             state.interval = state.pace;
             state.tail = text;
@@ -558,13 +557,13 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         emit(Event::Progress { label, steps: None });
 
         if !capture.paused()
+            && controls.preview_enabled()
             && backlog <= 1
             && last_roll.elapsed() >= state.interval
             && live_model_ready()
         {
             last_roll = Instant::now();
-            let dir = session.dir.clone();
-            if let Err(message) = caught(|| roll(&capture, &dir, &mut state, emit, fed)) {
+            if let Err(message) = caught(|| roll(&capture, &mut state, emit, fed)) {
                 state.interval = live::backoff(state.interval);
                 leo_core::diag::warn(format!(
                     "live transcription hit a problem ({message}); the recording continues"
@@ -733,6 +732,53 @@ pub fn write_up(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore]
+    fn benchmark_preview_audio_preparation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("live.wav");
+        let samples = vec![3000i16; 20 * wav::RATE as usize];
+        for trial in 0..5 {
+            let start = Instant::now();
+            for _ in 0..8 {
+                wav::write(&path, &samples).unwrap();
+                std::hint::black_box(
+                    samples
+                        .iter()
+                        .map(|s| *s as f32 / 32768.0)
+                        .collect::<Vec<_>>(),
+                );
+                std::fs::remove_file(&path).unwrap();
+            }
+            let before = start.elapsed();
+            let start = Instant::now();
+            for _ in 0..8 {
+                std::hint::black_box(
+                    samples
+                        .iter()
+                        .map(|s| *s as f32 / 32768.0)
+                        .collect::<Vec<_>>(),
+                );
+            }
+            println!("trial={trial} previews=8 audio_secs=20 before_us={} after_us={} before_syncs=8 after_syncs=0", before.as_micros(), start.elapsed().as_micros());
+        }
+    }
+    #[test]
+    fn hiding_only_disables_preview_and_resume_keeps_capture_controls_intact() {
+        let mut controls = Controls::default();
+        assert!(controls.preview_enabled());
+        let visible = Arc::new(AtomicBool::new(true));
+        controls.preview = Some(visible.clone());
+        for shown in [true, false, true, false] {
+            visible.store(shown, Ordering::Release);
+            assert_eq!(controls.preview_enabled(), shown);
+            assert!(!controls.stop.load(Ordering::Acquire));
+            assert!(!controls.pause.load(Ordering::Acquire));
+            assert!(!controls.finish_now.load(Ordering::Acquire));
+        }
+    }
+
     #[test]
     fn points_arriving_with_stop_are_mirrored_before_the_final_snapshot() {
         let dir = tempfile::tempdir().unwrap();

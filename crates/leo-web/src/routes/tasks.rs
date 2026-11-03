@@ -42,7 +42,7 @@ pub(crate) async fn list_tasks(State(state): State<AppState>) -> Response {
 pub(crate) async fn all_listed(state: &AppState) -> Result<Vec<tasks::Listed>, StatusCode> {
     let chats = state.chats.clone();
     state
-        .with_store(move |store| {
+        .read_store(move |store| {
             let metas = tasks::metas(&chats);
             let mut all = tasks::note_tasks(store, &metas);
             all.extend(
