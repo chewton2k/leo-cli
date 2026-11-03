@@ -223,8 +223,8 @@ reader, seer, meaning, web, room, speech).
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
   Settings pinned below (Trash and Storage live inside Settings since
   2026-11-02, the user's call; the rail shows Settings for them). The rail has no
-  Notes button (2026-11-03, the user's call: notes open from the explorer, whose
-  Top level row goes to the library). Buttons retain accessible names,
+  Notes button (2026-11-03, the user's call: notes open from the explorer; the
+  library is reached from the breadcrumbs' first crumb or the leo name). Buttons retain accessible names,
   tooltips and active states, with space between controls and unboxed shortcut
   hints. The separate explorer shows nested folders and
   individual notes. Folder labels and chevrons toggle their children; note rows

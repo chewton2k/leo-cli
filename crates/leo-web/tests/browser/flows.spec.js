@@ -252,7 +252,6 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   }
   await expect(side).toBeVisible();
   await expect(page.locator('#menu')).toBeHidden();
-  await expect(side.locator('.side-root [data-action="open-folder"][data-dir=""]')).toHaveAttribute('aria-current', 'page');
   await expect(side.locator('.side-rail [data-action="home"]'), 'notes are opened from the explorer, not a rail button').toHaveCount(0);
   for (const [action, url] of [['map', /#\/map$/], ['settings', /#\/settings$/]]) {
     await side.locator(`[data-action="${action}"]`).click();
@@ -601,7 +600,7 @@ test.describe('drag and drop', () => {
     expect(await where()).toBe(b);
 
     await page.goto(`/#/f/${b}`);
-    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-root [data-action="open-folder"][data-dir=""]'));
+    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
     await expect.poll(where).toBe('');
   });
 
@@ -3633,7 +3632,7 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   expect(before[0].y + before[0].height).toBeLessThanOrEqual(640);
   const scrolled = await tree.evaluate((el) => el.scrollTop);
   expect(scrolled).toBeGreaterThan(0);
-  await page.locator('#side .side-root [data-action="open-folder"][data-dir=""]').click();
+  await page.locator('#side [data-action="home"]').first().click();
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
 
@@ -4510,7 +4509,7 @@ test.describe('beside the note', () => {
     expect(doc.x + doc.width).toBeLessThanOrEqual(paneBox.x + 1);
     await pane.locator('[data-action="source-file"]', { hasText: 'paper.pdf' }).click();
     await expect(pane.locator('iframe.source-frame')).toHaveAttribute('src', /paper\.pdf\?view=1$/);
-    await page.locator('#side .side-root [data-action="open-folder"][data-dir=""]').click();
+    await page.locator('#side [data-action="home"]').first().click();
     await expect(pane).toBeHidden();
   });
 
