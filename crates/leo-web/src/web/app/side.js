@@ -74,7 +74,6 @@ function drawSide() {
     <div class="side-rail">
       <nav class="side-rail-main" aria-label="Leo tools">
         ${sideRow('new', ICON.plus, 'New note', { attrs: ` data-dir="${esc(actionDir)}"`, hint: actionDir ? `New note in ${folderLabel(actionDir)}` : 'New note' })}
-        ${sideRow('home', ICON.note, 'Notes', { on: ['folder', 'note', 'new'].includes(state.view) })}
         ${sideRow('side-search', ICON.search, 'Search', { hint: `Search every note (${shortcutLabel})` })}
         ${sideRow('quick-leo', ICON.bolt, 'Quick Leo', { hint: `Quick Leo · ask, remind, find or jot anything (${quickLabel})` })}
         ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}

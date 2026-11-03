@@ -91,7 +91,7 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       await expect(rail.locator('kbd')).toHaveCount(0);
       // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
       await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
-      for(const label of ['New note','Notes','Ask Felix','Search','Quick Leo','Record','Note from a file','Calendar','Boards','Interview practice','Knowledge graph','Settings']) {
+      for(const label of ['New note','Ask Felix','Search','Quick Leo','Record','Note from a file','Calendar','Boards','Interview practice','Knowledge graph','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();
         await expect(button).toHaveAttribute('title',/.+/);
