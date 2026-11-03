@@ -267,6 +267,16 @@ test('a task opens beside the calendar, edits save, and Escape closes it', async
     await expect(page.locator('#cal-side.peek .cal-peek-title')).toHaveText('CS 241 lecture');
     await expect(page.locator('#cal-side.peek')).toContainText('DC 1351');
     await expect(page.locator('#cal-side.peek .cal-item, #cal-side.peek input')).toHaveCount(0);
+
+    await page.locator('.cal-name').click();
+    await page.keyboard.press('Escape');
+    await page.locator('.cal-tray-row .cal-open', { hasText: 'Draft essay outline' }).click();
+    await expect(page.locator('#cal-side [data-action="task-google"]')).toHaveCount(0);
+    await page.locator('#cal-peek-date').fill('2026-11-06');
+    await page.locator('#cal-peek-date').dispatchEvent('change');
+    await expect(page.locator('#cal-peek-start')).toBeEnabled();
+    await expect(page.locator('#cal-side [data-action="task-google"]')).toBeVisible();
+    await expect(page.locator('#cal-side a[download]')).toBeVisible();
   });
 });
 
