@@ -547,6 +547,12 @@ impl Running {
         format!("http://127.0.0.1:{}/?token={}", self.port, self.token)
     }
 
+    /// What Felix and leo's other AI work used since leo started, for the menu
+    /// bar: "12 AI requests · 340k tokens (210k cached)".
+    pub fn usage_line(&self) -> String {
+        self.state.usage.line()
+    }
+
     pub fn back_up(&self) {
         let Some(settings) = self.state.settings.clone() else {
             return;
@@ -944,6 +950,11 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/chat", post(chat_reply))
         .route("/api/quiz/mark", post(routes::felix::mark_quiz))
+        .route(
+            "/api/chat/compact",
+            post(routes::felix::compact_chat)
+                .layer(axum::extract::DefaultBodyLimit::max(chats::CHAT_BYTES)),
+        )
         .route("/api/chat/{answer}/steer", post(steer_answer))
         .route("/api/chat/{answer}/access", post(change_answer_access))
         .route("/api/chats", get(list_chats))

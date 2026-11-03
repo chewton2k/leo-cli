@@ -87,7 +87,10 @@ async function checkWebsiteBackup() {
   } catch (_) {}
 }
 
-window.addEventListener('pagehide', leaveWebsite);
+window.addEventListener('pagehide', () => {
+  rememberPlace();
+  leaveWebsite();
+});
 window.addEventListener('pageshow', () => { websiteLeaveSent = false; });
 
 window.addEventListener('beforeunload', (e) => {
@@ -95,6 +98,31 @@ window.addEventListener('beforeunload', (e) => {
   saveWebsiteWork();
   e.preventDefault();
 });
+
+// Reopen where you left off, like VS Code and Obsidian: the last note, folder
+// or page is kept, and a fresh launch of the window (a new tab session) that
+// opens on the library goes back there. Reloads and in-app navigation never
+// redirect. The place is kept after every page that drew, and again when the
+// window hides or quits, since some moves rewrite the address without a
+// hashchange (a new note getting its id, a deleted note's page closing). A
+// note that turns out to be gone resets it to the library.
+const LAST_PLACE_KEY = 'leo-last-place';
+const LAST_PLACES = /^#\/(n|f|boards|calendar|map|interviews)(\/|$)/;
+function rememberPlace() {
+  try {
+    const here = location.hash || '#/';
+    if (here === '#/' || LAST_PLACES.test(here)) localStorage.setItem(LAST_PLACE_KEY, here);
+  } catch (e) {}
+}
+function reopenLastPlace() {
+  try {
+    if (sessionStorage.getItem('leo-launched')) return;
+    sessionStorage.setItem('leo-launched', '1');
+    if (location.hash && location.hash !== '#/') return;
+    const last = localStorage.getItem(LAST_PLACE_KEY);
+    if (last && LAST_PLACES.test(last)) history.replaceState(history.state, '', last);
+  } catch (e) {}
+}
 
 window.addEventListener('hashchange', () => {
   const leaving = state.session;
@@ -113,6 +141,7 @@ const busy = () => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
+    rememberPlace();
     leaveWebsite();
     return;
   }
@@ -269,11 +298,13 @@ async function render() {
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');
     if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
+    rememberPlace();
     loadSideFolders();
   } catch (e) {
     if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
     if (e.status === 404 && hash.startsWith('#/n/')) {
       toast('That note is not there any more.', { bad: true });
+      try { localStorage.setItem(LAST_PLACE_KEY, '#/'); } catch (err) {}
       go('#/', { replace: true });
     } else if (e instanceof Offline) {
       app.innerHTML = empty(ICON.cloud, "Can't reach leo", 'Quit leo and open it again.');
@@ -296,6 +327,7 @@ window.addEventListener('afterprint', () => {
     delete fold.dataset.printed;
   }
 });
+reopenLastPlace();
 route();
 checkActivity();
 checkWebsiteBackup();
@@ -320,3 +352,20 @@ document.addEventListener('paste', (e) => {
   e.preventDefault();
   uploadSheet(pastedFiles(files));
 });
+
+// The menu bar icon (leo-desktop tray.rs) calls this after showing the window.
+// Record starts a lecture (microphone) or a call right away, like pressing
+// Start on the Record page; one already running is just shown.
+const APP_SETTINGS = ['general', 'updates'];
+window.leoFromApp = async (what, which) => {
+  if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
+  if (what !== 'record' || !['microphone', 'call'].includes(which)) return;
+  if (recorder.active()) return go('#/record');
+  if (state.view !== 'record') go('#/record');
+  const until = Date.now() + 8000;
+  let kind = null;
+  while (Date.now() < until && !(kind = $(`#rec-box input[name="rec-kind"][value="${which}"]`))) await new Promise((r) => setTimeout(r, 100));
+  if (!kind || kind.disabled || recorder.active()) return;
+  kind.checked = true;
+  recorder.begin().catch(fail);
+};

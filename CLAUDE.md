@@ -239,6 +239,10 @@ the user picks AI writing (2026-11-02, the user's call; off by default). Recent
   Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` sync like tasks
   (union merge, newest line wins); they are not calendar tasks. See
   crates/leo-web/CLAUDE.md.
+- Menu bar, study order, idle compaction and in-app drag and drop
+  (2026-11-02, the user's notes): see crates/leo-desktop/CLAUDE.md (tray,
+  `disable_drag_drop_handler`) and crates/leo-web/CLAUDE.md (Felix study order,
+  idle compaction).
 - Keeping: `leo_core::keep` (`<data>/keep.json`, beside notes, not synced):
   `trash_days` (7/30/90/365/None=forever, default 30) drives `tidy_trash`;
   `chat_days` (30/90/365/None, default forever) drives `chats::tidy` in leo-web.

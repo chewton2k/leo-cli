@@ -4,7 +4,7 @@
   const MOST_JSON = 8 * 1024 * 1024;
   const INTERVIEW = 'leo-interview-drafts';
   const NOTE = 'leo-draft-v1:';
-  const NAMES = { 'leo-chat-v1': 'Cached Felix conversation', 'leo-felix-access': 'Felix permissions', 'leo-chat-sidebar': 'Chat sidebar', 'leo-chat-width': 'Chat panel width', 'leo-library': 'Notes view, sort and filters', 'leo-calendar-hide-done': 'Calendar completion filter', 'leo-tasks-folded': 'Tasks panel preference', 'leo-source-width': 'Source panel width', 'leo-side': 'Sidebar preference', 'leo-side-open': 'Expanded folders' };
+  const NAMES = { 'leo-chat-v1': 'Cached Felix conversation', 'leo-felix-access': 'Felix permissions', 'leo-chat-sidebar': 'Chat sidebar', 'leo-chat-width': 'Chat panel width', 'leo-library': 'Notes view, sort and filters', 'leo-calendar-hide-done': 'Calendar completion filter', 'leo-tasks-folded': 'Tasks panel preference', 'leo-source-width': 'Source panel width', 'leo-side': 'Sidebar preference', 'leo-side-open': 'Expanded folders (old)', 'leo-side-folders': 'Expanded folders', 'leo-last-place': 'Where you left off' };
   function object(text) {
     if (!text || text.length > MOST_JSON) return null;
     try { const value = JSON.parse(text); return value && typeof value === 'object' && !Array.isArray(value) ? value : null; } catch (_) { return null; }

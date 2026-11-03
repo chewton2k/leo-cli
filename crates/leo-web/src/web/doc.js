@@ -1054,8 +1054,11 @@
       onPictures(found);
     }
     function onDrop(e) {
-      const found = pictures(e.dataTransfer && e.dataTransfer.files);
-      if (!onPictures || !found.length) return;
+      const dropped = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+      const found = pictures(dropped);
+      // Only pictures go straight into the note; a drop with any other file
+      // goes on to the page, which offers to add all of them to this note.
+      if (!onPictures || !found.length || found.length !== dropped.length) return;
       e.preventDefault();
       e.stopPropagation();
       onPictures(found);

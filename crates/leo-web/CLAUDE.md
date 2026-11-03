@@ -222,7 +222,9 @@ reader, seer, meaning, web, room, speech).
   the copied transcripts (POST `uncombine`).
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
   Settings pinned below (Trash and Storage live inside Settings since
-  2026-11-02, the user's call; the rail shows Settings for them). Buttons retain accessible names,
+  2026-11-02, the user's call; the rail shows Settings for them). The rail has no
+  Notes button (2026-11-03, the user's call: notes open from the explorer; the
+  library is reached from the breadcrumbs' first crumb or the leo name). Buttons retain accessible names,
   tooltips and active states, with space between controls and unboxed shortcut
   hints. The separate explorer shows nested folders and
   individual notes. Folder labels and chevrons toggle their children; note rows
@@ -234,8 +236,24 @@ reader, seer, meaning, web, room, speech).
   folder and note rows retain drag data. A folder row is highlighted only on its
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
-  `leo-side` hides only the explorer, keeping the rail; `leo-side-open` retains
-  expansion. Tree and rail scrolling, focus and note pages survive redraws.
+  `leo-side` hides only the explorer, keeping the rail. Folders start closed;
+  `leo-side-folders` keeps only folders the user opened with their own clicks
+  (2026-11-03, the user's call), so the explorer reopens after a restart as
+  they left it (the old `leo-side-open`, which also held every folder browsing
+  unfolded, is dropped once). Opening a note or folder unfolds its parents for
+  that visit only (`side.revealed`, rebuilt whenever the folder or open note
+  changes), never into the saved set. Modelled on VS Code and
+  Obsidian (2026-11-03, the user's call): the Folders heading has Collapse all
+  (`collapseFolders`, saved closed); the open note's row is scrolled into the
+  explorer once when it first appears (`revealNoteRow`, the explorer only, never
+  the page, skipped while the explorer is hidden, so later redraws keep the
+  user's scroll); and a fresh launch reopens
+  where the user left off (`leo-last-place`: the last note, folder, board,
+  calendar, graph or practice page, restored only when a new window session
+  opens on the library, never on reloads or in-app navigation). It is kept after
+  every page that drew and when the window hides or quits (`pagehide`), since a
+  new note's id and a deleted note's redirect rewrite the address without a
+  hashchange; a missing note resets it to the library. Tree and rail scrolling, focus and note pages survive redraws.
   Notes use the existing bounded metadata endpoint: 100 per page, four concurrent
   reads with ten-second aborts, 64 cached folders and 32 automatic visible reads.
   Further expanded folders offer Show notes. Late reads check page generation and
@@ -276,6 +294,16 @@ reader, seer, meaning, web, room, speech).
   Study marking can reuse a session when its Read only access key matches.
   Failed sessions fall back with a fresh
   read cache; provider context accounting still bounds each retained session.
+- Idle compaction (2026-11-02, the user's request; usage drained fast): after
+  `COMPACT_IDLE_MS` (10 min, warm.rs `IDLE`) without a message, the page POSTs
+  `/api/chat/compact` with the model history; when at least
+  `COMPACT_LEAST_CHARS` (3,000) lie before the last `chat::COMPACT_KEEP` (4)
+  turns, the server drops that chat's warm session and summarises them in the
+  background (`remember_in_background`, the quick model). `chat::kept_from`
+  starts the next prompt at a summary's end when it covers more than the usual
+  window (hash-checked), so a chat picked up after a pause sends the summary and
+  the last turns instead of every recent turn on a cold cache. The chat on
+  screen is unchanged.
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).
   History carries who wrote each answer, what Felix did, cards and passages,
@@ -303,7 +331,19 @@ reader, seer, meaning, web, room, speech).
   else goes to POST `/api/quiz/mark` (the quick model, `MARK`, JSON verdict
   and feedback). The card then offers Next question and Ask Felix why
   (`q.held`); Felix is only told the result (`heldSay`, "do not repeat it")
-  when the user goes on, or with their next message. If the quick check is
+  when the user goes on, or with their next message. Order (2026-11-02, the
+  user's call: asking why jumped to the next question): Ask Felix why sends
+  `quizSay(..., stay)` (explain, no new question) and the card keeps Next
+  question under the reply; a typed message while a card is held tells the
+  result once (`q.told`), says "do not ask a new practice question unless I ask"
+  and keeps the button; Next question after that sends only "Next question,
+  please." A new question card clears Next question on every told card, so an
+  old button cannot ask a second question later. Next question shows as a slim `.msg-next` divider (the `chat-switch`
+  pill), not a user bubble, and a card-only reply draws no empty paragraph.
+  Study's style starts from the open/attached material without being set up,
+  asks for self-contained questions that test one important idea, climbs from
+  understanding to use to transfer, adapts to right/wrong answers, and stops
+  after marking or answering a question about an answer. If the quick check is
   unavailable, Felix marks it as before (a `JUDGE` call when the verdict is
   missing). `quiz_from` shuffles multiple-choice options and refuses a quiz
   whose right option is clearly the longest (`gives_itself_away`). Study sessions: `study_plan` / `end_session`, quizzes
@@ -676,7 +716,23 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   (`run_each`), each named from its own file, with its own original; a file
   that fails is listed in the job's `error` and the rest are still made
   (`notes` lists them, the page opens the folder). "Make one note from all of
-  them" sends them together as before and shows the title field again. Originals are kept in
+  them" sends them together as before and shows the title field again.
+  Adding to a note (2026-11-03, the user's request): on an open note the sheet
+  has a segmented **Add to this note / New note** switch (`#upload-where`).
+  Files dropped on the note default to Add, the rail's Note from a file to New;
+  Add hides the folder, title and one-note-each choices. POST `/api/import`
+  with `into` (a note id, 404 if gone; never `each`) does not touch the note:
+  the finished job carries `section` (`## <title>`, the written text and the
+  From/uploaded line), and the page puts it at the end through the
+  version-checked `/insert` (`addSection`: the open editor's version after
+  `ready()` saves its draft, one retry on 409, Undo in the toast), as Add to
+  note does, so typing during a long upload never makes a conflict copy.
+  Originals go beside that note under free names (`free_original_name`:
+  `slides (2).pdf`), so an earlier upload's file and citations stay; if they
+  cannot be kept the section still goes in and the job says so. Try again on
+  a failed add keeps Add. In the note, a drop of only
+  pictures still goes in as pictures (`doc.js`); a drop with any other file goes
+  to the sheet with every file. Originals are kept in
   `<data>/attachments/<note-id>/` (never synced); figures from pptx/docx/PDF
   are offered to the AI (`leo_services::figures`). Originals open in
   `#source-pane` beside the note on desktop (1000px and wider), with Felix

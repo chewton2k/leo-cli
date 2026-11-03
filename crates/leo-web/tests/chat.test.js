@@ -276,6 +276,21 @@ test('what Felix is told about a practice answer says how it went and how to rep
   assert.ok(C.quizSay({ kind: 'fill_blank', question: 'q', answer: 'oldest | earliest' }, 'x', false).includes('the right answer is oldest.'));
 });
 
+test('asking why about an answer explains it and leaves the next question to the user', () => {
+  const mc = { kind: 'multiple_choice', question: 'What does BFS use?', answer: 'a queue' };
+  const why = C.quizSay(mc, 'a queue', true, true);
+  assert.ok(why.includes('[[correct]]'));
+  assert.ok(why.includes('do not ask a new practice question'));
+  assert.ok(!why.includes('ask the next question with the quiz tool'));
+  const marked = C.heldSay({ ...mc, given: 'a stack', correct: false }, false);
+  assert.ok(marked.includes('leo marked it wrong; the right answer is a queue'));
+  assert.ok(marked.includes('Ask the next question with the quiz tool'));
+  const told = C.heldSay({ ...mc, given: 'a stack', correct: false, told: true }, false);
+  assert.ok(told.startsWith('Next question, please.'), 'a result already told with a typed message is not told again');
+  assert.ok(!told.includes('leo marked it'));
+  assert.ok(C.heldSay({ ...mc, given: 'a queue', correct: true, told: true }, true).includes('end_session'));
+});
+
 test('tokens read from the cache are named in the cost line tooltip', () => {
   const label = C.spentLabel({ by: 'Anthropic', model: 'claude-sonnet-5-5', input: 12000, cached: 9000, output: 800, cost: 0.01, steps: 3 });
   assert.equal(label.title, '12,000 tokens in (9,000 from the cache), 800 out over 3 steps');
@@ -503,7 +518,7 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
   const context = vm.createContext({
     state, input, AbortController, TextDecoder, Date: class extends Date { static now() { return stream.clock ? stream.clock() : Date.now(); } }, working: new Map(), MOST_REFS: C.MOST_REFS,
     historyText: C.historyText, modelHistory: C.modelHistory, historyRequest: C.historyRequest, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
-    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, react: noop, talking: noop, onInterviewReply: noop,
+    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, compactLater: noop, stopCompacting: noop, react: noop, talking: noop, onInterviewReply: noop,
     pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
     onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),

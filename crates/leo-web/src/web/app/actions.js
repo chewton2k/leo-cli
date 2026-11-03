@@ -102,6 +102,7 @@ const actions = {
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),
   'set-effort': (el) => changeSetting({ set: 'effort', value: el.dataset.effort === 'default' ? '' : el.dataset.effort }),
   'side-twist': (el) => twistFolder(el.dataset.dir, el),
+  'side-collapse': () => collapseFolders(),
   'side-notes': (el) => loadSideNotes(el.dataset.dir, Number(el.dataset.offset || 0), true),
   'open-title': (el) => openTitle(el.dataset.title || ''),
   'side-search': searchEverywhere,
@@ -213,7 +214,7 @@ const actions = {
   'rec-discard': (el) => discardRecordingAsk(el),
   'rec-discard-now': (el) => discardRecordingNow(el),
   'rec-again': () => recorder.again(),
-  upload: (el) => uploadSheet(undefined, el.dataset.dir).catch(fail),
+  upload: (el) => uploadSheet(undefined, el.dataset.dir, { add: el.dataset.add === 'yes' }).catch(fail),
   'upload-go': () => uploadGo().catch(fail),
   'upload-drop': (el) => {
     picked.splice(Number(el.dataset.i), 1);

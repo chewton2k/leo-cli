@@ -74,23 +74,36 @@ function choosePictures() {
   input.click();
 }
 
+// The note a sheet opened on (files dropped on an open note can be added to it).
+let uploadNote = null;
+const addingToNote = () => Boolean(uploadNote) && $('#upload-where')?.value === 'add';
+
 function drawPicked() {
   const list = $('#upload-list');
   if (!list) return;
+  const adding = addingToNote();
   list.innerHTML = picked
     .map((f, i) => `<div class="upload-file">${/^image\//.test(f.type) ? ICON.image : ICON.note}<span class="grow">${esc(f.name)}<span class="sub">${size(f.size)}</span></span><button class="icon-btn" data-action="upload-drop" data-i="${i}" aria-label="Remove ${esc(f.name)}">${ICON.close}</button></div>`)
     .join('');
   $('#upload-go').disabled = !picked.length;
   $('#upload-pick-label').textContent = picked.length ? 'Add more files' : 'Choose files, or take photos';
   const several = picked.length > 1;
-  $('#upload-together-row').hidden = !several;
-  const together = !several || $('#upload-together').checked;
-  $('#upload-title').closest('.field').hidden = !together;
-  $('#upload-go').textContent = together ? 'Make the note' : `Make ${picked.length} notes`;
+  $('#upload-together-row').hidden = !several || adding;
+  const together = adding || !several || $('#upload-together').checked;
+  $('#upload-title').closest('.field').hidden = !together || adding;
+  $('#upload-dir').closest('.field').hidden = adding;
+  $('#upload-heading').textContent = adding ? 'Add a file to this note' : 'Make a note from a file';
+  $('#upload-go').textContent = adding ? 'Add to the note' : together ? 'Make the note' : `Make ${picked.length} notes`;
 }
 
-async function uploadSheet(files, into) {
+// `add`: the files were dropped on the open note, so adding to it is the
+// default; from the rail or a folder a new note is. Either way, on a note the
+// sheet offers both.
+async function uploadSheet(files, into, { add = false } = {}) {
   const here = into !== undefined ? into : state.view === 'folder' ? state.dir : state.view === 'note' ? state.dir || '' : '';
+  const open = state.view === 'note' && state.session && state.session.note && state.session.note.id ? state.session.note : null;
+  uploadNote = open ? { id: open.id, title: open.title || 'Untitled' } : null;
+  const where = uploadNote ? `<div class="upload-where">${segmented({ label: 'Where it goes', choices: [['add', 'Add to this note'], ['new', 'New note']], current: add ? 'add' : 'new', field: 'id="upload-where"' })}<p class="hint">Adding puts what the AI writes at the end of “${esc(uploadNote.title)}”, under its own heading.</p></div>` : '';
   picked = files ? [...files] : [];
   let folders = [];
   try {
@@ -99,7 +112,8 @@ async function uploadSheet(files, into) {
     folders = [];
   }
   const options = [{ name: '' }, ...folders].map((d) => `<option value="${esc(d.name)}"${d.name === here ? ' selected' : ''}>${esc(d.name ? folderLabel(d.name) + (d.name.includes('/') ? ` (${d.name})` : '') : 'Top level')}</option>`).join('');
-  sheet(`<h3>Make a note from a file</h3>
+  sheet(`<h3 id="upload-heading">Make a note from a file</h3>
+    ${where}
     <p>Slides, handouts, papers or worksheets as PDF, Word, PowerPoint or text, or photos and scans of pages. Your AI reads them and writes study notes.</p>
     <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose files, or take photos</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
     <div class="upload-list" id="upload-list"></div>
@@ -110,6 +124,7 @@ async function uploadSheet(files, into) {
     <p class="hint upload-hint">You can also paste a picture here. Photos stay in the note, and pictures and diagrams in slides and documents are kept beside the text. Reading photos and scans needs an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
   $('#upload-together').addEventListener('change', drawPicked);
+  $('#upload-where')?.addEventListener('change', drawPicked);
   $('#upload-input').addEventListener('change', (e) => {
     picked.push(...e.target.files);
     e.target.value = '';
@@ -151,12 +166,13 @@ function uploadProgress(text, done, total) {
 
 async function uploadGo() {
   if (!picked.length) return;
-  const dir = $('#upload-dir').value;
-  const each = picked.length > 1 && !$('#upload-together').checked;
-  const title = each ? '' : $('#upload-title').value.trim();
+  const into = addingToNote() ? uploadNote : null;
+  const dir = into ? '' : $('#upload-dir').value;
+  const each = !into && picked.length > 1 && !$('#upload-together').checked;
+  const title = each || into ? '' : $('#upload-title').value.trim();
   const wants = $('#upload-wants').value.trim();
   const names = picked.map((f) => f.name);
-  sheet(`<div class="upload-working">${felix.felix(72, 'idle think')}<h3>${each ? `Making ${names.length} notes` : 'Making your note'}</h3><p>${esc(names.length === 1 ? names[0] : `${names.length} files`)}</p><div id="upload-progress"></div><p class="hint">This can take a minute for long files. You can close this; the note appears in the folder when it is ready.</p></div>`);
+  sheet(`<div class="upload-working">${felix.felix(72, 'idle think')}<h3>${into ? `Adding to “${esc(into.title)}”` : each ? `Making ${names.length} notes` : 'Making your note'}</h3><p>${esc(names.length === 1 ? names[0] : `${names.length} files`)}</p><div id="upload-progress"></div><p class="hint">This can take a minute for long files. You can close this; the note appears in the folder when it is ready.</p></div>`);
   Object.assign(uploadClock, { since: Date.now(), step: '', stepSince: Date.now(), steps: [] });
   uploadProgress('Preparing the files', 0, 0);
   const files = [];
@@ -173,36 +189,42 @@ async function uploadGo() {
   uploadProgress('Uploading', 0, 0);
   let started;
   try {
-    started = await api('/api/import', { method: 'POST', body: { directory: dir, title: title || null, wants, files, each } });
+    started = await api('/api/import', { method: 'POST', body: { directory: dir, title: title || null, wants, files, each, into: into ? into.id : null } });
   } catch (e) {
     closeSheet();
     throw e;
   }
   picked = [];
-  watchUpload(started.id, dir);
+  watchUpload(started.id, dir, into);
   checkActivity();
 }
 
-function watchUpload(id, dir) {
+function watchUpload(id, dir, into = null) {
   clearTimeout(uploadPoll);
   uploadPoll = setTimeout(async () => {
     let job;
     try {
       job = await api(`/api/import/${enc(id)}`);
     } catch (e) {
-      return watchUpload(id, dir);
+      return watchUpload(id, dir, into);
     }
     if (job.state === 'working') {
       uploadProgress(job.step, job.done, job.total);
-      return watchUpload(id, dir);
+      return watchUpload(id, dir, into);
     }
     const open = $('.upload-working');
     if (job.state === 'failed') {
       if (open) {
-        open.innerHTML = `${felix.felix(72, 'droop')}<h3>The note could not be made</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="upload">Try again</button></div>`;
+        open.innerHTML = `${felix.felix(72, 'droop')}<h3>${into ? 'The file could not be added' : 'The note could not be made'}</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="upload"${into ? ' data-add="yes"' : ''}>Try again</button></div>`;
       } else {
         toast(job.error || 'The upload failed.', { bad: true });
       }
+      return;
+    }
+    if (into) {
+      if (open) closeSheet();
+      if (job.error) toast(job.error, { bad: true });
+      await addSection(into, job.section || '').catch(fail);
       return;
     }
     const many = (job.notes || []).length > 1;
@@ -217,6 +239,45 @@ function watchUpload(id, dir) {
     }
     if (many && open && state.view === 'folder' && (state.dir || '') === dir) await showLatest().catch(() => {});
   }, 900);
+}
+
+// Puts an upload's section at the end of the note through the version-checked
+// insert (as Add to note does), using the open editor's own version after
+// saving its draft, so typing during the upload never makes a conflict copy.
+async function addSection(into, section) {
+  if (!section.trim()) return;
+  const isHere = () => state.view === 'note' && state.session && state.session.note && state.session.note.id === into.id;
+  let done = null;
+  try {
+    for (let attempt = 0; attempt < 2 && !done; attempt++) {
+      let base = null;
+      if (isHere()) {
+        const s = await ready();
+        base = s ? s.note.version : null;
+      }
+      try {
+        if (!base) base = (await api(`/api/notes/${enc(into.id)}`)).version;
+        done = await api(`/api/notes/${enc(into.id)}/insert`, { method: 'POST', body: { text: section, line: null, base } });
+      } catch (e) {
+        if (e.status !== 409 || attempt) throw e;
+      }
+    }
+  } finally {
+    // ready() paused the editor; drawing the note again restarts it either way.
+    if (isHere()) await showNote(into.id);
+  }
+  toast(`Added to “${into.title}”`, {
+    action: 'Undo',
+    run: async () => {
+      try {
+        await api(`/api/notes/${enc(into.id)}`, { method: 'PATCH', body: { body: done.before, base: done.version } });
+        if (isHere()) await showNote(into.id);
+        toast(`Took it out of “${into.title}”`);
+      } catch (e) {
+        toast(e.status === 409 ? 'That note has changed since, so leo left it as it is.' : e.message, { bad: true });
+      }
+    },
+  });
 }
 
 async function showLatest() {

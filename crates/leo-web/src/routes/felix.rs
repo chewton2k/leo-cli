@@ -226,14 +226,14 @@ pub(crate) fn remember_in_background(
     upto: Vec<chat::Turn>,
     from: usize,
     writer: crate::graph::Writer,
-) {
+) -> bool {
     if !chats::valid_id(&id) {
-        return;
+        return false;
     }
     let Some(guard) = claim_busy(&REMEMBERING, &id) else {
-        return;
+        return false;
     };
-    let _ = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name("leo-chat-memory".into())
         .spawn(move || {
             let _guard = guard;
@@ -252,7 +252,8 @@ pub(crate) fn remember_in_background(
                     );
                 }
             }
-        });
+        })
+        .is_ok()
 }
 
 pub(crate) async fn delete_chat(
@@ -269,6 +270,70 @@ pub(crate) async fn delete_chat(
     {
         Ok(true) => StatusCode::NO_CONTENT,
         _ => StatusCode::NOT_FOUND,
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct CompactBody {
+    pub(crate) chat: String,
+    pub(crate) messages: Vec<chat::Turn>,
+}
+
+/// The least that is worth a summary: below this the turns cost less to send
+/// again than a summary request does.
+const COMPACT_LEAST_CHARS: usize = 3_000;
+
+/// Compacts a chat the page saw go quiet (`COMPACT_IDLE_MS`): by then the warm
+/// session has expired and the provider's prompt cache is cold, so the next
+/// message would resend every recent turn at full price. Everything but the
+/// last `chat::COMPACT_KEEP` turns is summarised in the background with the
+/// cheap model (`remember_in_background`); the next prompt starts at the
+/// summary's end (`chat::kept_from`). The chat the user sees is untouched.
+pub(crate) async fn compact_chat(
+    State(state): State<AppState>,
+    Json(body): Json<CompactBody>,
+) -> Response {
+    if !chats::valid_id(&body.chat) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(writer) = state.housekeeping.clone().or_else(|| state.quick.clone()) else {
+        return Json(serde_json::json!({ "compacting": false })).into_response();
+    };
+    let dir = state.chats.clone();
+    let warm = Arc::clone(&state.warm);
+    let started = tokio::task::spawn_blocking(move || {
+        let saved = chats::load(&dir, &body.chat)?;
+        let messages = body.messages;
+        let upto = messages.len().saturating_sub(chat::COMPACT_KEEP);
+        let old = saved
+            .memory
+            .filter(|m| chat::memory_fits(m, &messages, upto));
+        let from = old.as_ref().map_or(0, |m| m.upto);
+        let more: usize = messages[from..upto].iter().map(|t| t.text.len()).sum();
+        if upto <= from || more < COMPACT_LEAST_CHARS {
+            return Some(false);
+        }
+        let chat = body.chat.clone();
+        let started = remember_in_background(
+            dir,
+            body.chat,
+            old.filter(|_| from > 0),
+            messages[..upto].to_vec(),
+            from,
+            writer,
+        );
+        if started {
+            warm.forget(&chat);
+        }
+        Some(started)
+    })
+    .await;
+    match started {
+        Ok(Some(compacting)) => {
+            Json(serde_json::json!({ "compacting": compacting })).into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -1875,12 +1940,12 @@ pub(crate) async fn chat_reply(
         Some(chat) if !body.files.is_empty() => chat_files::texts(&state.chats, chat, &body.files),
         _ => Vec::new(),
     };
-    let start = chat::first_kept(&body.messages, room);
     let memory = body
         .chat
         .as_deref()
         .and_then(|id| chats::load(&state.chats, id))
         .and_then(|c| c.memory);
+    let start = chat::kept_from(&body.messages, room, memory.as_ref());
     let documents_room = if body.practice { note_room } else { room };
     let (mut system, mut user) = chat::prompt_material(
         mode,

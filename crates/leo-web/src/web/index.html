@@ -957,6 +957,7 @@ html[data-app="mac"] body.side-mini .side-head { justify-content: center; }
 .side-group { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 0 2px 6px 8px; min-height: 22px; }
 .side-group .side-row { flex: 1; min-width: 0; min-height: 26px; gap: 8px; padding: 0; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; }
 .side-group .side-row svg { width: 16px; height: 16px; }
+.side-group-tools { display: flex; gap: 2px; }
 .side-add { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--muted); }
 .side-add:hover { background: var(--surface-2); color: var(--text); }
 .side-add svg { width: 16px; height: 16px; }
@@ -1623,6 +1624,9 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .switch:disabled { opacity: .5; cursor: default; }
 /* Segmented control: the pill slides under whichever option is picked. */
+.upload-where { display: grid; gap: 6px; margin: 4px 0 12px; }
+.upload-where .segmented { margin: 0; max-width: none; }
+.upload-where .hint { margin: 0; }
 .segmented { position: relative; isolation: isolate; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); flex: 1 1 260px; max-width: 440px; margin-left: auto; padding: 3px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--line); }
 .segment-pill { position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / var(--count)); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .14), 0 0 0 .5px rgba(0, 0, 0, .06); transform: translateX(calc(100% * var(--at))); transition: transform .26s cubic-bezier(.3, .7, .4, 1); }
 .segment { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 13.5px; font-weight: 600; white-space: nowrap; transition: color .2s; }
