@@ -45,6 +45,9 @@ const RUNNER_JS: &str = include_str!("../web/runner.js");
 pub(crate) const RUNNER_POLICY: &str = "default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; \
      worker-src blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
 const CHAT_JS: &str = include_str!("../web/chat.js");
+pub(crate) async fn pane_resize_js() -> Response {
+    javascript(include_str!("../web/pane-resize.js"))
+}
 pub(crate) async fn interview_js() -> Response {
     javascript(include_str!("../web/interview.js"))
 }

@@ -252,7 +252,12 @@ reader, seer, meaning, web, room, speech).
   individual notes. Folder labels and chevrons toggle their children; note rows
   open notes directly. The selected folder scopes New note, Record and imports;
   library cards and breadcrumbs retain folder navigation. The explorer narrows
-  below 1200 px to leave room for notes, originals and Felix.
+  below 1200 px to leave room for notes, originals and Felix. Its right edge is a
+  keyboard-accessible resize handle; `leo-side-width` remembers the expanded
+  width while the 52 px rail stays fixed. `pane-resize.js` shares bounded sizing,
+  32/96 px arrow steps, Home/double-click reset and drag cleanup with Felix's
+  Chats divider (`leo-chat-history-width`); shrinking a window clamps the visible
+  width without replacing the saved preference. Overlay chat lists have no grip.
   There is no Top level row (2026-11-02, the user's call: the tree already lists
   top-level notes); the pinned Folders heading is the top-level drop target, and
   folder and note rows retain drag data. Drops work like a file explorer

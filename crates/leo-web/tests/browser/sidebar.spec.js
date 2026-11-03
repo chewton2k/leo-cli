@@ -65,8 +65,11 @@ async function sidebarFixture(browser, run) {
     loadSideFolders().catch(fail);`;
   const server = http.createServer((req,res) => {
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
+    if(req.url==='/pane-resize.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(read('pane-resize.js'));}
+    if(req.url==='/chat.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(read('chat.js'));}
+    if(req.url.startsWith('/api/')) {res.setHeader('Content-Type','application/json');return res.end('[]');}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
-    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/style.css"></head><body><aside id="side" class="side"></aside><header class="bar"><div class="bar-row">Leo</div></header><main><textarea id="draft">Keep my draft 文字</textarea></main><script src="/fixture.js"></script></body></html>');
+    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/style.css"></head><body><aside id="side" class="side"></aside><header class="bar"><div class="bar-row">Leo</div></header><main><textarea id="draft">Keep my draft 文字</textarea></main><script src="/pane-resize.js"></script><script src="/chat.js"></script><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const context = await browser.newContext();
@@ -537,5 +540,126 @@ test('the sidebar toggle keeps its place while the explorer folds, and the fold 
     await page.locator('.side-fold').click();
     await expect(page.locator('body')).not.toHaveClass(/side-folding/);
     await expect(page.locator('.side-explorer')).toBeHidden();
+  });
+});
+
+
+async function dragPane(page,grip,dx) {
+  const box=await grip.boundingBox(), x=box.x+box.width/2, y=box.y+Math.min(140,box.height/2);
+  await page.mouse.move(x,y);
+  await page.mouse.down();
+  await page.mouse.move(x+dx,y,{steps:5});
+  await page.mouse.up();
+}
+
+test('file explorer width resizes, survives redraws and reloads, and keeps its bounds', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.setViewportSize({width:1440,height:900});
+    await page.goto(url);
+    const grip=page.getByRole('separator',{name:'File explorer width',exact:true}), side=page.locator('#side');
+    await expect(grip).toBeVisible();
+    await page.locator('#draft').fill('Keep my resized draft 文字');
+    await dragPane(page,grip,80);
+    expect(Math.round((await side.boundingBox()).width)).toBe(364);
+    await grip.focus();
+    await page.keyboard.press('ArrowLeft');
+    expect(Math.round((await side.boundingBox()).width)).toBe(332);
+    await page.evaluate(()=>audit.draw());
+    await expect(grip).toBeFocused();
+    await expect(page.locator('#draft')).toHaveValue('Keep my resized draft 文字');
+    await page.reload();
+    expect(Math.round((await side.boundingBox()).width)).toBe(332);
+    await page.locator('.side-fold').click();
+    await expect(grip).toBeHidden();
+    await expect(page.locator('body')).not.toHaveClass(/side-folding/);
+    expect(Math.round((await side.boundingBox()).width)).toBe(52);
+    await page.locator('.side-fold').click();
+    await expect(page.locator('body')).not.toHaveClass(/side-folding/);
+    expect(Math.round((await side.boundingBox()).width)).toBe(332);
+    await grip.focus();
+    await page.keyboard.press('End');
+    expect(Math.round((await side.boundingBox()).width)).toBe(Number(await grip.getAttribute('aria-valuemax')));
+    await page.keyboard.press('Shift+ArrowLeft');
+    expect(Math.round((await side.boundingBox()).width)).toBe(Number(await grip.getAttribute('aria-valuemax'))-96);
+    await grip.dblclick();
+    expect(Math.round((await side.boundingBox()).width)).toBe(284);
+    await page.evaluate(()=>localStorage.setItem('leo-side-width','Infinity'));
+    await page.reload();
+    expect(Math.round((await side.boundingBox()).width)).toBe(284);
+    await page.setViewportSize({width:390,height:844});
+    await expect(grip).toBeHidden();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+});
+
+async function openFixtureChat(page) {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.evaluate(()=>{
+    window.fixtureChat=window.leoChat.create({render:text=>'<p>'+text+'</p>',escape:text=>String(text).replace(/[&<>]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))});
+    fixtureChat.toggle(true);
+  });
+  await expect(page.locator('#chat-input')).toBeVisible();
+}
+
+test('Chats divider resizes independently, keeps drafts and restores its width', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.setViewportSize({width:1600,height:900});
+    await page.goto(url);
+    await openFixtureChat(page);
+    const grip=page.getByRole('separator',{name:'Chats list width',exact:true}), history=page.locator('.chat-history');
+    await expect(grip).toBeVisible();
+    await page.locator('#chat-input').fill('Keep this draft 文字');
+    const start=Math.round((await history.boundingBox()).width), total=(await page.locator('.chat').boundingBox()).width;
+    await dragPane(page,grip,64);
+    expect(Math.round((await history.boundingBox()).width)).toBe(start+64);
+    expect((await page.locator('.chat').boundingBox()).width).toBe(total);
+    await grip.focus();
+    await page.keyboard.press('ArrowLeft');
+    const kept=Math.round((await history.boundingBox()).width);
+    expect(kept).toBe(start+32);
+    await expect(page.locator('#chat-input')).toHaveValue('Keep this draft 文字');
+    await page.locator('.chat-history-toggle').click();
+    await expect(grip).toBeHidden();
+    await page.locator('.chat-history-toggle').click();
+    expect(Math.round((await history.boundingBox()).width)).toBe(kept);
+    await page.reload();
+    await openFixtureChat(page);
+    expect(Math.round((await history.boundingBox()).width)).toBe(kept);
+    await grip.focus();
+    await page.keyboard.press('End');
+    expect((await page.locator('.chat-main').boundingBox()).width).toBeGreaterThanOrEqual(220);
+    await grip.dblclick();
+    expect(Math.round((await history.boundingBox()).width)).toBe(start);
+    await page.setViewportSize({width:390,height:844});
+    await page.locator('.chat-history-toggle').click();
+    await expect(history).toBeVisible();
+    await expect(grip).toBeHidden();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+});
+
+
+test('explorer resize handle stays reachable beside Felix in narrow desktop windows', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    for(const width of [1000,1100,1280]) {
+      await page.setViewportSize({width,height:800});
+      await page.goto(url);
+      const grip=page.getByRole('separator',{name:'File explorer width',exact:true});
+      await grip.focus();
+      await page.keyboard.press('End');
+      await openFixtureChat(page);
+      await page.evaluate(()=>audit.draw());
+      await expect(grip).toBeVisible();
+      expect(await grip.evaluate(el=>{const box=el.getBoundingClientRect();return document.elementFromPoint(box.x+box.width/2,box.y+140)===el;})).toBe(true);
+      const box=await grip.boundingBox();
+      await page.mouse.move(box.x+box.width/2,box.y+140);
+      await page.mouse.down();
+      await expect(page.locator('body')).toHaveClass(/pane-resizing/);
+      await page.mouse.up();
+      await expect(page.locator('body')).not.toHaveClass(/pane-resizing/);
+    }
   });
 });

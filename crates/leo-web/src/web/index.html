@@ -595,7 +595,7 @@ label.trash-row { cursor: pointer; }
   html { scrollbar-gutter: auto !important; }
   body { --side: 0px !important; --right: 0px !important; --top: 0px !important; --bottom: 0px !important; }
   html, body { background: #fff; color: #1c1c1a; padding: 0 !important; margin: 0; font-size: 11pt; line-height: 1.55; }
-  .note-outline, .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, .map, .interview-split, [data-print-off] { display: none !important; }
+  .note-outline, .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .pane-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, .map, .interview-split, [data-print-off] { display: none !important; }
   body.files-over main::after { display: none !important; }
   .interview-panes, .store-all { position: static !important; }
   main, body.on-note main { max-width: none !important; width: auto !important; padding: 0 !important; margin: 0 !important; }
@@ -913,7 +913,7 @@ body.on-map main { padding: 0; max-width: none; }
 @property --side { syntax: '<length>'; inherits: true; initial-value: 0px; }
 .side { display: none; }
 @media (min-width: 1000px) {
-  body { --side: 284px; padding-left: var(--side); }
+  body { --side: var(--explorer-w, 284px); padding-left: var(--side); }
   body.side-mini { --side: 52px; }
   .bar .brand, #menu, #search-toggle, body .fabs { display: none; }
   .side {
@@ -924,7 +924,7 @@ body.on-map main { padding: 0; max-width: none; }
   .side[hidden] { display: none; }
 }
 .side-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 2px; padding: var(--top) 6px 0; border-bottom: 1px solid var(--line); min-width: 0; }
-@media (min-width: 1000px) and (max-width: 1199px) { body:not(.side-mini) { --side: 240px; } }
+@media (min-width: 1000px) and (max-width: 1199px) { body:not(.side-mini) { --side: var(--explorer-w, 240px); } }
 .side-head .brand { padding-left: 8px; }
 html[data-app="mac"] .side-head .brand { display: none; }
 html[data-app="mac"] .side-fold { position: fixed; z-index: 1; left: 76px; top: calc(var(--top) + 6px); }
@@ -994,9 +994,19 @@ body.side-mini .side { grid-template-columns: 52px; }
 body.side-mini .side-explorer, body.side-mini .side-head .brand { display: none; }
 body.side-folding { transition: --side 180ms cubic-bezier(.2, .8, .2, 1); }
 body.side-folding .bar { transition: padding-left 180ms cubic-bezier(.2, .8, .2, 1); }
-body.side-folding .side { grid-template-columns: 52px 232px; }
+body.side-folding .side { grid-template-columns: 52px calc(var(--explorer-w, 284px) - 52px); }
 body.side-mini.side-folding .side-explorer { display: flex; }
-@media (max-width: 1199px) { body.side-folding .side { grid-template-columns: 52px 188px; } }
+@media (max-width: 1199px) { body.side-folding .side { grid-template-columns: 52px calc(var(--explorer-w, 240px) - 52px); } }
+.side-resize { display: none; }
+@media (min-width: 1000px) {
+  .side-resize { display: block; position: fixed; z-index: 36; left: calc(var(--side) - 5px); top: var(--bar-height); bottom: 0; width: 10px; }
+}
+body.side-mini .side-resize, body.side-folding .side-resize { display: none; }
+.pane-resize { cursor: col-resize; touch-action: none; outline: 0; }
+.pane-resize::after { content: ''; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: var(--accent); opacity: 0; transition: opacity .15s; }
+.pane-resize:hover::after, .pane-resize:focus-visible::after, body.pane-resizing .pane-resize::after { opacity: 1; }
+body.pane-resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; transition: none; }
+body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 .side-folder { display: none; }
 .side-folder { position: relative; display: flex; align-items: center; padding-left: calc(var(--depth, 0) * 14px); border-radius: 9px; }
 .side-folder .side-row { flex: 1; min-width: 0; padding-left: 4px; }
@@ -1040,8 +1050,13 @@ body.side-mini.side-folding .side-explorer { display: flex; }
 @media (min-width: 900px) {
   :root { --chat-w: clamp(560px, 48vw, 820px); }
   .chat { width: var(--chat-w); }
-  .chat-history { flex: none; width: clamp(190px, 30%, 260px); border-right: 1px solid var(--line); }
+  .chat-history { position: relative; flex: none; width: clamp(190px, var(--chat-history-w, clamp(190px, 30%, 260px)), max(190px, calc(100% - 220px))); border-right: 1px solid var(--line); }
 }
+.chat-history-resize { display: none; }
+@media (min-width: 900px) {
+  .chat-history-resize { display: block; position: absolute; z-index: 6; right: -5px; top: 0; bottom: 0; width: 10px; }
+}
+.chat.source-narrow .chat-history-resize { display: none; }
 @media (max-width: 899px) {
   .chat-history { position: absolute; inset: var(--top) 0 0 0; z-index: 3; }
 }
@@ -2415,6 +2430,7 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 <script src="/saving.js"></script>
 <script src="/graph.js"></script>
 <script src="/schedule.js"></script>
+<script src="/pane-resize.js"></script>
 <script src="/chat.js"></script>
 <script src="/interview.js"></script>
 <script src="/audio-queue.js"></script>
