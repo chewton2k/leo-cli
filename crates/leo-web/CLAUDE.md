@@ -960,6 +960,9 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   POST `/api/cards/{id}/move` `{board?, column?, after?}` (`after` missing = end,
   null = top, an id = just after it; another board keeps a same-named column, else
   the first). Export adds `leo/boards.json`.
+- New board uses the existing sheet and controls, with a labelled full-width name
+  field and a small preview of the three starting columns; Enter and Create board
+  submit the same request, and Cancel leaves the boards untouched.
 - Page: board tabs with counts (a card dropped on a tab moves to that board, with
   Undo), the name and column names edit in place (Enter saves, Escape reverts),
   columns are grey lanes of white cards (title, muted subheading, priority arrows,

@@ -209,10 +209,15 @@ function kanbanSyncTab() {
 }
 
 async function kanbanNewBoard() {
-  const box = sheet(`<h3>New board</h3>
-    <input class="set-input" id="kanban-board-name" maxlength="80" placeholder="Like Coursework or Job search" aria-label="Board name" autocomplete="off">
-    <p class="hint">It starts with To do, In progress and Done. You can rename, add and reorder columns.</p>
-    <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn primary" id="kanban-board-make">Make board</button></div>`);
+  const box = sheet(`<div class="kanban-start">
+    <header class="kanban-start-head"><span class="kanban-start-icon">${ICON.board}</span><div><h3>New board</h3><p>A place for your next project.</p></div></header>
+    <label class="kanban-start-field"><span>Board name</span><input class="set-input" id="kanban-board-name" maxlength="80" placeholder="Coursework or Job search" autocomplete="off" aria-describedby="kanban-start-help"></label>
+    <div class="kanban-start-preview" aria-label="Starting columns">
+      ${[['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']].map(([tone, name]) => `<div class="kanban-start-column" data-tone="${tone}"><span><i class="kanban-dot"></i>${name}</span><div class="kanban-start-card" aria-hidden="true"><i></i><i></i></div></div>`).join('')}
+    </div>
+    <p class="kanban-start-help" id="kanban-start-help">Your starting columns. Rename, add or reorder them any time.</p>
+    <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn primary" id="kanban-board-make">Create board</button></div>
+  </div>`);
   const name = $('#kanban-board-name', box);
   const make = $('#kanban-board-make', box);
   const save = async () => {
