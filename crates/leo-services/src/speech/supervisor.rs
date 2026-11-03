@@ -409,11 +409,19 @@ pub struct StreamHandle {
     finished: bool,
 }
 
+pub enum Fed {
+    Sent,
+    Full(Vec<f32>),
+    Lost,
+}
+
 impl StreamHandle {
-    pub fn feed(&self, pcm: Vec<f32>) -> bool {
-        self.commands
-            .try_send(Command::Feed { id: self.id, pcm })
-            .is_ok()
+    pub fn feed(&self, pcm: Vec<f32>) -> Fed {
+        match self.commands.try_send(Command::Feed { id: self.id, pcm }) {
+            Ok(()) => Fed::Sent,
+            Err(mpsc::TrySendError::Full(Command::Feed { pcm, .. })) => Fed::Full(pcm),
+            Err(_) => Fed::Lost,
+        }
     }
 
     pub fn finalize(mut self, want_language: bool) -> Result<Option<Finalized>, EngineError> {
@@ -425,7 +433,7 @@ impl StreamHandle {
             epoch: self.epoch,
             reply,
         };
-        if self.commands.try_send(command).is_err() {
+        if self.commands.send(command).is_err() {
             return Ok(None);
         }
         answer.recv().unwrap_or(Ok(None))

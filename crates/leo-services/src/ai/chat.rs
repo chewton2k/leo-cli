@@ -413,6 +413,23 @@ pub fn complete(
     run_chat_chain(providers, &req)
 }
 
+pub fn complete_until(
+    cfg: &Config,
+    store: &dyn SecretStore,
+    prompt: Prompt,
+    max_tokens: u32,
+    stopped: &dyn Fn() -> bool,
+) -> Result<ChainOutcome<String>> {
+    let providers = build_chat_chain(cfg, store);
+    let req = ChatRequest {
+        system: Some(prompt.system),
+        prompt: prompt.user,
+        temperature: TEMPERATURE,
+        max_tokens,
+    };
+    crate::ai::chain::run_chat_chain_until(providers, &req, stopped)
+}
+
 /// The same completion, delivered as it arrives.
 pub fn complete_streaming(
     cfg: &Config,

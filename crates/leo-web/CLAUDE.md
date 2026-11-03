@@ -152,8 +152,14 @@ reader, seer, meaning, web, room, speech).
 ## Notes, editing and browsing
 
 - No editor view: `editing.js` splits the body into blocks; `doc.js` renders
-  each with `markdown.js` and swaps a tapped block (or the lines a selection
-  covers, like Obsidian's live preview) for a textarea of its raw lines.
+  each with `markdown.js` and swaps a tapped block for a textarea of its raw
+  lines. Like Obsidian's live preview (2026-11-02, the user's call), nothing
+  jumps when a line opens: a heading keeps its size (`data-head`) and a list or
+  task line is shifted so its text stays where it was drawn (the marker hangs
+  left). A selection across lines stays rendered in place: dragging out of the
+  edited line carries on across the lines (`dragAnchor`), Shift+click selects,
+  copy and cut give the Markdown, and typing, Enter, Delete or paste replace it
+  through the raw lines, then only the caret's line stays open.
   Autosave PATCHes 700 ms after the last change with `base` = the loaded
   `version` (FNV-1a); 409 → "<title> (conflict from phone)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
@@ -1096,10 +1102,13 @@ checks. Two combines may run at once, with a 15-minute between-request deadline;
 any failed part leaves both source notes unchanged. Review, version checks,
 transcript copies and Undo still apply. Saving admits bounded Unicode JSON bodies.
 
-Notes with Markdown headings have an On this page outline, generated locally from
+Notes with Markdown headings have an outline (its disclosure is an icon and chevron with no "On this page" label; 2026-11-02, the user's call), generated locally from
 editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
-It uses source-more controls and theme tokens. With 900 px of room, the borderless
-320 px rail sits beside the app sidebar, separated from the note by 56 px; note
+It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
+the user's call: notes sit in the middle), the note is centred between two 48 px
+gutters and the right one holds a tick per heading (`.outline-ticks`, longer for
+higher levels, the current one in the accent); hovering or focusing it shows the
+outline as a floating card to its left, and a tick jumps to its heading. Note
 width preferences still cap the reading column. Headings stay on one line with
 ellipsis and their full title on hover. The outline hides its scrollbar while
 keeping wheel, touch and keyboard scrolling available. The outline gutter is

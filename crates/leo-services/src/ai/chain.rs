@@ -36,6 +36,19 @@ pub fn run_chat_chain(
     run_chat_chain_with(providers, req, &mut |p, r| p.complete(r), &mut || {})
 }
 
+pub fn run_chat_chain_until(
+    providers: Vec<Box<dyn ChatProvider>>,
+    req: &ChatRequest,
+    stopped: &dyn Fn() -> bool,
+) -> Result<ChainOutcome<String>> {
+    run_chat_chain_with(
+        providers,
+        req,
+        &mut |p, r| p.complete_until(r, stopped),
+        &mut || {},
+    )
+}
+
 pub fn run_vision_chain(
     providers: Vec<Box<dyn ChatProvider>>,
     req: &ChatRequest,

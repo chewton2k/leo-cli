@@ -164,6 +164,24 @@ pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Cha
     chat::complete(&quick_config(&cfg), &store, prompt, max_tokens)
 }
 
+pub fn dictation_outcome(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+    quick: bool,
+    stopped: &dyn Fn() -> bool,
+) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    let cfg = if quick { quick_config(&cfg) } else { cfg };
+    chat::complete_until(&cfg, &*store, prompt, max_tokens, stopped)
+}
+
+pub fn writing_ready() -> bool {
+    let (cfg, store) = context();
+    provider::build_chat_chain(&cfg, &*store)
+        .iter()
+        .any(|p| p.available())
+}
+
 pub fn see(prompt: chat::Prompt, images: &[provider::Image], max_tokens: u32) -> Result<String> {
     let (cfg, store) = context();
     let req = provider::ChatRequest {

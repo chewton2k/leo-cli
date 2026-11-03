@@ -180,17 +180,16 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     await expect(nav.getByRole('button', {name:'Ignore code'})).toHaveCount(0);
     await expect(page.locator('.note-outline details')).toHaveAttribute('open', '');
     const rail = await page.locator('.note-outline').evaluate(el => {
-      const box = el.getBoundingClientRect(), note = document.querySelector('.note').getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return {left:box.left, width:box.width, gap:note.left-box.right, side:parseFloat(getComputedStyle(document.body).getPropertyValue('--side')) || 0, border:style.borderWidth, shadow:style.boxShadow, background:style.backgroundColor};
+      const ticks = el.querySelector('.outline-ticks').getBoundingClientRect(), note = document.querySelector('.note').getBoundingClientRect(), columns = document.querySelector('.note-columns').getBoundingClientRect();
+      return {ticks:ticks.left - note.right, centre:(note.left - columns.left) - (columns.right - note.right), count:el.querySelectorAll('.outline-ticks span').length};
     });
-    expect(rail.width).toBeGreaterThanOrEqual(280);
-    expect(rail.left - rail.side).toBeLessThanOrEqual(20);
-    expect(rail.gap).toBeGreaterThanOrEqual(48);
-    expect(rail.border).toBe('0px');
-    expect(rail.shadow).toBe('none');
-    expect(rail.background).toBe('rgba(0, 0, 0, 0)');
+    expect(rail.ticks).toBeGreaterThanOrEqual(0);
+    expect(Math.abs(rail.centre)).toBeLessThanOrEqual(2);
+    expect(rail.count).toBe(4);
+    expect(await nav.evaluate(el => getComputedStyle(el).opacity)).toBe('0');
     expect(await nav.evaluate(el => getComputedStyle(el).scrollbarWidth)).toBe('none');
+    await page.locator('.note-outline .outline-ticks').hover();
+    await expect.poll(() => nav.evaluate(el => getComputedStyle(el).opacity)).toBe('1');
     await nav.evaluate(el => { el.style.maxHeight = '64px'; });
     expect(await nav.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
     await nav.hover();

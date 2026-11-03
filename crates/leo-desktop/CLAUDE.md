@@ -85,6 +85,17 @@ window's monitor, with cursor/primary fallbacks, and supports top/bottom and
 Live/Minimal/Off. Its CSS token block comes directly from the web page's theme;
 the main page sends Light/Dark/Match changes. Queued shows and updates check the
 current generation. The popup's IPC is limited to its own window label.
+The popup follows Handy's live preview: state changes are pushed as a
+`dictation` event (revision-stamped, skipped when the popup is Off; the page
+polls only if listening fails), committed and tentative words render with a
+caret, the text pins to its newest line, and 16 FFT buckets
+(`dictation::visualizer`) drive nine smoothed bars. Streaming models get the
+1650 ms streaming VAD hangover and ~32 ms feeds, so the model hears the tail
+it needs for the last words and their punctuation; text stays visible while
+the final pass runs. With AI writing on, Escape stays registered through the
+polishing step (its own `escape` flag, separate from `capturing`), and a
+fallback shows a four-second "Pasted without AI writing" notice with the
+reason. Settings warns when no writing AI is set up (`writing_ready`).
 Shutdown cancels dictation/shortcuts and stops the speech worker before the
 loopback engine finishes.
 
