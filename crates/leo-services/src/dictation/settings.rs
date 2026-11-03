@@ -26,17 +26,15 @@ pub enum Writing {
     Quick,
     Selected,
 }
+const RETIRED: &[&str] = &["closed_microphone", "trailing_space", "enter"];
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub shortcut: String,
     pub mode: Mode,
     pub microphone: Option<String>,
-    pub closed_microphone: Option<String>,
     pub custom_words: Vec<String>,
     pub fillers: bool,
-    pub trailing_space: bool,
-    pub enter: bool,
     pub sounds: bool,
     pub popup: Popup,
     pub top: bool,
@@ -53,11 +51,8 @@ impl Default for Settings {
             .into(),
             mode: Mode::Both,
             microphone: None,
-            closed_microphone: None,
             custom_words: Vec::new(),
             fillers: true,
-            trailing_space: false,
-            enter: false,
             sounds: false,
             popup: Popup::Live,
             top: false,
@@ -83,9 +78,7 @@ impl Settings {
             "Use at most 200 custom words, each up to 200 characters."
         );
         ensure!(
-            [&self.microphone, &self.closed_microphone]
-                .iter()
-                .all(|n| n.as_ref().is_none_or(|n| n.len() <= 1024)),
+            self.microphone.as_ref().is_none_or(|n| n.len() <= 1024),
             "Choose a microphone from the list."
         );
         Ok(())
@@ -98,7 +91,15 @@ impl Settings {
             std::fs::symlink_metadata(path)?.is_file() && std::fs::metadata(path)?.len() <= 200_000,
             "Dictation settings could not be opened. Restore dictation.json from a backup."
         );
-        let value: Self = serde_json::from_slice(&std::fs::read(path)?).context(
+        let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?).context(
+            "Dictation settings could not be read. Restore dictation.json from a backup.",
+        )?;
+        if let Some(fields) = value.as_object_mut() {
+            for retired in RETIRED {
+                fields.remove(*retired);
+            }
+        }
+        let value: Self = serde_json::from_value(value).context(
             "Dictation settings could not be read. Restore dictation.json from a backup.",
         )?;
         value.validate()?;
@@ -183,5 +184,25 @@ mod recovery_tests {
         let chosen: super::Settings = serde_json::from_str(r#"{"writing":"quick"}"#).unwrap();
         assert_eq!(chosen.writing, super::Writing::Quick);
         assert!(serde_json::from_str::<super::Settings>(r#"{"writing":"loud"}"#).is_err());
+    }
+    #[test]
+    fn files_with_retired_options_load_and_drop_them_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dictation.json");
+        std::fs::write(
+            &path,
+            r#"{"shortcut":"fn","fillers":false,"closed_microphone":"Studio","trailing_space":true,"enter":true}"#,
+        )
+        .unwrap();
+        let settings = super::Settings::load(&path).unwrap();
+        assert_eq!(settings.shortcut, "fn");
+        assert!(!settings.fillers);
+        settings.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !saved.contains("closed_microphone")
+                && !saved.contains("trailing_space")
+                && !saved.contains("\"enter\"")
+        );
     }
 }

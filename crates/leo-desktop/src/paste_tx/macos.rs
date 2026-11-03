@@ -7,13 +7,11 @@ use objc2::rc::Retained;
 use objc2::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSData, NSInteger, NSObject, NSString};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use super::{evaluate, send_chord, TxState, WaitDecision};
-use crate::clipboard::send_return_key;
-use crate::input::EnigoState;
-use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod};
+use crate::settings::{ClipboardHandling, PasteMethod};
 
 const CONCEALMENT_TYPES: [&str; 3] = [
     "org.nspasteboard.TransientType",
@@ -73,8 +71,6 @@ struct MacPending {
     snapshot: super::Snapshot,
     change_count: NSInteger,
     provider: Option<Retained<LeoPasteProvider>>,
-    auto_submit: bool,
-    auto_submit_key: AutoSubmitKey,
     preserve_transcript: bool,
     transcript: String,
     settled: bool,
@@ -82,11 +78,7 @@ struct MacPending {
 
 static PENDING: Mutex<Option<Arc<Mutex<MacPending>>>> = Mutex::new(None);
 
-fn settle(
-    pending: &Arc<Mutex<MacPending>>,
-    app_handle: &AppHandle,
-    enigo: Option<&mut enigo::Enigo>,
-) {
+fn settle(pending: &Arc<Mutex<MacPending>>, app_handle: &AppHandle) {
     let mut p = match pending.lock() {
         Ok(p) => p,
         Err(_) => return,
@@ -97,34 +89,14 @@ fn settle(
     p.settled = true;
 
     let activity = p.activity.take();
-    let current = p.current.clone();
     let state = p.state.clone();
     let snapshot = std::mem::take(&mut p.snapshot.0);
     let change_count = p.change_count;
-    let auto_submit = p.auto_submit;
-    let auto_submit_key = p.auto_submit_key;
     let preserve_transcript = p.preserve_transcript;
     let transcript = p.transcript.clone();
     let provider = p.provider.take();
     drop(p);
-    let (submit, ownership_lost) = match state.lock() {
-        Ok(st) => (super::should_submit(&st), st.ownership_lost),
-        Err(_) => (false, true),
-    };
-    if auto_submit && submit && current() {
-        match enigo {
-            Some(e) => {
-                let _ = send_return_key(e, auto_submit_key);
-            }
-            None => {
-                if let Some(enigo_state) = app_handle.try_state::<EnigoState>() {
-                    enigo_state.0.with(|e| {
-                        let _ = send_return_key(e, auto_submit_key);
-                    });
-                }
-            }
-        }
-    }
+    let ownership_lost = state.lock().map(|st| st.ownership_lost).unwrap_or(true);
 
     let still_ours =
         !ownership_lost && NSPasteboard::generalPasteboard().changeCount() == change_count;
@@ -158,13 +130,13 @@ fn settle(
     drop(activity);
 }
 
-fn flush_pending(app_handle: &AppHandle, enigo: &mut enigo::Enigo) {
+fn flush_pending(app_handle: &AppHandle) {
     let previous = match PENDING.lock() {
         Ok(mut slot) => slot.take(),
         Err(_) => None,
     };
     if let Some(previous) = previous {
-        settle(&previous, app_handle, Some(enigo));
+        settle(&previous, app_handle);
     }
 }
 
@@ -216,7 +188,7 @@ fn spawn_waiter(pending: Arc<Mutex<MacPending>>, app_handle: AppHandle) {
         let pending_for_finish = pending.clone();
         let app_for_finish = app_handle.clone();
         let _ = app_handle.run_on_main_thread(move || {
-            settle(&pending_for_finish, &app_for_finish, None);
+            settle(&pending_for_finish, &app_for_finish);
             if let Ok(mut slot) = PENDING.lock() {
                 let is_us = slot
                     .as_ref()
@@ -234,14 +206,12 @@ pub(super) fn run(
     text: &str,
     app_handle: &AppHandle,
     enigo: &mut enigo::Enigo,
-    auto_submit: bool,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<(), String> {
     let paste_method = &PasteMethod::CtrlV;
-    let auto_submit_key = AutoSubmitKey::Enter;
     let clipboard_handling = ClipboardHandling::Restore;
 
-    flush_pending(app_handle, enigo);
+    flush_pending(app_handle);
     let activity = leo_core::activity::global()
         .begin()
         .map_err(|e| e.to_string())?;
@@ -323,8 +293,6 @@ pub(super) fn run(
         snapshot,
         change_count,
         provider: Some(provider),
-        auto_submit,
-        auto_submit_key,
         preserve_transcript: clipboard_handling == ClipboardHandling::CopyToClipboard,
         transcript: text.to_string(),
         settled: false,

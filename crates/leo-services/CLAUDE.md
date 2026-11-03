@@ -516,7 +516,8 @@ contain the dictation. The call goes through
 instead of leaving it running. Every fallback returns a reason the popup shows. `capture.rs` bounds dictation to
 300 seconds, closes the input before draining its final queued audio and before
 transcription. `Mic::open_named` opens only the selected input; `microphones`
-enumerates without opening. Desktop chooses the lid-closed alternative.
+enumerates without opening. `RETIRED` keys (lid-closed microphone, trailing
+space, Enter) are stripped before parsing, since the struct denies unknown fields.
 
 `AudioGate` makes lecture capture wait for an already-playing feedback sound
 and prevents new sounds until that recording ends. It does no I/O under a mutex.

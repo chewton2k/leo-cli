@@ -9,7 +9,7 @@ function refreshKey(node) {
   }
   if (node.hasAttribute('data-store-item') || node.hasAttribute('data-trash-pick')) return JSON.stringify([node.nodeName, node.getAttribute('data-store-item'), node.getAttribute('data-trash-pick'), node.getAttribute('value')]);
   if (node.hasAttribute('data-action') || node.hasAttribute('data-set')) {
-    return JSON.stringify([node.nodeName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') && !['data-title', 'data-name'].includes(attr.name)).map((attr) => [attr.name, attr.value]).sort(([a], [b]) => a.localeCompare(b))]);
+    return JSON.stringify([node.nodeName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') && !['data-title', 'data-name', 'data-menu'].includes(attr.name)).map((attr) => [attr.name, attr.value]).sort(([a], [b]) => a.localeCompare(b))]);
   }
   if (node.hasAttribute('data-area')) return `${node.nodeName}:area:${node.getAttribute('data-area')}`;
   if (node.matches('.segmented[aria-label]')) return `segment:${node.getAttribute('aria-label')}`;
@@ -46,6 +46,7 @@ function refreshChildren(box, desired) {
       if (node.nodeValue !== next.nodeValue) node.nodeValue = next.nodeValue;
       continue;
     }
+    if (typeof keepSelectMenu === 'function') keepSelectMenu(node, next);
     for (const attr of [...node.attributes]) {
       if (attr.name === 'open' && node.nodeName === 'DETAILS') continue;
       if (!next.hasAttribute(attr.name)) node.removeAttribute(attr.name);

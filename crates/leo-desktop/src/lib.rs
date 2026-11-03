@@ -1,6 +1,5 @@
 mod app_settings;
 mod audio_feedback;
-mod clamshell;
 mod clipboard;
 mod dictation;
 #[cfg(target_os = "macos")]

@@ -214,7 +214,7 @@ the notes remote.
 - Dictation preferences/text rules live in `leo-services::dictation`; desktop
   owns global shortcuts, permissions, in-memory capture, transactional paste
   and a bundled nonactivating popup. Writing AI runs on dictations only when
-the user picks AI writing (2026-11-02, the user's call; off by default). Recent
+the user turns on the AI writing switch (2026-11-02, the user's call; off by default; on keeps a stored `selected`, else `quick`). Recent
   results are twenty local rows in `leo.db`, never notes or sync data.
 - Recording is captured in Rust, including two native tracks for calls; hiding
   the window cannot stop it. App Nap is held while recording. Missing models
@@ -237,8 +237,9 @@ the user picks AI writing (2026-11-02, the user's call; off by default). Recent
   rail page (`#/boards`), several boards, untimed cards (title, subheading,
   description, priority) in custom columns, dragged between columns and boards.
   Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` sync like tasks
-  (union merge, newest line wins); they are not calendar tasks. See
-  crates/leo-web/CLAUDE.md.
+  (union merge, newest line wins); they are not calendar tasks. Felix has
+  board tools (list/open, add/update/move/delete cards, add/change/delete
+  boards) under the usual Ask/Auto/Read and Undo. See crates/leo-web/CLAUDE.md.
 - Menu bar, study order, idle compaction and in-app drag and drop
   (2026-11-02, the user's notes): see crates/leo-desktop/CLAUDE.md (tray,
   `disable_drag_drop_handler`) and crates/leo-web/CLAUDE.md (Felix study order,
@@ -289,7 +290,7 @@ backend directly. Legacy AGY/Copilot profiles contain private sign-in state, sta
 notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
 and must never be staged or committed.
 
-Settings uses grouped `#/settings/<section>` routes in a left sidebar with icons, preserving Storage's route; Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
+Settings uses grouped `#/settings/<section>` routes in a sidebar with icons (a rounded panel set apart from the explorer; panel and section are centered together), preserving Storage's route; Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
 `leo_web::app_settings::AppApi` bridges native preferences, permission requests,
 Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.

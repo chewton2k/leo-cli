@@ -9,7 +9,7 @@ async function sidebarFixture(browser, run) {
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
   const core = read('app/core.js');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
-  const drag = read('app/drag.js').split("document.addEventListener('dragend'")[0];
+  const drag = read('app/drag.js');
   const open = read('app/actions.js').split("'open-folder':")[1].split("'open-note':")[0].trim().replace(/,$/, '');
   const fixture = `const $=selector=>document.querySelector(selector);
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -20,6 +20,8 @@ async function sidebarFixture(browser, run) {
     const folderLabel=dir=>dir.split('/').pop()||'Top level', folderHash=dir=>dir?'#/f/'+encodeURIComponent(dir):'#/', noteHash=id=>'#/n/'+encodeURIComponent(id);
     const closeSheet=()=>{}, go=hash=>{location.hash=hash;}, fail=error=>window.errors.push(error.message);
     const slideHeight=(el,from,to,done)=>{if(done)done();};
+    const MOTION_MS=180, stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const moves=[], enc=encodeURIComponent, toast=()=>{}, showLatest=async()=>{}, saving={unsaved:()=>false};
     const notes={
       '':[{id:'root-note',title:'Welcome',directory:''}],
       Course:[{id:'course-note',title:'Course overview',directory:'Course'},{id:'escaped-note',title:'<script> stays text',directory:'Course'}],
@@ -29,6 +31,7 @@ async function sidebarFixture(browser, run) {
     let pending=null, broken=null;
     async function api(url,options={}) {
       if(url==='/api/folders')return structuredClone(folders);
+      if(options.method==='POST'){moves.push({url,body:options.body});return url==='/api/dirs/move'?{path:(options.body.into?options.body.into+'/':'')+options.body.from.split('/').pop()}:{};}
       const query=new URL(url,location.origin).searchParams, dir=query.get('dir'), offset=Number(query.get('offset')||0);
       const all=notes[dir]||[], result={items:structuredClone(all.slice(offset,offset+100)),total:all.length};
       if(pending && dir==='Course') {
@@ -58,7 +61,7 @@ async function sidebarFixture(browser, run) {
       else if(action==='home') go('#/');
     });
     window.errors=[];
-    window.audit={draw:drawSide,side,refresh:loadSideFolders,note:(id,dir)=>{seq++;state={view:'note',dir,session:{note:{id}}};drawSide();},dragging,drop:el=>dirOf(dropTargetOf(el)),stop:endDrag,rename:title=>{notes.Course[0].title=title;},route:(dir)=>{seq++;state={view:'folder',dir};drawSide();},mac:on=>{document.documentElement.dataset.app=on?'mac':'';},broken:dir=>{broken=dir;},hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});}};
+    window.audit={moves,draw:drawSide,side,refresh:loadSideFolders,note:(id,dir)=>{seq++;state={view:'note',dir,session:{note:{id}}};drawSide();},dragging,drop:el=>dirOf(dropTargetOf(el)),stop:endDrag,rename:title=>{notes.Course[0].title=title;},route:(dir)=>{seq++;state={view:'folder',dir};drawSide();},mac:on=>{document.documentElement.dataset.app=on?'mac':'';},broken:dir=>{broken=dir;},hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});}};
     loadSideFolders().catch(fail);`;
   const server = http.createServer((req,res) => {
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
@@ -372,5 +375,132 @@ test('old saved folders are dropped, and after Collapse all a newly opened note 
     await expect(row('Course'), 'a redraw does not undo Collapse all').toHaveAttribute('aria-expanded','false');
     await page.evaluate(()=>audit.note('escaped-note','Course'));
     await expect(page.locator('.side-note[data-id="escaped-note"]'), 'another note in the same folder unfolds it again').toHaveCount(1);
+  });
+});
+
+test('the explorer takes drops like a file explorer: rows, open folders and note rows all mean their folder', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    await page.locator('.side-tree .side-row[data-dir="Course/Week 1"]').click();
+    const lecture=page.locator('.side-note[data-id="week-note"]');
+    await expect(lecture).toBeVisible();
+    const drop=selector=>page.locator(selector).first().evaluate(el=>audit.drop(el));
+    expect(await drop('.side-folder[data-drop-dir="Course"] .side-twist')).toBe('Course');
+    expect(await drop('.side-kids[data-kids="Course/Week 1"]')).toBe('Course/Week 1');
+    expect(await drop('.side-note[data-id="week-note"]')).toBe('Course/Week 1');
+    expect(await drop('.side-note[data-id="root-note"]')).toBe('');
+    const transfer=await page.evaluateHandle(()=>new DataTransfer());
+    await page.locator('.side-note[data-id="root-note"]').dispatchEvent('dragstart',{dataTransfer:transfer});
+    await page.locator('.side-note[data-id="course-note"]').dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.side-folder[data-drop-dir="Course"]')).toHaveClass(/drop-ok/);
+    await page.locator('.side-tree').dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.drop-ok'), 'a top-level note is already at the top level').toHaveCount(0);
+    await page.locator('.side-note[data-id="root-note"]').dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.drop-ok')).toHaveCount(0);
+    await lecture.dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.side-folder[data-drop-dir="Course/Week 1"]')).toHaveClass(/drop-ok/);
+    await expect(page.locator('.side-kids[data-kids="Course/Week 1"]')).toHaveClass(/drop-in/);
+    await expect(lecture, 'a note row is its folder, not a note to combine with').not.toHaveClass(/drop-ok/);
+    await lecture.dispatchEvent('drop',{dataTransfer:transfer});
+    await expect.poll(()=>page.evaluate(()=>audit.moves)).toEqual([{url:'/api/notes/root-note/move',body:{directory:'Course/Week 1'}}]);
+    await expect(page.locator('.drop-ok, .drop-in')).toHaveCount(0);
+    expect(await page.evaluate(()=>audit.dragging.note)).toBe(null);
+  });
+});
+
+test('a folder moves into a folder and keeps its open subfolders open under the new path', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    await page.locator('.side-tree .side-row[data-dir="Course/Week 1"]').click();
+    const transfer=await page.evaluateHandle(()=>new DataTransfer());
+    await page.locator('.side-tree .side-row[data-dir="Course/Week 1"]').dispatchEvent('dragstart',{dataTransfer:transfer});
+    await page.locator('.side-note[data-id="week-note"]').dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.drop-ok'), 'a folder cannot go into itself').toHaveCount(0);
+    await page.locator('.side-tree').dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.drop-ok'), 'the top level lights only the Folders heading').toHaveCount(1);
+    await expect(page.locator('.side-group')).toHaveClass(/drop-ok/);
+    const personal=page.locator('.side-tree .side-row[data-dir="Personal"]');
+    await personal.dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(page.locator('.side-folder[data-drop-dir="Personal"]')).toHaveClass(/drop-ok/);
+    await personal.dispatchEvent('drop',{dataTransfer:transfer});
+    await expect.poll(()=>page.evaluate(()=>audit.moves)).toEqual([{url:'/api/dirs/move',body:{from:'Course/Week 1',into:'Personal'}}]);
+    expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-folders')))).toContain('Personal/Week 1');
+  });
+});
+
+test('holding a drag over a closed folder opens it, and a redraw mid-drag cannot leave the drag stuck', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    const course=page.locator('.side-tree .side-row[data-dir="Course"]');
+    await expect(course).toHaveAttribute('aria-expanded','false');
+    const transfer=await page.evaluateHandle(()=>new DataTransfer());
+    const source=page.locator('.side-note[data-id="root-note"]');
+    const original=await source.elementHandle();
+    await source.dispatchEvent('dragstart',{dataTransfer:transfer});
+    await course.dispatchEvent('dragover',{dataTransfer:transfer});
+    await page.waitForTimeout(250);
+    await course.dispatchEvent('dragover',{dataTransfer:transfer});
+    await expect(course, 'a passing drag does not open folders').toHaveAttribute('aria-expanded','false');
+    await expect(course).toHaveAttribute('aria-expanded','true',{timeout:2000});
+    await expect(page.locator('.side-tree .side-row[data-dir="Course/Week 1"]')).toBeVisible();
+    expect(await original.evaluate(el=>el.isConnected)).toBe(true);
+    await original.dispatchEvent('dragend',{dataTransfer:transfer});
+    expect(await page.evaluate(()=>audit.dragging.note)).toBe(null);
+    await expect(page.locator('body')).not.toHaveClass(/dragging/);
+    await source.dispatchEvent('dragstart',{dataTransfer:transfer});
+    await original.evaluate(el=>el.remove());
+    await original.dispatchEvent('dragend',{dataTransfer:transfer});
+    expect(await page.evaluate(()=>audit.dragging.note)).toBe(null);
+    await expect(page.locator('body')).not.toHaveClass(/dragging/);
+    expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-folders')||'[]')), 'a folder opened by a passing drag is not kept').not.toContain('Course');
+    const files=await page.evaluateHandle(()=>{const data=new DataTransfer();data.items.add(new File(['x'],'x.txt',{type:'text/plain'}));return data;});
+    const personal=page.locator('.side-tree .side-row[data-dir="Personal"]');
+    await personal.dispatchEvent('dragover',{dataTransfer:files});
+    await page.waitForTimeout(800);
+    await expect(personal, 'files dragged in from outside do not open folders').toHaveAttribute('aria-expanded','false');
+    await expect(page.locator('.side-group')).not.toHaveClass(/drop-ok/);
+  });
+});
+
+test('the sidebar toggle keeps its place while the explorer folds, and the fold slides', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    for(const [width,full] of [[1280,284],[1100,240]]) {
+      await page.setViewportSize({width,height:800});
+      await page.goto(url);
+      for(const mac of [false,true]) {
+        await page.evaluate(on=>audit.mac(on),mac);
+        const toggle=page.locator('.side-fold'), side=page.locator('#side');
+        const open=await toggle.boundingBox();
+        expect((await side.boundingBox()).width).toBe(full);
+        const slid=()=>page.evaluate(()=>{window.slid=new Promise(resolve=>document.body.addEventListener('transitionrun',e=>{if(e.propertyName==='--side')resolve(true);}));});
+        await slid();
+        await toggle.click();
+        expect(await page.evaluate(()=>window.slid)).toBe(true);
+        await expect(page.locator('body')).not.toHaveClass(/side-folding/);
+        await expect(page.locator('.side-explorer')).toBeHidden();
+        expect((await side.boundingBox()).width).toBe(52);
+        expect(await toggle.boundingBox()).toEqual(open);
+        await expect(page.locator('.side-rail')).toBeVisible();
+        const clear=await page.locator('.bar').evaluate(el=>el.getBoundingClientRect().left+parseFloat(getComputedStyle(el).paddingLeft));
+        expect(clear, 'the toolbar starts after the toggle').toBeGreaterThanOrEqual(open.x+open.width);
+        await slid();
+        await toggle.click();
+        expect(await page.evaluate(()=>window.slid)).toBe(true);
+        await expect(page.locator('body')).not.toHaveClass(/side-folding/);
+        await expect(page.locator('.side-explorer')).toBeVisible();
+        expect((await side.boundingBox()).width).toBe(full);
+        expect(await toggle.boundingBox()).toEqual(open);
+      }
+    }
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await page.locator('.side-fold').click();
+    await expect(page.locator('body')).not.toHaveClass(/side-folding/);
+    await expect(page.locator('.side-explorer')).toBeHidden();
   });
 });

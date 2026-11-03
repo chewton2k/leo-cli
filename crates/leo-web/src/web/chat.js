@@ -1225,8 +1225,10 @@
         const response = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, { credentials: 'same-origin' });
         if (!response.ok || state.id !== chat) return;
         const split = splitFiles(await response.json(), state.messages);
+        const known = new Set([...split.waiting, ...split.sent].map((d) => d.id));
+        const added = state.files.filter((f) => f.status === 'reading' || (f.id && !known.has(f.id)));
         state.sent = split.sent;
-        state.files = split.waiting.map((d) => ({ ...d, status: 'ready' }));
+        state.files = [...split.waiting.map((d) => ({ ...d, status: 'ready' })), ...added];
         drawRefs();
       } catch (e) {
         state.files = state.id === chat ? state.files : [];
@@ -1719,7 +1721,7 @@
           ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
-            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'restore_note' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'delete_card' || p.kind === 'delete_board' ? 'Delete' : p.kind === 'restore_note' || p.kind === 'restore_folder' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
         return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${typeof p.description === 'string' && (p.kind === 'update_task' || p.description) ? `<div class="proposal-why">${escape(p.description || 'Clear description')}</div>` : ''}${acts}</div>`;
       }
       const done = p.state === 'applied'

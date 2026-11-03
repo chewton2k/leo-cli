@@ -24,8 +24,9 @@ a test, or leave it unset to see the user's own data.
    `html[data-app="mac"]`, which hides the sidebar wordmark and makes room for
    the buttons (2026-10-31, the user found the grey title strip ugly). `#bar`
    and `.side-head` are `data-tauri-drag-region="deep"`. The icon rail stays
-   visible when the explorer is hidden; compact macOS spacing keeps both the rail
-   toggle and note toolbar clear of the window buttons.
+   visible when the explorer is hidden; the sidebar toggle sits fixed right after
+   the window buttons whether the explorer is shown or hidden, and the folded
+   toolbar leaves room for both.
 
 ## Behaviour
 
@@ -72,8 +73,10 @@ capture and its process activity guard live in services and continue when
 `Dictation` is managed as an Arc before the loopback engine starts and supplies
 `Powers.dictation`. A bounded coordinator serializes shortcut inputs, handles
 hold/tap and remembered input during decoding, and rejects stale completion by
-generation. It opens the selected microphone only for capture, choosing the
-lid-closed alternative through a bounded IORegistry query. Capture releases
+generation. It opens the selected microphone only for capture. Lid-closed
+microphone, trailing space and Press Enter after pasting were removed
+(2026-11-02, the user's call); `dictation.json` files that still name them load
+and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
 Start/stop WAVs are optional and excluded from lecture recordings by AudioGate.
 Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
@@ -89,7 +92,7 @@ permissions, unavailable registration and uncovered Secure Input chords.
 
 `paste_tx` publishes lazy clipboard data, waits for post-injection reads and a
 200 ms quiet period, with an 8 s cap. Restoration checks ownership again; a newer
-copy wins, Enter requires a confirmed receipt and an uncanceled generation.
+copy wins.
 macOS snapshots every pasteboard item/type. Windows retains memory formats and
 copies bitmap, metafile and palette handles; a format it cannot preserve causes
 an error before publishing. Total snapshot bytes/items/types are bounded.

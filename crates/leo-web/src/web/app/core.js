@@ -107,6 +107,10 @@ const chat = felix.create({
     if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
     if (proposal.kind === 'interview_test') { refreshInterviewTests(proposal.interview, proposal.challenge).catch(fail); return; }
     if (['interview_problem_edit', 'interview_topics', 'delete_interview_problem', 'restore_interview_problem'].includes(proposal.kind)) { refreshInterview(proposal.interview).catch(fail); return; }
+    if (BOARD_KINDS.includes(proposal.kind)) {
+      if (state.view === 'boards') showBoards((kanban.board && kanban.board.id) || '').catch(fail);
+      return;
+    }
     loadSideFolders().catch(() => {});
     if (state.view === 'calendar') loadSchedule(seq);
     loadTasksWindow().catch(() => {});

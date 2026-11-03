@@ -283,6 +283,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   const full = (await side.boundingBox()).width;
   await side.locator('[data-action="side-fold"]').click();
   await expect(page.locator('body')).toHaveClass(/side-mini/);
+  await expect(page.locator('body')).not.toHaveClass(/side-folding/);
   const narrow = (await side.boundingBox()).width;
   expect(narrow).toBeLessThan(80);
   expect((await page.locator('main').boundingBox()).x).toBeGreaterThanOrEqual(narrow);
@@ -290,6 +291,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await page.reload();
   await expect(page.locator('body')).toHaveClass(/side-mini/);
   await side.locator('[data-action="side-fold"]').click();
+  await expect(page.locator('body')).not.toHaveClass(/side-folding/);
   expect((await side.boundingBox()).width).toBe(full);
 });
 
@@ -3736,9 +3738,11 @@ test('grid and list keep the library and header width in every layout', async ({
       if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
       if (layout === 'chat') {
         await page.locator('[data-action="side-fold"]').click();
+        await expect(page.locator('body')).not.toHaveClass(/side-folding/);
         await page.locator('#chat-toggle').click();
         await expect(page.locator('.chat')).toBeVisible();
       }
+      await expect(page.locator('body')).not.toHaveClass(/side-folding/);
       for (const views of [['grid', 'list'], ['list', 'grid']]) {
         await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
         const before = await bounds();
@@ -3891,6 +3895,16 @@ test('dropdowns and nested disclosures share real icons and keep their native co
     expect(await selects.count()).toBeGreaterThan(0);
     const issues = await selects.evaluateAll(els => els.flatMap(el => {
       const wrap = el.closest('.select-control');
+      const menu = wrap && wrap.classList.contains('has-menu') && wrap.querySelector(':scope > .select-menu-button');
+      if (menu) {
+        const name = el.id || el.dataset.set || el.dataset.keep || el.dataset.library;
+        const icon = menu.querySelector('svg')?.getBoundingClientRect();
+        const box = menu.getBoundingClientRect(), under = el.getBoundingClientRect();
+        if (!icon) return [`${name}: menu missing chevron`];
+        if (getComputedStyle(el).opacity !== '0' || getComputedStyle(el).pointerEvents !== 'none') return [`${name}: native select still shown`];
+        if (Math.abs(under.width - box.width) > 1 || Math.abs(under.height - box.height) > 1) return [`${name}: select does not sit under its menu`];
+        return Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2) > 1 || icon.right > box.right - 4 || icon.left < box.left ? [`${name}: misaligned menu chevron`] : [];
+      }
       const arrow = wrap && wrap.querySelector(':scope > svg[aria-hidden="true"]');
       if (!arrow) return [`${el.id || el.dataset.set || el.dataset.keep || el.dataset.library}: missing chevron`];
       const box = el.getBoundingClientRect();

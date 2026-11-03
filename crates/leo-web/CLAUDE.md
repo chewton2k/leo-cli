@@ -112,7 +112,21 @@ reader, seer, meaning, web, room, speech).
   never a bare checkbox; `segmented` (a pill that slides to the pick) for
   choices of two to four short options, either a hidden `field` input that
   fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
-  longer or open-ended lists stay `<select>`. Redraws keep the pill where it
+  longer or open-ended lists stay `<select>`, which inside Settings
+  `select-menu.js` draws as a custom listbox (2026-11-02, the user's call: no
+  system menus). The `<select>` stays underneath, invisible and unclickable, as
+  the value: change handlers, drafts and `selectOption` keep working; its
+  `value` setter keeps the button label in step, the redraw after a save gives
+  focus back to the new button, and forced colors keeps the native control.
+  Settings motion: the menu unfolds like the model picker; the section list's
+  highlight is one pill that glides to the new section (260 ms, started from
+  where the old pill is drawn, so the placeholder-then-content double draw
+  does not cut it off; hidden under 760 px); a section switch has one 180 ms
+  arrival leaning the way you moved; "Saved" fades. Labels are 500 weight in
+  the text color. Pressing a menu's button keeps focus where it is (WebKit
+  does not focus clicked buttons, which made a second press reopen it).
+  Speech model filters keep the filter bar where it was on screen and hold
+  the section's height so a shorter list cannot snap the page up. Redraws keep the pill where it
   was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).
@@ -134,7 +148,7 @@ reader, seer, meaning, web, room, speech).
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
   follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
   entrances, hover lifts or sliding gliders. `<details>` slide their height
-  (`slideHeight`); Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
+  (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
   ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
   content. Reduced Motion turns all of it off. Tapping Felix is the one
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
@@ -233,10 +247,25 @@ reader, seer, meaning, web, room, speech).
   below 1200 px to leave room for notes, originals and Felix.
   There is no Top level row (2026-11-02, the user's call: the tree already lists
   top-level notes); the pinned Folders heading is the top-level drop target, and
-  folder and note rows retain drag data. A folder row is highlighted only on its
+  folder and note rows retain drag data. Drops work like a file explorer
+  (2026-11-02, the user's call): every explorer row means its folder (the folder
+  row and chevron, its open children `.side-kids`, a note row means the note's
+  folder, empty tree space the top level), so a note dropped on a note in the
+  explorer moves there (combining stays on library cards). The destination
+  folder's row gets `drop-ok` and its open children `drop-in`; holding a note or
+  folder drag over a closed folder for `SPRING_MS` (600) opens it for that visit
+  (`side.revealed`, never saved); the tree scrolls near its
+  edges; moved folders keep their open state (`moveOpenFolders`). A redraw can
+  replace the dragged row, so `dragend` is also caught on the source element,
+  a pointer move with no button ends a drag, and drops check the drag's type. A folder row is highlighted only on its
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
-  `leo-side` hides only the explorer, keeping the rail. Folders start closed;
+  `leo-side` hides only the explorer, keeping the rail. The fold slides
+  (2026-11-02, the user's call; the one width animation): `--side` is an
+  `@property` length that transitions while `body.side-folding` (`MOTION_MS`),
+  the explorer keeps its width and is clipped, Reduced Motion snaps. The toggle
+  never moves: left of the head over the rail, or on macOS fixed right after the
+  window buttons, in both states. Folders start closed;
   `leo-side-folders` keeps only folders the user opened with their own clicks
   (2026-11-03, the user's call), so the explorer reopens after a restart as
   they left it (the old `leo-side-open`, which also held every folder browsing
@@ -371,22 +400,39 @@ reader, seer, meaning, web, room, speech).
   (`web::allowed`, public addresses only).
 - Access (`tools::Access`, `leo-felix-access`, Shift+Tab): Ask first (cards to
   Apply), Auto (applied at once, cards come back applied with Undo), Read only
-  (change tools left out of the manual and refused).
+  (change tools left out of the manual and refused, interview writes included:
+  `interview_tools::changes`). Deleting a folder, a board or an interview problem
+  always asks, even in Auto (`Proposal::always_asks`, 2026-11-02, the user's call).
+  A tool runs only where it is offered (`Desk::not_offered`): interview tools need
+  a practice chat, and an unknown or unoffered name is answered with this chat's
+  own tool list. `run_tool` reads true/false, numbers, arrays and objects as text
+  (`Call::normalized`) so native Claude Code and Codex calls never fail on types,
+  and no parameter may be called `name` (the text protocol's tool key; a test).
   Changes during a reply POST to `/api/chat/{answer}/access`; both protocols
   check the live setting before tool execution and automatic application.
   A failed permission update stops the reply; a closed stream prevents further changes.
 - Read tools: search_notes, open_note, connected_notes, read_document,
   read_transcript, read_original, look_at_picture, calculate (`calc.rs`, a
-  safe evaluator), list_schedule, list_trash, search_chats.
+  safe evaluator), list_schedule, list_trash, search_chats, list_boards,
+  open_board.
 - Change tools: edit_note / create_note (cards; Apply POSTs
   `/api/notes/{id}/suggestion`, 409 unless `find` is there exactly once),
   and the organizing tools in `routes/organize.rs`: add_task (`repeat`:
   `mon | wed`), update_task (`on` = which day of a repeating task),
   delete_task, move_note, make_folder, move_folder, delete_note,
   rename_note, rename_folder (`new_name`), pin_note, restore_note,
-  delete_folder (always a card, even in Auto). They validate against the
+  restore_folder (trashed notes from that folder and its subfolders),
+  delete_folder (always a card, even in Auto), and the board tools in
+  `board_tools.rs`: add_card, update_card, move_card (`column`, `to_board`,
+  `position` top/end/a card), delete_card, add_board (`title`, `columns` split
+  by `|`), change_board (`new_name`, `columns`, `move_to`; Undo restores the
+  board snapshot) and delete_board (always a card). Boards, columns and cards
+  are named by id or exact name ignoring case; the board may be left out when
+  there is only one. They validate against the
   store, become `Proposal` cards, run through POST `/api/felix/act` (reusing
-  the normal routes) and return the inverse card as `undo`.
+  the normal routes) and return the inverse card as `undo`. The page redraws
+  an open board after one applies (`BOARD_KINDS`). The text manual stays under
+  14,500 bytes. `MOST_PROPOSALS` counts every change tool.
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
@@ -846,7 +892,8 @@ the same idle loop.
 
 Jira-style task boards (the user's call: their own rail icon after Calendar, several
 boards, untimed, standalone cards only). Cards have no dates, so they are not
-calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule.
+calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule;
+Felix reads and changes them with the board tools (see Felix above).
 JS and CSS use the `kanban` prefix: `board` already names the interview whiteboard.
 
 - Storage mirrors standalone tasks: `<notes>/.leo/boards/<b…>.json` (name, columns
@@ -1205,7 +1252,10 @@ provides settings, devices and native actions. The existing database owns the
 `dictations` table: insert and twenty-row eviction share a transaction; Copy
 resolves a stored ID and discards page-supplied text; Clear removes local rows.
 Nothing becomes a note or sync file. Card polling updates shortcut status and
-history only; fields, drafts, focus and caret survive. Local popup rendering
+history only; fields, drafts, focus and caret survive. There is no Save button
+(2026-11-02, the user's call): every change saves at once and Custom words saves
+700 ms after typing stops, in order (`saveDictation` chains saves so the last
+wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
 Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels
@@ -1214,8 +1264,11 @@ no card title repeating the page title, flat cards (border, no shadow), labels
 on one line with controls hugging their content at the right edge; a card under
 500 px stacks segmented rows (container query), and switch rows stay inline on
 phones. Writing AI uses a pen icon, never a sparkle.
-Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
-left of the content (sticky under the bar, its own scroll), grouped Leo / Your
+Settings (2026-11-02, the user's call) is a sidebar beside the content: a
+rounded panel set apart from the explorer by a gap on every side (sticky under
+the bar, its own scroll), panel and section centred together at any width,
+every card 20 px from the next (a section's wrapper `<div id>` is
+`display: contents`, so its cards share that gap), grouped Leo / Your
 notes / Data / This app, each section with an icon and a page heading with a
 one-line description; under 760 px it becomes a sideways-scrolling chip strip
 that centres the current section. Routes stay `#/settings/<section>`; Storage
@@ -1224,8 +1277,11 @@ works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
 ready-update banner without replacing focused controls. `app/refresh.js` reconciles
 settings and explorer panels by stable keys, retaining native controls, file
-selections and unchanged rows through async updates. Settings navigation is
-retained between sections; its phone strip recentres only when the section changes.
+selections and unchanged rows through async updates. Custom select buttons and open
+menus retain their native elements and focus through reconciliation. Dictation autosaves snapshot the draft and page generation
+before queuing or debouncing, so navigation cannot lose edits or update a later page.
+Settings navigation stays between sections; its phone strip recentres only when
+the section changes.
 First-launch setup
 (`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a
 two-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
