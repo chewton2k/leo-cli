@@ -276,15 +276,9 @@ async function loadSideFolders() {
 
 function foldSide() {
   side.mini = !side.mini;
-  clearTimeout(side.folding);
+  const generation = side.folding = (side.folding || 0) + 1;
   const body = document.body;
   body.classList.toggle('side-folding', sideWide() && !stillMotion());
-  if (body.classList.contains('side-folding')) {
-    side.folding = setTimeout(() => {
-      body.classList.remove('side-folding');
-      window.dispatchEvent(new Event('resize'));
-    }, MOTION_MS + 40);
-  }
   body.classList.toggle('side-mini', side.mini);
   sideResize.fit();
   try {
@@ -292,6 +286,14 @@ function foldSide() {
   } catch (e) {}
   drawSide();
   window.dispatchEvent(new Event('resize'));
+  if (body.classList.contains('side-folding')) {
+    const transitions = body.getAnimations().filter((run) => run.transitionProperty === '--side');
+    Promise.allSettled(transitions.map((run) => run.finished)).then(() => {
+      if (side.folding !== generation) return;
+      body.classList.remove('side-folding');
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
 }
 
 function moveOpenFolders(from, to) {

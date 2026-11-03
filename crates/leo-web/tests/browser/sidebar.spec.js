@@ -472,18 +472,22 @@ test('a folder moves into a folder and keeps its open subfolders open under the 
 
 test('holding a drag over a closed folder opens it, and a redraw mid-drag cannot leave the drag stuck', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
-    const page=await context.newPage({viewport:{width:1280,height:800}});
+    const page=await context.newPage();
+    await page.setViewportSize({width:1280,height:800});
+    await page.clock.install({time:new Date('2026-11-03T00:00:00Z')});
     await page.goto(url);
     const course=page.locator('.side-tree .side-row[data-dir="Course"]');
     await expect(course).toHaveAttribute('aria-expanded','false');
+    await page.clock.pauseAt(new Date('2026-11-03T00:01:00Z'));
     const transfer=await page.evaluateHandle(()=>new DataTransfer());
     const source=page.locator('.side-note[data-id="root-note"]');
     const original=await source.elementHandle();
     await source.dispatchEvent('dragstart',{dataTransfer:transfer});
     await course.dispatchEvent('dragover',{dataTransfer:transfer});
-    await page.waitForTimeout(250);
+    await page.clock.runFor(599);
     await course.dispatchEvent('dragover',{dataTransfer:transfer});
     await expect(course, 'a passing drag does not open folders').toHaveAttribute('aria-expanded','false');
+    await page.clock.runFor(1);
     await expect(course).toHaveAttribute('aria-expanded','true',{timeout:2000});
     await expect(page.locator('.side-tree .side-row[data-dir="Course/Week 1"]')).toBeVisible();
     expect(await original.evaluate(el=>el.isConnected)).toBe(true);
@@ -499,7 +503,7 @@ test('holding a drag over a closed folder opens it, and a redraw mid-drag cannot
     const files=await page.evaluateHandle(()=>{const data=new DataTransfer();data.items.add(new File(['x'],'x.txt',{type:'text/plain'}));return data;});
     const personal=page.locator('.side-tree .side-row[data-dir="Personal"]');
     await personal.dispatchEvent('dragover',{dataTransfer:files});
-    await page.waitForTimeout(800);
+    await page.clock.runFor(800);
     await expect(personal, 'files dragged in from outside do not open folders').toHaveAttribute('aria-expanded','false');
     await expect(page.locator('.side-group')).not.toHaveClass(/drop-ok/);
   });
@@ -661,5 +665,37 @@ test('explorer resize handle stays reachable beside Felix in narrow desktop wind
       await page.mouse.up();
       await expect(page.locator('body')).not.toHaveClass(/pane-resizing/);
     }
+  });
+});
+
+test('sidebar folding waits for the actual transition rather than a timer', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.setViewportSize({width:1280,height:800});
+    await page.clock.install();
+    await page.goto(url);
+    const body=page.locator('body'), side=page.locator('#side');
+    for(const expected of [52,284]) {
+      await page.locator('.side-fold').click();
+      await body.evaluate(el=>{const run=el.getAnimations().find(a=>a.transitionProperty==='--side');run.pause();});
+      await page.clock.runFor(300);
+      await expect(body).toHaveClass(/side-folding/);
+      await body.evaluate(el=>{for(const run of el.getAnimations())if(run.transitionProperty==='--side')run.finish();});
+      await expect(body).not.toHaveClass(/side-folding/);
+      expect((await side.boundingBox()).width).toBe(expected);
+    }
+    await page.locator('.side-fold').click();
+    await body.evaluate(el=>{
+      const run=el.getAnimations().find(a=>a.transitionProperty==='--side');
+      run.pause();run.currentTime=90;
+      getComputedStyle(el).getPropertyValue('--side');
+    });
+    await page.locator('.side-fold').click();
+    await body.evaluate(el=>{const run=el.getAnimations().find(a=>a.transitionProperty==='--side');run.pause();});
+    await page.clock.runFor(300);
+    await expect(body).toHaveClass(/side-folding/);
+    await body.evaluate(el=>{for(const run of el.getAnimations())if(run.transitionProperty==='--side')run.finish();});
+    await expect(body).not.toHaveClass(/side-folding/);
+    expect((await side.boundingBox()).width).toBe(284);
   });
 });

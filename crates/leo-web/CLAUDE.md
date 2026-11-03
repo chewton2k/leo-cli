@@ -279,7 +279,9 @@ reader, seer, meaning, web, room, speech).
   `leo-side` hides only the explorer, keeping the rail. The fold slides
   (2026-11-02, the user's call; the one width animation): `--side` is an
   `@property` length that transitions while `body.side-folding` (`MOTION_MS`),
-  the explorer keeps its width and is clipped, Reduced Motion snaps. The toggle
+  the explorer keeps its width and is clipped, Reduced Motion snaps. Folding ends
+  after the actual `--side` transition settles, including interrupted or reversed
+  transitions; a timer cannot finish it early. The toggle
   never moves: left of the head over the rail, or on macOS fixed right after the
   window buttons, in both states. Folders start closed;
   `leo-side-folders` keeps only folders the user opened with their own clicks
