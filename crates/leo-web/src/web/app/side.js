@@ -89,8 +89,7 @@ function drawSide() {
       </nav>
     </div>
     <div class="side-explorer" id="side-explorer">
-      <div class="side-group"><span>Folders</span><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
-      <div class="side-nav side-top"><div class="side-folder side-root${here === 'home' ? ' on' : ''}" style="--depth:0"><span class="side-twist none"></span><button class="side-row" data-action="open-folder" data-dir="" title="Top level"${here === 'home' ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">Top level</span></button></div></div>
+      <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
@@ -131,7 +130,7 @@ function folderTree(here) {
     for (const d of children(parent)) {
       const open = folderShown(d.name);
       const name = d.name.split('/').pop();
-      const on = here === d.name;
+      const on = state.view === 'folder' && here === d.name;
       const shown = twisted && twisted.path === d.name ? twisted.was : open;
       const toggle = `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`;
       rows.push(`<div class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}" aria-expanded="${open}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${esc(String(d.notes))}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);

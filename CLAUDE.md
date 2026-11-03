@@ -30,8 +30,11 @@ workspace-wide `cargo test`, no full Playwright run; the user's call,
 checks (`cargo check`, `cargo fmt`, `cargo clippy`, one crate's or one
 test's run, a single Playwright `-g` test, one node test file), then commit,
 push, and let CI run the full suite. Check CI once; fix a red run with a
-follow-up push. CI tests only what changed since the last release tag
-(`scripts/ci-scope.sh`; DEVELOPER.md says what each kind of change runs).
+follow-up push. CI compares main with the newest verified ancestor (a successful
+CI push or a newer release), and pull requests with their base. Unknown inputs
+and nightly/manual runs test everything; failed and cancelled pushes never
+advance the baseline. `scripts/ci-scope.sh` selects independent Rust, browser,
+Node and runner checks; CONTRIBUTING.md describes the selection.
 
 For website changes, do not build leo or run local Cargo checks/tests; rely on
 CI for compiled and browser validation (the user's call, 2026-10-11). Lightweight
@@ -208,7 +211,8 @@ the notes remote.
   stored keys are retired through SecretStore; calendar/writing data stays.
 - Dictation preferences/text rules live in `leo-services::dictation`; desktop
   owns global shortcuts, permissions, in-memory capture, transactional paste
-  and a bundled nonactivating popup. No writing AI runs on dictations. Recent
+  and a bundled nonactivating popup. Writing AI runs on dictations only when
+the user picks AI writing (2026-11-02, the user's call; off by default). Recent
   results are twenty local rows in `leo.db`, never notes or sync data.
 - Recording is captured in Rust, including two native tracks for calls; hiding
   the window cannot stop it. App Nap is held while recording. Missing models

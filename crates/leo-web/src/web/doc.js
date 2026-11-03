@@ -126,6 +126,12 @@
     const outlineChevron = outline && outline.querySelector('summary > svg') ? outline.querySelector('summary > svg').outerHTML : '';
     const outlineNav = outline && outline.querySelector('nav');
     const outlineDetails = outline && outline.querySelector('details');
+    const outlineTicks = outlineNav ? document.createElement('div') : null;
+    if (outlineTicks) {
+      outlineTicks.className = 'outline-ticks';
+      outlineTicks.setAttribute('aria-hidden', 'true');
+      outline.appendChild(outlineTicks);
+    }
     const OUTLINE_PAUSE = 300;
     const OUTLINE_WIDE = 900;
 
@@ -155,6 +161,7 @@
         if (button === selected) button.setAttribute('aria-current', 'location');
         else button.removeAttribute('aria-current');
       }
+      for (const tick of outlineTicks.children) tick.classList.toggle('on', Boolean(current) && tick.dataset.tick === String(current.line));
     }
 
     function outlineScroll() {
@@ -191,6 +198,7 @@
         const focused = active ? { type: active.hasAttribute('data-fold') ? 'fold' : 'line', line: active.dataset.fold || active.dataset.line } : null;
         outlineKey = key;
         outlineNav.innerHTML = outlineList(ed.headingTree(outlineRows));
+        outlineTicks.innerHTML = outlineRows.map((row) => `<span data-tick="${row.line}" data-level="${Math.min(row.level, 3)}"></span>`).join('');
         if (focused) {
           const button = outlineNav.querySelector(`[data-${focused.type}="${focused.line}"]`) || outlineNav.querySelector('button[data-line]');
           if (button) button.focus({ preventScroll: true });
@@ -217,10 +225,10 @@
         }
         return;
       }
-      const button = e.target.closest('button[data-line]');
-      if (!button || !outlineNav.contains(button)) return;
+      const button = e.target.closest('button[data-line], [data-tick]');
+      if (!button || !outline.contains(button)) return;
       stop();
-      const block = container.querySelector(`.blk[data-start="${button.dataset.line}"]`);
+      const block = container.querySelector(`.blk[data-start="${button.dataset.line || button.dataset.tick}"]`);
       if (!block) return;
       block.tabIndex = -1;
       block.focus({ preventScroll: true });
@@ -239,7 +247,7 @@
       outlineScroll();
     }) : null;
     if (outlineNav) {
-      outlineNav.addEventListener('click', outlineGo);
+      outline.addEventListener('click', outlineGo);
       root.addEventListener('scroll', outlineScroll, { passive: true });
       root.addEventListener('resize', outlineScroll);
       if (outlineResize) outlineResize.observe(outline.closest('.note-layout'));
@@ -302,7 +310,9 @@
       mirror.appendChild(mark);
       document.body.appendChild(mirror);
       const box = area.getBoundingClientRect();
-      const point = { x: box.left + mark.offsetLeft - area.scrollLeft, y: box.top + mark.offsetTop - area.scrollTop + mark.offsetHeight };
+      const frame = mirror.getBoundingClientRect();
+      const spot = mark.getBoundingClientRect();
+      const point = { x: box.left + spot.left - frame.left - area.scrollLeft, y: box.top + spot.bottom - frame.top - area.scrollTop };
       mirror.remove();
       return point;
     }
@@ -321,6 +331,7 @@
       area.removeEventListener('input', onInput);
       area.removeEventListener('keydown', onKey);
       area.removeEventListener('blur', onBlur);
+      area.removeEventListener('pointerdown', onAreaPress);
       for (const kind of ['select', 'keyup', 'mouseup']) area.removeEventListener(kind, tell);
       editing = null;
       draw();
@@ -347,6 +358,8 @@
         if (covered) covered.remove();
       }
       const raw = lines.slice(block.start, end.end).join('\n');
+      const single = first === last && block.kind === 'line';
+      const shown = single ? textLeft(el) : null;
       const area = document.createElement('textarea');
       area.className = 'line-edit';
       area.value = raw;
@@ -357,14 +370,85 @@
       el.replaceChildren(area);
       el.classList.add('editing');
       editing = { index: first, last, start: block.start, end: end.end, originalEnd: end.end, kind: first === last ? block.kind : 'span', area };
+      look(area);
+      if (shown !== null && raw.trim()) {
+        const from = caretBox(area, ed.rawOffset(raw, '')).x;
+        if (shown - from > 0.5) el.style.marginLeft = `${shown - from}px`;
+      }
       fit(area);
       area.addEventListener('input', onInput);
       area.addEventListener('keydown', onKey);
       area.addEventListener('blur', onBlur);
+      area.addEventListener('pointerdown', onAreaPress);
       for (const kind of ['select', 'keyup', 'mouseup']) area.addEventListener(kind, tell);
       area.focus({ preventScroll: true });
       area.setSelectionRange(Math.max(0, Math.min(from, raw.length)), Math.max(0, Math.min(to, raw.length)));
       if (from === to) area.scrollIntoView({ block: 'nearest' });
+    }
+
+    function textLeft(el) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const at = node.data.search(/[^\s\u200b]/);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + 1);
+        const box = range.getClientRects()[0];
+        if (box) return box.left;
+      }
+      return null;
+    }
+
+    function look(area) {
+      const head = editing && editing.kind === 'line' && area.value.match(/^\s{0,3}(#{1,6})\s/);
+      if (head) area.dataset.head = String(Math.min(head[1].length + 1, 6));
+      else delete area.dataset.head;
+    }
+
+    function pointFor(at) {
+      const index = blockAtLine(lineOf(at));
+      const block = blocks[index];
+      const blk = block && container.querySelector(`.blk[data-i="${index}"]`);
+      if (!blk) return { node: container, offset: at > 0 ? container.childNodes.length : 0 };
+      const raw = lines.slice(block.start, block.end).join('\n');
+      const inside = at - lineStart(block.start);
+      const texts = [];
+      const walker = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) texts.push(node);
+      const whole = { node: blk, offset: inside > 0 ? blk.childNodes.length : 0 };
+      if (block.kind !== 'line' || !raw.trim() || !texts.length) return whole;
+      const total = texts.reduce((n, text) => n + [...text.data].filter((ch) => ch !== '\u200b').length, 0);
+      let low = 0;
+      let high = total;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (ed.rawOffset(raw, 'x'.repeat(mid)) >= inside) high = mid;
+        else low = mid + 1;
+      }
+      let seen = 0;
+      for (const text of texts) {
+        let offset = 0;
+        for (const ch of text.data) {
+          if (ch !== '\u200b') {
+            if (seen === low) return { node: text, offset };
+            seen++;
+          }
+          offset += ch.length;
+        }
+      }
+      const last = texts[texts.length - 1];
+      return { node: last, offset: last.data.length };
+    }
+
+    function selectSpan(from, to) {
+      const selection = root.getSelection ? root.getSelection() : null;
+      if (!selection) return;
+      const a = pointFor(from);
+      const b = pointFor(to);
+      selection.setBaseAndExtent(a.node, a.offset, b.node, b.offset);
     }
 
     function lineStart(line) {
@@ -450,13 +534,48 @@
         return;
       }
       const typing = e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey;
-      if (e.key !== 'Backspace' && e.key !== 'Delete' && !typing) return;
-      if (!takeSelection()) return;
+      const enter = e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (e.key !== 'Backspace' && e.key !== 'Delete' && !typing && !enter) return;
+      if (!replaceSelection(typing ? e.key : enter ? '\n' : '')) return;
       e.preventDefault();
-      const area = editing.area;
-      area.setRangeText(typing ? e.key : '', area.selectionStart, area.selectionEnd, 'end');
-      onInput();
     }
+
+    function replaceSelection(text) {
+      if (!takeSelection()) return false;
+      const area = editing.area;
+      area.setRangeText(text, area.selectionStart, area.selectionEnd, 'end');
+      onInput();
+      const at = lineStart(editing.start) + area.selectionEnd;
+      stop();
+      editSpan(at, at);
+      return true;
+    }
+
+    function noteFocused() {
+      const focus = document.activeElement;
+      return !focus || focus === document.body || (container.contains(focus) && !(editing && focus === editing.area));
+    }
+
+    function onCopy(e) {
+      if (!container.isConnected || !noteFocused()) return;
+      const span = selectedSpan();
+      if (!span || !e.clipboardData) return;
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', lines.join('\n').slice(span[0], span[1]));
+      if (e.type === 'cut') replaceSelection('');
+    }
+
+    function onTextPaste(e) {
+      if (!container.isConnected || e.defaultPrevented || !noteFocused()) return;
+      const text = e.clipboardData && e.clipboardData.getData('text/plain');
+      if (!text || pictures(e.clipboardData.files).length || !selectedSpan()) return;
+      e.preventDefault();
+      replaceSelection(text.replace(/\r\n?/g, '\n'));
+    }
+
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('cut', onCopy);
+    document.addEventListener('paste', onTextPaste);
 
     document.addEventListener('keydown', onDocumentKey);
 
@@ -471,6 +590,7 @@
       const next = area.value.split('\n');
       lines.splice(start, editing.end - start, ...next);
       editing.end = start + next.length;
+      look(area);
       fit(area);
       changed();
     }
@@ -604,8 +724,66 @@
 
     let extended = false;
 
+    let dragOut = null;
+    let dragAnchor = null;
+
+    function onAreaPress(e) {
+      dragOut = e.button === 0 && !e.shiftKey && e.pointerType === 'mouse' ? e.currentTarget : null;
+    }
+
+    function caretAt(x, y) {
+      if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(x, y);
+        if (pos && container.contains(pos.offsetNode)) return { node: pos.offsetNode, offset: pos.offset };
+      } else if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(x, y);
+        if (range && container.contains(range.startContainer)) return { node: range.startContainer, offset: range.startOffset };
+      }
+      const box = container.getBoundingClientRect();
+      if (y < box.top) return { node: container, offset: 0 };
+      if (y > box.bottom) return { node: container, offset: container.childNodes.length };
+      return null;
+    }
+
+    function onDragMove(e) {
+      if (dragAnchor) {
+        if (!(e.buttons & 1)) {
+          dragAnchor = null;
+          return;
+        }
+        const to = caretAt(e.clientX, e.clientY);
+        const selection = root.getSelection();
+        if (to && selection) selection.setBaseAndExtent(dragAnchor.node, dragAnchor.offset, to.node, to.offset);
+        return;
+      }
+      if (!dragOut) return;
+      if (!(e.buttons & 1) || !editing || editing.area !== dragOut) {
+        dragOut = null;
+        return;
+      }
+      const area = dragOut;
+      const box = area.getBoundingClientRect();
+      if (e.clientY >= box.top && e.clientY <= box.bottom) return;
+      dragOut = null;
+      const anchor = lineStart(editing.start) + (area.selectionDirection === 'backward' ? area.selectionEnd : area.selectionStart);
+      stop();
+      dragAnchor = pointFor(anchor);
+      extended = true;
+      onDragMove(e);
+    }
+
+    function onDragEnd() {
+      dragOut = null;
+      dragAnchor = null;
+    }
+
+    document.addEventListener('pointermove', onDragMove);
+    document.addEventListener('pointerup', onDragEnd);
+    document.addEventListener('pointercancel', onDragEnd);
+
     container.addEventListener('pointerdown', (e) => {
       pressed = true;
+      extended = false;
       clearTimeout(release);
       if (!e.shiftKey || !editing || e.target.closest('.editing')) return;
       const blk = e.target.closest('.blk');
@@ -621,7 +799,7 @@
       extended = true;
       const target = lineStart(start) + inside;
       stop();
-      editSpan(anchor, target);
+      selectSpan(anchor, target);
     });
 
     container.addEventListener('pointercancel', () => {
@@ -790,8 +968,13 @@
         return;
       }
       unframe();
-      if (!e.target.closest('input[data-box], a') && takeSelection()) {
+      const span = !e.target.closest('input[data-box], a') && selectedSpan();
+      if (span) {
         e.preventDefault();
+        if (editing) {
+          stop();
+          selectSpan(span[0], span[1]);
+        }
         return;
       }
       const box = boxFor(e);
@@ -890,13 +1073,19 @@
         cancelAnimationFrame(outlineFrame);
         if (outlineResize) outlineResize.disconnect();
         if (editResize) editResize.disconnect();
-        if (outlineNav) outlineNav.removeEventListener('click', outlineGo);
+        if (outlineNav) outline.removeEventListener('click', outlineGo);
         root.removeEventListener('scroll', outlineScroll);
         root.removeEventListener('resize', outlineScroll);
         document.removeEventListener('selectionchange', onSelectionChange);
         clearTimeout(release);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('keydown', onDocumentKey);
+        document.removeEventListener('copy', onCopy);
+        document.removeEventListener('cut', onCopy);
+        document.removeEventListener('paste', onTextPaste);
+        document.removeEventListener('pointermove', onDragMove);
+        document.removeEventListener('pointerup', onDragEnd);
+        document.removeEventListener('pointercancel', onDragEnd);
         document.removeEventListener('keydown', onFrameKey, true);
         root.removeEventListener('resize', placeFrame);
         unframe();

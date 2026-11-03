@@ -323,7 +323,8 @@ test('a board keeps its cards in the columns they were dragged to', async ({ pag
   await columns.nth(0).locator('.kanban-card').click();
   await page.locator('#kanban-card-sub').fill('Chemistry');
   await page.locator('#kanban-card-description').fill('Questions 1 to 8');
-  await page.locator('.scrim [data-action="close"]').click();
+  await page.locator('#kanban-panel [data-kanban="close"]').click();
+  await expect(page.locator('#kanban-panel')).toBeHidden();
   await expect(columns.nth(0).locator('.kanban-card-sub')).toHaveText('Chemistry');
   await expect(columns.nth(0).locator('.kanban-has-text')).toBeVisible();
 
@@ -364,18 +365,46 @@ test.describe('editing like Obsidian', () => {
     }, [from, to]);
   }
 
-  test('a dragged selection across lines becomes editable, so Delete removes all of it', async ({ page }) => {
+  test('a dragged selection across lines stays rendered in place, copies as Markdown, and Delete removes all of it', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
     const saved = await open(page, 'drag');
     const first = await page.locator('#doc .blk').nth(0).locator('p').boundingBox();
     const third = await page.locator('#doc .blk').nth(2).locator('li').boundingBox();
+    const fourth = await page.locator('#doc .blk').nth(3).boundingBox();
     await page.mouse.move(first.x + 2, first.y + first.height / 2);
     await page.mouse.down();
     await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 8 });
     await page.mouse.up();
+    await expect(page.locator('#doc textarea.line-edit')).toHaveCount(0);
+    expect(await page.evaluate(() => getSelection().toString())).toContain('Second bold line');
+    expect(await page.locator('#doc .blk').nth(3).boundingBox()).toEqual(fourth);
+    const copied = await page.evaluate(() => {
+      const data = new DataTransfer();
+      document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+      return data.getData('text/plain');
+    });
+    expect(copied).toContain('Second **bold** line\n- Third item');
+    await page.keyboard.press('Backspace');
+    await expect.poll(saved, { timeout: 5000 }).toBe('\nFourth line');
+  });
+
+  test('dragging out of the line being edited selects across the lines below', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const saved = await open(page, 'drag-out');
+    await page.locator('#doc .blk').nth(0).click();
     const area = page.locator('#doc textarea.line-edit');
-    await expect(area).toHaveCount(1);
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Second **bold** line');
+    await expect(area).toBeFocused();
+    const box = await area.boundingBox();
+    const third = await page.locator('#doc .blk').nth(2).boundingBox();
+    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 3 });
+    await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator('#doc textarea.line-edit')).toHaveCount(0);
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('First line here');
+    expect(picked).toContain('Second bold line');
     await page.keyboard.press('Backspace');
     await expect.poll(saved, { timeout: 5000 }).toBe('\nFourth line');
   });
@@ -398,7 +427,11 @@ test.describe('editing like Obsidian', () => {
     await page.keyboard.down('Shift');
     await page.mouse.click(last.x + last.width - 1, last.y + last.height / 2);
     await page.keyboard.up('Shift');
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toBe(['Second **bold** line', '- Third item', 'Fourth line'].join('\n'));
+    await expect(area).toHaveCount(0);
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('Second bold line');
+    expect(picked).toContain('Fourth line');
+    expect(picked).not.toContain('First line here');
     await page.keyboard.press('Delete');
     await expect.poll(saved, { timeout: 5000 }).toBe('First line here\n');
     await page.keyboard.press('ControlOrMeta+a');
@@ -3593,7 +3626,7 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   const before = [await settings.boundingBox(), await record.boundingBox()];
   expect(await tree.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   await tree.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-  await expect(page.locator('#side .side-top [data-dir=""]')).toBeInViewport();
+  await expect(page.locator('#side .side-group[data-drop-dir=""]')).toBeInViewport();
   await page.mouse.wheel(0, 2000);
   const after = [await settings.boundingBox(), await record.boundingBox()];
   expect(after.map((b) => Math.round(b.y))).toEqual(before.map((b) => Math.round(b.y)));
@@ -3702,8 +3735,8 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   const note = await (await page.request.post('/api/notes', { data: { title: 'Nested folder move', directory: `${from}/Child`, body: 'Keep descendants.' } })).json();
   const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
   await page.goto(`/#/f/${encodeURIComponent(from)}`);
-  const target = page.locator('#side [data-action="open-folder"][data-dir=""]');
-  await expect(target).toHaveText('Top level');
+  const target = page.locator('#side .side-group[data-drop-dir=""]');
+  await expect(target).toContainText('Folders');
   await dragBetween(page, page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`), target);
   await expect.poll(where).toBe(`${root}/Child`);
   await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
@@ -3717,7 +3750,7 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   const parent = from.split('/')[0];
   for (const [source, into] of [[parent, from], [from, parent], [parent, '']]) {
     const dragged = `#side [data-action="open-folder"][data-dir="${source}"]`;
-    const dropped = `#side [data-action="open-folder"][data-dir="${into}"]`;
+    const dropped = into ? `#side [data-action="open-folder"][data-dir="${into}"]` : '#side .side-group[data-drop-dir=""]';
     await page.dispatchEvent(dragged, 'dragstart', { dataTransfer: transfer });
     await page.dispatchEvent(dropped, 'dragover', { dataTransfer: transfer });
     await expect(page.locator(dropped)).not.toHaveClass(/drop-ok/);

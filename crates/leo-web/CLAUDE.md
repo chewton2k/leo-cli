@@ -152,8 +152,14 @@ reader, seer, meaning, web, room, speech).
 ## Notes, editing and browsing
 
 - No editor view: `editing.js` splits the body into blocks; `doc.js` renders
-  each with `markdown.js` and swaps a tapped block (or the lines a selection
-  covers, like Obsidian's live preview) for a textarea of its raw lines.
+  each with `markdown.js` and swaps a tapped block for a textarea of its raw
+  lines. Like Obsidian's live preview (2026-11-02, the user's call), nothing
+  jumps when a line opens: a heading keeps its size (`data-head`) and a list or
+  task line is shifted so its text stays where it was drawn (the marker hangs
+  left). A selection across lines stays rendered in place: dragging out of the
+  edited line carries on across the lines (`dragAnchor`), Shift+click selects,
+  copy and cut give the Markdown, and typing, Enter, Delete or paste replace it
+  through the raw lines, then only the caret's line stays open.
   Autosave PATCHes 700 ms after the last change with `base` = the loaded
   `version` (FNV-1a); 409 → "<title> (conflict from phone)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
@@ -225,7 +231,11 @@ reader, seer, meaning, web, room, speech).
   open notes directly. The selected folder scopes New note, Record and imports;
   library cards and breadcrumbs retain folder navigation. The explorer narrows
   below 1200 px to leave room for notes, originals and Felix.
-  Top level stays pinned as a drop target; folder and note rows retain drag data.
+  There is no Top level row (2026-11-02, the user's call: the tree already lists
+  top-level notes); the pinned Folders heading is the top-level drop target, and
+  folder and note rows retain drag data. A folder row is highlighted only on its
+  folder page; on a note page only the note's row is. The rail, explorer, tabs and
+  segmented controls are not text-selectable.
   `leo-side` hides only the explorer, keeping the rail; `leo-side-open` retains
   expansion. Tree and rail scrolling, focus and note pages survive redraws.
   Notes use the existing bounded metadata endpoint: 100 per page, four concurrent
@@ -850,8 +860,14 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   open for the next card (adds are queued so fast typing loses nothing), + Add
   column, ⋯ sheets for a column (rename, move left/right, delete moving its cards)
   and the board (rename, add column, delete with a second press, Undo). A card opens
-  a sheet: title, subheading, status, priority (`library-views`), board, description
-  (autosave after 600 ms, on blur, and before Escape/scrim closes it), Delete with Undo.
+  in a side panel beside the board like a note (2026-11-02, the user's call: no modal;
+  `#kanban-panel`, kept across board redraws, a full-screen layer under 760 px): title,
+  subheading, status, priority (`library-views`), board, a borderless description
+  (autosave after 600 ms, on blur, and before Escape or × closes it), Delete with Undo.
+  Columns share one height and fill the width (flex 1, at least 260 px; Add column is a
+  small + tile), cards are roomier, and each column takes a quiet colour from its name
+  (`kanbanTone`: to do blue, in progress amber, done green, blocked red, others by
+  place) shown as a dot, its count and a 3% tint. No help line under the board.
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
   placeholder moving through the lists; a copy follows the pointer; the board
@@ -1126,10 +1142,13 @@ checks. Two combines may run at once, with a 15-minute between-request deadline;
 any failed part leaves both source notes unchanged. Review, version checks,
 transcript copies and Undo still apply. Saving admits bounded Unicode JSON bodies.
 
-Notes with Markdown headings have an On this page outline, generated locally from
+Notes with Markdown headings have an outline (its disclosure is an icon and chevron with no "On this page" label; 2026-11-02, the user's call), generated locally from
 editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
-It uses source-more controls and theme tokens. With 900 px of room, the borderless
-320 px rail sits beside the app sidebar, separated from the note by 56 px; note
+It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
+the user's call: notes sit in the middle), the note is centred between two 48 px
+gutters and the right one holds a tick per heading (`.outline-ticks`, longer for
+higher levels, the current one in the accent); hovering or focusing it shows the
+outline as a floating card to its left, and a tick jumps to its heading. Note
 width preferences still cap the reading column. Headings stay on one line with
 ellipsis and their full title on hover. The outline hides its scrollbar while
 keeping wheel, touch and keyboard scrolling available. The outline gutter is
@@ -1173,6 +1192,12 @@ Nothing becomes a note or sync file. Card polling updates shortcut status and
 history only; fields, drafts, focus and caret survive. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
+Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels
+in sentence case, no "Settings" title in the section list (the bar says it),
+no card title repeating the page title, flat cards (border, no shadow), labels
+on one line with controls hugging their content at the right edge; a card under
+500 px stacks segmented rows (container query), and switch rows stay inline on
+phones. Writing AI uses a pen icon, never a sparkle.
 Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
 left of the content (sticky under the bar, its own scroll), grouped Leo / Your
 notes / Data / This app, each section with an icon and a page heading with a

@@ -15,7 +15,22 @@ const KANBAN_ICON = {
   medium: svg('<path d="M6 9.5h12M6 14.5h12"/>'),
   low: svg('<path d="M6 9l6 6 6-6"/>'),
 };
-const kanban = { boards: [], board: null, cards: [], loaded: false, drag: null, suppressClick: false, redrawing: false };
+const KANBAN_TONES = [
+  [/\b(done|complete|completed|finished|shipped|closed)\b/i, 'done'],
+  [/\b(in progress|doing|working|review|reviewing|testing|started)\b/i, 'doing'],
+  [/\b(blocked|stuck|waiting|on hold)\b/i, 'blocked'],
+  [/\b(to do|todo|tasks?|backlog|ideas?|next|planned|new)\b/i, 'todo'],
+];
+const kanban = { boards: [], board: null, cards: [], loaded: false, drag: null, suppressClick: false, redrawing: false, panel: null };
+
+// A column's colour follows what its name means, so To do, In progress and Done read at a
+// glance; any other column takes a quiet hue by its place on the board.
+function kanbanTone(column) {
+  const hit = KANBAN_TONES.find(([test]) => test.test(column.name));
+  if (hit) return hit[1];
+  const at = kanban.board ? kanban.board.columns.findIndex((c) => c.id === column.id) : 0;
+  return `hue${Math.max(0, at) % 4}`;
+}
 
 function kanbanRemembered() {
   try { return localStorage.getItem(KANBAN_KEY) || ''; } catch (e) { return ''; }
@@ -87,13 +102,15 @@ function kanbanCardHtml(card) {
   const foot = card.priority || card.description
     ? `<div class="kanban-card-foot">${kanbanPriority(card.priority)}${card.description ? `<span class="kanban-has-text" title="Has a description" aria-label="Has a description">${KANBAN_ICON.lines}</span>` : ''}</div>`
     : '';
-  return `<article class="kanban-card" tabindex="0" data-card="${esc(card.id)}" data-action="kanban-open-card" aria-roledescription="card" aria-label="${esc(card.title)}"><div class="kanban-card-title">${esc(card.title)}</div>${card.subheading ? `<div class="kanban-card-sub">${esc(card.subheading)}</div>` : ''}${foot}</article>`;
+  const open = kanban.panel?.id === card.id;
+  return `<article class="kanban-card${open ? ' open' : ''}" tabindex="0" data-card="${esc(card.id)}" data-action="kanban-open-card" aria-roledescription="card" aria-label="${esc(card.title)}"${open ? ' aria-current="true"' : ''}><div class="kanban-card-title">${esc(card.title)}</div>${card.subheading ? `<div class="kanban-card-sub">${esc(card.subheading)}</div>` : ''}${foot}</article>`;
 }
 
 function kanbanColumnHtml(column) {
   const cards = kanbanCardsIn(column.id);
-  return `<section class="kanban-col" data-col="${esc(column.id)}" aria-label="${esc(column.name)}">
+  return `<section class="kanban-col" data-col="${esc(column.id)}" data-tone="${kanbanTone(column)}" aria-label="${esc(column.name)}">
     <header class="kanban-col-head" title="Drag to move this column">
+      <span class="kanban-dot" aria-hidden="true"></span>
       <input class="kanban-col-name" data-kanban-name="${esc(column.id)}" value="${esc(column.name)}" maxlength="80" aria-label="Column name" spellcheck="false" autocomplete="off">
       <span class="kanban-count" data-count-col="${esc(column.id)}">${cards.length}</span>
       <button class="icon-btn kanban-col-more" data-action="kanban-column-menu" data-col="${esc(column.id)}" aria-label="Options for ${esc(column.name)}" title="Column options">${ICON.more}</button>
@@ -115,6 +132,7 @@ function drawKanban() {
   if (state.view !== 'boards') return;
   const board = kanban.board;
   if (!board) {
+    kanbanClosePanel(false);
     app.innerHTML = `<div class="kanban-page kanban-none">${empty(ICON.board, 'Keep track of your work', 'A board has columns like To do, In progress and Done. Add a card for each task and drag it along as the work moves.')}<button class="btn primary" data-action="kanban-new-board">${ICON.plus}<span>New board</span></button></div>`;
     return;
   }
@@ -128,9 +146,17 @@ function drawKanban() {
     const text = form.querySelector('textarea');
     return { column: form.dataset.composer, text: text.value, start: text.selectionStart, end: text.selectionEnd, focus: text === active };
   });
+  let host = app.querySelector('.kanban-board');
+  if (!host) {
+    app.innerHTML = '<div class="kanban-layout"><div class="kanban-board"></div><aside class="kanban-panel" id="kanban-panel" aria-label="Card details" hidden></aside></div>';
+    host = app.querySelector('.kanban-board');
+    kanban.panel?.flush();
+    kanban.panel = null;
+    document.body.classList.remove('kanban-panel-on');
+  }
   kanban.redrawing = true;
   try {
-    app.innerHTML = `<div class="kanban-page">
+    host.innerHTML = `<div class="kanban-page">
       <header class="kanban-head">
         <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
         <div class="kanban-title-row">
@@ -138,14 +164,15 @@ function drawKanban() {
           <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
         </div>
       </header>
-      <div class="kanban-cols">${board.columns.map(kanbanColumnHtml).join('')}${board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="kanban-add-col" data-action="kanban-add-column">${ICON.plus}<span>Add column</span></button>` : ''}</div>
-      <p class="hint kanban-hint">Drag cards between columns or onto another board. Drag a column by its name bar to reorder. With a card selected, ${ON_MAC ? '⌥' : 'Alt'} and the arrow keys move it.</p>
+      <div class="kanban-cols">${board.columns.map(kanbanColumnHtml).join('')}${board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="kanban-add-col" data-action="kanban-add-column" title="Add column">${ICON.plus}<span>Add column</span></button>` : ''}</div>
     </div>`;
   } finally {
     kanban.redrawing = false;
   }
   const next = app.querySelector('.kanban-cols');
   if (next) next.scrollLeft = scrolled;
+  if (kanban.panel && !kanbanCard(kanban.panel.id)) kanbanClosePanel(false);
+  else if (kanban.panel) kanbanPanelStatus();
   for (const open of composers) {
     if (board.columns.some((c) => c.id === open.column)) kanbanComposer(open.column, open);
   }
@@ -229,7 +256,11 @@ async function kanbanRename(input) {
     if (column) {
       await kanbanSaveBoard({ columns: board.columns.map((c) => ({ id: c.id, name: c.id === key ? text : c.name })) });
       const box = input.closest('.kanban-col');
-      if (box) box.setAttribute('aria-label', text);
+      if (box) {
+        box.setAttribute('aria-label', text);
+        box.dataset.tone = kanbanTone({ id: key, name: text });
+      }
+      kanbanPanelStatus();
     } else {
       const saved = await kanbanSaveBoard({ name: text });
       document.title = `${saved.name} · leo`;
@@ -433,28 +464,74 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
   }
 }
 
-function kanbanCardSheet(id) {
+function kanbanStatusOptions(card) {
+  return kanban.board.columns.map((c) => `<option value="${esc(c.id)}"${c.id === card.column ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+}
+
+// Keep the open card's Status in step with moves made on the board itself.
+function kanbanPanelStatus() {
+  const open = kanban.panel;
+  const card = open && kanbanCard(open.id);
+  const box = $('#kanban-panel');
+  const status = box && $('#kanban-card-column', box);
+  if (!card || !status) return;
+  if (document.activeElement !== status) status.innerHTML = kanbanStatusOptions(card);
+  const column = kanbanColumn(card.column);
+  box.dataset.tone = column ? kanbanTone(column) : '';
+}
+
+function kanbanClosePanel(refocus = true) {
+  const open = kanban.panel;
+  if (!open) return;
+  open.flush();
+  kanban.panel = null;
+  const box = $('#kanban-panel');
+  if (box) { box.hidden = true; box.innerHTML = ''; }
+  document.body.classList.remove('kanban-panel-on');
+  const el = app.querySelector(`.kanban-card[data-card="${CSS.escape(open.id)}"]`);
+  if (el) {
+    el.classList.remove('open');
+    el.removeAttribute('aria-current');
+    if (refocus) el.focus({ preventScroll: true });
+  }
+}
+
+// A card opens beside the board, like a note: edits save as you type and the board stays
+// in view, so the next card is one click away.
+function kanbanCardPanel(id) {
   const card = kanbanCard(id);
   const board = kanban.board;
-  if (!card || !board) return;
+  const box = $('#kanban-panel');
+  if (!card || !board || !box) return;
+  if (kanban.panel?.id === id) { $('#kanban-card-title', box)?.focus(); return; }
+  if (kanban.panel) kanbanClosePanel(false);
   const others = kanban.boards.filter((b) => b.id !== board.id);
-  const box = sheet(`<div class="kanban-sheet">
+  const column = kanbanColumn(card.column);
+  box.dataset.tone = column ? kanbanTone(column) : '';
+  box.innerHTML = `<div class="kanban-sheet">
+    <div class="kanban-panel-bar"><span class="kanban-panel-where"><span class="kanban-dot" aria-hidden="true"></span><span>${esc(board.name)}</span></span><span class="hint grow" id="kanban-card-saved" role="status"></span><button type="button" class="icon-btn" data-kanban="delete" aria-label="Delete card" title="Delete card">${ICON.trash}</button><button type="button" class="icon-btn" data-kanban="close" aria-label="Close" title="Close (Esc)">${ICON.close}</button></div>
     <textarea class="kanban-sheet-title" id="kanban-card-title" rows="1" maxlength="300" aria-label="Card title" spellcheck="true">${esc(card.title)}</textarea>
-    <input class="set-input kanban-sheet-sub" id="kanban-card-sub" maxlength="200" placeholder="Add a subheading" aria-label="Subheading" autocomplete="off" value="${esc(card.subheading || '')}">
-    <div class="set-row"><span class="set-label">Status</span><label class="select-control"><select id="kanban-card-column" aria-label="Status">${board.columns.map((c) => `<option value="${esc(c.id)}"${c.id === card.column ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>
-    <div class="set-row"><span class="set-label">Priority</span><div class="library-views kanban-priorities" role="group" aria-label="Priority">${KANBAN_PRIORITIES.map(([value, label]) => `<button type="button" class="btn sm plain${(card.priority || '') === value ? ' on' : ''}" data-priority="${value}" aria-pressed="${(card.priority || '') === value}">${value ? KANBAN_ICON[value] : ''}<span>${esc(label)}</span></button>`).join('')}</div></div>
-    ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
-    <div class="set-row column"><label class="set-label" for="kanban-card-description">Description</label><textarea class="set-input kanban-description" id="kanban-card-description" rows="7" maxlength="8000" placeholder="Add details, steps or links…">${esc(card.description || '')}</textarea></div>
-    <div class="buttons kanban-sheet-acts"><span class="hint grow" id="kanban-card-saved" role="status"></span><button type="button" class="btn plain danger" data-kanban="delete">${ICON.trash}<span>Delete</span></button><button type="button" class="btn primary" data-action="close">Done</button></div>
-  </div>`);
-  box.returnFocus = app.querySelector(`.kanban-card[data-card="${CSS.escape(id)}"]`);
+    <input class="kanban-sheet-sub" id="kanban-card-sub" maxlength="200" placeholder="Add a subheading" aria-label="Subheading" autocomplete="off" value="${esc(card.subheading || '')}">
+    <div class="kanban-props">
+      <div class="set-row"><span class="set-label">Status</span><label class="select-control kanban-status"><span class="kanban-dot" aria-hidden="true"></span><select id="kanban-card-column" aria-label="Status">${kanbanStatusOptions(card)}</select>${ICON.chevron}</label></div>
+      <div class="set-row"><span class="set-label">Priority</span><div class="library-views kanban-priorities" role="group" aria-label="Priority">${KANBAN_PRIORITIES.map(([value, label]) => `<button type="button" class="btn sm plain${(card.priority || '') === value ? ' on' : ''}" data-priority="${value}" aria-pressed="${(card.priority || '') === value}">${value ? KANBAN_ICON[value] : ''}<span>${esc(label)}</span></button>`).join('')}</div></div>
+      ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
+    </div>
+    <textarea class="kanban-description" id="kanban-card-description" maxlength="8000" aria-label="Description" placeholder="Add details, steps or links…">${esc(card.description || '')}</textarea>
+  </div>`;
+  box.hidden = false;
+  document.body.classList.add('kanban-panel-on');
+  for (const el of app.querySelectorAll('.kanban-card.open')) { el.classList.remove('open'); el.removeAttribute('aria-current'); }
+  const el = app.querySelector(`.kanban-card[data-card="${CSS.escape(id)}"]`);
+  if (el) { el.classList.add('open'); el.setAttribute('aria-current', 'true'); }
   const title = $('#kanban-card-title', box);
   const sub = $('#kanban-card-sub', box);
   const description = $('#kanban-card-description', box);
   const status = $('#kanban-card-column', box);
   const saved = $('#kanban-card-saved', box);
-  const fit = () => { title.style.height = 'auto'; title.style.height = `${title.scrollHeight}px`; };
-  fit();
+  const fit = (area) => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; };
+  fit(title);
+  fit(description);
   const fields = { title, subheading: sub, description };
   const timers = {};
   const save = async (name) => {
@@ -463,7 +540,7 @@ function kanbanCardSheet(id) {
     const field = fields[name];
     const value = name === 'description' ? field.value.trim() : field.value.replace(/\s+/g, ' ').trim();
     if (value === (card[name] || '')) return;
-    if (name === 'title' && !value) { field.value = card.title; fit(); return; }
+    if (name === 'title' && !value) { field.value = card.title; fit(title); return; }
     try {
       const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
       kanbanUpdate(card, done);
@@ -474,9 +551,10 @@ function kanbanCardSheet(id) {
     }
   };
   const flush = () => { for (const name of Object.keys(fields)) if (timers[name]) save(name).catch(fail); };
+  kanban.panel = { id, flush };
   for (const [name, field] of Object.entries(fields)) {
     field.addEventListener('input', () => {
-      if (name === 'title') fit();
+      if (field.tagName === 'TEXTAREA') fit(field);
       if (saved.isConnected) saved.textContent = '';
       clearTimeout(timers[name]);
       timers[name] = setTimeout(() => save(name).catch(fail), KANBAN_SAVE_MS);
@@ -486,10 +564,18 @@ function kanbanCardSheet(id) {
   title.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sub.focus(); }
   });
-  // Escape closes the sheet before a blur could save, so save first.
-  box.addEventListener('keydown', (e) => { if (e.key === 'Escape') flush(); }, true);
-  box.addEventListener('pointerdown', (e) => { if (e.target === box) flush(); });
+  sub.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); description.focus(); }
+  });
+  box.onkeydown = (e) => {
+    if (e.key !== 'Escape' || e.isComposing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    kanbanClosePanel();
+  };
   status.addEventListener('change', () => {
+    const column = kanbanColumn(status.value);
+    if (column) box.dataset.tone = kanbanTone(column);
     kanbanMove(card, { column: status.value }).catch(fail);
   });
   $('.kanban-priorities', box).addEventListener('click', async (e) => {
@@ -508,16 +594,16 @@ function kanbanCardSheet(id) {
     }
   });
   $('#kanban-card-board', box)?.addEventListener('change', (e) => {
-    flush();
-    closeSheet();
+    kanbanClosePanel(false);
     kanbanMoveToBoard(card, e.target.value).catch(fail);
   });
   box.querySelector('[data-kanban="delete"]').addEventListener('click', () => {
-    flush();
-    closeSheet();
+    kanbanClosePanel(false);
     kanbanDeleteCard(card).catch(fail);
   });
-  box.querySelector('[data-action="close"]').addEventListener('click', flush);
+  box.querySelector('[data-kanban="close"]').addEventListener('click', () => kanbanClosePanel());
+  title.focus();
+  title.setSelectionRange(title.value.length, title.value.length);
 }
 
 // The card just before this one in its column, or null at the top.
@@ -804,6 +890,12 @@ document.addEventListener('keydown', (e) => {
     kanbanCancel();
     return;
   }
+  if (kanban.panel && e.key === 'Escape' && !e.target.closest?.('input, textarea, select, [contenteditable], .scrim')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    kanbanClosePanel();
+    return;
+  }
   const name = e.target.closest?.('[data-kanban-name]');
   if (name) {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); name.blur(); }
@@ -822,7 +914,7 @@ document.addEventListener('keydown', (e) => {
   if (!card) return;
   if ((e.key === 'Enter' || e.key === ' ') && !e.altKey && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    kanbanCardSheet(card.id);
+    kanbanCardPanel(card.id);
   } else if (e.altKey && !e.metaKey && !e.ctrlKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
     e.preventDefault();
     kanbanKeyMove(card, e.key).catch(fail);
@@ -833,4 +925,5 @@ document.addEventListener('keydown', (e) => {
 function leaveBoards() {
   if (kanban.drag?.live) kanbanCancel();
   else kanbanEnd();
+  kanbanClosePanel(false);
 }
