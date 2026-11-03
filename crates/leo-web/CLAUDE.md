@@ -252,7 +252,12 @@ reader, seer, meaning, web, room, speech).
   individual notes. Folder labels and chevrons toggle their children; note rows
   open notes directly. The selected folder scopes New note, Record and imports;
   library cards and breadcrumbs retain folder navigation. The explorer narrows
-  below 1200 px to leave room for notes, originals and Felix.
+  below 1200 px to leave room for notes, originals and Felix. Its right edge is a
+  keyboard-accessible resize handle; `leo-side-width` remembers the expanded
+  width while the 52 px rail stays fixed. `pane-resize.js` shares bounded sizing,
+  32/96 px arrow steps, Home/double-click reset and drag cleanup with Felix's
+  Chats divider (`leo-chat-history-width`); shrinking a window clamps the visible
+  width without replacing the saved preference. Overlay chat lists have no grip.
   There is no Top level row (2026-11-02, the user's call: the tree already lists
   top-level notes); the pinned Folders heading is the top-level drop target, and
   folder and note rows retain drag data. Drops work like a file explorer
@@ -268,10 +273,17 @@ reader, seer, meaning, web, room, speech).
   a pointer move with no button ends a drag, and drops check the drag's type. A folder row is highlighted only on its
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
+  The sidebar head and page toolbar share `--bar-height`, including the safe-area
+  inset, so their bottom dividers stay aligned with the explorer open or hidden.
+  Settings uses the same height for its sticky navigation offset.
   `leo-side` hides only the explorer, keeping the rail. The fold slides
   (2026-11-02, the user's call; the one width animation): `--side` is an
   `@property` length that transitions while `body.side-folding` (`MOTION_MS`),
-  the explorer keeps its width and is clipped, Reduced Motion snaps. The toggle
+  the explorer keeps its width and is clipped, Reduced Motion snaps. Folding ends
+  after the actual `--side` transition settles, including interrupted or reversed
+  transitions; a timer cannot finish it early. Animation tests pause the native
+  transition in the click event, before browser protocol latency can let it end.
+  The toggle
   never moves: left of the head over the rail, or on macOS fixed right after the
   window buttons, in both states. Folders start closed;
   `leo-side-folders` keeps only folders the user opened with their own clicks
@@ -896,7 +908,11 @@ the same idle loop.
   600 ms after typing and on blur, note, Google, .ics, Delete; events are
   read-only. Colors follow the event title (`--hue-0..7`) and task kind
   (`TASK_TONES`). "Hide completed" is remembered (`leo-calendar-hide-done`).
-  Add to Google Calendar opens Google's prefilled page (no sign-in). Tests:
+  Add to Google Calendar opens Google's prefilled page (no sign-in).
+  Creation tolerates two minutes of pointer rounding only near drawn hour lines,
+  floors other clicks to their quarter hour and clamps starts inside the day.
+  Date edits refresh Google status and export actions without replacing focused fields.
+  A save resolves the current task snapshot after a calendar refresh. Tests:
   `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
   API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
 - Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /
@@ -952,6 +968,9 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   POST `/api/cards/{id}/move` `{board?, column?, after?}` (`after` missing = end,
   null = top, an id = just after it; another board keeps a same-named column, else
   the first). Export adds `leo/boards.json`.
+- New board uses the existing sheet and controls, with a labelled full-width name
+  field and a small preview of the three starting columns; Enter and Create board
+  submit the same request, and Cancel leaves the boards untouched.
 - Page: board tabs with counts (a card dropped on a tab moves to that board, with
   Undo), the name and column names edit in place (Enter saves, Escape reverts),
   columns are grey lanes of white cards (title, muted subheading, priority arrows,
@@ -1255,6 +1274,9 @@ magnifies nearby bars and previews the heading and a bounded plain-text excerpt
 Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Motion
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
+The wide rail is vertically centred in the reading viewport, including short
+notes. Its dropdown reveals and retracts with a 180 ms clip/translate animation,
+reverses from its current frame on repeated clicks, and snaps with Reduced Motion.
 Preview updates never redraw the editor, and destroy removes the rail and tooltip. Note
 width preferences still cap the reading column. Headings stay on one line with
 ellipsis and their full title on hover. The outline hides its scrollbar while

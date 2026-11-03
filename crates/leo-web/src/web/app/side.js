@@ -23,6 +23,36 @@ try {
 } catch (e) {}
 document.body.classList.toggle('side-mini', side.mini);
 
+const SIDE_LEAST_WIDTH = 220;
+const SIDE_MOST_WIDTH = 520;
+const SIDE_PAGE_ROOM = 380;
+const sideGrip = document.createElement('div');
+sideGrip.className = 'pane-resize side-resize';
+sideGrip.tabIndex = 0;
+sideGrip.title = 'Drag to resize folders; double-click to reset';
+sideGrip.setAttribute('role', 'separator');
+sideGrip.setAttribute('aria-orientation', 'vertical');
+sideGrip.setAttribute('aria-label', 'File explorer width');
+sideGrip.setAttribute('aria-controls', 'side-explorer');
+document.body.appendChild(sideGrip);
+const sideResize = window.leoPaneResize.create({
+  handle: sideGrip,
+  key: 'leo-side-width',
+  measure: () => $('#side').getBoundingClientRect().width,
+  limits: () => {
+    const body = document.body;
+    const chat = body.classList.contains('chat-open') && document.querySelector('.chat:not([hidden])');
+    const right = Math.max(parseFloat(getComputedStyle(body).paddingRight) || 0, chat ? window.innerWidth - chat.getBoundingClientRect().left : 0);
+    return [SIDE_LEAST_WIDTH, Math.max(SIDE_LEAST_WIDTH, Math.min(SIDE_MOST_WIDTH, window.innerWidth - right - SIDE_PAGE_ROOM))];
+  },
+  apply: (width) => {
+    if (width === null) document.body.style.removeProperty('--explorer-w');
+    else document.body.style.setProperty('--explorer-w', `${width}px`);
+  },
+  enabled: () => sideWide() && !side.mini && !document.body.classList.contains('side-folding') && state.view !== 'locked',
+  onChange: () => window.dispatchEvent(new Event('resize')),
+});
+
 const shortcutLabel = ON_MAC ? '⌘K' : 'Ctrl K';
 const quickLabel = ON_MAC ? '⌘J' : 'Ctrl J';
 
@@ -44,6 +74,8 @@ function drawSide() {
   const box = $('#side');
   if (!box) return;
   box.hidden = state.view === 'locked';
+  sideGrip.hidden = box.hidden;
+  sideResize.fit();
   if (box.hidden) return;
   const here = sidePlace();
   const chatOpen = document.body.classList.contains('chat-open');
@@ -244,21 +276,24 @@ async function loadSideFolders() {
 
 function foldSide() {
   side.mini = !side.mini;
-  clearTimeout(side.folding);
+  const generation = side.folding = (side.folding || 0) + 1;
   const body = document.body;
   body.classList.toggle('side-folding', sideWide() && !stillMotion());
-  if (body.classList.contains('side-folding')) {
-    side.folding = setTimeout(() => {
-      body.classList.remove('side-folding');
-      window.dispatchEvent(new Event('resize'));
-    }, MOTION_MS + 40);
-  }
   body.classList.toggle('side-mini', side.mini);
+  sideResize.fit();
   try {
     localStorage.setItem(SIDE_KEY, side.mini ? 'mini' : 'wide');
   } catch (e) {}
   drawSide();
   window.dispatchEvent(new Event('resize'));
+  if (body.classList.contains('side-folding')) {
+    const transitions = body.getAnimations().filter((run) => run.transitionProperty === '--side');
+    Promise.allSettled(transitions.map((run) => run.finished)).then(() => {
+      if (side.folding !== generation) return;
+      body.classList.remove('side-folding');
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
 }
 
 function moveOpenFolders(from, to) {

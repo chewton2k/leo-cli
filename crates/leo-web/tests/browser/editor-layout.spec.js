@@ -620,3 +620,55 @@ for (const interaction of ['touch', 'disclosure', 'escape']) {
     }, { body: '# One\nParagraph\n## Two\nMore\n# Three', touch: interaction !== 'escape' });
   });
 }
+
+
+test('heading rail stays vertically centred and its dropdown animates with reduced-motion support', async ({ browser }) => {
+  const short='# One\n\nFirst paragraph.\n\n## Two\n\nSecond paragraph.\n\n### Three\n\nLast paragraph.';
+  await editorFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    for(const body of [short,short+'\n\n'+'Long reading material.\n\n'.repeat(100)]) {
+      await page.setViewportSize({width:1600,height:900});
+      await page.goto(url+'?body='+encodeURIComponent(body));
+      const outline=page.locator('.note-outline');
+      await expect(outline).toBeVisible();
+      for(const height of [900,640]) {
+        await page.setViewportSize({width:1600,height});
+        await expect.poll(async()=>{const box=await outline.boundingBox();return Math.abs(box.y+box.height/2-height/2);}).toBeLessThanOrEqual(2);
+      }
+      if(body!==short) {
+        await page.evaluate(()=>scrollTo(0,document.documentElement.scrollHeight/2));
+        await expect.poll(async()=>{const box=await outline.boundingBox();return Math.abs(box.y+box.height/2-320);}).toBeLessThanOrEqual(2);
+      }
+    }
+    const nav=page.locator('.note-outline nav'), summary=page.locator('.note-outline summary'), details=page.locator('.note-outline details');
+    await nav.evaluate(el=>{
+      const animate=el.animate.bind(el);
+      el.animate=(...args)=>{const run=animate(...args);run.pause();return run;};
+    });
+    await summary.click();
+    expect(await nav.evaluate(el=>el.getAnimations().some(a=>a.playState==='paused'))).toBe(true);
+    await nav.evaluate(el=>{for(const run of el.getAnimations())run.currentTime=90;});
+    expect(await nav.evaluate(el=>getComputedStyle(el).clipPath)).not.toBe('none');
+    await nav.evaluate(el=>{for(const run of el.getAnimations())run.finish();});
+    await expect.poll(()=>nav.evaluate(el=>el.getAnimations().length)).toBe(0);
+    await expect(details).toHaveAttribute('open','');
+    const menu=await nav.boundingBox();
+    expect(menu.y).toBeGreaterThanOrEqual(0);
+    expect(menu.y+menu.height).toBeLessThanOrEqual(640);
+    await summary.click();
+    expect(await nav.evaluate(el=>el.getAnimations().some(a=>a.playState==='paused'))).toBe(true);
+    await nav.evaluate(el=>{for(const run of el.getAnimations())run.finish();});
+    await expect(details).not.toHaveAttribute('open','');
+    await summary.evaluate(el=>{el.click();el.click();el.click();});
+    await nav.evaluate(el=>{for(const run of el.getAnimations())run.finish();});
+    await expect.poll(()=>nav.evaluate(el=>el.getAnimations().length)).toBe(0);
+    await expect(details).toHaveAttribute('open','');
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await summary.click();
+    await expect(details).not.toHaveAttribute('open','');
+    expect(await nav.evaluate(el=>el.getAnimations().length)).toBe(0);
+    await page.setViewportSize({width:390,height:844});
+    await page.evaluate(()=>scrollTo(0,0));
+    expect((await page.locator('.note-outline').boundingBox()).y).toBeLessThan(200);
+  },{body:short});
+});

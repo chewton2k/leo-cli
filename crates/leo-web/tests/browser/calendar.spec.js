@@ -323,3 +323,44 @@ test('on a narrow window the calendar keeps the explorer and the peek covers onl
     expect(side.x).toBeGreaterThanOrEqual(explorer.x + explorer.width - 1);
   }, { width: 1000, view: 'day' });
 });
+
+test('dating and clearing a task updates export actions without replacing focused fields', async ({ browser }) => {
+  await calendarFixture(browser,async page=>{
+    await page.locator('.cal-tray-row[data-id="task-essay"] .cal-open').click();
+    const date=page.locator('#cal-peek-date'), google=page.locator('#cal-side [data-action="task-google"]'), ics=page.locator('#cal-side a[download]');
+    await expect(google).toBeHidden();
+    await page.evaluate(()=>window.keptDate=document.querySelector('#cal-peek-date'));
+    await date.fill('2026-11-06');
+    await date.dispatchEvent('change');
+    await settled(page);
+    await expect(google).toBeVisible();
+    await expect(ics).toBeVisible();
+    await expect(date).toBeFocused();
+    expect(await page.evaluate(()=>keptDate===document.querySelector('#cal-peek-date'))).toBe(true);
+    await date.fill('');
+    await date.dispatchEvent('change');
+    await settled(page);
+    await expect(google).toBeHidden();
+    await expect(ics).toBeHidden();
+    await expect(page.locator('#cal-peek-start')).toBeDisabled();
+    await expect(date).toBeFocused();
+  });
+});
+
+test('creating a time range respects grid boundaries and either drag direction', async ({ browser }) => {
+  await calendarFixture(browser,async page=>{
+    for(const [start,end] of [[720,810],[810,720],[0,15],[1425,1440]]) {
+      await page.locator('#cal-scroll').evaluate((el,minute)=>{el.scrollTop=Math.max(0,(minute/60-1)*48);},Math.min(start,end));
+      const a=await point(page,'2026-11-07',start), b=await point(page,'2026-11-07',end);
+      await dragTo(page,{x:a.x,y:a.y+(start>0&&start%60===0?-0.4:0.4)},{x:b.x,y:b.y-0.4});
+      const input=page.locator('.cal-compose-input');
+      await expect(input).toBeFocused();
+      await input.fill('Range '+start);
+      await input.press('Enter');
+      await settled(page);
+      const request=await page.evaluate(()=>window.calls.filter(c=>c.method==='POST').at(-1).body);
+      const hm=m=>{m=Math.min(1439,m);return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
+      expect(request).toMatchObject({time:hm(Math.min(start,end)),end:hm(Math.max(start,end))});
+    }
+  });
+});

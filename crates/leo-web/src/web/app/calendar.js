@@ -680,6 +680,7 @@ function calBodies(base, task, next, scope) {
 }
 
 async function calSave(base, task, next, scope) {
+  base = calFind(base.id) || base;
   const { body, undo, local } = calBodies(base, task, next, scope);
   const before = JSON.parse(JSON.stringify(base));
   local(base);

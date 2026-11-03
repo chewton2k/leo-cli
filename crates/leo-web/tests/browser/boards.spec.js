@@ -323,3 +323,36 @@ test('on a phone the columns scroll sideways inside the page, which never scroll
     expect(col.width).toBeLessThanOrEqual(330);
   }, { width: 390, height: 780 });
 });
+
+
+test('new board setup has a full-width named field and a readable column preview', async ({ browser },testInfo) => {
+  await boardsFixture(browser,async page=>{
+    for(const theme of ['light','dark']) for(const width of [1280,390]) {
+      await page.setViewportSize({width,height:844});
+      await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+      await page.locator('[data-action="kanban-new-board"]').click();
+      const sheet=page.locator('.sheet'), field=page.locator('.sheet').getByRole('textbox',{name:'Board name',exact:true});
+      await expect(field).toBeFocused();
+      const panel=await sheet.boundingBox(), input=await field.boundingBox();
+      expect(input.width).toBeGreaterThan(panel.width-64);
+      await expect(sheet.locator('.kanban-start-column')).toHaveCount(3);
+      for(const name of ['To do','In progress','Done'])await expect(sheet.getByText(name,{exact:true})).toBeVisible();
+      for(const tone of ['todo','doing','done']) {
+        const color=await page.locator('.kanban-col[data-tone="'+tone+'"] .kanban-dot').evaluate(el=>getComputedStyle(el).backgroundColor);
+        await expect(sheet.locator('.kanban-start-column[data-tone="'+tone+'"] .kanban-dot')).toHaveCSS('background-color',color);
+      }
+      await page.screenshot({path:testInfo.outputPath('new-board-'+theme+'-'+width+'.png'),animations:'disabled'});
+      await field.fill('Coursework 文字');
+      await page.getByRole('button',{name:'Cancel',exact:true}).click();
+      await expect(page.locator('.scrim')).toHaveCount(0);
+      await expect(page.locator('.scrim-gone')).toHaveCount(0);
+      expect(await page.evaluate(()=>db.boards.length)).toBe(2);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    }
+    await page.locator('[data-action="kanban-new-board"]').click();
+    await page.locator('.sheet').getByRole('textbox',{name:'Board name',exact:true}).fill('Coursework 文字');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.kanban-tab.on')).toContainText('Coursework 文字');
+    expect(await page.evaluate(()=>db.boards.at(-1).columns.map(c=>c.name))).toEqual(['To do','In progress','Done']);
+  });
+});

@@ -947,14 +947,41 @@
     });
 
     const sourceNarrow = () => document.body.classList.contains('with-source') && panel.getBoundingClientRect().width < HISTORY_SIDE_WIDTH;
+    const HISTORY_LEAST_WIDTH = 190;
+    const HISTORY_MOST_WIDTH = 360;
+    const HISTORY_CHAT_ROOM = 220;
+    const history = panel.querySelector('.chat-history');
+    const historyGrip = document.createElement('div');
+    historyGrip.className = 'pane-resize chat-history-resize';
+    historyGrip.tabIndex = 0;
+    historyGrip.title = 'Drag to resize your chats; double-click to reset';
+    historyGrip.setAttribute('role', 'separator');
+    historyGrip.setAttribute('aria-orientation', 'vertical');
+    historyGrip.setAttribute('aria-label', 'Chats list width');
+    historyGrip.setAttribute('aria-controls', 'chat-history');
+    history.appendChild(historyGrip);
+    const historyResize = root.leoPaneResize.create({
+      handle: historyGrip,
+      key: 'leo-chat-history-width',
+      storage,
+      measure: () => history.getBoundingClientRect().width,
+      limits: () => [HISTORY_LEAST_WIDTH, Math.max(HISTORY_LEAST_WIDTH, Math.min(HISTORY_MOST_WIDTH, panel.clientWidth - HISTORY_CHAT_ROOM))],
+      apply: (width) => {
+        if (width === null) panel.style.removeProperty('--chat-history-w');
+        else panel.style.setProperty('--chat-history-w', `${width}px`);
+      },
+      enabled: () => !panel.hidden && wide() && !sourceNarrow() && panel.classList.contains('with-history'),
+    });
     if (typeof root.ResizeObserver === 'function') {
       const historySize = new root.ResizeObserver(() => {
         panel.classList.toggle('source-narrow', sourceNarrow());
-        if (state.sidebar !== null || panel.hidden) return;
-        const on = sidebarOpen();
-        const before = panel.classList.contains('with-history');
-        panel.classList.toggle('with-history', on);
-        if (on && !before) loadChats();
+        if (state.sidebar === null && !panel.hidden) {
+          const on = sidebarOpen();
+          const before = panel.classList.contains('with-history');
+          panel.classList.toggle('with-history', on);
+          if (on && !before) loadChats();
+        }
+        historyResize.fit();
       });
       historySize.observe(panel);
     }
@@ -980,6 +1007,7 @@
         }
       }
       panel.classList.toggle('with-history', on);
+      historyResize.fit();
       if (on) loadChats();
     }
 
@@ -2450,6 +2478,7 @@
     function toggle(force) {
       const was = state.open;
       state.open = force === undefined ? !state.open : force;
+      if (!state.open) historyResize.stop();
       clearTimeout(leaving);
       const still = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (state.open) {
@@ -2472,6 +2501,7 @@
       }
       if (state.open) {
         panel.classList.toggle('with-history', sidebarOpen());
+        historyResize.fit();
         if (sidebarOpen()) loadChats();
         drawModes();
         drawContext();

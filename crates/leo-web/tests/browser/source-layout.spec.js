@@ -40,13 +40,14 @@ test('documents split notes and keep Felix at the right without losing drafts', 
       wait() { pending = new Promise(resolve => window.release = () => { pending = null; resolve(); }); }};`;
   const server = http.createServer((request, response) => {
     if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fixture); }
+    if (request.url === '/pane-resize.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fs.readFileSync(path.join(web, 'pane-resize.js'))); }
     if (request.url === '/chat.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fs.readFileSync(path.join(web, 'chat.js'))); }
     if (request.url.startsWith('/api/') && !request.url.includes('/originals/')) { response.setHeader('Content-Type', 'application/json'); return response.end('[]'); }
     if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css; charset=utf-8'); return response.end(style); }
     if (request.url.includes('/originals/notes.txt')) return response.end('Original text <must stay escaped>.');
     if (request.url.includes('/originals/')) return response.end('Document fixture');
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><aside class="side">Notes</aside><header class="bar"><div class="bar-row">Lecture</div></header><main id="app"><h1>Lecture notes</h1><a href="/paper.pdf" data-action="view-original">paper.pdf</a><textarea id="note-draft">My note draft</textarea><p>' + 'Notes stay readable. '.repeat(300) + '</p></main><div class="dock"><div class="activity">Background activity</div></div><script src="/chat.js"></script><script src="/fixture.js"></script></body></html>');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><aside class="side">Notes</aside><header class="bar"><div class="bar-row">Lecture</div></header><main id="app"><h1>Lecture notes</h1><a href="/paper.pdf" data-action="view-original">paper.pdf</a><textarea id="note-draft">My note draft</textarea><p>' + 'Notes stay readable. '.repeat(300) + '</p></main><div class="dock"><div class="activity">Background activity</div></div><script src="/pane-resize.js"></script><script src="/chat.js"></script><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const context = await browser.newContext({ reducedMotion: 'reduce' });
