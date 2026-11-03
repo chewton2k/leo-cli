@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
-async function editorFixture(browser, run, { remember = false, body = null } = {}) {
+async function editorFixture(browser, run, { remember = false, body = null, touch = false } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -36,7 +36,7 @@ async function editorFixture(browser, run, { remember = false, body = null } = {
     res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"></head><body class="on-note">'+sidebar+'<header id="bar" class="bar"><div class="bar-row">Leo</div></header><main><div class="note-layout"><div class="note-columns"><aside class="note-outline" hidden><details class="source-more"><summary aria-label="Headings in this note"></summary><nav aria-label="Headings"></nav></details></aside><article class="note"><h1>My note</h1><div id="doc" class="doc prose"></div></article></div></div></main><script src="/markdown.js"></script><script src="/editing.js"></script><script src="/doc.js"></script><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const context = await browser.newContext();
+  const context = await browser.newContext({ hasTouch: touch });
   try { await run(context, 'http://127.0.0.1:' + server.address().port); }
   finally { await context.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
@@ -280,7 +280,7 @@ test('a selection dragged out of the edited line keeps going across rendered lin
   }, { body });
 });
 
-test('the outline sits at the right edge as heading ticks, keeping the note centred, and opens on hover', async ({ browser }) => {
+test('the outline sits at the right edge as heading ticks, keeping the note centred, and opens its full outline on demand', async ({ browser }) => {
   const body = ['# One', 'Text', '## Two', 'More', '# Three'].join('\n');
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
@@ -294,9 +294,9 @@ test('the outline sits at the right edge as heading ticks, keeping the note cent
     expect(Math.abs((note.x - main.x) - (main.x + main.width - note.x - note.width))).toBeLessThanOrEqual(2);
     const ticks = await outline.locator('.outline-ticks').boundingBox();
     expect(ticks.x).toBeGreaterThanOrEqual(note.x + note.width - 1);
-    const nav = page.getByRole('navigation', { name: 'Headings' });
+    const nav = page.locator('.note-outline nav');
     expect(await nav.evaluate((el) => getComputedStyle(el).opacity)).toBe('0');
-    await outline.locator('.outline-ticks').hover();
+    await outline.locator('summary').click();
     await expect.poll(() => nav.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
     await nav.getByRole('button', { name: 'Three', exact: true }).click();
     await expect(page.locator('#doc .blk:focus')).toContainText('Three');
@@ -503,3 +503,120 @@ test('formatted wrapped text and heading prefixes keep their position when focus
     }
   });
 });
+
+test('heading rail previews magnify nearby bars without opening the whole outline', async ({ browser }) => {
+  const body = '# Overview\nA **clear** introduction.\n## Details 😀\nA <script>literal</script> preview.\n### Empty\n# Last\nFinal section.';
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url);
+    const rail = page.getByRole('button', { name: /Jump to heading:/ });
+    const preview = page.getByRole('tooltip');
+    await rail.locator('[data-tick]').nth(1).hover();
+    await expect(preview).toContainText('Details 😀');
+    await expect(preview).toContainText('A <script>literal</script> preview.');
+    await expect(preview.locator('script')).toHaveCount(0);
+    await expect(rail.locator('[data-tick]').nth(1)).toHaveAttribute('data-distance', '0');
+    await expect(rail.locator('[data-tick]').first()).toHaveAttribute('data-distance', '1');
+    await expect(page.getByRole('navigation', { name: 'Headings' })).toBeHidden();
+    await rail.locator('[data-tick]').nth(1).click();
+    await expect(page.locator('#doc .blk:focus')).toContainText('Details 😀');
+    await page.mouse.move(600, 500);
+    await expect(preview).toBeHidden();
+    await rail.focus();
+    await rail.press('End');
+    await expect(preview).toContainText('Last');
+    await rail.press('ArrowUp');
+    await expect(preview).toHaveText('Empty');
+    await rail.press('Home');
+    await expect(preview).toContainText('Overview');
+    await rail.press('Enter');
+    await expect(page.locator('#doc .blk:focus')).toContainText('Overview');
+    await expect(preview).toBeHidden();
+    await rail.focus();
+    await rail.press('Escape');
+    await expect(preview).toBeHidden();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    expect(await rail.locator('[data-tick]').first().evaluate(el => getComputedStyle(el).transitionDuration)).toBe('0s');
+    await page.setViewportSize({ width: 390, height: 900 });
+    await expect(rail).toBeHidden();
+    await expect(preview).toBeHidden();
+  }, { body });
+});
+
+test('heading previews preserve edits, refresh body text, and release their elements on destroy', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url);
+    await page.locator('#doc .blk').nth(1).click();
+    const editor = page.locator('#doc textarea');
+    await editor.fill('An updated **draft** 😀');
+    await editor.evaluate(el => el.setSelectionRange(4, 9));
+    const rail = page.locator('.outline-ticks');
+    await rail.locator('[data-tick]').first().hover();
+    await expect(page.getByRole('tooltip')).toContainText('An updated draft 😀');
+    await expect(editor).toBeFocused();
+    expect(await editor.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([4, 9]);
+    await editor.fill('Another draft');
+    await expect(page.getByRole('tooltip')).toContainText('Another draft');
+    await page.evaluate(() => window.doc.destroy());
+    await expect(rail).toHaveCount(0);
+    await expect(page.locator('.outline-preview')).toHaveCount(0);
+  }, { body: '# Start\nOriginal paragraph.\n## End\nLast paragraph.' });
+});
+
+test('heading rail keeps every marker reachable in a short viewport and tracks reading separately from previews', async ({ browser }) => {
+  const body = Array.from({ length: 300 }, (_, i) => `## Section ${i + 1}\nSome reading material.`).join('\n\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1600, height: 500 });
+    await page.goto(url);
+    const rail = page.locator('.outline-ticks');
+    await expect(rail.locator('[data-tick]')).toHaveCount(300);
+    const box = await rail.boundingBox();
+    expect(box.y + box.height).toBeLessThan(500);
+    await rail.focus();
+    await rail.press('End');
+    await expect(page.getByRole('tooltip')).toContainText('Section 300');
+    await expect(rail.locator('.on')).toHaveAttribute('data-tick', '0');
+    await rail.press('Space');
+    await expect(page.locator('#doc .blk:focus')).toContainText('Section 300');
+    await expect(rail.locator('.on')).toHaveAttribute('data-tick', '897');
+    await rail.focus();
+    await rail.press('Home');
+    await expect(page.getByRole('tooltip')).toContainText('Section 1');
+    const tip = await page.getByRole('tooltip').boundingBox();
+    expect(tip.y).toBeGreaterThanOrEqual(0);
+    expect(tip.y + tip.height).toBeLessThan(500);
+    await rail.press('ArrowUp');
+    await expect(page.getByRole('tooltip')).toContainText('Section 1');
+  }, { body });
+});
+
+for (const interaction of ['touch', 'disclosure', 'escape']) {
+  test('heading rail handles ' + interaction + ' without a prior keyboard selection', async ({ browser }) => {
+    await editorFixture(browser, async (context, url) => {
+      const page = await context.newPage();
+      await page.setViewportSize({ width: 1600, height: 900 });
+      await page.goto(url);
+      if (interaction === 'touch') {
+        await page.locator('.outline-ticks [data-tick]').nth(2).tap();
+        await expect(page.locator('#doc .blk:focus')).toContainText('Three');
+      } else if (interaction === 'disclosure') {
+        await page.locator('.note-outline summary').tap();
+        await expect(page.getByRole('navigation', { name: 'Headings' })).toBeVisible();
+        await page.locator('.note-outline summary').tap();
+        await expect(page.getByRole('navigation', { name: 'Headings' })).toBeHidden();
+      } else {
+        await page.locator('#doc .blk').nth(1).click();
+        const editor = page.locator('#doc textarea');
+        await page.locator('.outline-ticks [data-tick]').first().hover();
+        await expect(page.getByRole('tooltip')).toBeVisible();
+        await editor.press('Escape');
+        await expect(page.getByRole('tooltip')).toBeHidden();
+        await expect(editor).toBeFocused();
+      }
+    }, { body: '# One\nParagraph\n## Two\nMore\n# Three', touch: interaction !== 'escape' });
+  });
+}
