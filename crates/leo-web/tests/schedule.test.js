@@ -60,6 +60,9 @@ test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   assert.ok(S.quickRank('heap', { chats, places }, now).some((r) => r.kind === 'chat' && r.id === 'k1'), 'past chats that match are listed');
   assert.equal(new Set(S.quickRank('heaps', { notes, places }, now)).size, S.quickRank('heaps', { notes, places }, now).length);
   assert.deepEqual(S.quickRank('dijkstra', { notes, places }, now).find((r) => r.kind === 'search'), { kind: 'search', text: 'dijkstra' }, 'searching every note is always one of the choices');
+  const many = S.quickRank('alg', { notes: [{ id: 'x', title: 'alg 1' }, { id: 'y', title: 'alg 2' }, { id: 'z', title: 'alg 3' }], folders: ['Algebra', 'Algorithms'], chats, places }, now);
+  assert.ok(many.length <= 8);
+  assert.deepEqual(many.slice(-2).map((r) => r.kind), ['task', 'note'], 'adding a task or a note is never pushed off the list');
   assert.deepEqual(S.quickRank('   ', { notes, places }, now), []);
 });
 

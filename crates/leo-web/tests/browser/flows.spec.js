@@ -282,6 +282,13 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await page.keyboard.press('Escape');
   expect(await page.evaluate(() => window.escaped), 'Escape stays with the page, so it never leaves full screen').toBe(true);
   await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+  await side.locator('.side-group [data-action="new-folder"]').click();
+  await page.locator('#folder-name').fill('draft folder');
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(page.locator('.quick-leo'), 'an open sheet keeps what was typed in it').toHaveCount(0);
+  await expect(page.locator('#folder-name')).toHaveValue('draft folder');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
 
   const full = (await side.boundingBox()).width;
   await side.locator('[data-action="side-fold"]').click();

@@ -386,7 +386,9 @@
     else if (goes.length && words <= 2 && lower.length >= 3 && (!started.length || goes[0].name.toLowerCase().startsWith(lower))) top = goes[0];
     else if (started.length && words <= 4) top = opens[0];
     else if (TODO.test(text) && words >= 2 && words <= 12) top = task;
-    return [top, ask, ...opens, search, ...shelves, ...talks, ...goes, task, note].filter((row, i, rows) => rows.indexOf(row) === i).slice(0, 8);
+    const rows = [top, ask, ...opens, search, ...shelves, ...talks, ...goes, task, note].filter((row, i, all) => all.indexOf(row) === i);
+    const found = rows.filter((row) => row !== task && row !== note).slice(0, 6);
+    return rows.filter((row) => found.includes(row) || row === task || row === note);
   }
 
 
