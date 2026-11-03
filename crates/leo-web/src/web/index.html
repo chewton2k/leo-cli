@@ -1648,7 +1648,8 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .model-meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 3px; }
 .model-meter::-moz-meter-bar { background: var(--accent); border-radius: 3px; }
 .set-value progress { width: 90px; height: 6px; accent-color: var(--accent); }
-.settings { display: flex; flex-direction: column; gap: 16px; }
+.settings { display: flex; flex-direction: column; gap: 20px; }
+.settings > div[id]:not([class]) { display: contents; }
 .set-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; }
 .set-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .set-card h3 { margin: 0; font-size: 17px; }

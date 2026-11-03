@@ -1214,8 +1214,11 @@ no card title repeating the page title, flat cards (border, no shadow), labels
 on one line with controls hugging their content at the right edge; a card under
 500 px stacks segmented rows (container query), and switch rows stay inline on
 phones. Writing AI uses a pen icon, never a sparkle.
-Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
-left of the content (sticky under the bar, its own scroll), grouped Leo / Your
+Settings (2026-11-02, the user's call) is a sidebar beside the content: a
+rounded panel set apart from the explorer by a gap on every side (sticky under
+the bar, its own scroll), panel and section centred together at any width,
+every card 20 px from the next (a section's wrapper `<div id>` is
+`display: contents`, so its cards share that gap), grouped Leo / Your
 notes / Data / This app, each section with an icon and a page heading with a
 one-line description; under 760 px it becomes a sideways-scrolling chip strip
 that centres the current section. Routes stay `#/settings/<section>`; Storage

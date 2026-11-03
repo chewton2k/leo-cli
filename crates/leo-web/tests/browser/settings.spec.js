@@ -76,6 +76,11 @@ test('Settings sections keep drafts and selections across redraws in both themes
       expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
       // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
+      // Every card on a section sits apart from the next, including cards a section wraps in its own box.
+      await expect(page.getByRole('heading',{name:'Recent dictations'})).toBeVisible();
+      const gaps=await page.locator('.settings .set-card').evaluateAll(cards=>cards.slice(1).map((card,i)=>card.getBoundingClientRect().top-cards[i].getBoundingClientRect().bottom));
+      expect(gaps.length).toBeGreaterThan(0);
+      for(const gap of gaps) expect(gap).toBeGreaterThanOrEqual(16);
       const activation=page.getByRole('radiogroup',{name:'Activation'});
       await expect(activation.getByRole('radio',{name:'Hold or tap'})).toHaveAttribute('aria-checked','true');
       await activation.getByRole('radio',{name:'Tap',exact:true}).click();
