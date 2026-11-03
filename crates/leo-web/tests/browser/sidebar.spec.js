@@ -271,3 +271,30 @@ test('a stalled explorer read times out and offers a working retry', async ({ br
     await expect(page.locator('.side-note[data-id="course-note"]')).toBeVisible();
   });
 });
+
+test('nested folders start closed and the explorer reopens as the user left it, not as browsing unfolded it', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    const row = dir=>page.locator('.side-tree .side-row[data-dir="'+dir+'"]');
+    const kept = ()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-open')||'[]'));
+    await expect(row('Course')).toHaveAttribute('aria-expanded','false');
+    await expect(row('Course/Week 1'), 'nested folders start closed').toHaveCount(0);
+    await page.evaluate(()=>audit.route('Course/Week 1/Lab'));
+    await expect(row('Course/Week 1/Lab'), 'the open folder is shown').toBeVisible();
+    expect(await kept(), 'unfolding to show where you are is not remembered').toEqual([]);
+    await page.reload();
+    await expect(row('Course/Week 1')).toHaveCount(0);
+    await page.locator('[data-action="side-twist"][data-dir="Personal"]').click();
+    await page.locator('[data-action="side-twist"][data-dir="Course"]').click();
+    expect((await kept()).sort()).toEqual(['Course', 'Personal']);
+    await page.reload();
+    await expect(row('Course'), 'a folder the user opened stays open after a restart').toHaveAttribute('aria-expanded','true');
+    await expect(row('Course/Week 1')).toHaveAttribute('aria-expanded','false');
+    await expect(row('Personal')).toHaveAttribute('aria-expanded','true');
+    await page.locator('[data-action="side-twist"][data-dir="Personal"]').click();
+    await page.reload();
+    await expect(row('Personal'), 'and one they closed stays closed').toHaveAttribute('aria-expanded','false');
+    expect(await kept()).toEqual(['Course']);
+  });
+});

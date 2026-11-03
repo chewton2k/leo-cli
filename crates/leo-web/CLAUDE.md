@@ -236,8 +236,11 @@ reader, seer, meaning, web, room, speech).
   folder and note rows retain drag data. A folder row is highlighted only on its
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
-  `leo-side` hides only the explorer, keeping the rail; `leo-side-open` retains
-  expansion. Tree and rail scrolling, focus and note pages survive redraws.
+  `leo-side` hides only the explorer, keeping the rail. Folders start closed;
+  `leo-side-open` keeps only folders the user opened with their own clicks
+  (2026-11-03, the user's call), so the explorer reopens after a restart as
+  they left it. Opening a note or folder unfolds its parents for that visit
+  only (`side.revealed`), never into the saved set. Tree and rail scrolling, focus and note pages survive redraws.
   Notes use the existing bounded metadata endpoint: 100 per page, four concurrent
   reads with ten-second aborts, 64 cached folders and 32 automatic visible reads.
   Further expanded folders offer Show notes. Late reads check page generation and

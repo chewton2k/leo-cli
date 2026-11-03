@@ -1,6 +1,9 @@
 const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
-const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0 };
+const side = { folders: [], loaded: false, mini: false, open: new Set(), revealed: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0 };
+// Folders the user opened with their own hands, kept across restarts. Folders
+// unfolded only to show the open note or folder (`side.revealed`) are not
+// kept, so the explorer reopens exactly as the user left it, closed by default.
 const SIDE_OPEN_KEY = 'leo-side-open';
 const SIDE_NOTES_PAGE = 100;
 const SIDE_NOTES_FOLDERS = 64;
@@ -46,9 +49,9 @@ function drawSide() {
     side.here = dir;
     side.target = null;
     side.shut.clear();
+    side.revealed.clear();
     const parts = dir.split('/').filter(Boolean);
-    for (let i = 1; i <= parts.length; i++) side.open.add(parts.slice(0, i).join('/'));
-    keepOpenFolders();
+    for (let i = 1; i <= parts.length; i++) side.revealed.add(parts.slice(0, i).join('/'));
   }
   const actionDir = side.target ?? dir;
   let folders = folderTree(dir);
@@ -109,7 +112,7 @@ function sideHere() {
 }
 
 function folderShown(path) {
-  return !side.shut.has(path) && side.open.has(path);
+  return !side.shut.has(path) && (side.open.has(path) || side.revealed.has(path));
 }
 
 function keepOpenFolders() {
