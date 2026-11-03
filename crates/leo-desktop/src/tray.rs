@@ -153,7 +153,8 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
             .and_then(|library| library.selected_name())
             .unwrap_or_else(|| "no model chosen".into());
         let _ = status.speech.set_text(format!("Speech: {speech}"));
-        let writing = leo_services::web_settings::writing_status(round % WRITING_EVERY == 0);
+        let writing =
+            leo_services::web_settings::writing_status(round.is_multiple_of(WRITING_EVERY));
         let _ = status.writing.set_text(format!("Writing: {}", writing.0));
         let _ = status.limits.set_text(match &writing.1 {
             Some(limits) => format!("Plan use: {limits}"),
