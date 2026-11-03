@@ -38,6 +38,7 @@ struct Job {
 
 enum Message {
     Run(Job),
+    Warm(Selected),
     Stream {
         selected: Selected,
         audio: mpsc::Receiver<Option<Vec<f32>>>,
@@ -145,6 +146,12 @@ impl Engine {
         answer.recv_timeout(ANSWER_LIMIT).context(
             "Transcription took too long. Your audio is kept; try a faster speech model.",
         )?
+    }
+
+    pub fn warm(&self, selected: Selected) {
+        if !self.stopped.load(Ordering::Acquire) {
+            let _ = self.requests.try_send(Message::Warm(selected));
+        }
     }
 
     pub fn stream(
@@ -341,6 +348,23 @@ fn run(
         for message in &mut incoming {
             match message {
                 Message::Run(job) => pending.push(job),
+                Message::Warm(selected) => {
+                    let pinned_elsewhere = pins.load(Ordering::Acquire) > 0
+                        && model.as_ref().is_some_and(|path| path != &selected.path);
+                    if !pinned_elsewhere
+                        && (model.as_ref() != Some(&selected.path) || supervisor.loaded().is_none())
+                    {
+                        match supervisor.load(LoadSpec {
+                            path: selected.path.clone(),
+                            backend: Backend::Auto,
+                            device: DeviceSelector::Auto,
+                        }) {
+                            Ok(_) => model = Some(selected.path),
+                            Err(error) => log::warn!("Speech model preload failed: {error}"),
+                        }
+                    }
+                    last_work = Instant::now();
+                }
                 Message::Stream {
                     selected,
                     audio,

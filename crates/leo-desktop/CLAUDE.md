@@ -78,7 +78,10 @@ microphone, trailing space and Press Enter after pasting were removed
 (2026-11-02, the user's call); `dictation.json` files that still name them load
 and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
-Start/stop WAVs are optional and excluded from lecture recordings by AudioGate.
+Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
+they play on their own thread after the microphone is open (Handy's order), so
+the start chime never delays capture and the first words are kept. The app warms
+CoreAudio at launch and non-streaming models load at keypress.
 Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
 never expose the test actions or write a test paste file.
 

@@ -72,6 +72,7 @@ impl Dictation {
         });
         let input = this.tx.clone();
         if !Self::test_mode() {
+            leo_services::session::mic::warm_up();
             let keys = crate::shortcut::Shortcuts::start(
                 app,
                 settings.shortcut,
@@ -322,7 +323,9 @@ impl Dictation {
         let _awake = leo_services::session::awake::Awake::recording();
         let _reservation = engine().dictation();
         let selected = library()?.selected()?;
-        crate::audio_feedback::play(settings.sounds, true);
+        if !selected.streaming {
+            engine().warm(selected.clone());
+        }
         ensure!(self.generation.current(id), "Dictation cancelled.");
         let named = settings.microphone.clone();
         if stop.load(Ordering::Acquire) {
@@ -345,6 +348,7 @@ impl Dictation {
             let (mic, rx) = leo_services::session::mic::Mic::open_named(named)?;
             (Some(mic), rx)
         };
+        chime(settings.sounds, true);
         let this = self.clone();
         let mut stream = if selected.streaming {
             engine()
@@ -403,7 +407,7 @@ impl Dictation {
                 "loading"
             },
         );
-        crate::audio_feedback::play(settings.sounds, false);
+        chime(settings.sounds, false);
         let transcript = if let Some(stream) = stream {
             feed(&stream, &pending);
             stream.finish().ok().filter(|text| !text.trim().is_empty())
@@ -560,6 +564,15 @@ impl leo_web::dictation::DictationApi for Dictation {
             _ => anyhow::bail!("Choose an action in Dictation settings."),
         }
         Ok(json!({"ok":true}))
+    }
+}
+fn chime(enabled: bool, start: bool) {
+    if enabled {
+        std::thread::spawn(move || {
+            static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+            let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+            crate::audio_feedback::play(true, start);
+        });
     }
 }
 fn feed(stream: &DictationStream, pcm: &[f32]) -> bool {

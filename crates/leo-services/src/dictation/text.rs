@@ -364,6 +364,16 @@ pub fn remove_filler_words(
     filtered
 }
 
+static CLOCK_TIME_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(1[0-2]|0?[1-9])[:.]?([0-5]\d)(\s?)([ap]\.?\s?m\b\.?)").unwrap()
+});
+
+fn clock_times(text: &str) -> String {
+    CLOCK_TIME_PATTERN
+        .replace_all(text, "${1}:${2}${3}${4}")
+        .into_owned()
+}
+
 pub fn normalize_transcription_output(text: &str) -> String {
     let mut normalized = collapse_stutters(text);
 
@@ -379,12 +389,12 @@ pub fn clean(text: &str, settings: &super::settings::Settings, language: Option<
     let evidence = language
         .map(|s| OutputLanguageEvidence::UserSelected(s.into()))
         .unwrap_or(OutputLanguageEvidence::Unknown);
-    normalize_transcription_output(&remove_filler_words(
+    clock_times(&normalize_transcription_output(&remove_filler_words(
         &fixed,
         &evidence,
         &None,
         settings.fillers,
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -444,6 +454,21 @@ mod tests {
         let custom_words = vec![];
         let result = apply_custom_words(text, &custom_words, 0.5);
         assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn spoken_clock_times_get_their_colon_only_when_marked_as_times() {
+        assert_eq!(clock_times("Meet at 230 pm."), "Meet at 2:30 pm.");
+        assert_eq!(clock_times("2.30 p.m. works"), "2:30 p.m. works");
+        assert_eq!(clock_times("1145AM"), "11:45AM");
+        assert_eq!(clock_times("Call at 2:30 pm"), "Call at 2:30 pm");
+        assert_eq!(clock_times("230 works for me"), "230 works for me");
+        assert_eq!(
+            clock_times("It costs 2.30 per item"),
+            "It costs 2.30 per item"
+        );
+        assert_eq!(clock_times("1290 pm and 11230 pm"), "1290 pm and 11230 pm");
+        assert_eq!(clock_times("230 apples"), "230 apples");
     }
 
     #[test]
