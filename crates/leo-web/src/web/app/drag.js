@@ -1,13 +1,15 @@
 const NOTE_DRAG = felix.NOTE_DRAG;
 const FOLDER_DRAG = 'application/x-leo-folder';
 const FILE_VIEWS = ['folder', 'search', 'note'];
-const dragging = { note: null, folder: null, filesTimer: 0 };
+const SPRING_MS = 600;
+const EDGE_PX = 32;
+const dragging = { note: null, folder: null, filesTimer: 0, spring: null };
 
 const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes(type));
 const parentOf = (path) => path.split('/').slice(0, -1).join('/');
 const dropTargetOf = (el) => (el && el.closest ? el.closest('[data-action="open-folder"][data-dir], [data-action="home"], [data-drop-dir]') : null);
 const dirOf = (target) => (Object.hasOwn(target.dataset, 'dropDir') ? target.dataset.dropDir : target.dataset.action === 'home' ? '' : target.dataset.dir);
-const noteCardOf = (el) => (el && el.closest ? el.closest('.card[data-id][data-action="open-note"], .side-note[data-id][data-action="open-note"]') : null);
+const noteCardOf = (el) => (el && el.closest ? el.closest('.card[data-id][data-action="open-note"]') : null);
 const combinesWith = (e) => {
   const card = dragging.note && carries(e, NOTE_DRAG) ? noteCardOf(e.target) : null;
   return card && card.dataset.id !== dragging.note.id ? card : null;
@@ -23,9 +25,40 @@ function accepts(e, target) {
   return carries(e, 'Files');
 }
 
+function marksOf(target) {
+  const tree = target.closest('#side .side-tree');
+  const dir = dirOf(target);
+  if (target.closest('#side .side-explorer') && !dir) return { row: document.querySelector('#side .side-group') || target, kids: null };
+  if (!tree || !dir) return { row: target, kids: null };
+  const row = [...tree.querySelectorAll('.side-folder[data-drop-dir]')].find((el) => el.dataset.dropDir === dir) || target;
+  return { row, kids: sideKids(dir) };
+}
+
 function markDrop(target) {
-  for (const el of document.querySelectorAll('.drop-ok')) if (el !== target) el.classList.remove('drop-ok');
-  if (target) target.classList.add('drop-ok');
+  const { row, kids } = target ? marksOf(target) : {};
+  for (const el of document.querySelectorAll('.drop-ok')) if (el !== row) el.classList.remove('drop-ok');
+  for (const el of document.querySelectorAll('.drop-in')) if (el !== kids) el.classList.remove('drop-in');
+  if (row) row.classList.add('drop-ok');
+  if (kids) kids.classList.add('drop-in');
+}
+
+function springFolder(e) {
+  const row = e.target.closest ? e.target.closest('#side .side-tree .side-folder[data-drop-dir]') : null;
+  const dir = row && (carries(e, NOTE_DRAG) || carries(e, FOLDER_DRAG)) ? row.dataset.dropDir : null;
+  if (dragging.spring && dragging.spring.dir === dir) return;
+  clearTimeout(dragging.spring?.timer);
+  dragging.spring = null;
+  const from = dragging.folder;
+  if (dir === null || folderShown(dir) || (from !== null && (dir === from || dir.startsWith(`${from}/`)))) return;
+  dragging.spring = { dir, timer: setTimeout(() => { if (!folderShown(dir)) twistFolder(dir, null, false); }, SPRING_MS) };
+}
+
+function scrollTreeNear(e) {
+  const tree = e.target.closest ? e.target.closest('#side .side-tree') : null;
+  if (!tree) return;
+  const box = tree.getBoundingClientRect();
+  if (e.clientY < box.top + EDGE_PX) tree.scrollTop -= 10;
+  else if (e.clientY > box.bottom - EDGE_PX) tree.scrollTop += 10;
 }
 
 function filesOver(on) {
@@ -37,12 +70,15 @@ function filesOver(on) {
 function endDrag() {
   dragging.note = null;
   dragging.folder = null;
+  clearTimeout(dragging.spring?.timer);
+  dragging.spring = null;
   document.body.classList.remove('dragging');
   markDrop(null);
   filesOver(false);
 }
 
 document.addEventListener('dragstart', (e) => {
+  endDrag();
   const from = e.target.closest ? e.target : null;
   const card = from && from.closest('.card[data-id][draggable="true"], .side-note[data-id][draggable="true"]');
   const folder = !card && from && from.closest('[data-action="open-folder"][data-dir][draggable="true"]');
@@ -59,13 +95,19 @@ document.addEventListener('dragstart', (e) => {
   } else {
     return;
   }
+  (card || folder).addEventListener('dragend', endDrag, { once: true });
   document.body.classList.add('dragging');
 });
 
 document.addEventListener('dragend', endDrag);
+document.addEventListener('pointermove', (e) => {
+  if (!e.buttons && (dragging.note || dragging.folder !== null)) endDrag();
+});
 
 document.addEventListener('dragover', (e) => {
   if (e.defaultPrevented) return;
+  springFolder(e);
+  scrollTreeNear(e);
   const onto = combinesWith(e);
   if (onto) {
     markDrop(onto);
@@ -92,8 +134,8 @@ document.addEventListener('drop', (e) => {
   const onto = combinesWith(e);
   const target = dropTargetOf(e.target);
   const ok = target && accepts(e, target);
-  const note = dragging.note;
-  const folder = dragging.folder;
+  const note = carries(e, NOTE_DRAG) ? dragging.note : null;
+  const folder = carries(e, FOLDER_DRAG) ? dragging.folder : null;
   endDrag();
   if (e.defaultPrevented) return;
   if (note && onto) {
@@ -264,6 +306,7 @@ async function dropFolder(from, into) {
 
 async function afterMove(from, to) {
   const dir = state.dir || '';
+  if (from) moveOpenFolders(from, to);
   if (from && (state.view === 'folder' || state.view === 'note') && (dir === from || dir.startsWith(`${from}/`))) {
     const now = to + dir.slice(from.length);
     if (state.view === 'folder') return go(folderHash(now), { replace: true });
