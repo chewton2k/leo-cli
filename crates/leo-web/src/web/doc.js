@@ -131,6 +131,8 @@
     const outlineTicks = outlineNav ? document.createElement('button') : null;
     const outlinePreview = outlineNav ? document.createElement('div') : null;
     let outlineIndex = null;
+    let outlineMotion = null;
+    let outlineClosing = false;
     if (outlineTicks) {
       outlineTicks.className = 'outline-ticks';
       outlineTicks.type = 'button';
@@ -146,6 +148,43 @@
     const OUTLINE_WIDE = 900;
     const MOST_PREVIEW_LINES = 24;
     const MOST_PREVIEW_CHARS = 800;
+    const OUTLINE_MOTION_MS = 180;
+
+    function closeOutline() {
+      outlineMotion?.cancel();
+      outlineMotion = null;
+      outlineClosing = false;
+      outlineDetails.open = false;
+    }
+
+    function toggleOutline(e) {
+      if (!outlineWide || !e.target.closest('summary')) return false;
+      e.preventDefault();
+      outlinePeek(null);
+      const open = !outlineDetails.open || outlineClosing;
+      const from = outlineMotion ? { clipPath: getComputedStyle(outlineNav).clipPath, transform: getComputedStyle(outlineNav).transform } : null;
+      outlineMotion?.cancel();
+      outlineMotion = null;
+      outlineClosing = !open;
+      const still = root.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      if (still || typeof outlineNav.animate !== 'function') {
+        outlineDetails.open = open;
+        outlineClosing = false;
+        return true;
+      }
+      const closed = { clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-4px)' };
+      const shown = { clipPath: 'inset(0 0 0 0)', transform: 'none' };
+      outlineDetails.open = true;
+      const run = outlineNav.animate([from || (open ? closed : shown), open ? shown : closed], { duration: OUTLINE_MOTION_MS, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      outlineMotion = run;
+      run.onfinish = () => {
+        if (outlineMotion !== run) return;
+        outlineDetails.open = open;
+        outlineClosing = false;
+        outlineMotion = null;
+      };
+      return true;
+    }
 
     function outlinePeek(index) {
       outlineIndex = index;
@@ -156,7 +195,7 @@
       const row = index === null ? null : outlineRows[index];
       outlinePreview.hidden = !row;
       if (!row) return;
-      if (outlineWide) outlineDetails.open = false;
+      if (outlineWide) closeOutline();
       const title = md.plain(row.text);
       const end = Math.min(outlineRows[index + 1]?.line ?? lines.length, row.line + 1 + MOST_PREVIEW_LINES);
       let excerpt = '';
@@ -228,6 +267,7 @@
       if (!outline || !outline.isConnected || outline.hidden) return;
       const top = outlineTop();
       outline.style.setProperty('--outline-top', `${top}px`);
+      outline.style.setProperty('--outline-center', `${Math.max(top, (root.innerHeight - outline.offsetHeight) / 2)}px`);
       let current = outlineRows[0];
       const bottom = root.scrollY > 0 && root.scrollY + root.innerHeight >= document.documentElement.scrollHeight - 2;
       for (const row of outlineRows) {
@@ -300,6 +340,7 @@
     }
 
     function outlineGo(e) {
+      if (toggleOutline(e)) return;
       const toggle = e.target.closest('button[data-fold]');
       if (toggle && outlineNav.contains(toggle)) {
         toggle.focus({ preventScroll: true });
@@ -331,7 +372,7 @@
       const wide = entries[0].contentRect.width >= OUTLINE_WIDE;
       if (wide !== outlineWide) {
         outlineWide = wide;
-        outlineDetails.open = false;
+        closeOutline();
         outlinePeek(null);
       }
       outlineScroll();
@@ -1193,6 +1234,7 @@
       destroy: () => {
         stop();
         clearTimeout(outlineTimer);
+        outlineMotion?.cancel();
         cancelAnimationFrame(outlineFrame);
         if (outlineResize) outlineResize.disconnect();
         if (editResize) editResize.disconnect();

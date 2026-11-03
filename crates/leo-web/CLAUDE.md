@@ -1266,6 +1266,9 @@ magnifies nearby bars and previews the heading and a bounded plain-text excerpt
 Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Motion
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
+The wide rail is vertically centred in the reading viewport, including short
+notes. Its dropdown reveals and retracts with a 180 ms clip/translate animation,
+reverses from its current frame on repeated clicks, and snaps with Reduced Motion.
 Preview updates never redraw the editor, and destroy removes the rail and tooltip. Note
 width preferences still cap the reading column. Headings stay on one line with
 ellipsis and their full title on hover. The outline hides its scrollbar while
