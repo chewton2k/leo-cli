@@ -779,7 +779,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
   const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
   const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
-  app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary><span class="outline-icon">${ICON.list}</span><span>On this page</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
+  app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
     <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
     <div class="note-meta">${where}<span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>

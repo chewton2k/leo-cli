@@ -153,7 +153,6 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .note-outline { grid-area: 1 / 1; position: sticky; top: var(--outline-top, 76px); align-self: start; min-width: 0; z-index: 12; }
 .note-outline .source-more { margin: 0; border: 0; padding: 0; }
 .note-outline .source-more > summary { display: flex; gap: 8px; padding: 10px 8px; border: 0; color: var(--muted); }
-.note-outline summary span { flex: 1; }
 .note-outline summary .outline-icon { flex: none; display: flex; }
 .note-outline summary svg { flex: none; width: 18px; height: 18px; }
 .note-outline nav { max-height: min(50dvh, calc(100dvh - var(--outline-top, 76px) - 70px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; scrollbar-width: none; }
@@ -169,13 +168,22 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .note-outline .outline-toggle svg { width: 16px; height: 16px; }
 .note-outline .outline-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
 .note-outline .outline-spacer { flex: none; width: 24px; }
+.note-outline .outline-ticks { display: none; }
 @container note (max-width: 899px) {
   .note-outline { background: var(--bg); }
 }
 @container note (min-width: 900px) {
-  .note-columns { grid-template-columns: 320px minmax(0, 1fr); grid-template-rows: auto; gap: 56px; }
-  .note-columns > .note { grid-area: 1 / 2; }
-  .note-outline nav { max-height: calc(100dvh - var(--outline-top, 76px) - 130px); }
+  .note-columns { grid-template-rows: auto; padding-inline: 48px; }
+  .note-columns > .note { grid-area: 1 / 1; }
+  .note-outline { justify-self: end; width: 48px; margin-right: -48px; }
+  .note-outline .source-more > summary { display: none; }
+  .note-outline .outline-ticks { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; padding: 10px 12px 10px 0; max-height: calc(100dvh - var(--outline-top, 76px) - 130px); overflow: hidden; cursor: pointer; }
+  .note-outline .outline-ticks span { flex: none; display: block; width: 8px; height: 2px; border-radius: 1px; background: var(--faint); }
+  .note-outline .outline-ticks span[data-level="1"] { width: 18px; }
+  .note-outline .outline-ticks span[data-level="2"] { width: 12px; }
+  .note-outline .outline-ticks span.on { background: var(--accent); }
+  .note-outline nav { position: absolute; top: 0; right: 40px; width: 280px; max-height: calc(100dvh - var(--outline-top, 76px) - 130px); padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); opacity: 0; pointer-events: none; }
+  .note-outline:hover nav, .note-outline:focus-within nav { opacity: 1; pointer-events: auto; }
 }
 .section-title { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 4px 8px; }
 
@@ -413,6 +421,11 @@ body.on-library main, body.on-interviews main:not(:has(.interview-practice)) { p
   display: block; width: 100%; margin: 0; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden;
   background: none; font: inherit; line-height: 1.65; caret-color: var(--accent);
 }
+.doc .line-edit[data-head] { font-weight: bold; line-height: 1.3; letter-spacing: -.01em; }
+.doc .line-edit[data-head="2"] { font-size: 22px; }
+.doc .line-edit[data-head="3"] { font-size: 19px; }
+.doc .line-edit[data-head="4"] { font-size: 17px; }
+.doc .line-edit[data-head="5"], .doc .line-edit[data-head="6"] { font-size: 15px; color: var(--muted); }
 .doc .blk-code .line-edit, .doc .blk-table .line-edit {
   font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace;
   background: var(--code-bg); border-radius: 12px; padding: 14px 16px; margin: .4em 0;
