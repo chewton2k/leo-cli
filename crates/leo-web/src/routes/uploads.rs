@@ -20,6 +20,9 @@ pub(crate) struct ImportJob {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) notes: Vec<String>,
     pub(crate) error: Option<String>,
+    /// For an upload added to an open note: the section the page inserts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) section: Option<String>,
 }
 
 pub(crate) const IMPORT_BYTES: usize = 120 * 1024 * 1024;
@@ -311,6 +314,39 @@ struct Missed {
     error: String,
 }
 
+/// What an upload wrote: the note it went to, and for an upload added to an
+/// open note, the section the page puts into that note (`into`).
+struct Wrote {
+    note: String,
+    section: Option<String>,
+    warning: Option<String>,
+}
+
+/// A name for an original that does not replace one the note already keeps:
+/// `slides.pdf`, then `slides (2).pdf`, `slides (3).pdf`...
+fn free_original_name(
+    notes_dir: &std::path::Path,
+    note: &str,
+    name: &str,
+    taken: &[String],
+) -> String {
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+        _ => (name.to_string(), String::new()),
+    };
+    let used = |candidate: &str| {
+        taken.iter().any(|t| t == candidate)
+            || original_path(notes_dir, note, candidate).is_some_and(|p| p.exists())
+    };
+    if !used(name) {
+        return name.to_string();
+    }
+    (2..1000)
+        .map(|n| format!("{stem} ({n}){ext}"))
+        .find(|candidate| !used(candidate))
+        .unwrap_or_else(|| name.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_upload(
     state: &AppState,
@@ -321,12 +357,12 @@ fn write_upload(
     wants: &str,
     files: Vec<UploadFile>,
     step: &mut dyn FnMut(&str, usize, usize),
-) -> Result<String, Missed> {
+) -> Result<Wrote, Missed> {
     let missed = |note: Option<String>, error: &str| Missed {
         note,
         error: error.to_string(),
     };
-    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+    let gone = "The note to add to is gone. Open another note, or make a new note from the file.";
     let mut originals = stage_originals(&files).map_err(|_| {
         missed(
             None,
@@ -338,6 +374,25 @@ fn write_upload(
         body,
         figures,
     } = importer(files, wants, step).map_err(|e| missed(None, &e.to_string()))?;
+    // Originals added to an existing note take free names, so an earlier
+    // upload's file of the same name (and its citations) stays as it was.
+    if let Some(id) = into {
+        let notes_dir = store_now(state, |store| {
+            if store.notes.iter().any(|n| n.id == id) {
+                Ok(store.notes_dir.clone())
+            } else {
+                Err(StatusCode::NOT_FOUND)
+            }
+        })
+        .map_err(|_| missed(None, gone))?;
+        let mut taken = Vec::new();
+        for (name, _) in originals.iter_mut() {
+            let free = free_original_name(&notes_dir, id, name, &taken);
+            taken.push(free.clone());
+            *name = free;
+        }
+    }
+    let names: Vec<String> = originals.iter().map(|(name, _)| name.clone()).collect();
     let title = title
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
@@ -371,30 +426,41 @@ fn write_upload(
             attachments::save(&notes_dir, &name, &figure.bytes).ok()
         });
         let written = format!("{}{footer}", body.trim());
-        let note = match into {
-            // Added to an open note: the section goes at the end under its own
-            // heading, so what the user already wrote is untouched.
+        let wrote = match into {
+            // Added to an open note: the page puts the section in through the
+            // version-checked insert, as the note's editor knows its version.
             Some(id) => {
-                let note = store.find_note_mut(id).ok_or(StatusCode::NOT_FOUND)?;
-                let section = format!("## {}\n\n{written}", title.replace('\n', " "));
-                note.body = crate::routes::insert::inserted(&note.body, &section, None);
-                note.updated_at = chrono::Utc::now();
-                note.id.clone()
+                if !store.notes.iter().any(|n| n.id == id) {
+                    return Err(StatusCode::NOT_FOUND);
+                }
+                let heading = title.split(['\r', '\n']).collect::<Vec<_>>().join(" ");
+                Wrote {
+                    note: id.to_string(),
+                    section: Some(format!("## {}\n\n{written}", heading.trim())),
+                    warning: None,
+                }
             }
-            None => store
-                .create_note(title, written, vec![], dir)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .id
-                .clone(),
+            None => {
+                let note = store
+                    .create_note(title, written, vec![], dir)
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .id
+                    .clone();
+                save(store)?;
+                Wrote {
+                    note,
+                    section: None,
+                    warning: None,
+                }
+            }
         };
-        save(store)?;
-        Ok((note, store.notes_dir.clone()))
+        Ok((wrote, store.notes_dir.clone()))
     });
-    let (note, notes_dir) = made.map_err(|code| {
+    let (mut wrote, notes_dir) = made.map_err(|code| {
         missed(
             None,
             if code == StatusCode::NOT_FOUND {
-                "The note to add to is gone. Open another note, or make a new note from the file."
+                gone
             } else {
                 "The note could not be saved."
             },
@@ -402,11 +468,17 @@ fn write_upload(
     })?;
     if originals
         .iter_mut()
-        .any(|(name, staged)| save_original(&notes_dir, &note, name, staged).is_err())
+        .any(|(name, staged)| save_original(&notes_dir, &wrote.note, name, staged).is_err())
     {
-        return Err(missed(Some(note), "The note was saved, but its originals could not be kept. Check the attachments folder permissions and try again."));
+        if wrote.section.is_some() {
+            // Nothing is in the note yet, so the section still goes in; only
+            // the originals are missing, and the job says so.
+            wrote.warning = Some("The section is ready, but the original files could not be kept beside the note. Check the attachments folder permissions.".into());
+            return Ok(wrote);
+        }
+        return Err(missed(Some(wrote.note), "The note was saved, but its originals could not be kept. Check the attachments folder permissions and try again."));
     }
-    Ok(note)
+    Ok(wrote)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -438,11 +510,13 @@ fn run_import(
         &mut step,
     );
     set_job(&state, &id, |job| match made {
-        Ok(note) => {
+        Ok(wrote) => {
             job.state = "done";
             job.done = job.total.max(1);
-            job.notes = vec![note.clone()];
-            job.note = Some(note);
+            job.notes = vec![wrote.note.clone()];
+            job.note = Some(wrote.note);
+            job.section = wrote.section;
+            job.error = wrote.warning;
         }
         Err(missed) => {
             job.state = "failed";
@@ -482,7 +556,7 @@ fn run_each(
             vec![file],
             &mut step,
         ) {
-            Ok(note) => notes.push(note),
+            Ok(wrote) => notes.push(wrote.note),
             Err(missed) => {
                 notes.extend(missed.note);
                 problems.push(format!("{name}: {}", missed.error));
@@ -578,6 +652,7 @@ pub(crate) async fn start_import(
                     note: None,
                     notes: Vec::new(),
                     error: None,
+                    section: None,
                 },
             )
         })
@@ -822,6 +897,7 @@ mod admission_tests {
             note: None,
             notes: Vec::new(),
             error: None,
+            section: None,
         }
     }
 

@@ -213,7 +213,7 @@ const actions = {
   'rec-discard': (el) => discardRecordingAsk(el),
   'rec-discard-now': (el) => discardRecordingNow(el),
   'rec-again': () => recorder.again(),
-  upload: (el) => uploadSheet(undefined, el.dataset.dir).catch(fail),
+  upload: (el) => uploadSheet(undefined, el.dataset.dir, { add: el.dataset.add === 'yes' }).catch(fail),
   'upload-go': () => uploadGo().catch(fail),
   'upload-drop': (el) => {
     picked.splice(Number(el.dataset.i), 1);

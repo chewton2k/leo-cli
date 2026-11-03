@@ -2273,16 +2273,16 @@ test.describe('uploads', () => {
     let polls = 0;
     await page.route('**/api/import', async (route) => {
       sent = route.request().postDataJSON();
-      await page.request.patch(`/api/notes/${note.id}`, { data: { body: 'My own notes on heaps.\n\n## Heap proofs\n\nSift down keeps the order.' } });
       await route.fulfill({ status: 202, json: { id: 'job-into' } });
     });
     await page.route('**/api/import/job-into', (route) => {
       polls += 1;
-      route.fulfill({ json: polls < 2 ? { state: 'working', step: 'Writing the note', done: 0, total: 1 } : { state: 'done', step: '', done: 1, total: 1, note: note.id } });
+      route.fulfill({ json: polls < 2 ? { state: 'working', step: 'Writing the note', done: 0, total: 1 } : { state: 'done', step: '', done: 1, total: 1, note: note.id, section: '## Heap proofs\n\nSift down keeps the order.' } });
     });
     await page.goto(`/#/n/${note.id}`);
     await expect(page.locator('#doc')).toContainText('My own notes on heaps.');
-    await dropFiles(page, 'main', [{ name: 'proofs.pdf', type: 'application/pdf', text: '%PDF fake' }, { name: 'board.png', type: 'image/png', text: 'png' }]);
+    // On the note itself, so the note's own drop handler sees the mixed drop and passes it on.
+    await dropFiles(page, '#doc', [{ name: 'proofs.pdf', type: 'application/pdf', text: '%PDF fake' }, { name: 'board.png', type: 'image/png', text: 'png' }]);
     const sheet = page.locator('.sheet');
     await expect(sheet.locator('#upload-list'), 'a mixed drop keeps every file').toContainText('proofs.pdf');
     await expect(sheet.locator('#upload-list')).toContainText('board.png');
@@ -2301,6 +2301,10 @@ test.describe('uploads', () => {
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
     expect(sent).toMatchObject({ into: note.id, each: false, wants: 'just the proofs', title: null });
     expect(sent.files.map((f) => f.name)).toEqual(['proofs.pdf', 'board.png']);
+    const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+    await expect.poll(async () => (await body()).trim()).toBe('My own notes on heaps.\n\n## Heap proofs\n\nSift down keeps the order.');
+    await page.locator('.toast button', { hasText: 'Undo' }).click();
+    await expect.poll(async () => (await body()).trim()).toBe('My own notes on heaps.');
   });
 
   test('several files make a note each unless asked for one note, and the folder opens', async ({ page }) => {

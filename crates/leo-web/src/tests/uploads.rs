@@ -454,6 +454,7 @@ fn background_work_is_listed_until_it_is_done() {
         note: None,
         notes: Vec::new(),
         error: None,
+        section: None,
     };
     let mut imports = std::collections::HashMap::new();
     imports.insert("a".to_string(), job("working", "cs130"));
@@ -635,39 +636,56 @@ fn files_dropped_on_a_note_are_added_to_it_under_their_own_heading() {
         run(start_import(State(state.clone()), Json(body("nosuchnote")))).status(),
         StatusCode::NOT_FOUND
     );
-    let response = run(start_import(State(state.clone()), Json(body(&note))));
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
-    let id = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let job = wait_for(&state, &id);
-    assert_eq!(job.state, "done", "{job:?}");
-    assert_eq!(
-        job.note.as_deref(),
-        Some(note.as_str()),
-        "no new note is made"
+    let add = || {
+        let response = run(start_import(State(state.clone()), Json(body(&note))));
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+        let id = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let job = wait_for(&state, &id);
+        assert_eq!(job.state, "done", "{job:?}");
+        assert_eq!(
+            job.note.as_deref(),
+            Some(note.as_str()),
+            "no new note is made"
+        );
+        job.section
+            .expect("the section comes back for the page to insert")
+    };
+    let section = add();
+    assert!(
+        section.starts_with("## Heap proofs\n\nSift down keeps the heap order."),
+        "{section}"
+    );
+    assert!(
+        section.contains("*From slides.pdf, sheet.pdf, uploaded"),
+        "{section}"
     );
     let notes = run(state.with_store(|store| Ok(store.notes.clone()))).unwrap();
     assert_eq!(notes.len(), 1);
-    let body = &notes[0].body;
-    assert!(body.starts_with("My own notes on heaps."), "{body}");
-    assert!(
-        body.contains("## Heap proofs\n\nSift down keeps the heap order."),
-        "{body}"
+    assert_eq!(
+        notes[0].body, "My own notes on heaps.",
+        "the page inserts the section through the note's own version, so typing never clashes"
     );
+    let again = add();
     assert!(
-        body.contains("*From slides.pdf, sheet.pdf, uploaded"),
-        "{body}"
+        again.contains("*From slides (2).pdf, sheet (2).pdf, uploaded"),
+        "the same files again keep the first ones: {again}"
     );
     let originals = json_of(run(list_originals(
         State(state.clone()),
         Path(note.clone()),
     )));
+    let names: Vec<&str> = originals
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
     assert_eq!(
-        originals.as_array().unwrap().len(),
-        2,
-        "the originals stay with the note"
+        names,
+        ["sheet (2).pdf", "sheet.pdf", "slides (2).pdf", "slides.pdf"]
     );
 }

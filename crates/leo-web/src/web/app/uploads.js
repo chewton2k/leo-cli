@@ -167,9 +167,6 @@ function uploadProgress(text, done, total) {
 async function uploadGo() {
   if (!picked.length) return;
   const into = addingToNote() ? uploadNote : null;
-  // Save what was typed first: the section is appended to the saved note, and
-  // an unsaved edit would otherwise meet a newer version (a conflict copy).
-  if (into && state.session && state.session.note && state.session.note.id === into.id) await flush(state.session);
   const dir = into ? '' : $('#upload-dir').value;
   const each = !into && picked.length > 1 && !$('#upload-together').checked;
   const title = each || into ? '' : $('#upload-title').value.trim();
@@ -218,7 +215,7 @@ function watchUpload(id, dir, into = null) {
     const open = $('.upload-working');
     if (job.state === 'failed') {
       if (open) {
-        open.innerHTML = `${felix.felix(72, 'droop')}<h3>${into ? 'The file could not be added' : 'The note could not be made'}</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="upload">Try again</button></div>`;
+        open.innerHTML = `${felix.felix(72, 'droop')}<h3>${into ? 'The file could not be added' : 'The note could not be made'}</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="upload"${into ? ' data-add="yes"' : ''}>Try again</button></div>`;
       } else {
         toast(job.error || 'The upload failed.', { bad: true });
       }
@@ -226,12 +223,8 @@ function watchUpload(id, dir, into = null) {
     }
     if (into) {
       if (open) closeSheet();
-      const here = state.view === 'note' && state.session && state.session.note && state.session.note.id === into.id;
-      if (here) {
-        await flush(state.session).catch(() => {});
-        await render();
-      }
-      toast(`Added to “${into.title}”.`, here ? {} : { action: 'Open', run: () => go(noteHash(into.id)) });
+      if (job.error) toast(job.error, { bad: true });
+      await addSection(into, job.section || '').catch(fail);
       return;
     }
     const many = (job.notes || []).length > 1;
@@ -246,6 +239,45 @@ function watchUpload(id, dir, into = null) {
     }
     if (many && open && state.view === 'folder' && (state.dir || '') === dir) await showLatest().catch(() => {});
   }, 900);
+}
+
+// Puts an upload's section at the end of the note through the version-checked
+// insert (as Add to note does), using the open editor's own version after
+// saving its draft, so typing during the upload never makes a conflict copy.
+async function addSection(into, section) {
+  if (!section.trim()) return;
+  const isHere = () => state.view === 'note' && state.session && state.session.note && state.session.note.id === into.id;
+  let done = null;
+  try {
+    for (let attempt = 0; attempt < 2 && !done; attempt++) {
+      let base = null;
+      if (isHere()) {
+        const s = await ready();
+        base = s ? s.note.version : null;
+      }
+      try {
+        if (!base) base = (await api(`/api/notes/${enc(into.id)}`)).version;
+        done = await api(`/api/notes/${enc(into.id)}/insert`, { method: 'POST', body: { text: section, line: null, base } });
+      } catch (e) {
+        if (e.status !== 409 || attempt) throw e;
+      }
+    }
+  } finally {
+    // ready() paused the editor; drawing the note again restarts it either way.
+    if (isHere()) await showNote(into.id);
+  }
+  toast(`Added to “${into.title}”`, {
+    action: 'Undo',
+    run: async () => {
+      try {
+        await api(`/api/notes/${enc(into.id)}`, { method: 'PATCH', body: { body: done.before, base: done.version } });
+        if (isHere()) await showNote(into.id);
+        toast(`Took it out of “${into.title}”`);
+      } catch (e) {
+        toast(e.status === 409 ? 'That note has changed since, so leo left it as it is.' : e.message, { bad: true });
+      }
+    },
+  });
 }
 
 async function showLatest() {

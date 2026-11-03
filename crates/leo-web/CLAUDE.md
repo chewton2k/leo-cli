@@ -695,11 +695,16 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   has a segmented **Add to this note / New note** switch (`#upload-where`).
   Files dropped on the note default to Add, the rail's Note from a file to New;
   Add hides the folder, title and one-note-each choices. POST `/api/import`
-  with `into` (a note id, 404 if gone; never `each`) appends the written
-  section at the end under `## <title>` with the usual From/uploaded line
-  (`insert::inserted`), keeps the originals with that note, and the job's
-  `note` is that note. The page flushes the note's draft before starting and
-  again before redrawing it when the job is done. In the note, a drop of only
+  with `into` (a note id, 404 if gone; never `each`) does not touch the note:
+  the finished job carries `section` (`## <title>`, the written text and the
+  From/uploaded line), and the page puts it at the end through the
+  version-checked `/insert` (`addSection`: the open editor's version after
+  `ready()` saves its draft, one retry on 409, Undo in the toast), as Add to
+  note does, so typing during a long upload never makes a conflict copy.
+  Originals go beside that note under free names (`free_original_name`:
+  `slides (2).pdf`), so an earlier upload's file and citations stay; if they
+  cannot be kept the section still goes in and the job says so. Try again on
+  a failed add keeps Add. In the note, a drop of only
   pictures still goes in as pictures (`doc.js`); a drop with any other file goes
   to the sheet with every file. Originals are kept in
   `<data>/attachments/<note-id>/` (never synced); figures from pptx/docx/PDF
