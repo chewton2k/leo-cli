@@ -518,7 +518,15 @@ mod tests {
             std::fs::read_to_string(dir.path().join("seg-00005.txt")).unwrap(),
             ""
         );
-        assert_eq!(rx.try_iter().count(), 6);
+        let updates: Vec<Update> = rx.try_iter().collect();
+        assert_eq!(
+            updates
+                .iter()
+                .filter(|u| matches!(u, Update::Done { .. }))
+                .count(),
+            6
+        );
+        assert!(!updates.iter().any(|u| matches!(u, Update::Failed { .. })));
     }
 
     #[test]
