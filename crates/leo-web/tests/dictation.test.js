@@ -13,7 +13,7 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(!html.includes('<img'));
   assert.ok(html.includes('東京'));
   assert.ok(html.includes('data-dictation="custom_words"'));
-  assert.ok(html.includes('Lid closed'));
+  for (const retired of ['Lid closed', 'closed_microphone', 'trailing_space', 'data-dictation="enter"']) assert.ok(!html.includes(retired));
   assert.ok(html.includes('class="switch" role="switch"'));
   assert.ok(!/type="checkbox"(?![^>]*class="switch")/.test(html));
   assert.ok(html.includes('<input type="hidden" data-dictation="mode" value="both">'));

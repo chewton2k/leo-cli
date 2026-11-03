@@ -318,14 +318,7 @@ impl Dictation {
         let selected = library()?.selected()?;
         crate::audio_feedback::play(settings.sounds, true);
         ensure!(self.generation.current(id), "Dictation cancelled.");
-        let named = if crate::clamshell::closed() {
-            settings
-                .closed_microphone
-                .clone()
-                .or_else(|| settings.microphone.clone())
-        } else {
-            settings.microphone.clone()
-        };
+        let named = settings.microphone.clone();
         if stop.load(Ordering::Acquire) {
             return Ok(Finish::Done);
         }
@@ -455,11 +448,7 @@ impl Dictation {
         };
         ensure!(self.generation.current(id), "Dictation cancelled.");
         leo_web::dictation::remember(&leo_core::paths::data_dir()?, &text)?;
-        let output = if settings.trailing_space {
-            format!("{text} ")
-        } else {
-            text
-        };
+        let output = text;
         ensure!(self.generation.current(id), "Dictation cancelled.");
         if Self::test_mode() {
             if let Some(path) = std::env::var_os("LEO_DICTATION_OUTPUT") {
@@ -473,7 +462,7 @@ impl Dictation {
                 return Ok(Finish::Done);
             }
         }
-        let pasted = crate::clipboard::paste(&self.app, &output, settings.enter, {
+        let pasted = crate::clipboard::paste(&self.app, &output, {
             let this = self.clone();
             Arc::new(move || this.generation.current(id))
         })

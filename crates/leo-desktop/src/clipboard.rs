@@ -1,13 +1,6 @@
-use crate::settings::AutoSubmitKey;
-use enigo::{Direction, Enigo, Key, Keyboard};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-pub(crate) fn send_return_key(enigo: &mut Enigo, _: AutoSubmitKey) -> Result<(), String> {
-    enigo
-        .key(Key::Return, Direction::Click)
-        .map_err(|e| e.to_string())
-}
 pub fn copy(app: &AppHandle, text: &str) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
@@ -16,7 +9,6 @@ pub fn copy(app: &AppHandle, text: &str) -> Result<(), String> {
 pub fn paste(
     app: &AppHandle,
     text: &str,
-    enter: bool,
     current: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Option<String>, String> {
     if !current() {
@@ -39,7 +31,7 @@ pub fn paste(
                 }
                 let input = app.state::<crate::input::EnigoState>();
                 input.0.with(|enigo| crate::paste_tx::try_reliable_paste(
-                    &text, &app, enigo, enter, current.clone()
+                    &text, &app, enigo, current.clone()
                 )).ok_or("Keyboard input is busy. Try again.")?
 
             })();

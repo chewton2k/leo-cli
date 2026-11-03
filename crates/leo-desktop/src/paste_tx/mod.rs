@@ -26,8 +26,6 @@ pub(crate) struct TxState {
     pub receipts: Vec<Instant>,
     pub ownership_lost: bool,
     pub cancelled: bool,
-    #[allow(dead_code)]
-    pub auto_submit_sent: bool,
     pub logged_receipt: bool,
 }
 
@@ -40,7 +38,6 @@ impl TxState {
             receipts: Vec::new(),
             ownership_lost: false,
             cancelled: false,
-            auto_submit_sent: false,
             logged_receipt: false,
         }
     }
@@ -115,10 +112,9 @@ pub(crate) fn try_reliable_paste(
     text: &str,
     app_handle: &tauri::AppHandle,
     enigo: &mut enigo::Enigo,
-    auto_submit: bool,
     current: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<(), String> {
-    platform::run(text, app_handle, enigo, auto_submit, current)
+    platform::run(text, app_handle, enigo, current)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -139,13 +135,6 @@ impl Snapshot {
         }
         Ok(Self(items))
     }
-}
-
-pub(crate) fn should_submit(state: &TxState) -> bool {
-    state.any_receipt_after_injection()
-        && !state.ownership_lost
-        && !state.cancelled
-        && !state.injection_failed
 }
 
 #[cfg(test)]
@@ -238,22 +227,5 @@ mod snapshot_tests {
             vec![0; 64 * 1024 * 1024 + 1]
         )]])
         .is_err());
-    }
-}
-
-#[cfg(test)]
-mod submit_tests {
-    use super::*;
-    #[test]
-    fn enter_is_not_sent_after_a_new_copy_or_cancel() {
-        let mut state = TxState::new();
-        state.injected_at = Some(Instant::now());
-        state.record_receipt(Instant::now());
-        assert!(should_submit(&state));
-        state.ownership_lost = true;
-        assert!(!should_submit(&state));
-        state.ownership_lost = false;
-        state.cancelled = true;
-        assert!(!should_submit(&state));
     }
 }
