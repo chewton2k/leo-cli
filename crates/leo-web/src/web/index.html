@@ -938,7 +938,14 @@ html[data-app="mac"] .side-fold { position: fixed; z-index: 1; left: 76px; top: 
 .side-fold svg { width: 19px; height: 19px; color: var(--muted); }
 .quick-leo { display: flex; flex-direction: column; }
 :is(.sheet, .sheet-gone):has(.quick-leo) { max-width: 640px; padding: 6px; }
-@media (min-width: 600px) { :is(.scrim, .scrim-gone):has(.quick-leo) { align-items: flex-start; padding-top: 14vh; } :is(.sheet, .sheet-gone):has(.quick-leo) > .grip { display: none; } }
+@media (min-width: 600px) {
+  :is(.scrim, .scrim-gone):has(.quick-leo) { align-items: flex-start; padding-top: 14vh; }
+  :is(.sheet, .sheet-gone):has(.quick-leo) > .grip { display: none; }
+  .sheet:has(.quick-leo) { animation: drop-in .18s ease-out; }
+  .scrim-gone .sheet-gone:has(.quick-leo) { animation: lift-out .14s ease-in forwards; }
+}
+@keyframes drop-in { from { transform: translateY(-18px); opacity: 0; } }
+@keyframes lift-out { to { transform: translateY(-10px); opacity: 0; } }
 .quick-bar { display: flex; align-items: center; gap: 12px; padding: 6px 12px; cursor: text; }
 .quick-bar > svg { width: 22px; height: 22px; color: var(--accent); flex: none; }
 .quick-bar input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; font-size: 19px; padding: 10px 0; }

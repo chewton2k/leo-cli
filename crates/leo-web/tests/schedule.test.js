@@ -48,7 +48,7 @@ test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   assert.equal(top('dijkstra versus bellman ford for negative edges', []).kind, 'ask');
   assert.equal(top('how do graph algorithms work').kind, 'ask', 'a question asks even when a note matches');
   const rows = S.quickRank('Pay rent', { notes: [], places }, now);
-  assert.deepEqual(rows.map((r) => r.kind), ['task', 'ask', 'note'], 'every other choice stays one arrow away');
+  assert.deepEqual(rows.map((r) => r.kind), ['task', 'ask', 'search', 'note'], 'every other choice stays one arrow away');
   assert.deepEqual(top('buy milk', []), { kind: 'task', title: 'buy milk', date: null, time: null }, 'a short thing to do is a task');
   assert.equal(top('pick up John from the airport', []).kind, 'task');
   assert.equal(top('I keep mixing up the two proofs and want to get them straight before Friday somehow', []).kind, 'task', 'a date still means a reminder');
@@ -59,6 +59,10 @@ test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   assert.ok(S.quickRank('cs', { folders, places }, now).some((r) => r.kind === 'folder' && r.path === 'Classes/CS 161'));
   assert.ok(S.quickRank('heap', { chats, places }, now).some((r) => r.kind === 'chat' && r.id === 'k1'), 'past chats that match are listed');
   assert.equal(new Set(S.quickRank('heaps', { notes, places }, now)).size, S.quickRank('heaps', { notes, places }, now).length);
+  assert.deepEqual(S.quickRank('dijkstra', { notes, places }, now).find((r) => r.kind === 'search'), { kind: 'search', text: 'dijkstra' }, 'searching every note is always one of the choices');
+  const many = S.quickRank('alg', { notes: [{ id: 'x', title: 'alg 1' }, { id: 'y', title: 'alg 2' }, { id: 'z', title: 'alg 3' }], folders: ['Algebra', 'Algorithms'], chats, places }, now);
+  assert.ok(many.length <= 8);
+  assert.deepEqual(many.slice(-2).map((r) => r.kind), ['task', 'note'], 'adding a task or a note is never pushed off the list');
   assert.deepEqual(S.quickRank('   ', { notes, places }, now), []);
 });
 

@@ -104,16 +104,7 @@ const actions = {
   'side-collapse': () => collapseFolders(),
   'side-notes': (el) => loadSideNotes(el.dataset.dir, Number(el.dataset.offset || 0), true),
   'open-title': (el) => openTitle(el.dataset.title || ''),
-  'side-search': searchEverywhere,
-  'toggle-search': () => {
-    if ($('#search').hidden) {
-      openSearch('');
-      $('#search-input').focus();
-    } else {
-      closeSearch();
-      if (state.view === 'search') back();
-    }
-  },
+  'toggle-search': () => toggleQuickLeo(),
   menu,
   'calendar-add': () => addCalendar().catch(fail),
   'calendar-remove': (el) => removeCalendar(el).catch(fail),

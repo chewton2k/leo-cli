@@ -86,8 +86,7 @@ function drawSide() {
     <div class="side-rail">
       <nav class="side-rail-main" aria-label="Leo tools">
         ${sideRow('new', ICON.plus, 'New note', { attrs: ` data-dir="${esc(actionDir)}"`, hint: actionDir ? `New note in ${folderLabel(actionDir)}` : 'New note' })}
-        ${sideRow('side-search', ICON.search, 'Search', { hint: `Search every note (${shortcutLabel})` })}
-        ${sideRow('quick-leo', ICON.bolt, 'Quick Leo', { hint: `Quick Leo · ask, remind, find or jot anything (${quickLabel})` })}
+        ${sideRow('quick-leo', ICON.search, 'Search', { hint: `Search, ask, remind or jot anything (${shortcutLabel} or ${quickLabel})` })}
         ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
         ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
         ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
@@ -270,11 +269,6 @@ function moveOpenFolders(from, to) {
     for (const path of paths) set.add(moved(path));
   }
   keepOpenFolders();
-}
-
-function searchEverywhere() {
-  openSearch('');
-  $('#search-input').focus();
 }
 
 function openFolder(el) {
