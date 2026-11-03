@@ -55,6 +55,9 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
       const page = await browser.newPage({ colorScheme: theme });
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await expect(page.getByText('Local <b>speech</b>', { exact: true }).first()).toBeVisible();
+      // The model filters fill their row instead of bunching at its start.
+      const filters = await page.locator('.model-filters').evaluate(box => { const outer = box.getBoundingClientRect(), last = box.lastElementChild.getBoundingClientRect(); return outer.right - last.right; });
+      expect(filters).toBeLessThan(8);
       expect(await page.locator('#speech-library b').count()).toBe(0);
       const local = page.locator('[data-model-row="local"]');
       for (const detail of ['Fast, accurate <live> English transcription', 'English only', 'Streaming', '697 MB', '96.0%', '14.0× real time']) await expect(local).toContainText(detail);

@@ -1589,8 +1589,8 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 }
 .settings-section .set-row.column > .btn { align-self: flex-start; }
 .settings-section .btn { white-space: nowrap; }
-.set-shortcut { flex-wrap: wrap; }
-.set-shortcut .set-input { flex: 0 1 200px; min-width: 120px; }
+.set-shortcut { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 1 auto; min-width: 0; }
+.set-shortcut .set-input { flex: 0 1 180px; min-width: 110px; }
 .set-shortcut .btn { flex: none; white-space: nowrap; }
 #dictation-shortcut-status:empty { display: none; }
 .health-intro { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -1641,6 +1641,7 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 @media (max-width: 520px) { .segment span { display: none; } .segment:not(:has(svg)) span { display: inline; } }
 @media (prefers-reduced-motion: reduce) { .segment-pill, .switch, .switch::before { transition: none; } }
 .model-filters { flex-wrap: wrap; margin: 12px 0; }
+.model-filters .btn { flex: 1 1 auto; justify-content: center; }
 .model-ratings { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px; }
 .model-rating { display: inline-flex; align-items: center; gap: 8px; }
 .model-meter { width: 60px; height: 6px; border: 0; border-radius: 3px; background: var(--line); }

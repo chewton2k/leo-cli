@@ -1205,7 +1205,10 @@ provides settings, devices and native actions. The existing database owns the
 `dictations` table: insert and twenty-row eviction share a transaction; Copy
 resolves a stored ID and discards page-supplied text; Clear removes local rows.
 Nothing becomes a note or sync file. Card polling updates shortcut status and
-history only; fields, drafts, focus and caret survive. Local popup rendering
+history only; fields, drafts, focus and caret survive. There is no Save button
+(2026-11-02, the user's call): every change saves at once and Custom words saves
+700 ms after typing stops, in order (`saveDictation` chains saves so the last
+wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
 Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels

@@ -20,6 +20,8 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(html.includes('role="radiogroup" aria-label="Popup"'));
   assert.ok(/<input type="checkbox" class="switch" role="switch" data-dictation="writing" data-on="quick">/.test(html));
   assert.ok(html.includes('Adds a few seconds'));
+  assert.ok(!html.includes('data-action="dictation-save"'));
+  assert.ok(!html.includes('Save after editing'));
   assert.ok(html.includes('>Local<'));
   assert.ok(!html.includes('No writing AI is set up'));
   const unready = context.dictationCards({ settings: { writing: 'quick' }, writing_ready: false, recent: [], shortcut: {} });
