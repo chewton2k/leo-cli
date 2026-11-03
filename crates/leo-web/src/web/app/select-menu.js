@@ -144,12 +144,15 @@ app.addEventListener('click', (e) => {
   const button = e.target.closest('.select-menu-button');
   if (button) {
     const list = button.parentElement.querySelector(':scope > .select-menu');
-    if (list.hidden || list.dataset.folding) openSelectMenu(button); else closeSelectMenu(list, true);
+    if (button.getAttribute('aria-expanded') === 'true') closeSelectMenu(list, true); else openSelectMenu(button);
     return;
   }
   const option = e.target.closest('.select-menu-option');
   if (option) { pickSelectOption(option.closest('.select-menu'), option); return; }
   closeSelectMenus();
+});
+app.addEventListener('mousedown', (e) => {
+  if (e.target.closest?.('.select-menu-button, .select-menu')) e.preventDefault();
 });
 app.addEventListener('mousemove', (e) => {
   const option = e.target.closest?.('.select-menu-option');

@@ -24,7 +24,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
     ${option}
     ${helpers}
     $('#speech-library').innerHTML=speechCards(state.speech);
-    app.addEventListener('click',event=>{const button=event.target.closest('[data-action="speech-model"]');if(button) changeSpeechModel(button).catch(fail);});
+    app.addEventListener('click',event=>{const filter=event.target.closest('[data-action="speech-filter"]');if(filter) return filterSpeech(filter);const button=event.target.closest('[data-action="speech-model"]');if(button) changeSpeechModel(button).catch(fail);});
     window.audit={progress:()=>state.speech.models[1].progress};`;
   const server = http.createServer(async (request, response) => {
     if (request.url === '/api/speech') {
@@ -57,6 +57,20 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
       await expect(page.getByText('Local <b>speech</b>', { exact: true }).first()).toBeVisible();
       const filters = await page.locator('.model-filters').evaluate(box => { const outer = box.getBoundingClientRect(), last = box.lastElementChild.getBoundingClientRect(); return outer.right - last.right; });
       expect(filters).toBeLessThan(8);
+      await page.setViewportSize({ width: 900, height: 420 });
+      await page.evaluate(() => { for (let i = 0; i < 20; i++) state.speech.models.push({ id: 'extra' + i, name: 'Extra ' + i, languages: ['en'], size: 100, bytes: 0, downloaded: false, verified: false, in_use: false, live: false, progress: null }); });
+      await page.locator('.model-filters [data-filter="all"]').click();
+      await page.locator('.model-filters').evaluate(box => box.scrollIntoView({ block: 'start' }));
+      const anchored = () => page.locator('.model-filters').evaluate(box => Math.round(box.getBoundingClientRect().top));
+      const where = await anchored();
+      expect(await page.evaluate(() => scrollY)).toBeGreaterThan(0);
+      await page.locator('.model-filters [data-filter="downloaded"]').click();
+      expect(Math.abs(await anchored() - where)).toBeLessThan(2);
+      await page.locator('.model-filters [data-filter="recommended"]').click();
+      expect(Math.abs(await anchored() - where)).toBeLessThan(2);
+      await page.evaluate(() => { state.speech.models.splice(2); });
+      await page.locator('.model-filters [data-filter="recommended"]').click();
+      await page.setViewportSize({ width: 1280, height: 720 });
       expect(await page.locator('#speech-library b').count()).toBe(0);
       const local = page.locator('[data-model-row="local"]');
       for (const detail of ['Fast, accurate <live> English transcription', 'English only', 'Streaming', '697 MB', '96.0%', '14.0× real time']) await expect(local).toContainText(detail);

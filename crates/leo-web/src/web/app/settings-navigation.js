@@ -39,20 +39,42 @@ function settingsSection(section) {
 function settingsTitle(section) {
   return settingsItems().find(([id]) => id === section)?.[1] || 'General';
 }
-let settingsDrawn = '';
+let settingsDrawn = '', settingsPillFrom = null;
 function settingsFrame(section, content) {
-  const arrive = settingsDrawn !== section || !app.querySelector('.settings-section');
+  const shown = app.querySelector('.settings-section');
+  const arrive = settingsDrawn !== section || !shown;
+  const ids = settingsItems().map(([id]) => id);
+  const from = ids.indexOf(settingsDrawn), to = ids.indexOf(section);
+  const oldNav = shown && app.querySelector('.settings-nav'), oldPill = oldNav?.querySelector('.settings-nav-pill.placed');
+  if (oldPill) {
+    const box = oldPill.getBoundingClientRect(), frame = oldNav.getBoundingClientRect();
+    settingsPillFrom = { top: box.top - frame.top - oldNav.clientTop + oldNav.scrollTop, height: box.height };
+  } else settingsPillFrom = null;
   settingsDrawn = section;
   const [, title, , about] = settingsItems().find(([id]) => id === section) || settingsItems()[0];
   const nav = SETTINGS_SECTIONS.map((group) => `<div class="settings-group"><div class="settings-group-title">${esc(group.group)}</div>${group.items.map(([id, label, icon]) => `<a class="settings-link${id === section ? ' on' : ''}" href="#/settings/${id}"${id === section ? ' aria-current="page"' : ''}>${settingsIcon(icon)}<span>${esc(label)}</span></a>`).join('')}</div>`).join('');
   // Callers assign the frame to the page right away; once they have, bring the current
   // section into view in the phone strip, where the list scrolls sideways.
   if (typeof queueMicrotask === 'function') queueMicrotask(revealSettingsLink);
-  return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${nav}</nav><div class="settings-section${arrive ? ' arrive' : ''}" data-settings-section="${esc(section)}"><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
+  const lean = arrive && shown && from >= 0 && to >= 0 ? (to > from ? ' style="--arrive-from:6px"' : ' style="--arrive-from:-6px"') : '';
+  return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><span class="settings-nav-pill" aria-hidden="true"></span>${nav}</nav><div class="settings-section${arrive ? ' arrive' : ''}" data-settings-section="${esc(section)}"${lean}><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
+}
+
+function placeSettingsPill(nav, on) {
+  const pill = nav.querySelector('.settings-nav-pill');
+  if (!pill || !on) return;
+  const from = settingsPillFrom;
+  settingsPillFrom = null;
+  pill.style.transform = `translateY(${on.offsetTop}px)`;
+  pill.style.height = `${on.offsetHeight}px`;
+  pill.classList.add('placed');
+  if (!from || Math.abs(from.top - on.offsetTop) < 1 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.3, .8, .25, 1)' });
 }
 
 function revealSettingsLink() {
   const nav = app.querySelector('.settings-nav'), on = nav?.querySelector('.settings-link.on');
+  if (nav) placeSettingsPill(nav, on);
   if (on && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
 }
 

@@ -1617,7 +1617,12 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .settings-section .set-card h3 { font-size: 16.5px; font-weight: 650; letter-spacing: -.012em; }
 .settings-section .hint { line-height: 1.5; }
 .settings-head h1 { font-weight: 700; letter-spacing: -.025em; }
-.settings-link { font-weight: 500; transition: background-color .15s ease, color .15s ease; }
+.settings-link { position: relative; z-index: 1; font-weight: 500; transition: background-color .15s ease, color .15s ease; }
+.settings-link svg { transition: color .2s ease; }
+.settings-nav-pill { position: absolute; top: 0; left: 8px; right: 8px; height: 36px; border-radius: 9px; background: var(--accent-soft); pointer-events: none; visibility: hidden; }
+.settings-nav-pill.placed { visibility: visible; }
+@media (min-width: 760px) { .settings-nav:has(.settings-nav-pill.placed) .settings-link.on { background: transparent; } }
+@media (max-width: 759px) { .settings-nav-pill { display: none; } }
 .select-control.has-menu > select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
 .select-control.has-menu > svg { display: none; }
 .select-menu-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; min-height: 38px; padding: 0 10px 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 14.5px; font-weight: 500; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
@@ -1638,8 +1643,8 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
   .settings-section.arrive { animation: settings-arrive .18s cubic-bezier(.2, .8, .2, 1); }
   #dictation-result.flash { animation: settings-saved 2s ease both; }
 }
-@media (prefers-reduced-motion: reduce) { .settings-link, .select-menu-button, .select-menu-button svg { transition: none; } }
-@keyframes settings-arrive { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .settings-link, .settings-link svg, .select-menu-button, .select-menu-button svg { transition: none; } }
+@keyframes settings-arrive { from { opacity: 0; transform: translateY(var(--arrive-from, 4px)); } }
 @keyframes settings-saved { 0% { opacity: 0; } 12%, 80% { opacity: 1; } 100% { opacity: 0; } }
 /* iOS-style switch: a real checkbox drawn as a track whose knob slides across. */
 .switch { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 44px; height: 26px; margin: 0 0 0 auto; border-radius: 999px; background: color-mix(in srgb, var(--muted) 35%, transparent); cursor: pointer; transition: background-color .2s ease; }

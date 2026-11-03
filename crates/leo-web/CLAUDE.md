@@ -118,8 +118,15 @@ reader, seer, meaning, web, room, speech).
   the value: change handlers, drafts and `selectOption` keep working; its
   `value` setter keeps the button label in step, the redraw after a save gives
   focus back to the new button, and forced colors keeps the native control.
-  Settings motion: the menu unfolds like the model picker, a section switch has
-  one 180 ms arrival, "Saved" fades; labels are 500 weight in the text color. Redraws keep the pill where it
+  Settings motion: the menu unfolds like the model picker; the section list's
+  highlight is one pill that glides to the new section (260 ms, started from
+  where the old pill is drawn, so the placeholder-then-content double draw
+  does not cut it off; hidden under 760 px); a section switch has one 180 ms
+  arrival leaning the way you moved; "Saved" fades. Labels are 500 weight in
+  the text color. Pressing a menu's button keeps focus where it is (WebKit
+  does not focus clicked buttons, which made a second press reopen it).
+  Speech model filters keep the filter bar where it was on screen and hold
+  the section's height so a shorter list cannot snap the page up. Redraws keep the pill where it
   was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).

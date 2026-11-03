@@ -96,6 +96,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(push).toHaveText('Off');
       await page.locator('select[data-set="auto_push"]').selectOption('quit');
       await expect(push).toHaveText('On quit');
+      await push.click();
+      await expect(menu).toBeVisible();
+      await push.click();
+      await page.waitForTimeout(300);
+      await expect(menu).toBeHidden();
+      await expect(push).toHaveAttribute('aria-expanded','false');
+      const pillOn=async()=>page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top)+Math.abs(pill.height-on.height);});
+      expect(await pillOn()).toBeLessThan(2);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
       // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
       await expect(page.getByRole('heading',{name:'Recent dictations'})).toBeVisible();
@@ -131,6 +139,8 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(words).toBeFocused();
       expect(await words.evaluate(el=>[el.selectionStart,el.selectionEnd])).toEqual([2,7]);
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
+      await page.waitForTimeout(400);
+      expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);
       await expect(page.locator('#calendar-link')).toBeVisible();
       await page.getByRole('link',{name:'Health',exact:true}).click();
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();
