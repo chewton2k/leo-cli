@@ -566,6 +566,24 @@ test.describe('diagrams', () => {
   });
 });
 
+test('a fresh launch reopens the last note, while reloads and the library stay put', async ({ page, context }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: `Left off ${Date.now().toString(36)}`, body: 'Where I was.' } })).json();
+  await page.goto('/');
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toContainText('Where I was.');
+  await page.goto('/');
+  await expect(page, 'going to the library in the same window stays there').toHaveURL(/\/(#\/)?$/);
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toContainText('Where I was.');
+  const relaunch = await context.newPage();
+  await relaunch.goto('/');
+  await expect(relaunch, 'a new launch goes back to the note').toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await expect(relaunch.locator('#doc')).toContainText('Where I was.');
+  await relaunch.reload();
+  await expect(relaunch).toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await relaunch.close();
+});
+
 test.describe('drag and drop', () => {
   test('a note and a folder drag into other folders, and Undo puts them back', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');

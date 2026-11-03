@@ -92,13 +92,14 @@ function drawSide() {
       </nav>
     </div>
     <div class="side-explorer" id="side-explorer">
-      <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+      <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><span class="side-group-tools"><button class="side-add side-collapse" data-action="side-collapse" aria-label="Collapse all folders" title="Collapse all folders">${svg('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>')}</button><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></span></div>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
     </div>`;
   const tree = box.querySelector('.side-tree');
   if (tree) tree.scrollTop = kept;
+  revealNoteRow(tree);
   box.querySelector('.side-rail-main').scrollTop = railScroll;
   if (focused) {
     const buttons = [...box.querySelectorAll('button[data-action]')];
@@ -113,6 +114,31 @@ function sideHere() {
 
 function folderShown(path) {
   return !side.shut.has(path) && (side.open.has(path) || side.revealed.has(path));
+}
+
+// Like VS Code's auto reveal: the open note's row is scrolled into the
+// explorer's view once, when it first appears for that note; later redraws keep
+// whatever scroll the user chose. Only the explorer scrolls, never the page.
+function revealNoteRow(tree) {
+  const id = state.view === 'note' ? state.session?.note?.id : null;
+  if (!id) side.shownNote = null;
+  if (!tree || !id || side.shownNote === id) return;
+  const row = [...tree.querySelectorAll('.side-note[data-id]')].find((el) => el.dataset.id === id);
+  if (!row) return;
+  side.shownNote = id;
+  const at = row.getBoundingClientRect();
+  const view = tree.getBoundingClientRect();
+  if (at.top < view.top) tree.scrollTop -= view.top - at.top;
+  else if (at.bottom > view.bottom) tree.scrollTop += at.bottom - view.bottom;
+}
+
+// Collapse all, as in VS Code and Obsidian: every folder closes and stays closed.
+function collapseFolders() {
+  side.open.clear();
+  side.revealed.clear();
+  side.shut.clear();
+  keepOpenFolders();
+  drawSide();
 }
 
 function keepOpenFolders() {

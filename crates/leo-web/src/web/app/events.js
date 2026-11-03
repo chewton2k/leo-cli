@@ -96,7 +96,30 @@ window.addEventListener('beforeunload', (e) => {
   e.preventDefault();
 });
 
+// Reopen where you left off, like VS Code and Obsidian: the last note, folder
+// or page is kept, and a fresh launch of the window (a new tab session) that
+// opens on the library goes back there. Reloads and in-app navigation never
+// redirect. A place that is gone shows its usual message.
+const LAST_PLACE_KEY = 'leo-last-place';
+const LAST_PLACES = /^#\/(n|f|boards|calendar|map|interviews)(\/|$)/;
+function rememberPlace() {
+  try {
+    const here = location.hash || '#/';
+    if (here === '#/' || LAST_PLACES.test(here)) localStorage.setItem(LAST_PLACE_KEY, here);
+  } catch (e) {}
+}
+function reopenLastPlace() {
+  try {
+    if (sessionStorage.getItem('leo-launched')) return;
+    sessionStorage.setItem('leo-launched', '1');
+    if (location.hash && location.hash !== '#/') return;
+    const last = localStorage.getItem(LAST_PLACE_KEY);
+    if (last && LAST_PLACES.test(last)) history.replaceState(history.state, '', last);
+  } catch (e) {}
+}
+
 window.addEventListener('hashchange', () => {
+  rememberPlace();
   const leaving = state.session;
   if (leaving) {
     leaving.doc.stop();
@@ -295,6 +318,8 @@ window.addEventListener('afterprint', () => {
     delete fold.dataset.printed;
   }
 });
+reopenLastPlace();
+rememberPlace();
 route();
 checkActivity();
 checkWebsiteBackup();

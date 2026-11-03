@@ -50,6 +50,7 @@ async function sidebarFixture(browser, run) {
       const action=el.dataset.action;
       if(action==='open-folder') folderClick(el);
       else if(action==='side-twist') twistFolder(el.dataset.dir,el);
+      else if(action==='side-collapse') collapseFolders();
       else if(action==='side-fold') foldSide();
       else if(action==='side-notes') loadSideNotes(el.dataset.dir,Number(el.dataset.offset||0),true);
       else if(action==='open-note') go(noteHash(el.dataset.id));
@@ -296,5 +297,34 @@ test('nested folders start closed and the explorer reopens as the user left it, 
     await page.reload();
     await expect(row('Personal'), 'and one they closed stays closed').toHaveAttribute('aria-expanded','false');
     expect(await kept()).toEqual(['Course']);
+  });
+});
+
+test('Collapse all closes every folder for good, and the open note is scrolled into the explorer once', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:600}});
+    await page.goto(url);
+    const row = dir=>page.locator('.side-tree .side-row[data-dir="'+dir+'"]');
+    const kept = ()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-open')||'[]'));
+    await page.locator('[data-action="side-twist"][data-dir="Course"]').click();
+    await page.locator('[data-action="side-twist"][data-dir="Course/Week 1"]').click();
+    await expect(row('Course/Week 1/Lab')).toBeVisible();
+    await page.locator('.side-group [data-action="side-collapse"]').click();
+    await expect(row('Course/Week 1')).toHaveCount(0);
+    expect(await kept()).toEqual([]);
+    await page.reload();
+    await expect(row('Course')).toHaveAttribute('aria-expanded','false');
+
+    const tree = page.locator('.side-tree');
+    await page.evaluate(()=>audit.note('personal-90','Personal'));
+    const note = page.locator('.side-note[data-id="personal-90"]');
+    await expect(note).toHaveCount(1);
+    const inside = ()=>note.evaluate(el=>{const r=el.getBoundingClientRect(),t=el.closest('.side-tree').getBoundingClientRect();return r.top>=t.top-1&&r.bottom<=t.bottom+1;});
+    await expect.poll(inside, {message:'the open note is scrolled into the explorer'}).toBe(true);
+    const pageScroll = await page.evaluate(()=>window.scrollY);
+    expect(pageScroll, 'only the explorer scrolls').toBe(0);
+    await tree.evaluate(el=>{el.scrollTop=0;});
+    await page.evaluate(()=>audit.draw());
+    expect(await tree.evaluate(el=>el.scrollTop), 'a redraw keeps the scroll the user chose').toBe(0);
   });
 });
