@@ -592,6 +592,7 @@ fn run_tool(
     call: &tools::Call,
     send: &dyn Fn(serde_json::Value),
 ) -> Result<tools::Done> {
+    let call = &call.normalized();
     let result = execute_tool(state, desk, call, send);
     state.usage.tool(
         result
@@ -638,6 +639,17 @@ fn execute_tool(
                 "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>. Inside a JSON string write a line break as \\n and a quote as \\\".",
                 call.text("problem")
             ),
+            proposal: None,
+            found: Vec::new(),
+        }
+    } else if let Some(problem) = desk.not_offered(&call.name) {
+        tools::Done {
+            step: format!(
+                "Retried {}: {}",
+                call.name.replace('_', " "),
+                lowered(&tools::why_it_failed(&problem))
+            ),
+            result: format!("That did not work: {problem}"),
             proposal: None,
             found: Vec::new(),
         }
@@ -704,7 +716,7 @@ fn execute_tool(
         }
     } else if matches!(
         call.name.as_str(),
-        "list_schedule" | "list_trash" | "search_chats"
+        "list_schedule" | "list_trash" | "search_chats" | "list_boards" | "open_board"
     ) || tools::organizes(&call.name)
     {
         crate::routes::organize::run(state, desk, access, call)
@@ -721,15 +733,7 @@ fn execute_tool(
             found: Vec::new(),
         }
     } else if crate::interview_tools::is_tool(&call.name) {
-        if matches!(
-            call.name.as_str(),
-            "interview_code_edit"
-                | "interview_test"
-                | "interview_problem_edit"
-                | "interview_problem_delete"
-                | "interview_topics"
-        ) && !access.changes()
-        {
+        if crate::interview_tools::changes(&call.name) && !access.changes() {
             return Ok(tools::Done {
                 step: "Kept your code unchanged".into(),
                 result:
@@ -838,40 +842,37 @@ fn execute_tool(
                 shown["auto"] = serde_json::json!(true);
                 shown
             }
-            tools::Access::Auto if !matches!(proposal, tools::Proposal::DeleteFolder { .. }) => {
-                match apply_now(state, proposal) {
-                    Ok(applied) => {
-                        if let tools::Proposal::DeleteInterviewProblem { interview, .. } = proposal
-                        {
-                            if desk.interview.as_deref() == Some(interview.as_str()) {
-                                desk.interview_problem = applied["item"]["challenge"]["id"]
-                                    .as_str()
-                                    .map(str::to_string);
-                                send(
-                                    serde_json::json!({"interview": {"id": interview, "revision": applied["revision"]}}),
-                                );
-                            }
+            tools::Access::Auto if !proposal.always_asks() => match apply_now(state, proposal) {
+                Ok(applied) => {
+                    if let tools::Proposal::DeleteInterviewProblem { interview, .. } = proposal {
+                        if desk.interview.as_deref() == Some(interview.as_str()) {
+                            desk.interview_problem = applied["item"]["challenge"]["id"]
+                                .as_str()
+                                .map(str::to_string);
+                            send(
+                                serde_json::json!({"interview": {"id": interview, "revision": applied["revision"]}}),
+                            );
                         }
-                        done.result = match proposal {
-                            tools::Proposal::Edit { .. } => {
-                                "Changed. leo applied it; the user can undo it."
-                            }
-                            tools::Proposal::Create { .. } => {
-                                "Made. leo made the note; the user can undo it."
-                            }
-                            _ => "Done. leo did it; the user can undo it.",
-                        }
-                        .into();
-                        applied
                     }
-                    Err(why) => {
-                        done.result = format!(
+                    done.result = match proposal {
+                        tools::Proposal::Edit { .. } => {
+                            "Changed. leo applied it; the user can undo it."
+                        }
+                        tools::Proposal::Create { .. } => {
+                            "Made. leo made the note; the user can undo it."
+                        }
+                        _ => "Done. leo did it; the user can undo it.",
+                    }
+                    .into();
+                    applied
+                }
+                Err(why) => {
+                    done.result = format!(
                         "Suggested, but leo could not apply it ({why}); the user can press Apply."
                     );
-                        serde_json::json!(proposal)
-                    }
+                    serde_json::json!(proposal)
                 }
-            }
+            },
             _ => serde_json::json!(proposal),
         };
         send(serde_json::json!({ "proposal": shown }));
@@ -1262,7 +1263,7 @@ fn answer(
     let web = state.web.clone().filter(|w| (w.needed)());
     let web_on = web.is_some();
     let interview_manual = if interview.is_some() {
-        crate::interview_tools::manual()
+        crate::interview_tools::manual(access)
     } else {
         String::new()
     };
@@ -1295,9 +1296,7 @@ fn answer(
         .unwrap_or_default();
     let mut specs = tools::native_specs(web_on, access);
     if interview.is_some() {
-        specs.extend(tools::native_from(
-            crate::interview_tools::SPECS.iter().copied(),
-        ));
+        specs.extend(tools::native_from(crate::interview_tools::offered(access)));
     }
     let keep = |talk: Box<dyn chat::Conversation>,
                 sent: usize,

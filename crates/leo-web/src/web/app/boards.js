@@ -3,6 +3,7 @@
 // people rename, add, delete and drag into order; cards are dragged between columns,
 // and onto another board's tab to move them there.
 const KANBAN_KEY = 'leo-board';
+const BOARD_KINDS = ['add_card', 'update_card', 'move_card', 'delete_card', 'restore_card', 'add_board', 'change_board', 'delete_board', 'restore_board'];
 const KANBAN_MOST_COLUMNS = 12;
 const KANBAN_HOLD_MS = 300;
 const KANBAN_EDGE = 56;

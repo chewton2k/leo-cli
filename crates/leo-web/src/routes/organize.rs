@@ -132,6 +132,7 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "list_schedule" => return schedule(state, call),
         "list_trash" => return trash_list(state),
         "search_chats" => return chat_search(state, call),
+        "list_boards" | "open_board" => return crate::board_tools::read(&state.chats, call),
         _ => {}
     }
     let step = match call.name.as_str() {
@@ -146,12 +147,20 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "pin_note" => "Tried to pin a note",
         "restore_note" => "Tried to bring a note back",
         "delete_folder" => "Tried to delete a folder",
+        "restore_folder" => "Tried to bring a folder back",
+        "add_card" => "Tried to add a card",
+        "update_card" => "Tried to change a card",
+        "move_card" => "Tried to move a card",
+        "delete_card" => "Tried to delete a card",
+        "add_board" => "Tried to make a board",
+        "change_board" => "Tried to change a board",
+        "delete_board" => "Tried to delete a board",
         _ => "Tried to delete a note",
     };
     if !access.changes() {
         return fail(
             step,
-            "Felix is set to read only, so he cannot change notes, folders or tasks",
+            "Felix is set to read only, so he cannot change notes, folders, tasks or boards",
         );
     }
     if desk.proposals >= tools::MOST_PROPOSALS {
@@ -186,6 +195,10 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "pin_note" => pin_note(state, desk, call),
         "restore_note" => restore_note(state, call),
         "delete_folder" => delete_folder(state, call),
+        "restore_folder" => restore_folder(state, call),
+        name if crate::board_tools::changes(name) => {
+            crate::board_tools::propose(&state.chats, call)
+        }
         _ => delete_note(state, desk, call),
     };
     match made {
@@ -227,6 +240,15 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::DeleteInterviewProblem { summary, .. }
         | Proposal::RestoreInterviewProblem { summary, .. }
         | Proposal::InterviewTopics { summary, .. }
+        | Proposal::AddCard { summary, .. }
+        | Proposal::UpdateCard { summary, .. }
+        | Proposal::MoveCard { summary, .. }
+        | Proposal::DeleteCard { summary, .. }
+        | Proposal::RestoreCard { summary, .. }
+        | Proposal::AddBoard { summary, .. }
+        | Proposal::ChangeBoard { summary, .. }
+        | Proposal::DeleteBoard { summary, .. }
+        | Proposal::RestoreBoard { summary, .. }
         | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
         Proposal::Create { title, .. } => format!("Make the note “{title}”"),
@@ -359,6 +381,45 @@ fn delete_folder(state: &AppState, call: &Call) -> Result<Proposal, String> {
         })
     })
     .map_err(|_| format!("there is no folder \"{path}\""))
+}
+
+fn restore_folder(state: &AppState, call: &Call) -> Result<Proposal, String> {
+    let path = call.text("folder").trim().trim_matches('/').to_string();
+    if path.is_empty() {
+        return Err("say which folder".into());
+    }
+    let trashed = store_now(state, |store| {
+        if store.validate_directory(&path).is_err() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        Ok(store.trashed())
+    })
+    .map_err(|_| format!("\"{path}\" is not a folder path"))?;
+    let inside = format!("{path}/");
+    let mut ids = Vec::new();
+    let mut dirs = vec![path.clone()];
+    for t in &trashed {
+        if t.directory == path || t.directory.starts_with(&inside) {
+            ids.push(t.id.clone());
+            if !dirs.contains(&t.directory) {
+                dirs.push(t.directory.clone());
+            }
+        }
+    }
+    if ids.is_empty() {
+        return Err(format!(
+            "no trashed note came from the folder \"{path}\"; use list_trash to see where trashed notes came from"
+        ));
+    }
+    Ok(Proposal::RestoreFolder {
+        summary: format!(
+            "Bring the folder {path} back with its {} {}",
+            ids.len(),
+            if ids.len() == 1 { "note" } else { "notes" }
+        ),
+        ids,
+        dirs,
+    })
 }
 
 fn trash_list(state: &AppState) -> Done {
@@ -886,7 +947,8 @@ pub(crate) async fn act(
     state: &AppState,
     p: &Proposal,
 ) -> Result<(serde_json::Value, Proposal), String> {
-    use crate::routes::{notes, tasks as task_routes, trash};
+    use crate::boards;
+    use crate::routes::{boards as board_routes, notes, tasks as task_routes, trash};
     match p {
         Proposal::InterviewCodeEdit { .. } => {
             let path = state.chats.clone();
@@ -1443,6 +1505,270 @@ pub(crate) async fn act(
                     path: first,
                 },
             ))
+        }
+        Proposal::AddCard {
+            board,
+            column,
+            title,
+            subheading,
+            description,
+            priority,
+            top,
+            ..
+        } => {
+            let made = reply_of(
+                board_routes::create_card(
+                    State(state.clone()),
+                    Path(board.clone()),
+                    Json(parse(serde_json::json!({ "column": column, "title": title, "subheading": subheading, "description": description, "priority": priority, "top": top }))?),
+                )
+                .await,
+            )
+            .await?;
+            let card: boards::Card = parse(made)?;
+            Ok((
+                serde_json::json!({ "card": card.id, "board": card.board }),
+                Proposal::DeleteCard {
+                    summary: format!("Remove the card “{}”", card.title),
+                    card: card.id,
+                    title: card.title,
+                },
+            ))
+        }
+        Proposal::DeleteCard { card, .. } => {
+            let gone =
+                reply_of(board_routes::delete_card(State(state.clone()), Path(card.clone())).await)
+                    .await?;
+            let card: boards::Card = parse(gone)?;
+            Ok((
+                serde_json::json!({ "board": card.board }),
+                Proposal::RestoreCard {
+                    summary: format!("Bring the card “{}” back", card.title),
+                    card,
+                },
+            ))
+        }
+        Proposal::RestoreCard { card, .. } => {
+            let made = reply_of(
+                board_routes::create_card(
+                    State(state.clone()),
+                    Path(card.board.clone()),
+                    Json(parse(serde_json::json!({ "id": card.id, "column": card.column, "title": card.title, "subheading": card.subheading, "description": card.description, "priority": card.priority, "rank": card.rank }))?),
+                )
+                .await,
+            )
+            .await
+            .map_err(|why| {
+                if why.contains("column") {
+                    "the card's column is not on its board any more".to_string()
+                } else {
+                    why
+                }
+            })?;
+            let back: boards::Card = parse(made)?;
+            Ok((
+                serde_json::json!({ "card": back.id, "board": back.board }),
+                Proposal::DeleteCard {
+                    summary: format!("Delete the card “{}”", back.title),
+                    card: back.id,
+                    title: back.title,
+                },
+            ))
+        }
+        Proposal::UpdateCard {
+            card,
+            title,
+            subheading,
+            description,
+            priority,
+            ..
+        } => {
+            let before =
+                boards::card(&state.chats, card).ok_or("that card is not there any more")?;
+            let mut change = serde_json::Map::new();
+            for (key, value) in [
+                ("title", title),
+                ("subheading", subheading),
+                ("description", description),
+                ("priority", priority),
+            ] {
+                if let Some(value) = value {
+                    change.insert(key.into(), serde_json::json!(value));
+                }
+            }
+            reply_of(
+                board_routes::change_card(
+                    State(state.clone()),
+                    Path(card.clone()),
+                    Json(parse(serde_json::Value::Object(change))?),
+                )
+                .await,
+            )
+            .await?;
+            Ok((
+                serde_json::json!({ "card": card, "board": before.board }),
+                Proposal::UpdateCard {
+                    summary: format!("Put the card “{}” back as it was", before.title),
+                    card: card.clone(),
+                    title: title.as_ref().map(|_| before.title.clone()),
+                    subheading: subheading.as_ref().map(|_| before.subheading.clone()),
+                    description: description.as_ref().map(|_| before.description.clone()),
+                    priority: priority.as_ref().map(|_| before.priority.clone()),
+                },
+            ))
+        }
+        Proposal::MoveCard {
+            card,
+            board,
+            column,
+            after,
+            top,
+            ..
+        } => {
+            let stored =
+                boards::card(&state.chats, card).ok_or("that card is not there any more")?;
+            let home = boards::board(&state.chats, &stored.board)
+                .ok_or("that card's board is not there any more")?;
+            let before = boards::cards_in(&home, std::slice::from_ref(&stored))
+                .pop()
+                .unwrap_or(stored);
+            let previous = crate::board_tools::neighbour_before(&state.chats, &before).flatten();
+            let mut body = serde_json::json!({ "board": board, "column": column });
+            if *top {
+                body["after"] = serde_json::Value::Null;
+            } else if let Some(after) = after {
+                body["after"] = serde_json::json!(after);
+            }
+            reply_of(
+                board_routes::move_card(
+                    State(state.clone()),
+                    Path(card.clone()),
+                    Json(parse(body)?),
+                )
+                .await,
+            )
+            .await?;
+            Ok((
+                serde_json::json!({ "card": card, "board": board, "from": before.board }),
+                Proposal::MoveCard {
+                    summary: format!("Move “{}” back", before.title),
+                    card: card.clone(),
+                    board: before.board.clone(),
+                    column: before.column.clone(),
+                    top: previous.is_none(),
+                    after: previous,
+                },
+            ))
+        }
+        Proposal::AddBoard { name, columns, .. } => {
+            let made = reply_of(
+                board_routes::create_board(
+                    State(state.clone()),
+                    Json(parse(serde_json::json!({ "name": name }))?),
+                )
+                .await,
+            )
+            .await?;
+            let board: boards::Board = parse(made)?;
+            if !columns.is_empty() {
+                let wanted: Vec<serde_json::Value> = columns
+                    .iter()
+                    .map(|name| serde_json::json!({ "name": name }))
+                    .collect();
+                reply_of(
+                    board_routes::change_board(
+                        State(state.clone()),
+                        Path(board.id.clone()),
+                        Json(parse(serde_json::json!({ "columns": wanted }))?),
+                    )
+                    .await,
+                )
+                .await?;
+            }
+            Ok((
+                serde_json::json!({ "board": board.id }),
+                Proposal::DeleteBoard {
+                    summary: format!("Delete the new board “{}”", board.name),
+                    board: board.id,
+                },
+            ))
+        }
+        Proposal::ChangeBoard {
+            board,
+            name,
+            columns,
+            move_to,
+            ..
+        } => {
+            let (before, cards) = crate::board_tools::snapshot(&state.chats, board)
+                .ok_or("that board is not there any more")?;
+            let mut change = serde_json::Map::new();
+            if let Some(name) = name {
+                change.insert("name".into(), serde_json::json!(name));
+            }
+            if let Some(columns) = columns {
+                change.insert("columns".into(), serde_json::json!(columns));
+            }
+            if let Some(move_to) = move_to {
+                change.insert("move_to".into(), serde_json::json!(move_to));
+            }
+            reply_of(
+                board_routes::change_board(
+                    State(state.clone()),
+                    Path(board.clone()),
+                    Json(parse(serde_json::Value::Object(change))?),
+                )
+                .await,
+            )
+            .await?;
+            Ok((
+                serde_json::json!({ "board": board }),
+                Proposal::RestoreBoard {
+                    summary: format!("Put the board “{}” back as it was", before.name),
+                    board: before,
+                    cards,
+                },
+            ))
+        }
+        Proposal::DeleteBoard { board, .. } => {
+            let gone = reply_of(
+                board_routes::delete_board(State(state.clone()), Path(board.clone())).await,
+            )
+            .await?;
+            let board: boards::Board = parse(gone["board"].clone())?;
+            let cards: Vec<boards::Card> = parse(gone["cards"].clone())?;
+            Ok((
+                serde_json::json!({ "board": board.id }),
+                Proposal::RestoreBoard {
+                    summary: format!("Bring the board “{}” back", board.name),
+                    board,
+                    cards,
+                },
+            ))
+        }
+        Proposal::RestoreBoard { board, cards, .. } => {
+            let undo = match crate::board_tools::snapshot(&state.chats, &board.id) {
+                Some((now, cards)) => Proposal::RestoreBoard {
+                    summary: format!("Put the board “{}” back as it was", now.name),
+                    board: now,
+                    cards,
+                },
+                None => Proposal::DeleteBoard {
+                    summary: format!("Delete the board “{}”", board.name),
+                    board: board.id.clone(),
+                },
+            };
+            reply_of(
+                board_routes::restore_board(
+                    State(state.clone()),
+                    Json(parse(
+                        serde_json::json!({ "board": board, "cards": cards }),
+                    )?),
+                )
+                .await,
+            )
+            .await?;
+            Ok((serde_json::json!({ "board": board.id }), undo))
         }
         Proposal::Edit { .. } | Proposal::Create { .. } => {
             Err("that change has its own Apply".into())

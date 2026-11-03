@@ -235,8 +235,9 @@ the user picks AI writing (2026-11-02, the user's call; off by default). Recent
   rail page (`#/boards`), several boards, untimed cards (title, subheading,
   description, priority) in custom columns, dragged between columns and boards.
   Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` sync like tasks
-  (union merge, newest line wins); they are not calendar tasks. See
-  crates/leo-web/CLAUDE.md.
+  (union merge, newest line wins); they are not calendar tasks. Felix has
+  board tools (list/open, add/update/move/delete cards, add/change/delete
+  boards) under the usual Ask/Auto/Read and Undo. See crates/leo-web/CLAUDE.md.
 - Menu bar, study order, idle compaction and in-app drag and drop
   (2026-11-02, the user's notes): see crates/leo-desktop/CLAUDE.md (tray,
   `disable_drag_drop_handler`) and crates/leo-web/CLAUDE.md (Felix study order,

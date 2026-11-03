@@ -371,22 +371,39 @@ reader, seer, meaning, web, room, speech).
   (`web::allowed`, public addresses only).
 - Access (`tools::Access`, `leo-felix-access`, Shift+Tab): Ask first (cards to
   Apply), Auto (applied at once, cards come back applied with Undo), Read only
-  (change tools left out of the manual and refused).
+  (change tools left out of the manual and refused, interview writes included:
+  `interview_tools::changes`). Deleting a folder, a board or an interview problem
+  always asks, even in Auto (`Proposal::always_asks`, 2026-11-02, the user's call).
+  A tool runs only where it is offered (`Desk::not_offered`): interview tools need
+  a practice chat, and an unknown or unoffered name is answered with this chat's
+  own tool list. `run_tool` reads true/false, numbers, arrays and objects as text
+  (`Call::normalized`) so native Claude Code and Codex calls never fail on types,
+  and no parameter may be called `name` (the text protocol's tool key; a test).
   Changes during a reply POST to `/api/chat/{answer}/access`; both protocols
   check the live setting before tool execution and automatic application.
   A failed permission update stops the reply; a closed stream prevents further changes.
 - Read tools: search_notes, open_note, connected_notes, read_document,
   read_transcript, read_original, look_at_picture, calculate (`calc.rs`, a
-  safe evaluator), list_schedule, list_trash, search_chats.
+  safe evaluator), list_schedule, list_trash, search_chats, list_boards,
+  open_board.
 - Change tools: edit_note / create_note (cards; Apply POSTs
   `/api/notes/{id}/suggestion`, 409 unless `find` is there exactly once),
   and the organizing tools in `routes/organize.rs`: add_task (`repeat`:
   `mon | wed`), update_task (`on` = which day of a repeating task),
   delete_task, move_note, make_folder, move_folder, delete_note,
   rename_note, rename_folder (`new_name`), pin_note, restore_note,
-  delete_folder (always a card, even in Auto). They validate against the
+  restore_folder (trashed notes from that folder and its subfolders),
+  delete_folder (always a card, even in Auto), and the board tools in
+  `board_tools.rs`: add_card, update_card, move_card (`column`, `to_board`,
+  `position` top/end/a card), delete_card, add_board (`title`, `columns` split
+  by `|`), change_board (`new_name`, `columns`, `move_to`; Undo restores the
+  board snapshot) and delete_board (always a card). Boards, columns and cards
+  are named by id or exact name ignoring case; the board may be left out when
+  there is only one. They validate against the
   store, become `Proposal` cards, run through POST `/api/felix/act` (reusing
-  the normal routes) and return the inverse card as `undo`.
+  the normal routes) and return the inverse card as `undo`. The page redraws
+  an open board after one applies (`BOARD_KINDS`). The text manual stays under
+  14,500 bytes. `MOST_PROPOSALS` counts every change tool.
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
@@ -846,7 +863,8 @@ the same idle loop.
 
 Jira-style task boards (the user's call: their own rail icon after Calendar, several
 boards, untimed, standalone cards only). Cards have no dates, so they are not
-calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule.
+calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule;
+Felix reads and changes them with the board tools (see Felix above).
 JS and CSS use the `kanban` prefix: `board` already names the interview whiteboard.
 
 - Storage mirrors standalone tasks: `<notes>/.leo/boards/<b…>.json` (name, columns
