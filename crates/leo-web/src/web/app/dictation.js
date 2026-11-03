@@ -42,6 +42,9 @@ async function dictationChange(change) {
   const result = $('#dictation-result');
   if (result && change.action === 'save') {
     result.textContent = 'Saved';
+    result.classList.remove('flash');
+    void result.offsetWidth;
+    result.classList.add('flash');
     clearTimeout(dictationSavedTimer);
     dictationSavedTimer = setTimeout(() => { if (result.isConnected) result.textContent = ''; }, 2000);
   }

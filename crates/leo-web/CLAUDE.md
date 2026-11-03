@@ -112,7 +112,14 @@ reader, seer, meaning, web, room, speech).
   never a bare checkbox; `segmented` (a pill that slides to the pick) for
   choices of two to four short options, either a hidden `field` input that
   fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
-  longer or open-ended lists stay `<select>`. Redraws keep the pill where it
+  longer or open-ended lists stay `<select>`, which inside Settings
+  `select-menu.js` draws as a custom listbox (2026-11-02, the user's call: no
+  system menus). The `<select>` stays underneath, invisible and unclickable, as
+  the value: change handlers, drafts and `selectOption` keep working; its
+  `value` setter keeps the button label in step, the redraw after a save gives
+  focus back to the new button, and forced colors keeps the native control.
+  Settings motion: the menu unfolds like the model picker, a section switch has
+  one 180 ms arrival, "Saved" fades; labels are 500 weight in the text color. Redraws keep the pill where it
   was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).

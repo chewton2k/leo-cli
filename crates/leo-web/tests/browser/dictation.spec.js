@@ -46,7 +46,6 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       await expect(words).toBeFocused();
       await expect(words).toHaveValue('Charlton\n東京');
       expect(await words.evaluate(el => el.selectionStart)).toBe(3);
-      // Settings save themselves: custom words a moment after typing stops, without a Save button.
       await expect.poll(() => view.settings.custom_words).toEqual(['Charlton', '東京']);
       await expect(page.locator('#dictation-result')).toHaveText('Saved');
       await expect(page.getByRole('button', { name: /^Save/ })).toHaveCount(0);

@@ -12,8 +12,9 @@ test('Settings sections keep drafts and selections across redraws in both themes
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
     window.errors=[]; window.leoChat={usageRows:()=>[]};
-    const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'}]}};
-    async function api(url) {
+    const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'},{id:'when_idle',label:'When idle'},{id:'off',label:'Off'}]}};
+    async function api(url,options={}) {
+      if(url==='/api/settings'&&options.method==='POST') {if(options.body.set==='auto_push') page.backup.auto_push=options.body.value; return {settings:structuredClone(page),message:'Saved'};}
       if(url==='/api/settings') return structuredClone(page);
       if(url==='/api/calendar') return {calendars:[],events:[]};
       if(url==='/api/speech') return {ready:false,models:[],extra_files:[],disk_bytes:0};
@@ -25,11 +26,12 @@ test('Settings sections keep drafts and selections across redraws in both themes
       if(url==='/api/trash') return [];
       throw new Error(url);
     }
-    const floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
+    const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
     ${read('theme.js')}
     ${read('app/trash.js')}
     ${read('app/settings-navigation.js')}
+    ${read('app/select-menu.js')}
     ${read('app/settings.js')}
     ${read('app/storage.js')}
     ${read('app/dictation.js')}
@@ -53,8 +55,6 @@ test('Settings sections keep drafts and selections across redraws in both themes
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
       await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();
-      // The section list is a panel set apart from the window's edge that stays put while the page scrolls,
-      // and the list and the section together sit in the middle of the space beside the explorer.
       const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
       const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
       const gap=await page.locator('.settings-layout').evaluate(el=>parseFloat(getComputedStyle(el).paddingTop));
@@ -74,9 +74,30 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.evaluate(()=>window.audit.redraw());
       await expect(page.locator('#backup-repository')).toBeFocused();
       expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
+      const push=page.getByRole('button',{name:'Push changes'});
+      await expect(push).toHaveText('On quit');
+      expect(await page.locator('select[data-set="auto_push"]').evaluate(el=>getComputedStyle(el).opacity)).toBe('0');
+      await push.click();
+      const menu=page.getByRole('listbox',{name:'Push changes'});
+      await expect(menu).toBeVisible();
+      await expect(menu.getByRole('option',{name:'On quit'})).toHaveAttribute('aria-selected','true');
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      await expect(menu).toBeHidden();
+      await expect(push).toBeFocused();
+      await expect(push).toHaveText('When idle');
+      await expect(page.locator('select[data-set="auto_push"]')).toHaveValue('when_idle');
+      await push.click();
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeHidden();
+      await expect(push).toBeFocused();
+      await push.click();
+      await menu.getByRole('option',{name:'Off'}).click();
+      await expect(push).toHaveText('Off');
+      await page.locator('select[data-set="auto_push"]').selectOption('quit');
+      await expect(push).toHaveText('On quit');
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
       // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
-      // Every card on a section sits apart from the next, including cards a section wraps in its own box.
       await expect(page.getByRole('heading',{name:'Recent dictations'})).toBeVisible();
       const gaps=await page.locator('.settings .set-card').evaluateAll(cards=>cards.slice(1).map((card,i)=>card.getBoundingClientRect().top-cards[i].getBoundingClientRect().bottom));
       expect(gaps.length).toBeGreaterThan(0);

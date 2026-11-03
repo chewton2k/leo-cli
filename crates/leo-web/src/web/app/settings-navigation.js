@@ -39,13 +39,16 @@ function settingsSection(section) {
 function settingsTitle(section) {
   return settingsItems().find(([id]) => id === section)?.[1] || 'General';
 }
+let settingsDrawn = '';
 function settingsFrame(section, content) {
+  const arrive = settingsDrawn !== section || !app.querySelector('.settings-section');
+  settingsDrawn = section;
   const [, title, , about] = settingsItems().find(([id]) => id === section) || settingsItems()[0];
   const nav = SETTINGS_SECTIONS.map((group) => `<div class="settings-group"><div class="settings-group-title">${esc(group.group)}</div>${group.items.map(([id, label, icon]) => `<a class="settings-link${id === section ? ' on' : ''}" href="#/settings/${id}"${id === section ? ' aria-current="page"' : ''}>${settingsIcon(icon)}<span>${esc(label)}</span></a>`).join('')}</div>`).join('');
   // Callers assign the frame to the page right away; once they have, bring the current
   // section into view in the phone strip, where the list scrolls sideways.
   if (typeof queueMicrotask === 'function') queueMicrotask(revealSettingsLink);
-  return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${nav}</nav><div class="settings-section" data-settings-section="${esc(section)}"><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
+  return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${nav}</nav><div class="settings-section${arrive ? ' arrive' : ''}" data-settings-section="${esc(section)}"><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
 }
 
 function revealSettingsLink() {
