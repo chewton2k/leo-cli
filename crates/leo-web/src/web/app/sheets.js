@@ -387,12 +387,15 @@ async function deleteFolderNow(el) {
   const from = el.dataset.from;
   if (!from) return;
   const box = el.closest('.scrim');
+  const mine = seq;
   el.disabled = true;
   try {
     const done = await api('/api/trash/move', { method: 'POST', body: { notes: [], dirs: [from] } });
     if (box.isConnected) closeSheet();
-    if (state.view === 'folder' && (state.dir === from || state.dir.startsWith(`${from}/`))) go(folderHash(parentOf(from)), { replace: true });
-    else await showLatest();
+    if (mine === seq && state.view === 'folder' && (state.dir === from || state.dir.startsWith(`${from}/`))) {
+      await dismissContent(app.querySelectorAll('.cards, .folders, .empty'));
+      if (mine === seq) go(folderHash(parentOf(from)), { replace: true });
+    } else if (mine === seq) await showLatest();
     loadSideFolders();
     toast(`Moved “${folderLabel(from)}” to the trash`, { action: 'Undo', run: () => undoTrashMove(done) });
   } catch (error) { fail(error); }
@@ -448,12 +451,22 @@ async function confirmDelete() {
 }
 
 async function deleteNow() {
-  const note = state.session.note;
-  state.session = null;
+  const session = state.session;
+  if (!session) return;
+  const note = session.note;
+  const mine = seq;
   closeSheet();
   try {
     await api(`/api/notes/${enc(note.id)}`, { method: 'DELETE' });
-    go(folderHash(note.directory), { replace: true });
+    if (mine === seq && state.session === session) {
+      await dismissContent(app.querySelectorAll('.note-columns'));
+      if (mine === seq && state.session === session) {
+        session.doc.destroy();
+        state.session = null;
+        go(folderHash(note.directory), { replace: true });
+      }
+    }
+    loadSideFolders();
     toast('Moved to the trash', { action: 'Undo', run: () => restore(note.id, true) });
   } catch (e) {
     fail(e);
@@ -487,16 +500,23 @@ async function pinCard(el) {
 }
 
 async function share() {
+  const mine = seq;
   const s = await ready();
+  if (mine !== seq) return;
   if (!s) return toast('Write something first.');
   const before = document.title;
   document.title = s.note.title;
   const restore = () => {
-    document.title = before;
+    if (mine === seq) document.title = before;
     window.removeEventListener('afterprint', restore);
   };
   window.addEventListener('afterprint', restore);
-  window.print();
+  try {
+    await window.print();
+  } catch (e) {
+    restore();
+    toast('Could not open the print dialog. Try PDF export again.', { bad: true });
+  }
 }
 
 async function openTitle(title) {

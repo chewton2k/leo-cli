@@ -188,6 +188,29 @@ pub fn describe(
     })
 }
 
+pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
+    choice::WRITING
+        .iter()
+        .filter_map(|choice| {
+            let pc = cfg.provider(choice.provider)?;
+            let agent = Agent::of(pc)?;
+            let installed = AgentCli::new(choice.provider.to_string(), agent, pc).available();
+            let bin = pc.bin.as_deref().unwrap_or(agent.program());
+            let signed_in = installed
+                .then(|| agent_cli::signed_in(agent, bin))
+                .flatten();
+            Some(json!({
+                "provider": choice.provider,
+                "name": choice.name,
+                "installed": installed,
+                "signed_in": signed_in,
+                "signin": agent.sign_in(),
+                "limits": usage.get(choice.provider),
+            }))
+        })
+        .collect()
+}
+
 fn open(path: &Path) -> Result<DocumentMut> {
     if !path.exists() {
         if let Some(dir) = path.parent() {
@@ -372,6 +395,61 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("npm install -g @openai/codex"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn coding_plans_detect_both_accounts_without_exposing_auth_output() {
+        use std::os::unix::fs::PermissionsExt;
+        for (codex, claude, expected) in [
+            (
+                "Logged in using ChatGPT",
+                r#"{"loggedIn":true,"token":"PRIVATE_SENTINEL"}"#,
+                json!(true),
+            ),
+            ("Not logged in", r#"{"loggedIn":false}"#, json!(false)),
+            (
+                "Unknown command PRIVATE_SENTINEL",
+                "PRIVATE_SENTINEL",
+                Value::Null,
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut cfg = Config::default();
+            for (name, output) in [("codex", codex), ("claude_code", claude)] {
+                let bin = dir.path().join(name);
+                std::fs::write(&bin, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n")).unwrap();
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+                cfg.providers.get_mut(name).unwrap().bin = Some(bin.to_string_lossy().into());
+            }
+            let seen = crate::usage::Seen::from([(
+                "codex".into(),
+                crate::usage::Usage {
+                    five_hour: Some(crate::usage::Window {
+                        used: 0.25,
+                        resets_at: Some(1234),
+                    }),
+                    seven_day: None,
+                    seen_at: chrono::Utc::now(),
+                },
+            )]);
+            let plans = coding_plans(&cfg, &seen);
+            assert_eq!(plans.len(), 2);
+            for plan in &plans {
+                assert_eq!(plan["installed"], true);
+                assert_eq!(plan["signed_in"], expected);
+                assert!(!plan.to_string().contains("PRIVATE_SENTINEL"));
+            }
+            assert_eq!(plans[0]["limits"]["five_hour"]["used"], 0.25);
+            assert!(plans[1]["limits"].is_null());
+            for name in ["codex", "claude_code"] {
+                cfg.providers.get_mut(name).unwrap().bin = Some("leo-missing-coding-app".into());
+            }
+            for plan in coding_plans(&cfg, &seen) {
+                assert_eq!(plan["installed"], false);
+                assert!(plan["signed_in"].is_null());
+            }
+        }
     }
 
     #[test]

@@ -376,6 +376,26 @@ test.describe('editing like Obsidian', () => {
     }, [from, to]);
   }
 
+  test('note arrival never moves text before its animation finishes', async ({ page }) => {
+    await page.addInitScript(() => {
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (frames, options) {
+        const run = animate.call(this, frames, options);
+        if (this.matches('article.note')) { run.pause(); run.currentTime = 0; }
+        return run;
+      };
+    });
+    for (const body of ['A paragraph', '## A heading', '- A list item', '- [ ] A task', '```js\nconst n = 1;\n```', '| A | B |\n| --- | --- |\n| One | Two |', '> A quote', '> [!note] A callout\n> Text', '$$\nx = 2\n$$']) {
+      const note = await (await page.request.post('/api/notes', { data: { title: 'Arrival', body } })).json();
+      await page.goto(`/#/n/${note.id}`);
+      await expect(page.locator('#doc .blk').first()).toBeVisible();
+      if (body.startsWith('$$')) await expect(page.locator('#doc .math')).toHaveAttribute('data-drawn', 'yes');
+      const before = await page.locator('#doc .blk').first().boundingBox();
+      await page.locator('article.note').evaluate(el => { for (const run of el.getAnimations()) run.finish(); });
+      expect(await page.locator('#doc .blk').first().boundingBox(), body).toEqual(before);
+    }
+  });
+
   test('a dragged selection across lines stays rendered in place, copies as Markdown, and Delete removes all of it', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
     const saved = await open(page, 'drag');

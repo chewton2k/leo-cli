@@ -7,6 +7,7 @@
   function mount(container, { source, onChange, placeholder, dir = '', onPictures = null, onSelection = null, outline = null }) {
     let lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
     let blocks = [];
+    let rendered = [];
     let editing = null;
 
     const MOST_UNDO = 200;
@@ -107,15 +108,34 @@
 
     function draw() {
       blocks = ed.splitBlocks(lines);
-      container.innerHTML =
-        blocks
-          .map((block, i) => {
-            const text = lines.slice(block.start, block.end).join('\n');
-            const level = block.kind === 'line' ? levelOf(text) : 0;
-            const style = level ? ` style="margin-left:${level * 1.5}em"` : '';
-            return `<div class="blk blk-${block.kind}" data-start="${block.start}" data-i="${i}"${style}>${renderBlock(block)}</div>`;
-          })
-          .join('') + '<div class="doc-tail" data-tail="1"></div>';
+      rendered = blocks.map((block, i) => {
+        const text = lines.slice(block.start, block.end).join('\n');
+        const key = JSON.stringify([block.kind, text, ed.boxesBefore(lines, block.start)]);
+        const old = rendered[i];
+        if (old && old.key === key && old.el.isConnected && !old.el.classList.contains('editing')) {
+          old.el.dataset.start = String(block.start);
+          return old;
+        }
+        const el = document.createElement('div');
+        el.className = `blk blk-${block.kind}`;
+        el.dataset.start = String(block.start);
+        el.dataset.i = String(i);
+        const level = block.kind === 'line' ? levelOf(text) : 0;
+        if (level) el.style.marginLeft = `${level * 1.5}em`;
+        el.innerHTML = renderBlock(block);
+        if (old && old.el.parentNode === container) old.el.replaceWith(el);
+        else container.insertBefore(el, container.querySelector('.doc-tail'));
+        return { key, el };
+      });
+      for (const el of container.querySelectorAll('.blk')) {
+        if (Number(el.dataset.i) >= blocks.length) el.remove();
+      }
+      if (!container.querySelector('.doc-tail')) {
+        const tail = document.createElement('div');
+        tail.className = 'doc-tail';
+        tail.dataset.tail = '1';
+        container.appendChild(tail);
+      }
       outlineScroll();
     }
 
@@ -364,7 +384,7 @@
       block.focus({ preventScroll: true });
       if (!outlineWide) outlineDetails.open = false;
       const inset = outlineWide ? 0 : outlineDetails.querySelector('summary').getBoundingClientRect().height + 8;
-      root.scrollTo({ top: Math.max(0, root.scrollY + block.getBoundingClientRect().top - outlineTop() - inset), behavior: 'instant' });
+      root.scrollTo({ top: Math.max(0, root.scrollY + block.getBoundingClientRect().top - outlineTop() - inset), behavior: root.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
       outlineScroll();
     }
 
@@ -504,13 +524,15 @@
       }
       const raw = lines.slice(block.start, end.end).join('\n');
       const single = first === last && block.kind === 'line';
+      const margin = !single && el.firstElementChild ? getComputedStyle(el.firstElementChild).margin : null;
       const prefix = single && el.querySelector('li') ? ed.listPrefix(raw) : '';
       const shown = single && !prefix ? textLeft(el) : null;
       const height = el.getBoundingClientRect().height;
       const content = single ? el.querySelector('.task > span') || el.querySelector('li, h2, h3, h4, h5, h6, p') : null;
-      const initialHeight = content ? content.getBoundingClientRect().height || height : null;
+      const initialHeight = content ? content.getBoundingClientRect().height || height : height;
       const area = document.createElement('textarea');
       area.className = 'line-edit';
+      if (margin !== null) area.style.margin = margin;
       area.value = raw.slice(prefix.length);
       area.rows = 1;
       area.spellcheck = true;

@@ -18,7 +18,15 @@ impl leo_web::SettingsApi for WebSettings {
         let store = default_store();
         let local = choice::local_models(&cfg);
         let usage = leo_services::usage::load();
-        leo_services::web_settings::describe(&cfg, store.as_ref(), &local, &usage, Some(notes_dir))
+        let mut page = leo_services::web_settings::describe(
+            &cfg,
+            store.as_ref(),
+            &local,
+            &usage,
+            Some(notes_dir),
+        );
+        page["plans"] = serde_json::json!(leo_services::web_settings::coding_plans(&cfg, &usage));
+        page
     }
 
     fn apply(&self, change: &Value) -> Result<String> {

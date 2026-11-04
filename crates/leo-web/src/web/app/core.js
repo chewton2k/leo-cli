@@ -290,6 +290,17 @@ function stillMotion() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+async function dismissContent(elements) {
+  const live = Array.from(elements).filter(el => el.isConnected);
+  if (!stillMotion()) {
+    await Promise.all(live.map(el => el.animate([
+      { opacity: 1, transform: 'none' },
+      { opacity: 0, transform: 'translateY(6px) scale(.98)' },
+    ], { duration: MOTION_MS, easing: EASE_OUT }).finished.catch(() => {})));
+  }
+  for (const el of live) el.remove();
+}
+
 function stopSlide(el) {
   delete el.dataset.folding;
   const run = moving.get(el);
@@ -524,7 +535,7 @@ async function showFolder(dir) {
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
   drawFolder();
-  if (arrived) arriveInFolder();
+  if (arrived) arriveOnPage();
 }
 
 const PAGE = 200;
@@ -662,16 +673,19 @@ function folderTrashAsk() {
 }
 
 async function folderTrashNow() {
+  const mine = seq;
   const move = state.trashMove;
   closeSheet();
   if (!move) return;
   state.trashMove = null;
   const done = await api('/api/trash/move', { method: 'POST', body: move });
+  if (mine === seq) await dismissContent(app.querySelectorAll('.pick-card.picked, .folder.picked'));
   const parts = [];
   if (done.notes) parts.push(plural(done.notes, 'note'));
   if (done.folders) parts.push(plural(done.folders, 'folder'));
   const undo = done.ids && (done.ids.length || (done.dirs && done.dirs.length)) ? { action: 'Undo', run: () => undoTrashMove(done) } : { action: 'Open trash', run: () => go('#/trash') };
   toast(`Moved ${parts.join(' and ') || 'nothing'} to the trash`, undo);
+  if (mine !== seq) return;
   state.selecting = false;
   await showFolder(state.dir);
 }
@@ -793,6 +807,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   drawOriginals(note);
   hideAskFloat();
   s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+  arriveOnPage(app.querySelector('article.note'));
   if (citedLines && citedLines.id === note.id) showCitedLines();
   else restoreReading(note.id, mine);
   drawRelated(note.id, mine);

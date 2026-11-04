@@ -109,6 +109,51 @@ test('an active heading refits after pane resizing without clipping text or losi
   });
 });
 
+test('switching editable blocks keeps unrelated rendered content and the viewport stable', async ({ browser }) => {
+  const samples = ['Ordinary text', '## Heading', '- A list item', '- [ ] A task', '```js\nconst answer = 42;\n```', '| Name | Value |\n| --- | --- |\n| One | Two |', '> A quote\n> Another line', '> [!note] A callout\n> Kept open', '$$\nx = 2\n$$'];
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const width of [1400, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const sample of samples) {
+        await page.goto(url + '/?body=' + encodeURIComponent('First paragraph\n\n' + sample + '\n\nFollowing paragraph'));
+        const target = page.locator('#doc .blk').nth(2);
+        await target.scrollIntoViewIfNeeded();
+        await page.evaluate(() => { window.keptBlock = Array.from(document.querySelectorAll('#doc .blk')).at(-1); });
+        const before = await page.locator('#doc .blk').last().boundingBox();
+        await target.click({ position: { x: 30, y: 10 } });
+        await expect(page.locator('#doc textarea')).toBeFocused();
+        expect(Math.abs((await page.locator('#doc .blk').last().boundingBox()).y - before.y), sample).toBeLessThanOrEqual(1);
+        await page.locator('#doc .blk').first().click();
+        expect(await page.evaluate(() => window.keptBlock.isConnected), sample).toBe(true);
+        expect(await page.evaluate(() => doc.source())).toBe('First paragraph\n\n' + sample + '\n\nFollowing paragraph');
+      }
+    }
+  });
+});
+
+test('heading navigation scrolls smoothly and respects reduced motion', async ({ browser }) => {
+  const body = '## First\n\n' + 'A paragraph.\n\n'.repeat(80) + '## Last\n\n' + 'More text.\n\n'.repeat(20);
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const reducedMotion of ['no-preference', 'reduce']) {
+      await page.emulateMedia({ reducedMotion });
+      await page.goto(url);
+      const behavior = await page.evaluate(() => {
+        const scroll = window.scrollTo.bind(window);
+        let behavior;
+        window.scrollTo = options => { behavior = options.behavior; scroll(options); };
+        document.querySelector('.note-outline button[data-line="162"]').click();
+        return behavior;
+      });
+      expect(behavior).toBe(reducedMotion === 'reduce' ? 'instant' : 'smooth');
+      await expect.poll(() => page.locator('#doc .blk:focus').textContent()).toBe('Last');
+      await expect.poll(() => page.locator('#doc .blk:focus').evaluate(el => el.getBoundingClientRect().top - document.querySelector('#bar').getBoundingClientRect().bottom)).toBeLessThanOrEqual(80);
+      expect(await page.locator('#doc .blk:focus').evaluate(el => el.getBoundingClientRect().top >= document.querySelector('#bar').getBoundingClientRect().bottom)).toBe(true);
+    }
+  }, { body });
+});
+
 test('reading width choices cap the note column independently of its outline wrapper', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();

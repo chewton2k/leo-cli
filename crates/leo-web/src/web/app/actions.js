@@ -171,6 +171,7 @@ const actions = {
     return changeSetting({ set: 'key', account: el.dataset.account, value: null });
   },
   'test-ai': testAi,
+  'use-plan': (el) => changeSetting({ set: 'provider', task: 'writing', value: el.dataset.provider }),
   'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
   'note-picture': () => choosePictures(),
   'view-original': (el) => {

@@ -57,7 +57,9 @@ a test, or leave it unset to see the user's own data.
   files reach the page's own handlers (`drag.js`).
 - Downloads save to `~/Downloads` under a free name (`links::download_path`)
   and are revealed when done.
-- `window.print` calls the `print_page` command (the webview's own print).
+- `window.print` calls `print_page` on macOS; Windows retains its original
+  native function, since Tauri's print implementation calls back into JS.
+  Calling the bridge on Windows would recurse instead of opening the dialog.
 - Capability `default`: remote `http://127.0.0.1:*`/`localhost:*`, core
   defaults, window dragging and double-click maximize.
 

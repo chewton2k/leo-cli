@@ -11,6 +11,9 @@ raw output never reaches the page. `WebSettings::setup_backup` validates reposit
 names and refuses to replace an existing remote before invoking gh. Web runs it
 outside the notes lock and serializes setup requests.
 
+Writing Settings includes both coding accounts and their saved usage windows;
+detecting a signed-in CLI never changes the user's selected writer.
+
 Lecture listeners pass the engine's shared preview-visibility flag into recorder
 controls, including both call tracks. This flag never pauses capture or final
 transcription, and recovery continues while the main window is hidden.

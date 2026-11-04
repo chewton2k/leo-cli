@@ -200,11 +200,13 @@ pub fn run() {
     });
 }
 
-const PRINT: &str = "window.print = () => window.__TAURI_INTERNALS__.invoke('print_page');";
+const PRINT: &str = "(() => { const nativePrint = window.print.bind(window); window.print = () => window.__LEO_APP__ === 'mac' ? window.__TAURI_INTERNALS__.invoke('print_page') : nativePrint(); })();";
 
 #[tauri::command]
 fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {
-    window.print().map_err(|e| e.to_string())
+    window
+        .print()
+        .map_err(|_| "Could not open the print dialog. Try exporting the note again.".into())
 }
 
 static LAST_DOWNLOAD: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);

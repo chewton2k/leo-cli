@@ -149,11 +149,13 @@ reader, seer, meaning, web, room, speech).
   Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
   the menu and returns focus to its button without closing the conversation.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
-  follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
-  entrances, hover lifts or sliding gliders. `<details>` slide their height
+  follows a click, quick (`MOTION_MS` 180), transform/clip/height/opacity only. No
+  idle animation or hover lifts. `<details>` slide their height
   (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
   ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
-  content. Reduced Motion turns all of it off. Tapping Felix is the one
+  content. Notes fade in place so text never moves during an immediate selection; confirmed note/folder removals leave
+  over 180 ms only after the delete succeeds, and delayed deletes never navigate
+  a newer page. Reduced Motion turns all of it off. Tapping Felix is the one
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
@@ -1286,11 +1288,26 @@ the first heading never shifts or narrows the writing column. A narrow pane or
 phone reserves a fixed disclosure row; its expanded outline overlays the note.
 Outline toggles and original-file open/close controls focus explicitly so
 WKWebView preserves keyboard focus when their markup changes.
-Heading jumps keep the URL and reading-position flow; typing refreshes only the
+Heading jumps scroll smoothly (instantly with Reduced Motion), keeping the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. A width observer refits
 the active textarea in place when panes resize, clearing internal scroll so text
 and the caret stay visible; it disconnects with the document. Scroll/resize observers,
 frames and timers are released with the document. The outline never prints.
+
+Stopping a line editor reconciles blocks in place: unchanged source blocks retain
+their DOM, including rendered math, diagrams and open callouts. Source editors
+keep the rendered block height and margins until input so code, tables, quotes
+and math do not move the lines below when clicked.
+
+Writing AI shows detected Codex/Claude accounts with bounded CLI sign-in checks,
+5-hour/7-day meters, reset times and the age of saved usage. Detection never
+changes the chosen provider; unknown or absent limits are stated explicitly.
+PDF export keeps Windows' native print function (Tauri calls it internally),
+uses the native bridge on macOS, and reports bridge errors without losing the
+note. A completed export cannot rename a newer page.
+The browser runner requires a fresh disposable home and points both coding
+providers at missing fixture binaries before startup, so autodetection cannot
+inspect the developer's signed-in accounts.
 
 Combine’s chunker and dropped-content recovery share fence recognition: a closing
 line needs the opener’s character and at least its full length, with no trailing
