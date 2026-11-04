@@ -153,7 +153,7 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     let seq = 0, state = {}, saved = '', citedLines = null;
     const source = {}, chat = {setContext() {}};
     const saving = {open(note) {return {note, edit: {...note, tags: []}}}};
-    const chrome = () => {}, drawOriginals = () => {}, hideAskFloat = () => {}, restoreReading = () => {}, drawRelated = () => {}, placeAskFloat = () => {};
+    const chrome = () => {}, arriveOnPage = () => {}, drawOriginals = () => {}, hideAskFloat = () => {}, restoreReading = () => {}, drawRelated = () => {}, placeAskFloat = () => {};
     const cleanTitle = text => text.trim(), folderLabel = () => 'Top level', rel = () => 'now';
     function changed(s) {saved = s.doc.source();}
     ${icons}
