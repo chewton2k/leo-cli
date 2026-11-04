@@ -355,6 +355,7 @@ document.addEventListener('paste', (e) => {
 // Start on the Record page; one already running is just shown.
 const APP_SETTINGS = ['general', 'updates'];
 window.leoFromApp = async (what, which) => {
+  if (what === 'quit') return toast('Press ⌘Q again or choose Quit again within 3 seconds to quit Leo.');
   if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
   if (what !== 'record' || !['microphone', 'call'].includes(which)) return;
   if (recorder.active()) return go('#/record');

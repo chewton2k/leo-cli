@@ -31,8 +31,12 @@ a test, or leave it unset to see the user's own data.
 ## Behaviour
 
 - Close hides the window and queues a backup; Dock click and "Open leo" show
-  it; "Quit leo" (menu bar icon) or ⌘Q exits, and `RunEvent::Exit` backs up and
-  stops the engine (6 s cap). Tauri's default menu supplies Edit (⌘C/⌘V/⌘Z/⌘A)
+  it; on macOS, Leo's Quit menu items or ⌘Q need a second attempt within three seconds
+  (the first shows a prompt). Update restarts and error exits bypass this guard.
+  `RunEvent::Exit` backs up and stops the engine (6 s cap).
+  The macOS app menu replaces the predefined native Quit item with a regular
+  ⌘Q item routed through `app.exit(0)`, so it reaches the guard and update actor.
+  Tauri's default menu supplies Edit (⌘C/⌘V/⌘Z/⌘A)
   and binds none of the page's shortcuts.
 - `links::stays_inside`: only `http://127.0.0.1|localhost:<port>` and the
   bundled page stay in the window; navigation and new windows elsewhere open in
@@ -184,7 +188,8 @@ native capture, final transcription and dictation remain active. A finished page
 load resynchronizes visibility in case hide/show happened during navigation.
 
 Foreground requests (single instance, Dock and tray page commands) are refused
-while the core installation lease is held. Explicit update restarts leave a
+while the core installation lease is held. Every successful update reopens Leo,
+including install-on-quit. Installations leave a
 private atomic one-use `update-foreground` marker, consumed only after the
 single-instance check, so `--hidden` from login cannot hide the updated app.
 Failed installation removes the marker and releases the opening restriction.

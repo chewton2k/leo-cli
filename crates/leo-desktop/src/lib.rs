@@ -10,6 +10,8 @@ mod overlay;
 mod paste_tx;
 mod permissions;
 mod port;
+#[cfg(target_os = "macos")]
+mod quit;
 mod secure_input;
 mod settings;
 mod shell_path;
@@ -174,6 +176,8 @@ pub fn run() {
                     set_visible(&handle, visible);
                 }
             });
+            #[cfg(target_os = "macos")]
+            quit::menu(app.handle())?;
             tray::build(app.handle())?;
             open_at_login_once(app.handle(), config.as_deref());
             app_settings.apply_startup()?;
@@ -181,7 +185,9 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("leo could not start");
-    app.run(|app, event| match event {
+    #[cfg(target_os = "macos")]
+    let mut quitting = quit::Confirm::default();
+    app.run(move |app, event| match event {
         RunEvent::Ready => {
             if app
                 .get_webview_window(MAIN)
@@ -192,7 +198,18 @@ pub fn run() {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show(app),
-        RunEvent::ExitRequested { api, .. } => {
+        RunEvent::ExitRequested { api, code, .. } => {
+            #[cfg(target_os = "macos")]
+            if !quitting.allows(code, std::time::Instant::now()) {
+                api.prevent_exit();
+                show(app);
+                if let Some(window) = app.get_webview_window(MAIN) {
+                    let _ = window.eval("window.leoFromApp?.('quit', '')");
+                }
+                return;
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = code;
             if app
                 .try_state::<std::sync::Arc<updates::Updates>>()
                 .is_some_and(|updates| updates.on_quit())

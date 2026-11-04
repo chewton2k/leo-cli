@@ -54,6 +54,8 @@ reader, seer, meaning, web, room, speech).
   `#/map[/id]`, `#/calendar`, `#/boards[/id]`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
+- Native quit confirmation keeps the current page and uses its existing toast
+  (`events.js`); Updates explains that every successful installation reopens Leo.
 - Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
   `--note-width`, 980 px by default; Settings → Appearance → Note width picks
   Comfortable (760 px), Wide or Full width, kept per browser in
