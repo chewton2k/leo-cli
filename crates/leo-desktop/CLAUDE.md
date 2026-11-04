@@ -188,3 +188,9 @@ while the core installation lease is held. Explicit update restarts leave a
 private atomic one-use `update-foreground` marker, consumed only after the
 single-instance check, so `--hidden` from login cannot hide the updated app.
 Failed installation removes the marker and releases the opening restriction.
+
+Foreground requests run on the main thread, move the main window to the active
+macOS Space and explicitly make it the main/key window. Initial activation runs
+at Ready, never after an arbitrary page reload; hidden login launches stay hidden.
+The macOS tray opens its menu through NSStatusItem directly for either mouse
+button, avoiding tray-icon's simulated click that fails in other full-screen Spaces.
