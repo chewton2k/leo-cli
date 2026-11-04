@@ -42,6 +42,18 @@ struct Download {
 }
 
 type Verified = BTreeMap<PathBuf, (u64, SystemTime)>;
+const VERIFIED_FILE: &str = "speech-verified.json";
+const MOST_VERIFIED_BYTES: u64 = 64 * 1024;
+
+fn remembered(config: &Path) -> Verified {
+    let path = config.join(VERIFIED_FILE);
+    std::fs::symlink_metadata(&path)
+        .ok()
+        .filter(|meta| meta.is_file() && meta.len() <= MOST_VERIFIED_BYTES)
+        .and_then(|_| std::fs::File::open(&path).ok())
+        .and_then(|file| serde_json::from_reader(file.take(MOST_VERIFIED_BYTES + 1)).ok())
+        .unwrap_or_default()
+}
 
 #[derive(Clone)]
 pub struct Library {
@@ -50,6 +62,7 @@ pub struct Library {
     catalog: Arc<Catalog>,
     jobs: Arc<Mutex<BTreeMap<String, Download>>>,
     verified: Arc<Mutex<Verified>>,
+    hashing: Arc<Mutex<()>>,
 }
 
 pub fn library() -> Result<&'static Library> {
@@ -88,11 +101,12 @@ impl Library {
 
     pub(crate) fn with_catalog(models: PathBuf, config: PathBuf, catalog: Arc<Catalog>) -> Self {
         Self {
+            verified: Arc::new(Mutex::new(remembered(&config))),
             models,
             config,
             catalog,
             jobs: Default::default(),
-            verified: Default::default(),
+            hashing: Default::default(),
         }
     }
 
@@ -169,22 +183,42 @@ impl Library {
             );
         }
         let stamp = (meta.len(), meta.modified()?);
-        if self
-            .verified
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&path)
-            == Some(&stamp)
-        {
+        let known = || {
+            self.verified
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&path)
+                == Some(&stamp)
+        };
+        if known() {
+            return Ok(path);
+        }
+        let _hashing = self.hashing.lock().unwrap_or_else(|e| e.into_inner());
+        if known() {
             return Ok(path);
         }
         let actual = crate::providers::sha256_of(&path)?;
         ensure!(actual.eq_ignore_ascii_case(&model.file().sha256), "This speech model is damaged. Delete it and download it again in Settings → Speech models.");
-        self.verified
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(path.clone(), stamp);
+        self.change_verified(|verified| {
+            verified.insert(path.clone(), stamp);
+        });
         Ok(path)
+    }
+
+    fn change_verified(&self, change: impl FnOnce(&mut Verified)) {
+        let mut verified = self.verified.lock().unwrap_or_else(|e| e.into_inner());
+        change(&mut verified);
+        let saved = tempfile::NamedTempFile::new_in(&self.config)
+            .map_err(anyhow::Error::from)
+            .and_then(|mut tmp| {
+                serde_json::to_writer(&mut tmp, &*verified)?;
+                tmp.persist(self.config.join(VERIFIED_FILE))
+                    .map_err(|e| e.error)?;
+                Ok(())
+            });
+        if let Err(error) = saved {
+            log::warn!("Could not remember the verified speech models: {error}");
+        }
     }
 
     /// The chosen model's catalog name, marked when its file is not on disk.
@@ -282,10 +316,9 @@ impl Library {
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
-        self.verified
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&path);
+        self.change_verified(|verified| {
+            verified.remove(&path);
+        });
         if self.selection()?.id == id {
             let mut tmp = tempfile::NamedTempFile::new_in(&self.config)?;
             serde_json::to_writer(
@@ -464,10 +497,9 @@ impl Library {
             "The model download location changed. Try again."
         );
         tmp.persist(&target).map_err(|e| e.error)?;
-        self.verified
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&target);
+        self.change_verified(|verified| {
+            verified.remove(&target);
+        });
         self.remove_legacy()?;
         Ok(())
     }

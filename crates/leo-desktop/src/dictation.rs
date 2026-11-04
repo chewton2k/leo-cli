@@ -8,6 +8,10 @@ use leo_services::dictation::{
 use leo_services::speech::{
     engine::{engine, DictationStream, Priority},
     library::library,
+    vad::{
+        CaptureVad, SileroVad, SILERO_VAD_THRESHOLD, VAD_OFFLINE_HANGOVER_MS,
+        VAD_STREAMING_HANGOVER_MS,
+    },
 };
 use serde_json::{json, Value};
 use std::{
@@ -73,6 +77,13 @@ impl Dictation {
         let input = this.tx.clone();
         if !Self::test_mode() {
             leo_services::session::mic::warm_up();
+            std::thread::spawn(|| {
+                let _ = SileroVad::new(SILERO_VAD_THRESHOLD);
+                let _ = library().and_then(|models| models.selected());
+                if let Ok(config) = leo_core::paths::config_dir() {
+                    engine().prepare_after_update(&config, env!("CARGO_PKG_VERSION"));
+                }
+            });
             let keys = crate::shortcut::Shortcuts::start(
                 app,
                 settings.shortcut,
@@ -286,7 +297,7 @@ impl Dictation {
         self.set_escape(true);
         self.update(
             id,
-            json!({"state":"listening","seconds":0,"levels":[],"committed":"","tentative":""}),
+            json!({"state":"starting","seconds":0,"levels":[],"committed":"","tentative":""}),
         );
         self.show(id, &settings);
         let this = self.clone();
@@ -323,7 +334,8 @@ impl Dictation {
         let _awake = leo_services::session::awake::Awake::recording();
         let _reservation = engine().dictation();
         let selected = library()?.selected()?;
-        if !selected.streaming {
+        let live = selected.streaming && selected.live;
+        if !live {
             engine().warm(selected.clone());
         }
         ensure!(self.generation.current(id), "Dictation cancelled.");
@@ -348,9 +360,8 @@ impl Dictation {
             let (mic, rx) = leo_services::session::mic::Mic::open_named(named)?;
             (Some(mic), rx)
         };
-        chime(settings.sounds, true);
         let this = self.clone();
-        let mut stream = if selected.streaming {
+        let mut stream = if live {
             engine()
                 .stream(selected.clone(), move |committed, tentative| {
                     this.change(id, |state| {
@@ -363,20 +374,50 @@ impl Dictation {
             None
         };
         let mut pending = Vec::new();
-        let mut speech = StreamingVad::new()?;
+        let mut kept = Vec::new();
+        let hangover = if selected.streaming {
+            VAD_STREAMING_HANGOVER_MS
+        } else {
+            VAD_OFFLINE_HANGOVER_MS
+        };
+        let mut speech = match SileroVad::new(SILERO_VAD_THRESHOLD) {
+            Ok(silero) => Some(CaptureVad::new(Box::new(silero), hangover)),
+            Err(error) => {
+                log::warn!("Dictation is not filtered, Silero VAD did not load: {error:#}");
+                None
+            }
+        };
+        let mut ready = false;
         let mut visualizer = Visualizer::new();
         let pcm = leo_services::dictation::capture::collect(
             &rx,
             stop,
             |chunk, _, seconds| {
+                if !ready {
+                    ready = true;
+                    let mut began = false;
+                    self.change(id, |state| {
+                        if state["state"] == "starting" {
+                            state["state"] = json!("listening");
+                            began = true;
+                        }
+                    });
+                    if began {
+                        chime(settings.sounds, true);
+                    }
+                }
                 if let Some(levels) = visualizer.feed(chunk) {
                     self.change(id, |state| {
                         state["seconds"] = json!(seconds);
                         state["levels"] = json!(levels);
                     });
                 }
+                let heard = speech
+                    .as_mut()
+                    .map_or_else(|| chunk.to_vec(), |vad| vad.push(chunk));
+                kept.extend_from_slice(&heard);
                 if let Some(live) = stream.as_ref() {
-                    pending.extend(speech.push(chunk));
+                    pending.extend_from_slice(&heard);
                     if pending.len() >= FEED_SAMPLES {
                         if !feed(live, &pending) {
                             stream = None;
@@ -392,12 +433,12 @@ impl Dictation {
             },
         );
         self.capturing.store(false, Ordering::Release);
-        let pcm = pcm?;
         if let Some(mic) = &mic {
             if let Some(problem) = mic.problem.lock().ok().and_then(|p| p.clone()) {
                 anyhow::bail!(problem);
             }
         }
+        let raw = pcm?;
         ensure!(self.generation.current(id), "Dictation cancelled.");
         self.phase(
             id,
@@ -408,15 +449,26 @@ impl Dictation {
             },
         );
         chime(settings.sounds, false);
+        let tail = speech.map(CaptureVad::finish).unwrap_or_default();
+        kept.extend_from_slice(&tail);
+        pending.extend_from_slice(&tail);
         let transcript = if let Some(stream) = stream {
             feed(&stream, &pending);
             stream.finish().ok().filter(|text| !text.trim().is_empty())
         } else {
             None
         };
+        ensure!(self.generation.current(id), "Dictation cancelled.");
         let text = match transcript {
             Some(text) => text,
-            None => engine().transcribe(selected.clone(), pcm, Priority::Dictation)?,
+            None => {
+                let audio = if kept.is_empty() && selected.streaming {
+                    raw
+                } else {
+                    kept
+                };
+                engine().transcribe(selected.clone(), audio, Priority::Dictation)?
+            }
         };
         ensure!(self.generation.current(id), "Dictation cancelled.");
         let language = if selected.language != "auto" {
@@ -583,38 +635,4 @@ fn newest(text: &str) -> String {
     text.chars()
         .skip(count.saturating_sub(SHOWN_CHARS))
         .collect()
-}
-struct StreamingVad {
-    vad: leo_services::speech::vad::SmoothedVad,
-    pending: Vec<f32>,
-    frame: usize,
-}
-impl StreamingVad {
-    fn new() -> Result<Self> {
-        use leo_services::speech::vad::*;
-        let vad = EarshotVad::new(0.5)?;
-        let frame = vad.frame_samples();
-        Ok(Self {
-            vad: SmoothedVad::new(
-                Box::new(vad),
-                frames_for_duration_ms(VAD_PREFILL_MS, frame),
-                frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, frame),
-                frames_for_duration_ms(VAD_ONSET_MS, frame),
-            ),
-            pending: Vec::new(),
-            frame,
-        })
-    }
-    fn push(&mut self, chunk: &[f32]) -> Vec<f32> {
-        use leo_services::speech::vad::{VadFrame, VoiceActivityDetector};
-        self.pending.extend_from_slice(chunk);
-        let mut out = Vec::new();
-        while self.pending.len() >= self.frame {
-            let frame: Vec<f32> = self.pending.drain(..self.frame).collect();
-            if let Ok(VadFrame::Speech(pcm)) = self.vad.push_frame(&frame) {
-                out.extend_from_slice(pcm);
-            }
-        }
-        out
-    }
 }

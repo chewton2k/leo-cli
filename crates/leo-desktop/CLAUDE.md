@@ -85,9 +85,15 @@ microphone, trailing space and Press Enter after pasting were removed
 and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
 Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
-they play on their own thread after the microphone is open (Handy's order), so
-the start chime never delays capture and the first words are kept. The app warms
-CoreAudio at launch and non-streaming models load at keypress.
+they play on their own thread. The popup says "Starting microphone…" until the
+first audio arrives, silence included; only then does it say Listening and
+play the start chime (Handy's readiness cue). No audio at all in 8 s is an error (a
+Bluetooth headset can take seconds to switch).
+At launch the app warms CoreAudio, checks the model stamp and, on Apple Silicon
+once per app version (`<config>/speech-shaders-ready`), has a throwaway worker
+compile the Metal shaders (about 4 s) so the first shortcut does not. No model is loaded at
+launch (2026-11-04: warming measured 620 ms vs 612 ms for the first stream and
+held about 900 MB on every launch). Audio queues while a model loads.
 Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
 never expose the test actions or write a test paste file.
 
@@ -119,10 +125,17 @@ The popup follows Handy's live preview: state changes are pushed as a
 `dictation` event (revision-stamped, skipped when the popup is Off; the page
 polls only if listening fails), committed and tentative words render with a
 caret, the text pins to its newest line, and 16 FFT buckets
-(`dictation::visualizer`) drive nine smoothed bars. Streaming models get the
-1650 ms streaming VAD hangover and ~32 ms feeds, so the model hears the tail
-it needs for the last words and their punctuation; text stays visible while
-the final pass runs. With AI writing on, Escape stays registered through the
+(`dictation::visualizer`) drive nine smoothed bars. Dictation follows Handy (2026-11-04, the
+user's call): audio passes Silero VAD at 0.3 in this process with the 1650 ms
+streaming hangover (450 ms for models that do not stream) in ~32 ms feeds, the
+stream's text is final, and the same filtered audio goes to a batch run only when
+that text is empty or there was no stream. Measured on 73 read clips, Silero with
+the stream gave 2.61% WER vs 2.96% unfiltered. Differences from Handy: streaming
+models too slow for live text (`Selected.live`) skip the live pass (Voxtral: about
+103 s for 60 s of speech, estimated); if Silero cannot load, dictation runs
+unfiltered; and when a streaming model's filter kept nothing, the batch run gets
+the raw audio, so quiet speech is not lost whole. Text stays
+visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
 reason. Settings warns when no writing AI is set up (`writing_ready`).
@@ -159,6 +172,11 @@ and scripts/set-version.sh remain authoritative.
 Release assets are macOS arm64/x64 app archives and DMGs plus Windows x64 NSIS.
 CI uses one stable self-signed identity and verifies both bundle and CLI signatures;
 updater signatures cover the same app archive or NSIS used by terminal installation.
+Windows builds set `TRANSCRIBE_CMAKE_ARGS` to an AVX2 floor (2026-11-04): transcribe.cpp
+otherwise tunes to the build machine, which crashed with an illegal instruction when CI
+reused a cache from another runner and would on users' processors too. Handy picks
+instructions at run time with dynamic backends instead. Silero refuses a processor
+below that floor, since it runs in the app process; the worker contains its own crash.
 Windows uses the dynamic CRT to match transcribe-cpp; its release-only config
 bundles the Visual C++ runtime DLLs next to the executables.
 No Linux release/test rows remain. Chromium and targeted WebKit browser jobs run
