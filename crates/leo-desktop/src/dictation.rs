@@ -1,7 +1,6 @@
 use anyhow::{ensure, Context, Result};
 use leo_services::dictation::{
     activation::{Action, Activation},
-    capture::final_text,
     generation::Generation,
     settings::{Popup, Settings, Writing},
     visualizer::Visualizer,
@@ -9,6 +8,10 @@ use leo_services::dictation::{
 use leo_services::speech::{
     engine::{engine, DictationStream, Priority},
     library::library,
+    vad::{
+        CaptureVad, SileroVad, SILERO_VAD_THRESHOLD, VAD_OFFLINE_HANGOVER_MS,
+        VAD_STREAMING_HANGOVER_MS,
+    },
 };
 use serde_json::{json, Value};
 use std::{
@@ -23,7 +26,6 @@ use tauri::{AppHandle, Emitter};
 
 const FEED_SAMPLES: usize = 512;
 const SHOWN_CHARS: usize = 25_000;
-const ZEROS_BEFORE_LISTENING: f64 = 3.0;
 
 const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 enum Finish {
@@ -76,6 +78,7 @@ impl Dictation {
         if !Self::test_mode() {
             leo_services::session::mic::warm_up();
             std::thread::spawn(|| {
+                let _ = SileroVad::new(SILERO_VAD_THRESHOLD);
                 let _ = library().and_then(|models| models.selected());
                 if let Ok(config) = leo_core::paths::config_dir() {
                     engine().prepare_after_update(&config, env!("CARGO_PKG_VERSION"));
@@ -371,14 +374,26 @@ impl Dictation {
             None
         };
         let mut pending = Vec::new();
+        let mut kept = Vec::new();
+        let hangover = if selected.streaming {
+            VAD_STREAMING_HANGOVER_MS
+        } else {
+            VAD_OFFLINE_HANGOVER_MS
+        };
+        let mut speech = match SileroVad::new(SILERO_VAD_THRESHOLD) {
+            Ok(silero) => Some(CaptureVad::new(Box::new(silero), hangover)),
+            Err(error) => {
+                log::warn!("Dictation is not filtered, Silero VAD did not load: {error:#}");
+                None
+            }
+        };
         let mut ready = false;
         let mut visualizer = Visualizer::new();
         let pcm = leo_services::dictation::capture::collect(
             &rx,
             stop,
             |chunk, _, seconds| {
-                if !ready && (seconds >= ZEROS_BEFORE_LISTENING || chunk.iter().any(|n| *n != 0.0))
-                {
+                if !ready {
                     ready = true;
                     let mut began = false;
                     self.change(id, |state| {
@@ -397,8 +412,12 @@ impl Dictation {
                         state["levels"] = json!(levels);
                     });
                 }
+                let heard = speech
+                    .as_mut()
+                    .map_or_else(|| chunk.to_vec(), |vad| vad.push(chunk));
+                kept.extend_from_slice(&heard);
                 if let Some(live) = stream.as_ref() {
-                    pending.extend_from_slice(chunk);
+                    pending.extend_from_slice(&heard);
                     if pending.len() >= FEED_SAMPLES {
                         if !feed(live, &pending) {
                             stream = None;
@@ -419,7 +438,7 @@ impl Dictation {
                 anyhow::bail!(problem);
             }
         }
-        let pcm = pcm?;
+        let raw = pcm?;
         ensure!(self.generation.current(id), "Dictation cancelled.");
         self.phase(
             id,
@@ -430,6 +449,9 @@ impl Dictation {
             },
         );
         chime(settings.sounds, false);
+        let tail = speech.map(CaptureVad::finish).unwrap_or_default();
+        kept.extend_from_slice(&tail);
+        pending.extend_from_slice(&tail);
         let transcript = if let Some(stream) = stream {
             feed(&stream, &pending);
             stream.finish().ok().filter(|text| !text.trim().is_empty())
@@ -437,10 +459,17 @@ impl Dictation {
             None
         };
         ensure!(self.generation.current(id), "Dictation cancelled.");
-        let text = final_text(
-            engine().transcribe(selected.clone(), pcm, Priority::Dictation),
-            transcript,
-        )?;
+        let text = match transcript {
+            Some(text) => text,
+            None => {
+                let audio = if kept.is_empty() && selected.streaming {
+                    raw
+                } else {
+                    kept
+                };
+                engine().transcribe(selected.clone(), audio, Priority::Dictation)?
+            }
+        };
         ensure!(self.generation.current(id), "Dictation cancelled.");
         let language = if selected.language != "auto" {
             Some(selected.language.as_str())

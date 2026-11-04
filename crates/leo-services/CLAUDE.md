@@ -126,23 +126,29 @@ admission stays immediate and bounded. Saturation tests free queue capacity
 explicitly rather than depending on actor-thread scheduling.
 Model deletion waits behind inference, unloads the worker first,
 and refuses deletion of an active recording/dictation model. Long audio uses
-30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
-VAD with onset, pre-roll and hangover. All of that runs on a copy raised to speech
-level (95th percentile frame level of the whole clip to 0.1, gain 1-50), because Earshot fails below
-about -42 dBFS and lecture audio is deleted once transcribed; the model always gets
-the original level. Dictation is not trimmed: VAD only decides whether a chunk
-goes to the model (fragments made it invent words from noise, whole clips stayed
-empty). Dictation keeps at most 500 ms after its last sound (a frame at twice the
-clip's noise floor, so a quiet last word after loud speech stays) and ends in 300 ms of
-silence: without that batch lost last words, and with 10 s of silence it lost
-punctuation. Clips under a second are padded as Handy does. Raising means amplified
-room noise can pass the check: Parakeet returns nothing for it; a Whisper model may
-invent a word after an empty tap, which is the accepted cost of keeping quiet speech.
-Slow catalog models skip live passes.
+30-second target / 40-second maximum cuts at VAD pauses. `vad::detector` is Silero
+at 0.3, Handy's default, with Earshot at 0.5 if Silero cannot load. Dictation filters
+while capturing, and the engine only cuts and pads clips under a second, as Handy
+does. Recordings have no Handy equivalent and are never trimmed: a chunk goes to the
+model whole unless VAD, on a copy raised to speech level (median frame level of the
+whole clip to 0.1, gain 1-50), hears nothing in it (2026-11-04: lecturers often have
+no microphone, and the audio is deleted once transcribed). On a synthetic distant
+voice at 8 dB over room noise with a loud nearby talker 15% of the time, words found
+were 63% with 95th percentile raised trimming vs 90% untrimmed; plain Silero trimming
+of a distant voice gave 34.7% WER vs 13.1%. Chatter 10 dB under the voice or closer
+defeats the model itself (59%+ WER untrimmed). Raising means amplified noise can
+reach the model; Parakeet stayed empty on it, Whisper was not tested. Slow catalog
+models skip live passes.
 
 `speech/supervisor.rs` owns a crash-isolated worker, re-executing the current
 binary with `--leo-speech-worker` before normal app/CLI startup. Only the worker
-initializes native backends, loads a model or runs inference. Framed JSON/PCM,
+initializes GPU backends, loads a speech model or runs speech inference. The one
+exception is Silero VAD: a small CPU-only model that runs in the app process on a
+CPU-mask backend, as in Handy (2026-11-04, the user's call), written to
+`models_dir()/vad` from bytes embedded in the crate and compared before first use.
+Each detector loads its own `Model`, because one model's compute lock would make
+dictation wait behind chunk scoring. A native fault there takes the app down, which
+the worker rule otherwise prevents. Framed JSON/PCM,
 queues, stderr and deadlines are bounded; crashes/hangs are reaped and retried
 once (CPU after GPU failure). Apple Silicon uses Metal; Intel macOS and Windows
 use CPU. The Rust binding and native sys crate are both pinned to exactly

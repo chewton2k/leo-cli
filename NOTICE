@@ -26,3 +26,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+Silero VAD model (crates/leo-services/src/speech/vad/silero-vad-v6.2-F32.gguf)
+
+Copyright (c) 2020-present Silero Team
+Licensed under the MIT License. Converted to GGUF by the Handy project
+(https://huggingface.co/handy-computer/silero-vad-v6.2-gguf).
+Upstream: https://github.com/snakers4/silero-vad

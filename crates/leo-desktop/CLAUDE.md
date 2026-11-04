@@ -86,10 +86,9 @@ and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
 Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
 they play on their own thread. The popup says "Starting microphone…" until the
-first sound arrives (all-zero blocks do not count); only then does it say
-Listening and play the start chime (Handy's readiness cue). After 3 s of zeros it
-goes on anyway, for devices that gate silence; no audio at all in 8 s is an error
-(a Bluetooth headset can take seconds to switch).
+first audio arrives, silence included; only then does it say Listening and
+play the start chime (Handy's readiness cue). No audio at all in 8 s is an error (a
+Bluetooth headset can take seconds to switch).
 At launch the app warms CoreAudio, checks the model stamp and, on Apple Silicon
 once per app version (`<config>/speech-shaders-ready`), has a throwaway worker
 compile the Metal shaders (about 4 s) so the first shortcut does not. No model is loaded at
@@ -126,12 +125,16 @@ The popup follows Handy's live preview: state changes are pushed as a
 `dictation` event (revision-stamped, skipped when the popup is Off; the page
 polls only if listening fails), committed and tentative words render with a
 caret, the text pins to its newest line, and 16 FFT buckets
-(`dictation::visualizer`) drive nine smoothed bars. Models fast enough for live text
-(`Selected.live`) stream every sample in ~32 ms feeds with no VAD in front. Slower
-streaming models skip the live pass and are transcribed on stop. The final text
-always comes from a batch pass, with the stream's text as its fallback (2026-11-04,
-74 read clips: batch 2.39% WER vs 2.73%, sentence-final punctuation 34 vs 1 of 74,
-123 ms vs 86 ms for 10 s of speech). Text stays
+(`dictation::visualizer`) drive nine smoothed bars. Dictation follows Handy (2026-11-04, the
+user's call): audio passes Silero VAD at 0.3 in this process with the 1650 ms
+streaming hangover (450 ms for models that do not stream) in ~32 ms feeds, the
+stream's text is final, and the same filtered audio goes to a batch run only when
+that text is empty or there was no stream. Measured on 73 read clips, Silero with
+the stream gave 2.61% WER vs 2.96% unfiltered. Differences from Handy: streaming
+models too slow for live text (`Selected.live`) skip the live pass (Voxtral: about
+103 s for 60 s of speech, estimated); if Silero cannot load, dictation runs
+unfiltered; and when a streaming model's filter kept nothing, the batch run gets
+the raw audio, so quiet speech is not lost whole. Text stays
 visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the

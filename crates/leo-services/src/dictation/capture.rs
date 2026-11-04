@@ -25,13 +25,6 @@ fn append(
     heard(&chunk, rms, pcm.len() as f64 / 16_000.0);
     Ok(())
 }
-pub fn final_text(batch: Result<String>, live: Option<String>) -> Result<String> {
-    match (batch, live) {
-        (Ok(text), _) if !text.trim().is_empty() => Ok(text),
-        (_, Some(text)) => Ok(text),
-        (batch, None) => batch,
-    }
-}
 pub fn collect(
     rx: &Receiver<Vec<i16>>,
     stop: &AtomicBool,
@@ -122,19 +115,6 @@ mod tail_tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("not sending audio"));
-    }
-
-    #[test]
-    fn the_final_pass_wins_and_the_live_text_is_the_fallback() {
-        let live = || Some("live".to_string());
-        assert_eq!(final_text(Ok("final.".into()), live()).unwrap(), "final.");
-        assert_eq!(final_text(Ok(" ".into()), live()).unwrap(), "live");
-        assert_eq!(
-            final_text(Err(anyhow::anyhow!("busy")), live()).unwrap(),
-            "live"
-        );
-        assert!(final_text(Err(anyhow::anyhow!("busy")), None).is_err());
-        assert_eq!(final_text(Ok(String::new()), None).unwrap(), "");
     }
 
     #[test]

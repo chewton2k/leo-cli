@@ -11,10 +11,7 @@ use transcribe_cpp::{Backend, RunOptions};
 use super::library::Selected;
 use super::protocol::DeviceSelector;
 use super::supervisor::{EngineSupervisor, Fed, LoadSpec};
-use super::vad::{
-    frames_for_duration_ms, EarshotVad, SmoothedVad, VadFrame, VoiceActivityDetector,
-    VAD_OFFLINE_HANGOVER_MS, VAD_ONSET_MS, VAD_PREFILL_MS,
-};
+use super::vad::{detector, CaptureVad, VAD_OFFLINE_HANGOVER_MS};
 
 const QUEUED: usize = 8;
 const SHADERS_MARKER: &str = "speech-shaders-ready";
@@ -23,9 +20,6 @@ const POLL: Duration = Duration::from_millis(20);
 const CONTROL_LIMIT: Duration = Duration::from_secs(5);
 const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 const MOST_FEEDS: usize = 300 * 16_000 / 512 + 2;
-const TAIL_KEPT: usize = 8_000;
-const TAIL_SILENCE: usize = 4_800;
-const SOUND_OVER_FLOOR: f32 = 2.0;
 const FRAME: usize = 256;
 const MOST_MARKER_BYTES: u64 = 64;
 const SPEECH_LEVEL: f32 = 0.1;
@@ -154,12 +148,11 @@ impl Engine {
             })
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again in a moment."))?;
         let admission = Pin(self.admitted.clone());
-        let pcm = if priority == Priority::Dictation {
-            settled(pcm)
+        let gain = if priority == Priority::Dictation {
+            1.0
         } else {
-            pcm
+            speech_gain(&pcm)
         };
-        let gain = speech_gain(&pcm);
         let chunks = speech_chunks(pcm, gain)?.into();
         let (reply, answer) = mpsc::sync_channel(1);
         self.requests.try_send(Message::Run(Job { _admission: admission, selected, gain, chunks, text: Vec::new(), priority, reply }))
@@ -343,26 +336,6 @@ impl Heard {
     }
 }
 
-fn trim(pcm: Vec<f32>) -> Result<Vec<f32>> {
-    let detector = EarshotVad::new(0.5)?;
-    let frame = detector.frame_samples();
-    let mut vad = SmoothedVad::new(
-        Box::new(detector),
-        frames_for_duration_ms(VAD_PREFILL_MS, frame),
-        frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, frame),
-        frames_for_duration_ms(VAD_ONSET_MS, frame),
-    );
-    let mut out = Vec::new();
-    for chunk in pcm.chunks(frame) {
-        let mut padded = vec![0.0; frame];
-        padded[..chunk.len()].copy_from_slice(chunk);
-        if let VadFrame::Speech(heard) = vad.push_frame(&padded)? {
-            out.extend_from_slice(heard);
-        }
-    }
-    Ok(out)
-}
-
 fn speech_gain(pcm: &[f32]) -> f32 {
     let mut levels: Vec<f32> = pcm
         .chunks(FRAME)
@@ -370,7 +343,7 @@ fn speech_gain(pcm: &[f32]) -> f32 {
         .filter(|level| *level > 0.0)
         .collect();
     levels.sort_by(f32::total_cmp);
-    match levels.get(levels.len() * 95 / 100) {
+    match levels.get(levels.len() / 2) {
         Some(level) => (SPEECH_LEVEL / level).clamp(1.0, MOST_GAIN),
         None => 1.0,
     }
@@ -392,20 +365,6 @@ fn frame_level(frame: &[f32]) -> f32 {
     (frame.iter().map(|n| n * n).sum::<f32>() / frame.len() as f32).sqrt()
 }
 
-fn settled(mut pcm: Vec<f32>) -> Vec<f32> {
-    let levels: Vec<f32> = pcm.chunks(FRAME).map(frame_level).collect();
-    let mut sorted = levels.clone();
-    sorted.sort_by(f32::total_cmp);
-    if let Some(floor) = sorted.get(sorted.len() / 10) {
-        let quiet = floor * SOUND_OVER_FLOOR;
-        if let Some(last) = levels.iter().rposition(|level| *level > quiet) {
-            pcm.truncate(((last + 1) * FRAME + TAIL_KEPT).min(pcm.len()));
-        }
-    }
-    pcm.resize(pcm.len() + TAIL_SILENCE, 0.0);
-    pcm
-}
-
 fn speech_chunks(pcm: Vec<f32>, gain: f32) -> Result<Vec<Vec<f32>>> {
     let mut chunks = super::prepare(raised(&pcm, gain))?;
     for chunk in &mut chunks {
@@ -414,24 +373,21 @@ fn speech_chunks(pcm: Vec<f32>, gain: f32) -> Result<Vec<Vec<f32>>> {
     Ok(chunks)
 }
 
-fn trim_at_speech_level(pcm: &[f32], gain: f32) -> Result<Vec<f32>> {
-    let mut kept = trim(raised(pcm, gain))?;
-    kept.iter_mut().for_each(|n| *n /= gain);
-    Ok(kept)
-}
-
 fn heard_speech(pcm: &[f32], gain: f32) -> Result<bool> {
-    Ok(!trim(raised(pcm, gain))?.is_empty())
+    let mut vad = CaptureVad::new(detector()?, VAD_OFFLINE_HANGOVER_MS);
+    for part in pcm.chunks(16_000) {
+        if !vad.push(&raised(part, gain)).is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(!vad.finish().is_empty())
 }
 
-fn dictated(mut pcm: Vec<f32>, heard: impl FnOnce(&[f32]) -> Result<bool>) -> Result<Vec<f32>> {
-    if !heard(&pcm)? {
-        return Ok(Vec::new());
-    }
-    if pcm.len() < SHORTEST_CLIP {
+fn padded(mut pcm: Vec<f32>) -> Vec<f32> {
+    if !pcm.is_empty() && pcm.len() < SHORTEST_CLIP {
         pcm.resize(SHORT_CLIP_PADDED, 0.0);
     }
-    Ok(pcm)
+    pcm
 }
 
 fn run(
@@ -606,9 +562,13 @@ fn run(
             }
             if let Some(chunk) = job.chunks.pop_front() {
                 let pcm = if job.priority == Priority::Dictation {
-                    dictated(chunk, |pcm| heard_speech(pcm, job.gain))?
+                    padded(chunk)
                 } else {
-                    trim_at_speech_level(&chunk, job.gain)?
+                    if heard_speech(&chunk, job.gain)? {
+                        chunk
+                    } else {
+                        Vec::new()
+                    }
                 };
                 if !pcm.is_empty() {
                     let run = RunOptions {
@@ -636,33 +596,25 @@ fn run(
 }
 
 #[cfg(test)]
-mod dictation_audio_tests {
+mod audio_level_tests {
     use super::*;
 
     #[test]
-    fn dictation_keeps_the_whole_clip_when_any_speech_is_heard() {
-        let clip = vec![0.01; SHORTEST_CLIP * 2];
-        assert_eq!(dictated(clip.clone(), |_| Ok(true)).unwrap(), clip);
-        assert!(dictated(clip, |_| Ok(false)).unwrap().is_empty());
+    fn a_short_dictation_is_padded_and_an_empty_one_stays_empty() {
+        let short = padded(vec![0.5; 4_000]);
+        assert_eq!(short.len(), SHORT_CLIP_PADDED);
+        assert_eq!(short[3_999], 0.5);
+        assert_eq!(short[4_000], 0.0);
+        assert!(padded(Vec::new()).is_empty());
+        assert_eq!(padded(vec![0.5; SHORTEST_CLIP]).len(), SHORTEST_CLIP);
     }
 
     #[test]
-    fn a_short_dictation_is_padded_for_models_that_need_a_full_second() {
-        let padded = dictated(vec![0.5; 4_000], |_| Ok(true)).unwrap();
-        assert_eq!(padded.len(), SHORT_CLIP_PADDED);
-        assert_eq!(padded[3_999], 0.5);
-        assert_eq!(padded[4_000], 0.0);
-    }
-
-    #[test]
-    fn a_quiet_voice_is_raised_for_detection_and_a_loud_one_left_alone() {
+    fn a_quiet_voice_is_raised_and_a_loud_one_left_alone() {
         assert_eq!(speech_gain(&[0.0; 1_024]), 1.0);
         assert_eq!(speech_gain(&[0.5; 1_024]), 1.0);
         assert!((speech_gain(&[0.01; 1_024]) - 10.0).abs() < 0.01);
         assert_eq!(speech_gain(&[0.000_01; 1_024]), MOST_GAIN);
-        let mut mostly_quiet = vec![0.01; 25_600];
-        mostly_quiet[..256].fill(1.0);
-        assert!((speech_gain(&mostly_quiet) - 10.0).abs() < 0.01);
     }
 
     #[test]
@@ -673,7 +625,7 @@ mod dictation_audio_tests {
     }
 
     #[test]
-    fn the_model_gets_audio_at_its_original_level() {
+    fn the_model_gets_a_recording_at_its_original_level() {
         let mut clip = vec![0.01; 25_600];
         clip[0] = 0.5;
         let gain = speech_gain(&clip);
@@ -684,43 +636,15 @@ mod dictation_audio_tests {
     }
 
     #[test]
-    fn a_dictation_ends_in_a_short_silence_whatever_followed_the_speech() {
-        let mut speech = vec![0.2; 16_000];
-        speech.extend(vec![0.0; 160_000]);
-        let tidy = settled(speech);
-        assert_eq!(tidy.len(), 16_128 + TAIL_KEPT + TAIL_SILENCE);
-        assert_eq!(tidy[15_999], 0.2);
-
-        let cut_off = settled(vec![0.2; 16_000]);
-        assert_eq!(cut_off.len(), 16_000 + TAIL_SILENCE);
-        assert_eq!(cut_off[15_999], 0.2);
-        assert_eq!(cut_off[16_000], 0.0);
+    fn a_loud_voice_near_the_microphone_does_not_hide_the_lecturer() {
+        let mut clip = vec![0.002; 7_000];
+        clip.extend(vec![0.5; 3_000]);
+        assert!((speech_gain(&clip) - 50.0).abs() < 0.01);
     }
 
     #[test]
-    fn a_quiet_last_word_after_loud_speech_is_kept() {
-        let mut clip = vec![0.5; 16_000];
-        clip.extend(vec![0.0; 32_000]);
-        clip.extend(vec![0.002; 16_000]);
-        clip.extend(vec![0.0; 64_000]);
-        let tidy = settled(clip);
-        assert!(tidy.len() >= 64_000 + TAIL_SILENCE);
-        assert_eq!(tidy[63_000], 0.002);
-    }
-
-    #[test]
-    fn room_noise_after_the_speech_is_not_taken_for_sound() {
-        let mut clip = vec![0.1; 16_000];
-        clip.extend(vec![0.001; 160_000]);
-        assert!(settled(clip).len() <= 16_128 + TAIL_KEPT + TAIL_SILENCE);
-    }
-
-    #[test]
-    fn a_quiet_tail_counts_as_speech_for_a_quiet_voice() {
-        let mut speech = vec![0.01; 16_000];
-        speech.extend(vec![0.002; 16_000]);
-        speech.extend(vec![0.000_1; 160_000]);
-        assert!(settled(speech).len() >= 32_000 + TAIL_SILENCE);
+    fn digital_silence_has_no_speech_in_it() {
+        assert!(!heard_speech(&[0.0; 32_000], 1.0).unwrap());
     }
 
     #[test]
@@ -731,14 +655,6 @@ mod dictation_audio_tests {
         std::fs::write(&marker, "1.0.0").unwrap();
         assert!(shaders_ready(&marker, "1.0.0"));
         assert!(!shaders_ready(&marker, "1.0.1"));
-    }
-
-    #[test]
-    fn digital_silence_is_never_sent_to_the_model() {
-        let clip = vec![0.0; SHORTEST_CLIP * 2];
-        assert!(dictated(clip, |pcm| heard_speech(pcm, 1.0))
-            .unwrap()
-            .is_empty());
     }
 }
 
