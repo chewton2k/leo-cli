@@ -65,6 +65,14 @@ impl SileroVad {
         if !(0.0..=1.0).contains(&threshold) {
             bail!("threshold must be between 0.0 and 1.0");
         }
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if !(is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("fma")
+            && is_x86_feature_detected!("f16c")
+            && is_x86_feature_detected!("bmi2"))
+        {
+            bail!("this processor lacks the AVX2 instructions Silero VAD is built for");
+        }
         cpu_backend()?;
         let model = Model::load_with(
             model_file()?,

@@ -112,6 +112,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: Build speech for any recent x64 Windows CPU
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "TRANSCRIBE_CMAKE_ARGS=-DGGML_NATIVE=OFF -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_F16C=ON -DGGML_FMA=ON -DGGML_BMI2=ON -DGGML_AVX2=ON" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: desktop-${{ matrix.target }}

@@ -172,6 +172,11 @@ and scripts/set-version.sh remain authoritative.
 Release assets are macOS arm64/x64 app archives and DMGs plus Windows x64 NSIS.
 CI uses one stable self-signed identity and verifies both bundle and CLI signatures;
 updater signatures cover the same app archive or NSIS used by terminal installation.
+Windows builds set `TRANSCRIBE_CMAKE_ARGS` to an AVX2 floor (2026-11-04): transcribe.cpp
+otherwise tunes to the build machine, which crashed with an illegal instruction when CI
+reused a cache from another runner and would on users' processors too. Handy picks
+instructions at run time with dynamic backends instead. Silero refuses a processor
+below that floor, since it runs in the app process; the worker contains its own crash.
 Windows uses the dynamic CRT to match transcribe-cpp; its release-only config
 bundles the Visual C++ runtime DLLs next to the executables.
 No Linux release/test rows remain. Chromium and targeted WebKit browser jobs run
