@@ -25,6 +25,7 @@ const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 const MOST_FEEDS: usize = 300 * 16_000 / 512 + 2;
 const TAIL_KEPT: usize = 8_000;
 const TAIL_SILENCE: usize = 4_800;
+const SOUND_OVER_FLOOR: f32 = 2.0;
 const FRAME: usize = 256;
 const MOST_MARKER_BYTES: u64 = 64;
 const SPEECH_LEVEL: f32 = 0.1;
@@ -392,9 +393,14 @@ fn frame_level(frame: &[f32]) -> f32 {
 }
 
 fn settled(mut pcm: Vec<f32>) -> Vec<f32> {
-    let quiet = SPEECH_LEVEL / 10.0 / speech_gain(&pcm);
-    if let Some(last) = pcm.chunks(FRAME).rposition(|f| frame_level(f) >= quiet) {
-        pcm.truncate(((last + 1) * FRAME + TAIL_KEPT).min(pcm.len()));
+    let levels: Vec<f32> = pcm.chunks(FRAME).map(frame_level).collect();
+    let mut sorted = levels.clone();
+    sorted.sort_by(f32::total_cmp);
+    if let Some(floor) = sorted.get(sorted.len() / 10) {
+        let quiet = floor * SOUND_OVER_FLOOR;
+        if let Some(last) = levels.iter().rposition(|level| *level > quiet) {
+            pcm.truncate(((last + 1) * FRAME + TAIL_KEPT).min(pcm.len()));
+        }
     }
     pcm.resize(pcm.len() + TAIL_SILENCE, 0.0);
     pcm
@@ -689,6 +695,24 @@ mod dictation_audio_tests {
         assert_eq!(cut_off.len(), 16_000 + TAIL_SILENCE);
         assert_eq!(cut_off[15_999], 0.2);
         assert_eq!(cut_off[16_000], 0.0);
+    }
+
+    #[test]
+    fn a_quiet_last_word_after_loud_speech_is_kept() {
+        let mut clip = vec![0.5; 16_000];
+        clip.extend(vec![0.0; 32_000]);
+        clip.extend(vec![0.002; 16_000]);
+        clip.extend(vec![0.0; 64_000]);
+        let tidy = settled(clip);
+        assert!(tidy.len() >= 64_000 + TAIL_SILENCE);
+        assert_eq!(tidy[63_000], 0.002);
+    }
+
+    #[test]
+    fn room_noise_after_the_speech_is_not_taken_for_sound() {
+        let mut clip = vec![0.1; 16_000];
+        clip.extend(vec![0.001; 160_000]);
+        assert!(settled(clip).len() <= 16_128 + TAIL_KEPT + TAIL_SILENCE);
     }
 
     #[test]

@@ -132,7 +132,8 @@ level (95th percentile frame level of the whole clip to 0.1, gain 1-50), because
 about -42 dBFS and lecture audio is deleted once transcribed; the model always gets
 the original level. Dictation is not trimmed: VAD only decides whether a chunk
 goes to the model (fragments made it invent words from noise, whole clips stayed
-empty). Dictation keeps at most 500 ms after its last sound and ends in 300 ms of
+empty). Dictation keeps at most 500 ms after its last sound (a frame at twice the
+clip's noise floor, so a quiet last word after loud speech stays) and ends in 300 ms of
 silence: without that batch lost last words, and with 10 s of silence it lost
 punctuation. Clips under a second are padded as Handy does. Raising means amplified
 room noise can pass the check: Parakeet returns nothing for it; a Whisper model may
