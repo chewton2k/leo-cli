@@ -170,7 +170,7 @@
 
   function rawOffset(raw, visiblePrefix) {
     const { prefix, out } = visibleIndices(raw);
-    const k = [...visiblePrefix].length;
+    const k = visiblePrefix.length;
     if (k === 0) return out.length ? out[0] : prefix;
     if (k > out.length) return raw.length;
     return out[k - 1] + 1;

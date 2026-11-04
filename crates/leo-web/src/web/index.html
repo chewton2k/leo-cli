@@ -451,6 +451,18 @@ body.on-library main, body.on-interviews main:not(:has(.interview-practice)) { p
   background: var(--code-bg); border-radius: 12px; padding: 14px 16px; margin: .4em 0;
 }
 .doc .blk-quote .line-edit { border-left: 3px solid var(--accent); padding-left: 14px; }
+.coding-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; margin-top: 18px; }
+.coding-plan { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.coding-plan header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.coding-plan h4 { margin: 0; }
+.coding-plan .chip, .coding-plan .btn { margin-top: 10px; }
+.plan-window { margin-top: 16px; }
+.plan-window .set-line { justify-content: space-between; font-size: 13px; }
+.plan-window strong { font-weight: 500; }
+.plan-meter { height: 6px; border-radius: 6px; overflow: hidden; background: var(--surface-2); margin: 7px 0; }
+.plan-meter i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .18s ease-out; }
+.plan-meter.near-limit i { background: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .plan-meter i { transition: none; } }
 .doc-tail { min-height: 40vh; cursor: text; }
 
 .actions {

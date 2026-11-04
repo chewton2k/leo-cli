@@ -1338,6 +1338,7 @@ impl ChatProvider for AgentCli {
 
 pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
     let mut command = leo_core::children::quiet_command(locate(bin)?);
+    super::scoped_cli::plan_environment(&mut command);
     command.args(match agent {
         Agent::Codex => vec!["login", "status"],
         Agent::ClaudeCode => vec!["auth", "status", "--json"],

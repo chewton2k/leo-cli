@@ -200,6 +200,13 @@ or plan usage for agents, notes such as Ollama not running) never includes a
 key; `apply` validates every change against `choice`, writes through
 `toml_edit` (creating the commented default file when missing).
 
+`coding_plans` detects both configured coding CLIs without changing the selected
+writer. It returns only availability, tri-state sign-in and saved usage windows;
+auth probes use the same cleaned plan environment as writing and never expose
+their raw output or make a model call. An installed CLI alone is not sign-in.
+Availability and sign-in use the same normalized `AgentCli::bin`, including
+when a missing, empty or whitespace-only setting falls back to the default CLI.
+
 `import.rs` turns uploads into a note: native Markdown extraction precedes AI
 study-note writing. `import/office.rs` preserves Word headings (including
 inherited styles), lists, emphasis, hyperlinks, tables and common OMML equations;

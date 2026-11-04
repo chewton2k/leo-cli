@@ -80,10 +80,11 @@ function stopLibraryArrival() {
   library.arrival = null;
 }
 
-function arriveInFolder() {
+function arriveOnPage(element = app) {
   stopLibraryArrival();
   if (stillMotion() || typeof app.animate !== 'function') return;
-  const run = app.animate([{ opacity: .45, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
+  const from = element === app ? 'translateY(4px)' : 'none';
+  const run = element.animate([{ opacity: .45, transform: from }, { opacity: 1, transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
   library.arrival = run;
   run.onfinish = () => { if (library.arrival === run) library.arrival = null; };
 }

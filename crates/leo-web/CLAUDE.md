@@ -151,11 +151,13 @@ reader, seer, meaning, web, room, speech).
   Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
   the menu and returns focus to its button without closing the conversation.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
-  follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
-  entrances, hover lifts or sliding gliders. `<details>` slide their height
+  follows a click, quick (`MOTION_MS` 180), transform/clip/height/opacity only. No
+  idle animation or hover lifts. `<details>` slide their height
   (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
   ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
-  content. Reduced Motion turns all of it off. Tapping Felix is the one
+  content. Notes fade in place so text never moves during an immediate selection; confirmed note/folder removals leave
+  over 180 ms only after the delete succeeds, and delayed deletes never navigate
+  a newer page. Reduced Motion turns all of it off. Tapping Felix is the one
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
@@ -180,8 +182,12 @@ reader, seer, meaning, web, room, speech).
   Select-all and multi-line undo selections keep the blocks rendered. A newly
   focused source editor retains the rendered text height (scrolling internally
   for longer inline Markdown); input resumes normal height fitting. Heading
-  source prefixes hang left of the rendered text position. A selection across
-  lines stays rendered in place: dragging out of the edited line carries on across the lines (`dragAnchor`), Shift+click selects,
+  source prefixes hang left of the rendered text position. During a selection
+  dragged out of an editor, its source text keeps the editor's geometry and
+  scroll position in a selectable div until the selection clears; clicking it
+  resumes the same textarea. Other blocks stay rendered. The drag anchor is
+  captured before mouse movement, since macOS can report `selectionDirection`
+  as `none` for a backwards range. Dragging carries on across the lines (`dragAnchor`), Shift+click selects,
   copy and cut give the Markdown, and typing, Enter, Delete or paste replace it
   through the raw lines, then only the caret's line stays open.
   Autosave PATCHes 700 ms after the last change with `base` = the loaded
@@ -1290,11 +1296,33 @@ the first heading never shifts or narrows the writing column. A narrow pane or
 phone reserves a fixed disclosure row; its expanded outline overlays the note.
 Outline toggles and original-file open/close controls focus explicitly so
 WKWebView preserves keyboard focus when their markup changes.
-Heading jumps keep the URL and reading-position flow; typing refreshes only the
+Heading jumps scroll smoothly (instantly with Reduced Motion), keeping the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. A width observer refits
 the active textarea in place when panes resize, clearing internal scroll so text
 and the caret stay visible; it disconnects with the document. Scroll/resize observers,
 frames and timers are released with the document. The outline never prints.
+
+Stopping a line editor reconciles blocks in place: unchanged source blocks retain
+their DOM, including rendered math, diagrams and open callouts. Source editors
+keep the rendered block height and margins until input so code, tables, quotes
+and math do not move the lines below when clicked.
+Pointer activation never scrolls an already visible part of a block into view;
+keyboard navigation still reveals its editor. Rendered/source caret conversion
+uses UTF-16 offsets throughout, matching DOM ranges and textarea selections even
+when a line contains emoji.
+Selection endpoints on list markers stay within the edited item's source range.
+Programmatic insertion commits source-selection mode first and retains the
+existing append behavior, so picture insertion never uses a detached textarea.
+
+Writing AI shows detected Codex/Claude accounts with bounded CLI sign-in checks,
+5-hour/7-day meters, reset times and the age of saved usage. Detection never
+changes the chosen provider; unknown or absent limits are stated explicitly.
+PDF export keeps Windows' native print function (Tauri calls it internally),
+uses the native bridge on macOS, and reports bridge errors without losing the
+note. A completed export cannot rename a newer page.
+The browser runner requires a fresh disposable home and points both coding
+providers at missing fixture binaries before startup, so autodetection cannot
+inspect the developer's signed-in accounts.
 
 Combine’s chunker and dropped-content recovery share fence recognition: a closing
 line needs the opener’s character and at least its full length, with no trailing

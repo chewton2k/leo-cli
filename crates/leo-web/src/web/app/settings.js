@@ -163,7 +163,10 @@ document.addEventListener('keydown', (e) => {
 }, true);
 
 function taskCard(t) {
-  const status = t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
+  const plan = state.settings?.plans?.find(plan => plan.provider === t.provider);
+  const status = plan && plan.installed && plan.signed_in !== true
+    ? `<span class="set-status missing">${plan.signed_in === false ? 'Sign in needed' : 'Sign-in unknown'}</span>`
+    : t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
   const providers = t.choices.map((c) => settingsOption(c.id, c.label, t.provider)).join('') + (t.custom ? settingsOption(t.provider, `${t.provider} (from config.toml)`, t.provider) : '');
   let model = '';
   if (t.fixed_model) {
@@ -178,7 +181,7 @@ function taskCard(t) {
     key = `<div class="set-row column"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
   }
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text)}</p>` : '';
-  const usage = t.usage ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
+  const usage = t.usage && !plan ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
   const note = t.note ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
   return `<section class="set-card" data-task-card="${t.task}">
     <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
@@ -189,6 +192,36 @@ function taskCard(t) {
     ${model}${key}${signin}${usage}${note}
     <div class="set-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
+}
+
+const PLAN_STALE_MS = 5 * 60 * 1000;
+
+function planLimits(plan) {
+  const limits = plan.limits;
+  const now = Date.now();
+  const windows = [['five_hour', '5 hour'], ['seven_day', '7 day']].flatMap(([key, name]) => {
+    const window = limits?.[key];
+    if (!window || !Number.isFinite(window.used)) return [];
+    const reset = Number.isFinite(window.resets_at) ? new Date(window.resets_at * 1000) : null;
+    const validReset = reset && Number.isFinite(reset.getTime());
+    const expired = validReset && reset.getTime() <= now;
+    const percent = expired ? 0 : Math.round(Math.max(0, Math.min(1, window.used)) * 100);
+    const when = expired ? 'Waiting for the next update' : validReset ? `Resets ${reset.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Reset time unavailable';
+    return [`<div class="plan-window"><div class="set-line"><span>${name}</span><strong>${percent}% used</strong></div><div class="plan-meter${percent >= 90 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
+  });
+  const seen = limits && new Date(limits.seen_at).getTime();
+  const age = Number.isFinite(seen) ? `<p class="hint">${now - seen >= PLAN_STALE_MS ? 'Saved usage · ' : ''}Updated ${esc(rel(limits.seen_at))}</p>` : '';
+  return windows.length ? windows.join('') + age : `<p class="hint">${plan.provider === 'claude_code' ? 'Usage appears after Claude Code reports limits during an answer.' : 'Usage appears when Codex reports account limits. Select Codex and reopen Writing AI to check.'}</p>`;
+}
+
+function codingPlans(page) {
+  if (!page.plans?.length) return '';
+  const selected = page.tasks.find(task => task.task === 'writing')?.provider;
+  return `<section class="set-card"><header><h3>Coding accounts</h3></header><p class="hint">Detected from the coding apps on this computer. Sign-in stays with each app; Leo never copies its credentials. Billing follows the account signed into the CLI.</p><div class="coding-plans">${page.plans.map(plan => {
+    const connected = plan.installed && plan.signed_in === true;
+    const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
+    return `<section class="coding-plan" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then reopen Writing AI.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+  }).join('')}</div></section>`;
 }
 
 const THEME_LABELS = { system: 'Match device', light: 'Light', dark: 'Dark' };
@@ -279,7 +312,7 @@ function drawSettings(page) {
   if (section === 'general') content = themeCard() + `<div id="app-general">${nativeGeneralCard(desktopApp)}</div>`;
   else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the Leo app to set up dictation.</section>'}</div>`;
   else if (section === 'models') content = `<div id="speech-library">${speechCards(state.speech)}</div>`;
-  else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
+  else if (section === 'writing') content = codingPlans(page) + page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
   else if (section === 'calendar') content = calendarCard(state.calendar);
   else if (section === 'backup') content = backupCard(page.backup);
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
