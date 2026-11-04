@@ -442,7 +442,56 @@ const skeleton = (n) => Array.from({ length: n }, () => '<div class="skeleton"><
 let state = { view: null };
 let seq = 0;
 
-function go(hash, { replace = false } = {}) {
+const SEARCH_HIGHLIGHT_MS = 5000;
+const SEARCH_HIGHLIGHT_MOST = 300;
+const SEARCH_HIGHLIGHT_NODES = 20000;
+let searchHighlightTimer;
+let searchPassage = null;
+
+function clearSearchHighlight() {
+  clearTimeout(searchHighlightTimer);
+  CSS.highlights?.delete('leo-search');
+}
+
+function highlightSearch(root, query) {
+  clearSearchHighlight();
+  if (!CSS.highlights || typeof Highlight === 'undefined') return false;
+  const words = Array.from(String(query || '')).slice(0, 2000).join('').split(/\s+/).map(word => word.replace(/^#/, '')).filter(Boolean).slice(0, 20);
+  if (!words.length) return false;
+  const pattern = new RegExp(words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const ranges = [];
+  let node;
+  let seen = 0;
+  while (ranges.length < SEARCH_HIGHLIGHT_MOST && seen++ < SEARCH_HIGHLIGHT_NODES && (node = walk.nextNode())) {
+    if (node.parentElement.closest('textarea, script, style, .katex-mathml')) continue;
+    pattern.lastIndex = 0;
+    let match;
+    while (ranges.length < SEARCH_HIGHLIGHT_MOST && (match = pattern.exec(node.textContent))) {
+      const range = document.createRange();
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
+      ranges.push(range);
+    }
+  }
+  if (!ranges.length) return false;
+  CSS.highlights.set('leo-search', new Highlight(...ranges));
+  const first = ranges[0];
+  const rect = first.getBoundingClientRect();
+  if (rect.top < 80 || rect.bottom > window.innerHeight) first.startContainer.parentElement.scrollIntoView({ block: 'center' });
+  searchHighlightTimer = setTimeout(clearSearchHighlight, SEARCH_HIGHLIGHT_MS);
+  return true;
+}
+
+window.addEventListener('hashchange', () => {
+  clearSearchHighlight();
+  if (searchPassage && searchPassage.hash !== location.hash) searchPassage = null;
+});
+
+function go(hash, { replace = false, search = null } = {}) {
+  clearSearchHighlight();
+  const query = search ?? (state.view === 'search' ? state.query : null);
+  searchPassage = query && hash.startsWith('#/n/') ? { hash, query } : null;
   if (location.hash === hash) return route();
   if (replace) {
     history.replaceState(history.state, '', hash);
@@ -784,6 +833,9 @@ function noteActions(id, recorded = false) {
 }
 
 async function showNote(id, { fresh = null, draft = null } = {}) {
+  const passage = searchPassage?.hash === noteHash(id) ? searchPassage : null;
+  searchPassage = null;
+  clearSearchHighlight();
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
@@ -809,7 +861,11 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
   arriveOnPage(app.querySelector('article.note'));
   if (citedLines && citedLines.id === note.id) showCitedLines();
-  else restoreReading(note.id, mine);
+  else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
+    clearTimeout(reading.timer);
+    reading.id = note.id;
+    reading.user = false;
+  } else restoreReading(note.id, mine);
   drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');

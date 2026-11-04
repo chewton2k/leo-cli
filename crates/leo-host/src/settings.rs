@@ -12,9 +12,7 @@ pub struct WebSettings;
 impl leo_web::SettingsApi for WebSettings {
     fn describe(&self, notes_dir: &Path) -> Value {
         let cfg = Config::load();
-        if cfg.chat.chain.first().map(String::as_str) == Some("codex") {
-            leo_services::usage::refresh_codex(&cfg);
-        }
+        leo_services::usage::refresh_codex(&cfg);
         let store = default_store();
         let local = choice::local_models(&cfg);
         let usage = leo_services::usage::load();

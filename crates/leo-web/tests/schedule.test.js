@@ -4,6 +4,16 @@ const S = require('../src/web/schedule.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('explicit calendar dates retain the day and deadline', () => {
+  const now = new Date(2026, 10, 4, 12);
+  for (const date of ['Nov 08', 'November 8', '2026-11-08']) {
+    assert.deepEqual(S.quickParse(`math 164 homework due ${date} at 11:59PM`, now), { kind: 'task', title: 'math 164 homework', date: '2026-11-08', time: '23:59' });
+  }
+  assert.equal(S.quickParse('submit Jan 2', now).date, '2027-01-02');
+  assert.equal(S.quickParse('submit Feb 30', now).date, null);
+  assert.equal(S.quickParse('submit Nov 8 2027', now).date, '2027-11-08');
+});
+
 test('Quick Leo reads a reminder, a question or a note from one line', () => {
   const now = new Date(2026, 9, 19, 10, 0);
   assert.deepEqual(S.quickParse('remind me to email Bob tomorrow at 3pm', now), { kind: 'task', title: 'email Bob', date: '2026-10-20', time: '15:00' });

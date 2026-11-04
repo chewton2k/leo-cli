@@ -258,8 +258,9 @@ async function quickGo(at) {
     return;
   }
   if (row.kind === 'open' || row.kind === 'place' || row.kind === 'folder' || row.kind === 'search') {
+    const search = inQuick('#quick-input')?.value || '';
     closeSheet();
-    go(row.kind === 'open' ? noteHash(row.id) : row.kind === 'folder' ? folderHash(row.path) : row.kind === 'search' ? `#/search/${enc(row.text)}` : row.hash);
+    go(row.kind === 'open' ? noteHash(row.id) : row.kind === 'folder' ? folderHash(row.path) : row.kind === 'search' ? `#/search/${enc(row.text)}` : row.hash, { search });
     return;
   }
   if (row.kind === 'chat') {

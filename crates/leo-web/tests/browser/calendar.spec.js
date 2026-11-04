@@ -144,6 +144,16 @@ test('the calendar fills the room beside the explorer and shows a week of events
     expect(cal.x).toBeGreaterThanOrEqual(explorer.x + explorer.width - 1);
     expect(cal.x + cal.width).toBeLessThanOrEqual(1360 + 1);
     await expect(page.locator('.cal-dayhead')).toHaveCount(7);
+    expect(await page.locator('.cal-hours').evaluate(el => getComputedStyle(el).backgroundImage)).not.toBe('none');
+    const boundaries = await page.evaluate(() => {
+      const lefts = selector => [...document.querySelectorAll(selector)].map(el => el.getBoundingClientRect().left);
+      return [lefts('.cal-dayhead'), lefts('.cal-allday-cell'), lefts('.cal-col')];
+    });
+    for (let day = 0; day < 7; day++) {
+      expect(Math.abs(boundaries[0][day] - boundaries[2][day])).toBeLessThan(1);
+      expect(Math.abs(boundaries[1][day] - boundaries[2][day])).toBeLessThan(1);
+    }
+
     await expect(page.locator('.cal-dayhead.today')).toContainText('3');
     await expect(page.locator('.cal-col[data-day="2026-11-03"] .cal-now')).toHaveCount(1);
     await expect(page.locator('.cal-allday .cal-item', { hasText: 'Reading week' })).toHaveCount(1);
@@ -158,7 +168,7 @@ test('the calendar fills the room beside the explorer and shows a week of events
   });
 });
 
-test('tasks lead the calendar sidebar and stay visible above a narrow calendar', async ({ browser }) => {
+test('tasks follow the mini calendar and stay visible above a narrow calendar', async ({ browser }) => {
   for (const width of [1360, 1000, 674]) {
     await calendarFixture(browser, async page => {
       const side = page.locator('#cal-side');
@@ -169,7 +179,7 @@ test('tasks lead the calendar sidebar and stay visible above a narrow calendar',
       const mini = side.locator('.cal-mini');
       if (width === 1360) {
         const month = await mini.boundingBox();
-        expect(tasks.y + tasks.height).toBeLessThan(month.y);
+        expect(month.y + month.height).toBeLessThan(tasks.y);
       } else {
         await expect(mini).toBeHidden();
         const main = await page.locator('#cal-main').boundingBox();

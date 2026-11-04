@@ -205,22 +205,22 @@ function planLimits(plan) {
     const reset = Number.isFinite(window.resets_at) ? new Date(window.resets_at * 1000) : null;
     const validReset = reset && Number.isFinite(reset.getTime());
     const expired = validReset && reset.getTime() <= now;
-    const percent = expired ? 0 : Math.round(Math.max(0, Math.min(1, window.used)) * 100);
+    const percent = expired ? 0 : 100 - Math.round(Math.max(0, Math.min(1, window.used)) * 100);
     const when = expired ? 'Waiting for the next update' : validReset ? `Resets ${reset.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Reset time unavailable';
-    return [`<div class="plan-window"><div class="set-line"><span>${name}</span><strong>${percent}% used</strong></div><div class="plan-meter${percent >= 90 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
+    return [`<div class="plan-window"><div class="set-line"><span>${name}</span><strong>${expired ? 'Unavailable' : `${percent}% left`}</strong></div><div class="plan-meter${!expired && percent <= 10 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
   });
   const seen = limits && new Date(limits.seen_at).getTime();
   const age = Number.isFinite(seen) ? `<p class="hint">${now - seen >= PLAN_STALE_MS ? 'Saved usage · ' : ''}Updated ${esc(rel(limits.seen_at))}</p>` : '';
-  return windows.length ? windows.join('') + age : `<p class="hint">${plan.provider === 'claude_code' ? 'Usage appears after Claude Code reports limits during an answer.' : 'Usage appears when Codex reports account limits. Select Codex and reopen Writing AI to check.'}</p>`;
+  return windows.length ? windows.join('') + age : `<p class="hint">${plan.provider === 'claude_code' ? 'Usage appears after Claude Code reports limits during an answer.' : 'Usage unavailable. Refresh to check Codex account limits.'}</p>`;
 }
 
-function codingPlans(page) {
+function codingPlans(page, selectable = true) {
   if (!page.plans?.length) return '';
   const selected = page.tasks.find(task => task.task === 'writing')?.provider;
   return `<section class="set-card"><header><h3>Coding accounts</h3></header><p class="hint">Detected from the coding apps on this computer. Sign-in stays with each app; Leo never copies its credentials. Billing follows the account signed into the CLI.</p><div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then reopen Writing AI.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+    return `<section class="coding-plan" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
   }).join('')}</div></section>`;
 }
 
@@ -312,7 +312,7 @@ function drawSettings(page) {
   if (section === 'general') content = themeCard() + `<div id="app-general">${nativeGeneralCard(desktopApp)}</div>`;
   else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the Leo app to set up dictation.</section>'}</div>`;
   else if (section === 'models') content = `<div id="speech-library">${speechCards(state.speech)}</div>`;
-  else if (section === 'writing') content = codingPlans(page) + page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
+  else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
   else if (section === 'calendar') content = calendarCard(state.calendar);
   else if (section === 'backup') content = backupCard(page.backup);
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
@@ -494,3 +494,15 @@ app.addEventListener('change', (event) => {
   const language = event.target.closest('[data-speech-language]');
   if (language) speechChange({ action: 'use', id: language.dataset.speechLanguage, language: language.value }).catch(fail);
 });
+
+async function showUsage() {
+  const box = sheet('<h3>Usage</h3><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn" data-action="usage">Refresh</button></div>');
+  box.querySelector('[data-action="close"]').focus();
+  try {
+    const page = await api('/api/settings');
+    if (!box.isConnected || box.classList.contains('scrim-gone')) return;
+    box.querySelector('.usage-content').innerHTML = codingPlans(page, false) || '<p class="hint">No coding accounts detected.</p>';
+  } catch (e) {
+    if (box.isConnected && !box.classList.contains('scrim-gone')) { closeSheet(); fail(e); }
+  }
+}
