@@ -2,6 +2,32 @@ use std::path::Path;
 
 const FOREGROUND: &str = "update-foreground";
 
+#[cfg(target_os = "macos")]
+pub fn focus(window: &tauri::WebviewWindow) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSWindow};
+
+    let Some(main) = MainThreadMarker::new() else {
+        return;
+    };
+    let Ok(raw) = window.ns_window() else { return };
+    let window = unsafe { &*raw.cast::<NSWindow>() };
+    window.setCollectionBehavior(on_space(window.collectionBehavior()));
+    window.deminiaturize(None);
+    #[allow(deprecated)]
+    NSApplication::sharedApplication(main).activateIgnoringOtherApps(true);
+    window.makeMainWindow();
+    window.makeKeyAndOrderFront(None);
+}
+
+#[cfg(target_os = "macos")]
+fn on_space(
+    behavior: objc2_app_kit::NSWindowCollectionBehavior,
+) -> objc2_app_kit::NSWindowCollectionBehavior {
+    use objc2_app_kit::NSWindowCollectionBehavior as B;
+    (behavior & !B::CanJoinAllSpaces) | B::MoveToActiveSpace
+}
+
 pub fn may_open(gate: &leo_core::activity::Gate) -> bool {
     !gate.installing()
 }
@@ -23,6 +49,26 @@ pub fn hidden(at_login: bool, foreground: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn opening_moves_to_one_space_and_preserves_other_window_behaviors() {
+        use objc2_app_kit::NSWindowCollectionBehavior as B;
+        for behavior in [
+            B::empty(),
+            B::CanJoinAllSpaces,
+            B::FullScreenPrimary,
+            B::Managed | B::CanJoinAllSpaces,
+        ] {
+            let next = super::on_space(behavior);
+            assert!(next.contains(B::MoveToActiveSpace));
+            assert!(!next.contains(B::CanJoinAllSpaces));
+            assert_eq!(
+                next & !B::MoveToActiveSpace,
+                behavior & !B::CanJoinAllSpaces
+            );
+        }
+    }
+
     #[test]
     fn opening_waits_for_installation_and_recovers_on_failure() {
         let gate = leo_core::activity::Gate::default();

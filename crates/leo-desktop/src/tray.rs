@@ -93,12 +93,48 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon().cloned() {
         tray = tray.icon(icon);
     }
-    tray.build(app)?;
+    #[cfg(target_os = "macos")]
+    let tray = tray
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(move |tray, event| {
+            if matches!(
+                event,
+                tauri::tray::TrayIconEvent::Click {
+                    button_state: tauri::tray::MouseButtonState::Down,
+                    ..
+                }
+            ) {
+                popup(tray, menu.clone());
+            }
+        });
+    let built = tray.build(app)?;
+    #[cfg(target_os = "macos")]
+    built.with_inner_tray_icon(|tray| tray.set_show_menu_on_right_click(false))?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = built;
     let handle = app.clone();
     std::thread::Builder::new()
         .name("leo-tray-status".into())
         .spawn(move || refresh(handle, status))?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn popup<M: tauri::menu::ContextMenu + 'static>(tray: &tauri::tray::TrayIcon, menu: M) {
+    let _ = tray.with_inner_tray_icon(move |tray| {
+        if let Some(status) = tray.ns_status_item() {
+            let raw = menu.inner_context().ns_menu();
+            if let Some(menu) = unsafe { raw.cast::<objc2_app_kit::NSMenu>().as_ref() } {
+                #[allow(deprecated)]
+                status.popUpStatusItemMenu(menu);
+                if let Some(main) = objc2::MainThreadMarker::new() {
+                    if let Some(button) = status.button(main) {
+                        button.highlight(false);
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Shows the window and asks the page to go somewhere (`leoFromApp` in

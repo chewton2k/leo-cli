@@ -54,6 +54,8 @@ reader, seer, meaning, web, room, speech).
   `#/map[/id]`, `#/calendar`, `#/boards[/id]`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
+- Native quit confirmation keeps the current page and uses its existing toast
+  (`events.js`); Updates explains that every successful installation reopens Leo.
 - Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
   `--note-width`, 980 px by default; Settings → Appearance → Note width picks
   Comfortable (760 px), Wide or Full width, kept per browser in
@@ -894,7 +896,9 @@ the same idle loop.
   grid (`CAL_HOUR_PX` 48, 15-minute snap) with an All day row of spanning bars
   (`schedule.lanes`), side-by-side overlaps (`schedule.dayColumns`) and a now
   line; Month shows three chips a day and "n more" (Day view). The right tray
-  holds a mini month, Overdue and No date. Pointer drags (boards' rules: 5 px
+  leads with Tasks, Overdue and No date before the mini month. Narrow windows
+  keep this task tray above the calendar instead of hiding it, with its own
+  bounded scroll area and no mini month. Pointer drags (boards' rules: 5 px
   or a 300 ms touch hold, capture on `#app`, Escape cancels, the click after
   a drop is swallowed) move a task (Month: day only), resize a Leo task's end
   by its bottom edge, schedule a tray task, or sweep empty time into an inline

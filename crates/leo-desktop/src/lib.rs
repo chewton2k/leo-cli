@@ -10,6 +10,8 @@ mod overlay;
 mod paste_tx;
 mod permissions;
 mod port;
+#[cfg(target_os = "macos")]
+mod quit;
 mod secure_input;
 mod settings;
 mod shell_path;
@@ -111,9 +113,6 @@ pub fn run() {
                         let visible = window.is_visible().unwrap_or(true)
                             && !window.is_minimized().unwrap_or(false);
                         sync_visible(&window, visible, true);
-                        if visible && update_window::may_open(leo_core::activity::global()) {
-                            let _ = window.set_focus();
-                        }
                     }
                 })
                 // Tauri's own file-drop handler swallows the webview's drag events,
@@ -177,6 +176,8 @@ pub fn run() {
                     set_visible(&handle, visible);
                 }
             });
+            #[cfg(target_os = "macos")]
+            quit::menu(app.handle())?;
             tray::build(app.handle())?;
             open_at_login_once(app.handle(), config.as_deref());
             app_settings.apply_startup()?;
@@ -184,10 +185,31 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("leo could not start");
-    app.run(|app, event| match event {
+    #[cfg(target_os = "macos")]
+    let mut quitting = quit::Confirm::default();
+    app.run(move |app, event| match event {
+        RunEvent::Ready => {
+            if app
+                .get_webview_window(MAIN)
+                .is_some_and(|w| w.is_visible().unwrap_or(false))
+            {
+                show(app);
+            }
+        }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show(app),
-        RunEvent::ExitRequested { api, .. } => {
+        RunEvent::ExitRequested { api, code, .. } => {
+            #[cfg(target_os = "macos")]
+            if !quitting.allows(code, std::time::Instant::now()) {
+                api.prevent_exit();
+                show(app);
+                if let Some(window) = app.get_webview_window(MAIN) {
+                    let _ = window.eval("window.leoFromApp?.('quit', '')");
+                }
+                return;
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = code;
             if app
                 .try_state::<std::sync::Arc<updates::Updates>>()
                 .is_some_and(|updates| updates.on_quit())
@@ -246,15 +268,22 @@ fn back_up(app: &AppHandle) {
 }
 
 pub(crate) fn show(app: &AppHandle) {
-    if !update_window::may_open(leo_core::activity::global()) {
-        return;
-    }
-    if let Some(window) = app.get_webview_window(MAIN) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        set_visible(&window, true);
-        let _ = window.set_focus();
-    }
+    let app = app.clone();
+    let caller = app.clone();
+    let _ = caller.run_on_main_thread(move || {
+        if !update_window::may_open(leo_core::activity::global()) {
+            return;
+        }
+        if let Some(window) = app.get_webview_window(MAIN) {
+            let _ = window.unminimize();
+            let _ = window.show();
+            set_visible(&window, true);
+            #[cfg(target_os = "macos")]
+            update_window::focus(&window);
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn set_visible(window: &tauri::WebviewWindow, visible: bool) {

@@ -372,7 +372,7 @@ function calTray(plan, today) {
   const undated = list('No date', plan.undated, false);
   const tasks = (d && d.tasks) || [];
   const toggle = tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn cal-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : '';
-  return `${calMini(today)}${connect}${list('Overdue', plan.overdue, true)}${undated}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}`;
+  return `<div class="cal-tasks-head"><h2>Tasks</h2><button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button></div>${list('Overdue', plan.overdue, true)}${undated}${!plan.overdue.length && !plan.undated.length ? '<p class="hint cal-connect">Tasks without a date appear here.</p>' : ''}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}${calMini(today)}${connect}`;
 }
 
 function drawCalendar() {

@@ -1471,6 +1471,9 @@ body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; user-selec
 .cal-more { align-self: flex-start; padding: 0 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
 .cal-side { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 18px; padding: 14px 14px 24px; border-left: 1px solid var(--line); background: var(--bg); }
 .cal-side > * { flex-shrink: 0; }
+.cal-tasks-head { display: flex; align-items: center; justify-content: space-between; }
+.cal-tasks-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+.cal-tasks-head .icon-btn { width: 28px; height: 28px; }
 .cal-page:has(> .cal-side.peek) { grid-template-columns: minmax(0, 1fr) 340px; }
 .cal-mini-head { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
 .cal-mini-head span { flex: 1; }
@@ -1511,8 +1514,10 @@ h2.cal-peek-title { margin-left: 0; padding: 4px 0; }
 .cal-peek-about { box-sizing: border-box; width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid transparent; border-radius: 10px; background: var(--surface-2); font: inherit; font-size: 14px; line-height: 1.5; color: var(--text); resize: vertical; }
 .cal-peek-about:focus { outline: none; border-color: var(--accent); background: var(--surface); }
 @container cal (max-width: 760px) {
-  .cal-page { grid-template-columns: minmax(0, 1fr); }
-  .cal-side:not(.peek) { display: none; }
+  .cal-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .cal-side:not(.peek) { grid-row: 1; max-height: 200px; border-left: 0; border-bottom: 1px solid var(--line); gap: 12px; padding: 10px 14px; }
+  .cal-side:not(.peek) .cal-mini { display: none; }
+  .cal-page:has(> .cal-side.peek) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .cal-side.peek { position: fixed; z-index: 40; inset: calc(var(--top) + 61px) var(--right) 0 var(--side); border: 0; }
   .cal-status { display: none; }
 }
