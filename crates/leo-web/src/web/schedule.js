@@ -418,26 +418,45 @@
         text = (text.slice(0, t.index) + ' ' + text.slice(t.index + t[0].length)).replace(/\s{2,}/g, ' ').trim();
       }
     }
-    const inDays = /\bin\s+(\d{1,3})\s+days?\b/i.exec(text);
-    if (/\btonight\b/i.test(text)) { date = today; if (!time) time = '20:00'; strip(/\btonight\b/i); }
-    else if (/\btoday\b/i.test(text)) { date = today; strip(/\btoday\b/i); }
-    else if (/\b(tomorrow|tmrw|tmr)\b/i.test(text)) { date = addDays(today, 1); strip(/\b(tomorrow|tmrw|tmr)\b/i); }
-    else if (/\bnext week\b/i.test(text)) { date = nextWeekday(today, 1); strip(/\bnext week\b/i); }
-    else if (inDays) { date = addDays(today, Number(inDays[1])); strip(/\bin\s+\d{1,3}\s+days?\b/i); }
-    else {
-      const day = [...text.matchAll(/\b(?:(on|this|next|for|by|until|till)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/gi)]
-        .find((d) => d[1] || d[0].length > 3 || !/^(sun|sat)$/i.test(d[2]) || /^\s*([,.;!?]|$)/.test(text.slice(d.index + d[0].length)));
-      if (day) {
-        const index = DAYS.findIndex((d) => d.startsWith(day[2].toLowerCase().slice(0, 3)));
-        if (index >= 0) {
-          date = nextWeekday(today, index);
-          if (index === today.getDay() && !/next/i.test(day[1] || '')) date = today;
-          if (/next/i.test(day[1] || '') && (date - today) / 86400000 < 7 && index !== today.getDay()) date = addDays(date, 7);
-          text = (text.slice(0, day.index) + ' ' + text.slice(day.index + day[0].length)).replace(/\s{2,}/g, ' ').trim();
+    const named = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:(?:,\s*|\s+)(\d{4}))?\b/i.exec(text);
+    const iso = /\b(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?\b(?![:+-])/i.exec(text);
+    const explicit = iso || named;
+    if (explicit) {
+      const month = iso ? Number(iso[2]) - 1 : ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(named[1].slice(0, 3).toLowerCase());
+      const day = Number(iso ? iso[3] : named[2]);
+      const year = Number(iso ? iso[1] : named[3] || today.getFullYear());
+      let candidate = new Date(year, month, day);
+      if (candidate.getFullYear() === year && candidate.getMonth() === month && candidate.getDate() === day && (!iso?.[4] || (Number(iso[4]) < 24 && Number(iso[5]) < 60))) {
+        if (!iso && !named[3] && candidate < today) candidate = new Date(year + 1, month, day);
+        if (candidate.getMonth() === month && candidate.getDate() === day) {
+          date = candidate;
+          if (iso?.[4]) time = `${iso[4]}:${iso[5]}`;
+          text = (text.slice(0, explicit.index) + ' ' + text.slice(explicit.index + explicit[0].length)).replace(/\s{2,}/g, ' ').trim();
         }
       }
     }
-    if (time && !date) date = today;
+    const inDays = /\bin\s+(\d{1,3})\s+days?\b/i.exec(text);
+    if (!explicit) {
+      if (/\btonight\b/i.test(text)) { date = today; if (!time) time = '20:00'; strip(/\btonight\b/i); }
+      else if (/\btoday\b/i.test(text)) { date = today; strip(/\btoday\b/i); }
+      else if (/\b(tomorrow|tmrw|tmr)\b/i.test(text)) { date = addDays(today, 1); strip(/\b(tomorrow|tmrw|tmr)\b/i); }
+      else if (/\bnext week\b/i.test(text)) { date = nextWeekday(today, 1); strip(/\bnext week\b/i); }
+      else if (inDays) { date = addDays(today, Number(inDays[1])); strip(/\bin\s+\d{1,3}\s+days?\b/i); }
+      else {
+        const day = [...text.matchAll(/\b(?:(on|this|next|for|by|until|till)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/gi)]
+          .find((d) => d[1] || d[0].length > 3 || !/^(sun|sat)$/i.test(d[2]) || /^\s*([,.;!?]|$)/.test(text.slice(d.index + d[0].length)));
+        if (day) {
+          const index = DAYS.findIndex((d) => d.startsWith(day[2].toLowerCase().slice(0, 3)));
+          if (index >= 0) {
+            date = nextWeekday(today, index);
+            if (index === today.getDay() && !/next/i.test(day[1] || '')) date = today;
+            if (/next/i.test(day[1] || '') && (date - today) / 86400000 < 7 && index !== today.getDay()) date = addDays(date, 7);
+            text = (text.slice(0, day.index) + ' ' + text.slice(day.index + day[0].length)).replace(/\s{2,}/g, ' ').trim();
+          }
+        }
+      }
+    }
+    if (time && !date && !explicit) date = today;
     text = text.replace(/^[\s,.;:!?-]+/, '').replace(/\s+(on|at|by|for|due)$/i, '').replace(/^(on|at|by|for|to)\s+/i, '').replace(/[\s,.;:!?]+$/, '').trim();
     if (!kind) kind = /\?$/.test(String(input).trim()) || ASK.test(String(input).trim()) ? 'ask' : date ? 'task' : 'ask';
     return { kind, title: kind === 'ask' ? String(input).trim() : text, date: date ? dayKey(date) : null, time };

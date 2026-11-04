@@ -12,6 +12,7 @@ try {
 }
 const CAL_POLL_MS = 150000;
 const CAL_HOUR_PX = 48;
+const CAL_TASK_PX = 60;
 const CAL_SNAP = 15;
 const CAL_HOLD_MS = 300;
 const CAL_MONTH_CHIPS = 3;
@@ -297,7 +298,7 @@ function calAllDay(days, plan) {
 function calColumn(key, plan, today) {
   const day = plan.byDay.get(key) || { timed: [] };
   const items = day.timed.filter(calShown);
-  const spans = items.map((item) => S.spanOn(item, key, CAL_SNAP * 2));
+  const spans = items.map((item) => S.spanOn(item, key, item.type === 'task' ? Math.ceil((CAL_TASK_PX + 2) / CAL_HOUR_PX * 60) : CAL_SNAP * 2));
   const cols = S.dayColumns(spans);
   const blocks = items.map((item, i) => {
     const { start, end } = spans[i];
@@ -306,7 +307,7 @@ function calColumn(key, plan, today) {
     const left = col * step;
     const width = col === n - 1 ? 100 - left : Math.min(100 - left, step * 1.8);
     const top = (start / 60) * CAL_HOUR_PX;
-    const height = Math.max(18, ((end - start) / 60) * CAL_HOUR_PX - 2);
+    const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - start) / 60) * CAL_HOUR_PX - 2);
     const short = end - start <= 30;
     const task = item.type === 'task' ? item.task : null;
     const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
@@ -372,7 +373,7 @@ function calTray(plan, today) {
   const undated = list('No date', plan.undated, false);
   const tasks = (d && d.tasks) || [];
   const toggle = tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn cal-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : '';
-  return `<div class="cal-tasks-head"><h2>Tasks</h2><button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button></div>${list('Overdue', plan.overdue, true)}${undated}${!plan.overdue.length && !plan.undated.length ? '<p class="hint cal-connect">Tasks without a date appear here.</p>' : ''}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}${calMini(today)}${connect}`;
+  return `${calMini(today)}<div class="cal-tasks-head"><h2>Tasks</h2><button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button></div>${list('Overdue', plan.overdue, true)}${undated}${!plan.overdue.length && !plan.undated.length ? '<p class="hint cal-connect">Tasks without a date appear here.</p>' : ''}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}${connect}`;
 }
 
 function drawCalendar() {
@@ -382,14 +383,15 @@ function drawCalendar() {
   const days = calDays();
   const plan = calPlan(days.includes(today) ? days : [...days, today].sort());
   const body = cal.view === 'month' ? calMonth(days, plan, today) : calTimeGrid(days, plan, today);
-  const scroll = $('#cal-scroll');
+  const scroll = $('#cal-scroll') || $('.cal-month-grid');
   const keep = scroll ? scroll.scrollTop : null;
   main.innerHTML = `${calHead(days)}${body}`;
   main.dataset.view = cal.view;
-  const box = $('#cal-scroll');
+  const box = $('#cal-scroll') || $('.cal-month-grid');
   if (box) {
     const place = `${cal.view} ${days[0]}`;
     if (keep !== null && cal.scrolled === place) box.scrollTop = keep;
+    else if (cal.view === 'month') cal.scrolled = place;
     else {
       const now = new Date();
       const hour = days.includes(today) ? Math.max(0, now.getHours() - 1) : 8;
@@ -561,9 +563,11 @@ function calFollow() {
   calClearMarks();
   if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)${stillMotion() ? '' : ' rotate(-1.5deg)'}`;
   if (d.mode === 'resize') {
-    const end = Math.max(d.start + CAL_SNAP, Math.min(24 * 60, S.snap(calMinutesIn(d.col, d.y), CAL_SNAP)));
-    d.target = { day: d.day, minutes: d.start, end };
-    d.source.style.height = `${Math.max(18, ((end - d.start) / 60) * CAL_HOUR_PX - 2)}px`;
+    const before = d.task.end ? S.minutesOf(d.task.end) : d.start + d.length;
+    const moved = d.y === d.startY ? 0 : calMinutesIn(d.col, d.y) - d.start - d.offset;
+    const end = moved ? Math.max(d.start + CAL_SNAP, Math.min(24 * 60, S.snap(before + moved, CAL_SNAP))) : before;
+    d.target = moved ? { day: d.day, minutes: d.start, end } : null;
+    d.source.style.height = `${Math.max(CAL_TASK_PX, ((end - d.start) / 60) * CAL_HOUR_PX - 2)}px`;
     const sub = d.source.querySelector('.cal-sub');
     if (sub) sub.textContent = calRange(d.start, end);
     return;
@@ -880,9 +884,9 @@ function calPeekGoogle(task) {
 
 function calPeekActs(task) {
   const leo = task.source === 'leo';
-  return `${task.date && !calOnGoogle(task) ? `<button type="button" class="btn" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
-      ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
-      ${leo ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}`;
+  return `${task.date && !calOnGoogle(task) ? `<button type="button" class="icon-btn" aria-label="Add to Google Calendar" title="Add to Google Calendar" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}</button>` : ''}
+      ${task.date ? `<a class="icon-btn" href="/api/tasks/${enc(task.id)}/ics" download aria-label="Download .ics" title="Download .ics">${ICON.download}</a>` : ''}
+      ${leo ? `<button type="button" class="icon-btn danger" aria-label="Delete" title="Delete" data-action="task-delete" data-id="${esc(task.id)}">${ICON.trash}</button>` : task.promoted ? `<button type="button" class="icon-btn" aria-label="Stop tracking" title="Stop tracking" data-action="task-delete" data-id="${esc(task.id)}">${ICON.close}</button>` : ''}`;
 }
 
 function calPeekBar(where, actions = '') {
@@ -1209,11 +1213,11 @@ function taskSheet(id, on = null) {
     <div class="set-row"><span class="set-label">Google</span><span class="set-value">${esc(google)}</span></div>
     ${moved ? `<p class="set-note">The Google event is on another day. <a href="${esc(S.googleDay(S.dayKey(new Date(onGoogle.start))))}" target="_blank" rel="noopener">Open that day in Google Calendar</a></p>` : ''}
     <div class="buttons task-acts">
-      ${task.date && !onGoogle ? `<button type="button" class="btn primary" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
+      ${task.date && !onGoogle ? `<button type="button" class="icon-btn" aria-label="Add to Google Calendar" title="Add to Google Calendar" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}</button>` : ''}
       ${!task.date ? `<button type="button" class="btn primary" data-action="task-date" data-id="${esc(task.id)}" data-then="google">Set a date to add it to Google Calendar</button>` : ''}
-      ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
+      ${task.date ? `<a class="icon-btn" href="/api/tasks/${enc(task.id)}/ics" download aria-label="Download .ics" title="Download .ics">${ICON.download}</a>` : ''}
       <button type="button" class="btn plain" data-action="task-done" data-id="${esc(task.id)}"${day ? ` data-on="${esc(day)}"` : ''} data-set="${doneNow ? '0' : '1'}">${doneNow ? (day ? `Not done on ${esc(dayName)}` : 'Not done') : (day ? `Done for ${esc(dayName)}` : 'Done')}</button>
-      ${task.source === 'leo' ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}
+      ${task.source === 'leo' ? `<button type="button" class="icon-btn danger" aria-label="Delete" title="Delete" data-action="task-delete" data-id="${esc(task.id)}">${ICON.trash}</button>` : task.promoted ? `<button type="button" class="icon-btn" aria-label="Stop tracking" title="Stop tracking" data-action="task-delete" data-id="${esc(task.id)}">${ICON.close}</button>` : ''}
     </div>`);
   const description = $('#task-description', box);
   const saveDescription = $('#task-description-save', box);

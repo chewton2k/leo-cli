@@ -151,6 +151,8 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     const $ = (q, root = document) => root.querySelector(q), app = $('#app');
     const esc = md.escape, enc = encodeURIComponent;
     let seq = 0, state = {}, saved = '', citedLines = null;
+    const noteHash = id => '#/n/' + encodeURIComponent(id);
+    ${core.slice(core.indexOf('const SEARCH_HIGHLIGHT_MS'), core.indexOf('function go('))}
     const source = {}, chat = {setContext() {}};
     const saving = {open(note) {return {note, edit: {...note, tags: []}}}};
     const chrome = () => {}, arriveOnPage = () => {}, drawOriginals = () => {}, hideAskFloat = () => {}, restoreReading = () => {}, drawRelated = () => {}, placeAskFloat = () => {};

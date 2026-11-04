@@ -53,8 +53,8 @@ const sideResize = window.leoPaneResize.create({
   onChange: () => window.dispatchEvent(new Event('resize')),
 });
 
-const shortcutLabel = ON_MAC ? '⌘K' : 'Ctrl K';
-const quickLabel = ON_MAC ? '⌘J' : 'Ctrl J';
+const shortcutLabel = ON_MAC ? '⌘F' : 'Ctrl F';
+const quickLabel = shortcutLabel;
 
 function sideRow(action, icon, label, { on = false, attrs = '', count = '', hint = label } = {}) {
   const tail = count === '' ? '' : `<span class="side-count side-label">${esc(String(count))}</span>`;
@@ -118,7 +118,7 @@ function drawSide() {
     <div class="side-rail">
       <nav class="side-rail-main" aria-label="Leo tools">
         ${sideRow('new', ICON.plus, 'New note', { attrs: ` data-dir="${esc(actionDir)}"`, hint: actionDir ? `New note in ${folderLabel(actionDir)}` : 'New note' })}
-        ${sideRow('quick-leo', ICON.search, 'Search', { hint: `Search, ask, remind or jot anything (${shortcutLabel} or ${quickLabel})` })}
+        ${sideRow('quick-leo', ICON.search, 'Search', { hint: `Search, ask, remind or jot anything (${shortcutLabel})` })}
         ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
         ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
         ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
@@ -128,6 +128,7 @@ function drawSide() {
         ${sideRow('upload', ICON.upload, 'Note from a file', { attrs: ` data-dir="${esc(actionDir)}"` })}
       </nav>
       <nav class="side-foot" aria-label="This app">
+        ${sideRow('usage', svg('<path d="M4 19V9m8 10V5m8 14v-7"/>'), 'Usage', { hint: 'Coding accounts and remaining usage' })}
         ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}
       </nav>
     </div>

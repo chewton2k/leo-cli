@@ -21,6 +21,7 @@ test('coding accounts distinguish signed in, signed out, unknown and unavailable
     assert.equal(html.includes('data-action="use-plan"'), installed && signed_in === true);
     assert.ok(!html.includes('<img>'));
     assert.equal(page.tasks[0].provider, 'ollama');
+    assert.ok(!value.codingPlans(page, false).includes('data-action="use-plan"'));
     page.tasks[0].provider = 'codex';
     assert.ok(value.codingPlans(page).includes('Selected for writing'));
     assert.ok(!value.codingPlans(page).includes('data-action="use-plan"'));
@@ -33,14 +34,14 @@ test('plan meters handle both windows, limits, resets, saved readings and absent
   const now = Math.floor(Date.now() / 1000);
   const plan = { provider: 'codex', name: 'Codex', limits: { five_hour: { used: 0.25, resets_at: now + 3600 }, seven_day: { used: 0.93, resets_at: now + 86400 }, seen_at: new Date().toISOString() } };
   let html = value.planLimits(plan);
-  assert.match(html, /aria-valuenow="25"/);
-  assert.match(html, /aria-valuenow="93"/);
+  assert.match(html, /aria-valuenow="75"/);
+  assert.match(html, /aria-valuenow="7"/);
   assert.match(html, /near-limit/);
   assert.match(html, /Resets /);
   assert.ok(!html.includes('Saved usage'));
   plan.limits.seen_at = new Date(Date.now() - 600000).toISOString();
   assert.match(value.planLimits(plan), /Saved usage/);
-  for (const [used, resets_at, percent, text] of [[2, null, 100, 'Reset time unavailable'], [-2, null, 0, 'Reset time unavailable'], [0.9, now - 1, 0, 'Waiting for the next update'], [0.2, 1e100, 20, 'Reset time unavailable']]) {
+  for (const [used, resets_at, percent, text] of [[2, null, 0, 'Reset time unavailable'], [-2, null, 100, 'Reset time unavailable'], [0.9, now - 1, 0, 'Waiting for the next update'], [0.2, 1e100, 80, 'Reset time unavailable']]) {
     plan.limits = { five_hour: { used, resets_at }, seen_at: 'bad-date' };
     html = value.planLimits(plan);
     assert.ok(html.includes(`aria-valuenow="${percent}"`));
@@ -48,7 +49,7 @@ test('plan meters handle both windows, limits, resets, saved readings and absent
     assert.ok(!html.includes('Invalid Date'));
   }
   for (const limits of [null, {}, { five_hour: { used: 'bad' } }]) {
-    assert.match(value.planLimits({ provider: 'codex', limits }), /Select Codex/);
+    assert.match(value.planLimits({ provider: 'codex', limits }), /Usage unavailable/);
     assert.match(value.planLimits({ provider: 'claude_code', limits }), /during an answer/);
   }
 });

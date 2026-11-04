@@ -52,8 +52,8 @@ test('coding accounts show readable usage and sign-in states in both themes and 
         document.querySelector('#plans').innerHTML = codingPlans({ tasks: [{ task: 'writing', provider: 'codex' }], plans: [{ provider: 'codex', name: 'Codex', installed: true, signed_in: true, limits }, { provider: 'claude_code', name: 'Claude Code', installed: true, signed_in: false, signin: 'claude auth login', limits: null }] });
       }, theme);
       await expect(page.getByRole('meter')).toHaveCount(2);
-      await expect(page.getByRole('meter', { name: 'Codex 5 hour usage' })).toHaveAttribute('aria-valuenow', '25');
-      await expect(page.getByRole('meter', { name: 'Codex 7 day usage' })).toHaveAttribute('aria-valuenow', '93');
+      await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '75');
+      await expect(page.getByRole('meter', { name: 'Codex 7 day remaining' })).toHaveAttribute('aria-valuenow', '7');
       await expect(page.getByText('Signed in', { exact: true })).toBeVisible();
       await expect(page.getByText('Signed out', { exact: true })).toBeVisible();
       await expect(page.getByText('Selected for writing')).toBeVisible();

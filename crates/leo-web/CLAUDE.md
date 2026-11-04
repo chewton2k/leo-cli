@@ -63,8 +63,8 @@ reader, seer, meaning, web, room, speech).
   Width checks measure the reading column; its outer wrapper also reserves the
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
-- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J or Cmd/Ctrl+K
-  anywhere (Cmd+L belongs to the browser's address bar), `/`, the sidebar
+- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+F
+  anywhere, the sidebar
   Search button, the header search button or the phone menu opens one line
   (`sheets.js` `quickLeo`, toggled by `toggleQuickLeo`). It is also the search
   bar (2026-11-03, the user's call): every query offers "Search every note",
@@ -1440,3 +1440,35 @@ Application controls and draggable note/folder rows suppress text selection;
 prose and editable fields remain selectable. The page admits native drag starts
 only from its explicit note/folder sources, preventing accidental link, image and
 selection drags while keeping file drops and pointer-driven board/resize actions.
+
+Usage opens from the rail above Settings and shows remaining subscription windows,
+with unknown and expired readings explicit. The combined Quick Leo uses only
+Cmd/Ctrl+F and retains task/search/question/navigation ranking. Explicit named
+month dates and ISO dates keep their deadline; omitted years use the next date.
+The calendar tray puts its mini calendar before tasks, and all-day/timed grids
+share the full width without scrollbar gutters shifting their day boundaries.
+Search-result and Quick Leo note opens carry the query into a bounded CSS Custom
+Highlight, cleared after five seconds or navigation without changing editor DOM.
+
+Usage keeps a single provider column with compact Session/Weekly rows: remaining
+percentage at left, a muted provider-colored bar and reset time at right. The
+dialog has no nested settings card or setup prose; unknown readings stay explicit.
+
+Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
+minimum timed block. Overlap layout includes that visual minimum; saved task
+times stay unchanged. Google export, .ics download and delete/stop-tracking
+actions use icon controls with accessible names and hover titles in both peeks
+and task sheets.
+Minimum-height blocks resize from the original end plus pointer movement,
+including scroll movement; a sideways grip drag cannot lengthen a short task.
+Month rows grow to fit their previews and More action; the month grid scrolls
+and keeps its position across redraws instead of clipping larger task cards.
+
+Ordinary Settings reads never refresh coding-plan limits. Usage first draws saved
+readings, then POSTs `/api/settings/usage`, behind the session gate and one refresh
+slot, with blocking CLI work outside store locks. Failed refresh leaves saved
+meters visible; responses from closed sheets or old page generations are ignored.
+Search scrolls the matched Range itself, including within very tall paragraphs.
+A resize with zero vertical movement never writes a synthetic end to a deadline.
+Quick Leo accepts a year directly after a comma and validates local minute-based
+ISO datetimes as one date/time before removing them from the title.
