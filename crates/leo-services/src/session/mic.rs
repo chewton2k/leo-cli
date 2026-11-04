@@ -152,6 +152,7 @@ pub struct Resampler {
     half: usize,
     buffer: Vec<f32>,
     at: f64,
+    fed: bool,
 }
 
 impl Resampler {
@@ -164,6 +165,7 @@ impl Resampler {
             half,
             buffer: vec![0.0; half],
             at: half as f64,
+            fed: false,
         }
     }
 
@@ -183,6 +185,7 @@ impl Resampler {
     }
 
     pub fn push(&mut self, input: &[f32], out: &mut Vec<i16>) {
+        self.fed |= !input.is_empty();
         if (self.step - 1.0).abs() < f64::EPSILON {
             out.extend(input.iter().map(|x| to_i16(*x)));
             return;
@@ -208,7 +211,7 @@ impl Resampler {
     }
 
     pub fn finish(&mut self, out: &mut Vec<i16>) {
-        if (self.step - 1.0).abs() >= f64::EPSILON {
+        if self.fed && (self.step - 1.0).abs() >= f64::EPSILON {
             self.push(&vec![0.0; self.half + 1], out);
         }
     }
@@ -421,8 +424,10 @@ impl Mic {
                         resampler.push(&chunk, &mut converted);
                     }
                     resampler.finish(&mut converted);
-                    if !converted.is_empty() {
-                        deliver_last_audio(&out_tx, converted, LAST_AUDIO_WAIT);
+                    for part in converted.chunks(RATE as usize * 10) {
+                        if !deliver_last_audio(&out_tx, part.to_vec(), LAST_AUDIO_WAIT) {
+                            break;
+                        }
                     }
                 })?
         };
@@ -569,6 +574,14 @@ mod tests {
         assert!(out.len() > before);
         assert!((out.len() as i64 - input.len() as i64 / 3).abs() <= 2);
         assert!(out[out.len() - 3..].iter().any(|s| *s > 8_000));
+    }
+
+    #[test]
+    fn finishing_an_unused_resampler_invents_no_audio() {
+        let mut r = Resampler::new(48_000, 16_000);
+        let mut out = Vec::new();
+        r.finish(&mut out);
+        assert!(out.is_empty());
     }
 
     #[test]

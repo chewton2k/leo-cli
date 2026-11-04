@@ -146,12 +146,12 @@ impl Engine {
             })
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again in a moment."))?;
         let admission = Pin(self.admitted.clone());
-        let pcm = if priority == Priority::Dictation {
-            raised(pcm)
+        let chunks = if priority == Priority::Dictation {
+            dictation_chunks(pcm)?
         } else {
-            pcm
-        };
-        let chunks = super::prepare(pcm)?.into();
+            super::prepare(pcm)?
+        }
+        .into();
         let (reply, answer) = mpsc::sync_channel(1);
         self.requests.try_send(Message::Run(Job { _admission: admission, selected, chunks, text: Vec::new(), priority, reply }))
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Your recorded audio is kept; try again in a moment."))?;
@@ -345,24 +345,30 @@ fn speech_gain(pcm: &[f32]) -> f32 {
     let mut levels: Vec<f32> = pcm
         .chunks(256)
         .map(|frame| (frame.iter().map(|n| n * n).sum::<f32>() / frame.len() as f32).sqrt())
+        .filter(|level| *level > 0.0)
         .collect();
     levels.sort_by(f32::total_cmp);
     match levels.get(levels.len() * 95 / 100) {
-        Some(level) if *level > 0.0 => (SPEECH_LEVEL / level).clamp(1.0, MOST_GAIN),
-        _ => 1.0,
+        Some(level) => (SPEECH_LEVEL / level).clamp(1.0, MOST_GAIN),
+        None => 1.0,
     }
 }
 
-fn raised(mut pcm: Vec<f32>) -> Vec<f32> {
+fn raised(pcm: &[f32], gain: f32) -> Vec<f32> {
+    pcm.iter().map(|n| n * gain).collect()
+}
+
+fn dictation_chunks(pcm: Vec<f32>) -> Result<Vec<Vec<f32>>> {
     let gain = speech_gain(&pcm);
-    for sample in &mut pcm {
-        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    let mut chunks = super::prepare(raised(&pcm, gain))?;
+    for chunk in &mut chunks {
+        chunk.iter_mut().for_each(|n| *n /= gain);
     }
-    pcm
+    Ok(chunks)
 }
 
 fn heard_speech(pcm: &[f32]) -> Result<bool> {
-    Ok(!trim(raised(pcm.to_vec()))?.is_empty())
+    Ok(!trim(raised(pcm, speech_gain(pcm)))?.is_empty())
 }
 
 fn dictated(mut pcm: Vec<f32>, heard: impl FnOnce(&[f32]) -> Result<bool>) -> Result<Vec<f32>> {
@@ -619,12 +625,20 @@ mod dictation_audio_tests {
     }
 
     #[test]
-    fn raising_a_clip_never_clips_past_full_scale() {
+    fn a_silent_lead_in_does_not_hide_a_quiet_voice() {
+        let mut clip = vec![0.0; 256 * 99];
+        clip.extend(vec![0.01; 256]);
+        assert!((speech_gain(&clip) - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_model_gets_dictation_at_its_original_level() {
         let mut clip = vec![0.01; 25_600];
         clip[0] = 0.5;
-        let raised = raised(clip);
-        assert!((raised[25_000] - 0.1).abs() < 0.001);
-        assert_eq!(raised[0], 1.0);
+        let chunks = dictation_chunks(clip).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!((chunks[0][0] - 0.5).abs() < 0.000_1);
+        assert!((chunks[0][25_000] - 0.01).abs() < 0.000_1);
     }
 
     #[test]

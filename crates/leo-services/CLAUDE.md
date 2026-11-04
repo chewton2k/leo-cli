@@ -127,11 +127,13 @@ explicitly rather than depending on actor-thread scheduling.
 Model deletion waits behind inference, unloads the worker first,
 and refuses deletion of an active recording/dictation model. Long audio uses
 30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
-VAD with onset, pre-roll and hangover for recordings. Dictation never cuts: VAD on
-a copy raised to speech level only decides whether the clip goes to the model
+VAD with onset, pre-roll and hangover for recordings. Dictation keeps all audio within each chunk (over 40 seconds it is still cut at a
+pause or the hard limit): VAD on a copy raised to speech level only decides
+whether the chunk goes to the model
 (fragments made the model invent "Uh" from noise, whole clips stayed empty), and
-clips under a second are padded as Handy does. Long dictation is raised before
-pause cutting, so quiet speech still cuts at pauses. Raising means amplified room
+clips under a second are padded as Handy does. Pause cutting also runs on the raised
+copy, so quiet speech still cuts at pauses; the model always gets the original
+level. Raising means amplified room
 noise can pass the check: Parakeet returns nothing for it; a Whisper model may
 invent a word after an empty tap, which is the accepted cost of keeping quiet speech. Slow catalog models skip live passes.
 
