@@ -204,6 +204,8 @@ key; `apply` validates every change against `choice`, writes through
 writer. It returns only availability, tri-state sign-in and saved usage windows;
 auth probes use the same cleaned plan environment as writing and never expose
 their raw output or make a model call. An installed CLI alone is not sign-in.
+Availability and sign-in use the same normalized `AgentCli::bin`, including
+when a missing, empty or whitespace-only setting falls back to the default CLI.
 
 `import.rs` turns uploads into a note: native Markdown extraction precedes AI
 study-note writing. `import/office.rs` preserves Word headings (including

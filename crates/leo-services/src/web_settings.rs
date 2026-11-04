@@ -194,10 +194,10 @@ pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
         .filter_map(|choice| {
             let pc = cfg.provider(choice.provider)?;
             let agent = Agent::of(pc)?;
-            let installed = AgentCli::new(choice.provider.to_string(), agent, pc).available();
-            let bin = pc.bin.as_deref().unwrap_or(agent.program());
+            let cli = AgentCli::new(choice.provider.to_string(), agent, pc);
+            let installed = cli.available();
             let signed_in = installed
-                .then(|| agent_cli::signed_in(agent, bin))
+                .then(|| agent_cli::signed_in(agent, cli.bin()))
                 .flatten();
             Some(json!({
                 "provider": choice.provider,
@@ -450,6 +450,66 @@ mod tests {
                 assert!(plan["signed_in"].is_null());
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn coding_plans_use_normalized_bins_for_availability_and_signin() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD_HOME: &str = "LEO_TEST_CODING_BIN_DIR";
+        if std::env::var_os(CHILD_HOME).is_some() {
+            for bin in [None, Some(""), Some(" \t ")] {
+                let mut cfg = Config::default();
+                for name in ["codex", "claude_code"] {
+                    cfg.providers.get_mut(name).unwrap().bin = bin.map(String::from);
+                }
+                let plans = coding_plans(&cfg, &Default::default());
+                assert_eq!(plans.len(), 2);
+                for plan in plans {
+                    assert_eq!(plan["installed"], true, "{bin:?}: {plan}");
+                    assert_eq!(plan["signed_in"], true, "{bin:?}: {plan}");
+                }
+            }
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        for (name, output) in [
+            ("codex", "Logged in using ChatGPT"),
+            ("claude", r#"{"loggedIn":true}"#),
+        ] {
+            let bin = dir.path().join(name);
+            std::fs::write(&bin, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n")).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "web_settings::tests::coding_plans_use_normalized_bins_for_availability_and_signin",
+                "--nocapture",
+            ])
+            .env(CHILD_HOME, dir.path())
+            .env("PATH", dir.path())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        const CHILD_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + CHILD_WAIT;
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("coding-account checks exceeded {CHILD_WAIT:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
