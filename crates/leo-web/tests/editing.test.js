@@ -166,6 +166,9 @@ test('a tap lands on the same spot in the raw text', () => {
   assert.equal(ed.rawOffset('plain text', ''), 0);
   assert.equal(ed.rawOffset('[link](https://x.y) after', 'link af'), 22);
   assert.equal(ed.rawOffset('short', 'much longer than the line'), 5);
+  assert.equal(ed.rawOffset('😀 after', '😀'), 2);
+  assert.equal(ed.rawOffset('## 😀 **bold** after', '😀 bold af'), '## 😀 **bold** af'.length);
+  assert.equal(ed.rawOffset('[😀](https://x.y) after', '😀 af'), '[😀](https://x.y) af'.length);
 });
 
 let failed = 0;

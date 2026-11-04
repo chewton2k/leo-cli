@@ -434,7 +434,7 @@
       const width = entries[0].contentRect.width;
       if (width === editWidth) return;
       editWidth = width;
-      if (editing) fit(editing.area);
+      if (editing) fit(editing.selectionText || editing.area);
     }) : null;
     if (editResize) editResize.observe(container);
 
@@ -442,7 +442,7 @@
     let told = false;
 
     function liveSelection() {
-      if (!editing) return null;
+      if (!editing || editing.selectionText) return null;
       const { area } = editing;
       if (area.selectionStart === area.selectionEnd) return null;
       const base = lineStart(editing.start) + editing.prefix.length;
@@ -452,7 +452,8 @@
     function keep() {
       if (!editing) return;
       const base = lineStart(editing.start) + editing.prefix.length;
-      kept = { caret: lineOf(base + editing.area.selectionEnd), picked: liveSelection(), text: lines.join('\n') };
+      const span = editing.selectionText && selectedSpan();
+      kept = { caret: lineOf(span ? span[1] : base + editing.area.selectionEnd), picked: span ? ed.snapshotOf(lines, span[0], span[1]) : liveSelection(), text: lines.join('\n') };
     }
 
     function tell() {
@@ -484,6 +485,7 @@
 
     function onSelectionChange() {
       if (!container.isConnected) return;
+      if (editing && editing.selectionText && !pressed) settle();
       tell();
     }
 
@@ -492,6 +494,10 @@
     function stop() {
       if (!editing) return;
       keep();
+      dragOut = null;
+      dragStart = null;
+      dragAnchor = null;
+      sourcePress = null;
       const { area } = editing;
       area.removeEventListener('input', onInput);
       area.removeEventListener('keydown', onKey);
@@ -503,15 +509,15 @@
       tell();
     }
 
-    function edit(index, caret) {
+    function edit(index, caret, reveal = true) {
       const block = blocks[index];
       if (!block) return;
       const length = lines.slice(block.start, block.end).join('\n').length;
       const at = caret === 'start' ? 0 : caret === 'end' || caret == null ? length : Math.max(0, Math.min(caret, length));
-      open(index, index, at, at);
+      open(index, index, at, at, reveal);
     }
 
-    function open(first, last, from, to) {
+    function open(first, last, from, to, reveal = true) {
       if (editing) stop();
       const block = blocks[first];
       const end = blocks[last];
@@ -560,7 +566,7 @@
       for (const kind of ['select', 'keyup', 'mouseup']) area.addEventListener(kind, tell);
       area.focus({ preventScroll: true });
       area.setSelectionRange(Math.max(0, Math.min(from - prefix.length, area.value.length)), Math.max(0, Math.min(to - prefix.length, area.value.length)));
-      if (from === to) area.scrollIntoView({ block: 'nearest' });
+      if (reveal && from === to) area.scrollIntoView({ block: 'nearest' });
     }
 
     function textLeft(el) {
@@ -585,6 +591,10 @@
     }
 
     function pointFor(at) {
+      if (editing && editing.selectionText) {
+        const base = lineStart(editing.start) + editing.prefix.length;
+        if (at >= base && at <= base + editing.area.value.length) return { node: editing.selectionText.firstChild, offset: at - base };
+      }
       if (at <= 0) return { node: container, offset: 0 };
       if (at >= docLength()) return { node: container, offset: blocks.length };
       const index = blockAtLine(lineOf(at));
@@ -599,7 +609,7 @@
       while ((node = walker.nextNode())) texts.push(node);
       const whole = { node: blk, offset: inside > 0 ? blk.childNodes.length : 0 };
       if (block.kind !== 'line' || !raw.trim() || !texts.length) return whole;
-      const total = texts.reduce((n, text) => n + [...text.data].filter((ch) => ch !== '\u200b').length, 0);
+      const total = texts.reduce((n, text) => n + text.data.replace(/\u200b/g, '').length, 0);
       let low = 0;
       let high = total;
       while (low < high) {
@@ -612,8 +622,8 @@
         let offset = 0;
         for (const ch of text.data) {
           if (ch !== '\u200b') {
-            if (seen === low) return { node: text, offset };
-            seen++;
+            if (seen >= low) return { node: text, offset };
+            seen += ch.length;
           }
           offset += ch.length;
         }
@@ -664,7 +674,16 @@
       }
       const el = node.nodeType === 1 ? node : node.parentElement;
       const blk = el && el.closest('.blk');
-      if (!blk || !container.contains(blk) || blk.classList.contains('editing')) return side === 'start' ? 0 : docLength();
+      if (!blk || !container.contains(blk)) return side === 'start' ? 0 : docLength();
+      if (editing && editing.selectionText && editing.selectionText.contains(node)) {
+        const range = document.createRange();
+        range.setStart(editing.selectionText, 0);
+        range.setEnd(node, offset);
+        return lineStart(editing.start) + editing.prefix.length + Math.min(range.toString().length, editing.area.value.length);
+      }
+      if (editing && blk.classList.contains('editing')) {
+        return lineStart(editing.start) + editing.prefix.length + (side === 'start' ? 0 : editing.area.value.length);
+      }
       const block = blocks[Number(blk.dataset.i)];
       const start = shifted(block.start);
       const raw = lines.slice(start, start + block.end - block.start).join('\n');
@@ -752,9 +771,9 @@
 
     document.addEventListener('keydown', onDocumentKey);
 
-    function editLine(line, caret) {
+    function editLine(line, caret, reveal = true) {
       const index = blockAtLine(line);
-      if (index >= 0) edit(index, caret);
+      if (index >= 0) edit(index, caret, reveal);
     }
 
     function onInput() {
@@ -869,7 +888,7 @@
     }
 
     function settle() {
-      if (editing && document.activeElement !== editing.area) stop();
+      if (editing && document.activeElement !== editing.area && !(editing.selectionText && selectedSpan())) stop();
     }
 
     function onBlur() {
@@ -911,10 +930,14 @@
     let extended = false;
 
     let dragOut = null;
+    let dragStart = null;
     let dragAnchor = null;
+    let sourcePress = null;
+    const DRAG_CLICK_DISTANCE = 4;
 
     function onAreaPress(e) {
       dragOut = e.button === 0 && !e.shiftKey && e.pointerType === 'mouse' ? e.currentTarget : null;
+      dragStart = null;
     }
 
     function caretAt(x, y) {
@@ -937,6 +960,7 @@
           dragAnchor = null;
           return;
         }
+        e.preventDefault();
         const to = caretAt(e.clientX, e.clientY);
         const selection = root.getSelection();
         if (to && selection) selection.setBaseAndExtent(dragAnchor.node, dragAnchor.offset, to.node, to.offset);
@@ -948,11 +972,23 @@
         return;
       }
       const area = dragOut;
+      if (dragStart === null) dragStart = area.selectionStart;
       const box = area.getBoundingClientRect();
       if (e.clientY >= box.top && e.clientY <= box.bottom) return;
       dragOut = null;
-      const anchor = lineStart(editing.start) + editing.prefix.length + (area.selectionDirection === 'backward' ? area.selectionEnd : area.selectionStart);
-      stop();
+      const anchor = lineStart(editing.start) + editing.prefix.length + dragStart;
+      const text = document.createElement('div');
+      text.className = area.className;
+      text.style.cssText = area.style.cssText;
+      text.style.whiteSpace = 'pre-wrap';
+      text.style.overflowWrap = 'break-word';
+      if (area.dataset.head) text.dataset.head = area.dataset.head;
+      text.textContent = area.value || '\u200b';
+      const top = area.scrollTop, left = area.scrollLeft;
+      editing.selectionText = text;
+      area.replaceWith(text);
+      text.scrollTop = top;
+      text.scrollLeft = left;
       dragAnchor = pointFor(anchor);
       extended = true;
       onDragMove(e);
@@ -960,6 +996,7 @@
 
     function onDragEnd() {
       dragOut = null;
+      dragStart = null;
       dragAnchor = null;
     }
 
@@ -971,6 +1008,7 @@
       pressed = true;
       extended = false;
       clearTimeout(release);
+      sourcePress = e.button === 0 && !e.shiftKey && editing && editing.selectionText && editing.selectionText.contains(e.target) ? { x: e.clientX, y: e.clientY } : null;
       if (!e.shiftKey || !editing || e.target.closest('.editing')) return;
       const blk = e.target.closest('.blk');
       if (!blk) return;
@@ -1127,7 +1165,7 @@
       if (!img || img.closest('.editing')) return;
       const blk = img.closest('.blk');
       unframe();
-      if (blk) editLine(shifted(Number(blk.dataset.start)), 'end');
+      if (blk) editLine(shifted(Number(blk.dataset.start)), 'end', false);
     });
 
     function onFrameKey(e) {
@@ -1154,10 +1192,27 @@
         return;
       }
       unframe();
+      const resume = sourcePress && Math.hypot(e.clientX - sourcePress.x, e.clientY - sourcePress.y) < DRAG_CLICK_DISTANCE;
+      sourcePress = null;
+      if (resume && editing && editing.selectionText && editing.selectionText.contains(e.target)) {
+        e.preventDefault();
+        const { area, selectionText } = editing;
+        const prefix = caretIn(selectionText, e.clientX, e.clientY);
+        const top = selectionText.scrollTop, left = selectionText.scrollLeft;
+        area.style.cssText = selectionText.style.cssText;
+        selectionText.replaceWith(area);
+        delete editing.selectionText;
+        area.focus({ preventScroll: true });
+        const caret = prefix === null ? area.value.length : prefix.length;
+        area.setSelectionRange(caret, caret);
+        area.scrollTop = top;
+        area.scrollLeft = left;
+        return;
+      }
       const span = !e.target.closest('input[data-box], a') && selectedSpan();
       if (span) {
         e.preventDefault();
-        if (editing) {
+        if (editing && !editing.selectionText) {
           stop();
           selectSpan(span[0], span[1]);
         }
@@ -1200,7 +1255,7 @@
           changed();
           draw();
         }
-        editLine(lines.length - 1, 'end');
+        editLine(lines.length - 1, 'end', false);
         return;
       }
       const block = blocks[Number(blk.dataset.i)];
@@ -1209,12 +1264,13 @@
       stop();
       const raw = lines[line] || '';
       const caret = prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix) : 'end';
-      editLine(line, caret);
+      editLine(line, caret, false);
     });
 
     draw();
 
     function insert(text) {
+      if (editing && editing.selectionText) stop();
       if (editing) {
         const { area } = editing;
         const at = area.selectionStart;

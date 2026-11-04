@@ -132,6 +132,229 @@ test('switching editable blocks keeps unrelated rendered content and the viewpor
   });
 });
 
+test('focusing and dragging from a formatted line preserves document geometry in both directions', async ({ browser }) => {
+  const samples = ['## A heading', '- A list item', '  - A nested item', '- [ ] A task', '**Bold** text ' + 'wrapped words '.repeat(35), '```js\nconst answer = 42;\n```', '| Name | Value |\n| --- | --- |\n| One | Two |', '> A quote\n> Another line'];
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const width of [1400, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const sample of samples) {
+        for (const direction of ['up', 'down']) {
+          const body = 'Before this line\n' + sample + '\nAfter this line\nLast line';
+          await page.goto(url + '/?body=' + encodeURIComponent(body));
+          const block = page.locator('#doc .blk').nth(1);
+          const geometry = () => page.locator('#doc .blk').evaluateAll(els => els.map(el => ({ y: el.getBoundingClientRect().top + scrollY, height: el.getBoundingClientRect().height })));
+          const before = await geometry();
+          await block.click({ position: { x: 35, y: 10 } });
+          const area = page.locator('#doc textarea');
+          await expect(area).toBeFocused();
+          const focused = await geometry();
+          for (let i = 0; i < before.length; i++) {
+            expect(Math.abs(focused[i].y - before[i].y), `${width} ${direction} ${sample}: focus block ${i}`).toBeLessThanOrEqual(1);
+            expect(Math.abs(focused[i].height - before[i].height), `${width} ${sample}: focus height ${i}`).toBeLessThanOrEqual(1);
+          }
+          const box = await area.boundingBox();
+          const target = page.locator('#doc .blk').nth(direction === 'up' ? 0 : 2);
+          const end = await target.boundingBox();
+          await page.mouse.move(box.x + 35, box.y + Math.min(10, box.height / 2));
+          await page.mouse.down();
+          await page.mouse.move(end.x + 35, end.y + end.height / 2, { steps: 8 });
+          await page.mouse.up();
+          const after = await geometry();
+          for (let i = 0; i < before.length; i++) expect(Math.abs(after[i].y - before[i].y), `${width} ${direction} ${sample}: selection block ${i}`).toBeLessThanOrEqual(1);
+          expect(await page.evaluate(() => getSelection().toString())).toContain(direction === 'up' ? 'this line' : 'After');
+          expect(await page.evaluate(() => doc.source())).toBe(body);
+        }
+      }
+    }
+  });
+});
+
+test('focusing a partially visible Markdown line does not scroll the page', async ({ browser }) => {
+  const sample = '**Bold words** and ordinary words. '.repeat(25);
+  const body = 'Before\n\n'.repeat(30) + sample + '\n\n' + 'After\n\n'.repeat(30);
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto(url);
+    const block = page.locator('#doc .blk').filter({ hasText: 'Bold words' });
+    await block.evaluate(el => scrollTo(0, scrollY + el.getBoundingClientRect().top + 80));
+    const box = await block.boundingBox();
+    const before = await page.evaluate(() => scrollY);
+    await page.mouse.click(box.x + 70, 100);
+    await expect(page.locator('#doc textarea')).toBeFocused();
+    expect(await page.evaluate(() => scrollY)).toBe(before);
+  }, { body });
+});
+
+test('dragging after editing wrapped Markdown keeps the target under the pointer', async ({ browser }) => {
+  const words = '**word 😀** '.repeat(25);
+  const samples = [words, '## ' + words, '- ' + words, '- [ ] ' + words, '  - [x] ' + words, '```txt\n' + words + '\n```', '> ' + words, '| Name | Value |\n| --- | --- |\n| One | Two |', '', '- [ ] '];
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 390, height: 900 });
+    for (const sample of samples) for (const direction of ['up', 'down']) {
+      await page.goto(url + '/?body=' + encodeURIComponent('Before this line\n' + sample + '\nAfter this line\nLast line'));
+      await page.locator('#doc .blk').nth(1).click({ position: { x: 35, y: 10 } });
+      const area = page.locator('#doc textarea');
+      const value = await area.inputValue();
+      const base = 'Before this line\n'.length + sample.length - value.length;
+      await area.fill(sample === '' || sample === '- [ ] ' ? '' : value + (sample === words ? 'x\nPasted continuation' : 'x'));
+      const source = await page.evaluate(() => doc.source());
+      const box = await area.boundingBox();
+      const target = page.locator('#doc .blk').nth(direction === 'up' ? 0 : 2);
+      const before = await target.boundingBox();
+      const end = { x: before.x + 35, y: before.y + before.height / 2 };
+      const offset = await target.evaluate((el, point) => {
+        const pos = document.caretPositionFromPoint?.(point.x, point.y);
+        const hit = pos ? null : document.caretRangeFromPoint(point.x, point.y);
+        const range = document.createRange();
+        range.setStart(el, 0);
+        range.setEnd(pos ? pos.offsetNode : hit.startContainer, pos ? pos.offset : hit.startOffset);
+        return range.toString().length;
+      }, end);
+      await page.mouse.move(Math.max(2, box.x + 35), box.y + 10);
+      await page.mouse.down();
+      const anchor = base + await area.evaluate(el => el.selectionStart);
+      await page.mouse.move(end.x, end.y, { steps: 8 });
+      await page.mouse.up();
+      expect(Math.abs((await target.boundingBox()).y - before.y), direction + sample).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => getSelection().focusOffset)).toBe(offset);
+      const to = (direction === 'up' ? 0 : source.indexOf('After this line')) + offset;
+      const expected = source.slice(Math.min(anchor, to), Math.max(anchor, to));
+      const copied = await page.evaluate(() => {
+        const data = new DataTransfer();
+        document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+        return data.getData('text/plain');
+      });
+      expect(copied, direction + sample).toBe(expected);
+      await page.keyboard.press('Backspace');
+      expect(await page.evaluate(() => doc.source())).toBe(source.slice(0, Math.min(anchor, to)) + source.slice(Math.max(anchor, to)));
+    }
+  });
+});
+
+test('a dragged source line can be refocused without replacing its editor and returns to preview when cleared', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 390, height: 900 });
+    for (const sample of ['**word** '.repeat(25), '- [ ] ' + '**word** '.repeat(25), '```txt\nword\n```']) {
+      await page.goto(url + '/?body=' + encodeURIComponent('Before\n' + sample + '\nAfter this line\nLast'));
+      await page.locator('#doc .blk').nth(1).click({ position: { x: 35, y: 10 } });
+      const area = page.locator('#doc textarea');
+      await area.fill((await area.inputValue()) + 'x');
+      await area.evaluate(el => { window.keptEditor = el; });
+      const from = await area.boundingBox(), to = await page.locator('#doc .blk').nth(2).boundingBox();
+      await page.mouse.move(from.x + 35, from.y + 10);
+      await page.mouse.down();
+      await page.mouse.move(to.x + 35, to.y + to.height / 2, { steps: 8 });
+      await page.mouse.up();
+      await expect(area).toHaveCount(0);
+      const selected = page.locator('#doc .blk.editing .line-edit');
+      const before = await selected.boundingBox();
+      await page.mouse.move(before.x + 35, before.y + 10);
+      await page.mouse.down();
+      await page.mouse.up();
+      await expect(area).toBeFocused();
+      expect(await area.evaluate(el => el === window.keptEditor)).toBe(true);
+      expect(await area.boundingBox()).toEqual(before);
+      const value = await area.inputValue();
+      const caret = await area.evaluate(el => el.selectionStart);
+      await page.keyboard.type('Z');
+      await expect(area).toHaveValue(value.slice(0, caret) + 'Z' + value.slice(caret));
+      await page.locator('article.note > h1').click();
+      await expect(page.locator('#doc .line-edit')).toHaveCount(0);
+      expect(await page.evaluate(() => doc.source())).toContain('Z');
+    }
+  });
+});
+
+test('inserting a picture after a source-selection drag preserves the note and uses a live editor state', async ({ browser }) => {
+  const body = 'Before\n' + '**word** '.repeat(25) + '\nAfter this line\nLast';
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto(url);
+    await page.locator('#doc .blk').nth(1).click({ position: { x: 35, y: 10 } });
+    const area = page.locator('#doc textarea');
+    await area.fill((await area.inputValue()) + 'x');
+    const source = await page.evaluate(() => doc.source());
+    const from = await area.boundingBox(), to = await page.locator('#doc .blk').nth(2).boundingBox();
+    await page.mouse.move(from.x + 35, from.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(to.x + 35, to.y + to.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(area).toHaveCount(0);
+    await page.evaluate(() => doc.insert('![picture](attachment.png)'));
+    expect(await page.evaluate(() => doc.source())).toBe(source + '\n\n![picture](attachment.png)');
+  }, { body });
+});
+
+test('returning a drag to a list marker selects only the edited item text', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const item of ['- [ ] Task words', '- Item words', '12. Item words', '  - Nested words']) {
+      const body = 'Before this line\n' + item + '\nAfter this line\nLast line';
+      await page.goto(url + '/?body=' + encodeURIComponent(body));
+      await page.locator('#doc .blk').nth(1).locator('li').click({ position: { x: 60, y: 10 } });
+      const area = page.locator('#doc textarea');
+      const value = await area.inputValue();
+      const box = await area.boundingBox(), below = await page.locator('#doc .blk').nth(2).boundingBox();
+      await page.mouse.move(box.x + 20, box.y + 10);
+      await page.mouse.down();
+      const anchor = await area.evaluate(el => el.selectionStart);
+      await page.mouse.move(below.x + 20, below.y + 10, { steps: 5 });
+      await page.mouse.move(box.x - 8, box.y + 10, { steps: 5 });
+      await page.mouse.up();
+      expect(await page.evaluate(() => doc.selection().text), item).toBe(value.slice(0, anchor));
+      const copied = await page.evaluate(() => {
+        const data = new DataTransfer();
+        document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+        return data.getData('text/plain');
+      });
+      expect(copied, item).toBe(value.slice(0, anchor));
+      await page.keyboard.press('Backspace');
+      expect(await page.evaluate(() => doc.source()), item).toBe('Before this line\n' + item.slice(0, item.length - value.length) + value.slice(anchor) + '\nAfter this line\nLast line');
+    }
+  });
+});
+
+test('clicks and shift selections after emoji use the same raw caret offsets', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const sample of ['😀 target words', '**😀** target words', '- [ ] 😀 target words', '## 😀 target words']) {
+      const body = sample + '\nAfter this line';
+      await page.goto(url + '/?body=' + encodeURIComponent(body));
+      const point = await page.locator('#doc .blk').first().evaluate(el => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const at = node.data.indexOf('target');
+          if (at < 0) continue;
+          const range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + 1);
+          const rect = range.getBoundingClientRect();
+          return { x: rect.left + .2, y: rect.top + rect.height / 2 };
+        }
+      });
+      await page.mouse.click(point.x, point.y);
+      const area = page.locator('#doc textarea');
+      await expect(area).toBeFocused();
+      expect(await area.evaluate(el => el.selectionStart), sample).toBe((await area.inputValue()).indexOf('target'));
+      await page.keyboard.down('Shift');
+      await page.locator('#doc .blk').nth(1).click({ position: { x: 35, y: 10 } });
+      await page.keyboard.up('Shift');
+      const copied = await page.evaluate(() => {
+        const data = new DataTransfer();
+        document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+        return data.getData('text/plain');
+      });
+      expect(copied, sample).toBe('target words\nAfter');
+    }
+  });
+});
+
 test('heading navigation scrolls smoothly and respects reduced motion', async ({ browser }) => {
   const body = '## First\n\n' + 'A paragraph.\n\n'.repeat(80) + '## Last\n\n' + 'More text.\n\n'.repeat(20);
   await editorFixture(browser, async (context, url) => {
