@@ -80,6 +80,11 @@ fn activation_requires_a_verified_model_and_supported_language() {
 }
 
 #[test]
+fn the_default_dictation_model_is_fast_enough_for_live_text() {
+    assert!(catalog().live("parakeet-unified-en-0.6b"));
+}
+
+#[test]
 fn a_verified_model_is_not_hashed_again_after_a_restart() {
     let (dir, l) = fixture();
     let (url, t) = model_server(b"model");

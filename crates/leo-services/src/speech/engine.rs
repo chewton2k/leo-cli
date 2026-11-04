@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::io::Read;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -15,12 +17,16 @@ use super::vad::{
 };
 
 const QUEUED: usize = 8;
+const SHADERS_MARKER: &str = "speech-shaders-ready";
 const IDLE: Duration = Duration::from_secs(5 * 60);
 const POLL: Duration = Duration::from_millis(20);
 const CONTROL_LIMIT: Duration = Duration::from_secs(5);
 const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 const MOST_FEEDS: usize = 300 * 16_000 / 512 + 2;
-const WARM_SAMPLES: usize = 16_000;
+const TAIL_KEPT: usize = 8_000;
+const TAIL_SILENCE: usize = 4_800;
+const FRAME: usize = 256;
+const MOST_MARKER_BYTES: u64 = 64;
 const SPEECH_LEVEL: f32 = 0.1;
 const MOST_GAIN: f32 = 50.0;
 const SHORTEST_CLIP: usize = 16_000;
@@ -37,6 +43,7 @@ pub enum Priority {
 struct Job {
     _admission: Pin,
     selected: Selected,
+    gain: f32,
     chunks: VecDeque<Vec<f32>>,
     text: Vec<String>,
     priority: Priority,
@@ -146,14 +153,15 @@ impl Engine {
             })
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again in a moment."))?;
         let admission = Pin(self.admitted.clone());
-        let chunks = if priority == Priority::Dictation {
-            dictation_chunks(pcm)?
+        let pcm = if priority == Priority::Dictation {
+            settled(pcm)
         } else {
-            super::prepare(pcm)?
-        }
-        .into();
+            pcm
+        };
+        let gain = speech_gain(&pcm);
+        let chunks = speech_chunks(pcm, gain)?.into();
         let (reply, answer) = mpsc::sync_channel(1);
-        self.requests.try_send(Message::Run(Job { _admission: admission, selected, chunks, text: Vec::new(), priority, reply }))
+        self.requests.try_send(Message::Run(Job { _admission: admission, selected, gain, chunks, text: Vec::new(), priority, reply }))
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Your recorded audio is kept; try again in a moment."))?;
         answer.recv_timeout(ANSWER_LIMIT).context(
             "Transcription took too long. Your audio is kept; try a faster speech model.",
@@ -163,6 +171,19 @@ impl Engine {
     pub fn warm(&self, selected: Selected) {
         if !self.stopped.load(Ordering::Acquire) {
             let _ = self.requests.try_send(Message::Warm(selected));
+        }
+    }
+
+    pub fn prepare_after_update(&self, config: &Path, version: &str) {
+        let marker = config.join(SHADERS_MARKER);
+        if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            && !self.stopped.load(Ordering::Acquire)
+            && !shaders_ready(&marker, version)
+            && self.supervisor.devices().is_some()
+        {
+            if let Err(error) = std::fs::write(&marker, version) {
+                log::warn!("Could not remember the prepared speech shaders: {error}");
+            }
         }
     }
 
@@ -343,8 +364,8 @@ fn trim(pcm: Vec<f32>) -> Result<Vec<f32>> {
 
 fn speech_gain(pcm: &[f32]) -> f32 {
     let mut levels: Vec<f32> = pcm
-        .chunks(256)
-        .map(|frame| (frame.iter().map(|n| n * n).sum::<f32>() / frame.len() as f32).sqrt())
+        .chunks(FRAME)
+        .map(frame_level)
         .filter(|level| *level > 0.0)
         .collect();
     levels.sort_by(f32::total_cmp);
@@ -358,8 +379,28 @@ fn raised(pcm: &[f32], gain: f32) -> Vec<f32> {
     pcm.iter().map(|n| n * gain).collect()
 }
 
-fn dictation_chunks(pcm: Vec<f32>) -> Result<Vec<Vec<f32>>> {
-    let gain = speech_gain(&pcm);
+fn shaders_ready(marker: &Path, version: &str) -> bool {
+    let mut seen = String::new();
+    std::fs::File::open(marker)
+        .and_then(|file| file.take(MOST_MARKER_BYTES).read_to_string(&mut seen))
+        .is_ok()
+        && seen == version
+}
+
+fn frame_level(frame: &[f32]) -> f32 {
+    (frame.iter().map(|n| n * n).sum::<f32>() / frame.len() as f32).sqrt()
+}
+
+fn settled(mut pcm: Vec<f32>) -> Vec<f32> {
+    let quiet = SPEECH_LEVEL / 10.0 / speech_gain(&pcm);
+    if let Some(last) = pcm.chunks(FRAME).rposition(|f| frame_level(f) >= quiet) {
+        pcm.truncate(((last + 1) * FRAME + TAIL_KEPT).min(pcm.len()));
+    }
+    pcm.resize(pcm.len() + TAIL_SILENCE, 0.0);
+    pcm
+}
+
+fn speech_chunks(pcm: Vec<f32>, gain: f32) -> Result<Vec<Vec<f32>>> {
     let mut chunks = super::prepare(raised(&pcm, gain))?;
     for chunk in &mut chunks {
         chunk.iter_mut().for_each(|n| *n /= gain);
@@ -367,8 +408,14 @@ fn dictation_chunks(pcm: Vec<f32>) -> Result<Vec<Vec<f32>>> {
     Ok(chunks)
 }
 
-fn heard_speech(pcm: &[f32]) -> Result<bool> {
-    Ok(!trim(raised(pcm, speech_gain(pcm)))?.is_empty())
+fn trim_at_speech_level(pcm: &[f32], gain: f32) -> Result<Vec<f32>> {
+    let mut kept = trim(raised(pcm, gain))?;
+    kept.iter_mut().for_each(|n| *n /= gain);
+    Ok(kept)
+}
+
+fn heard_speech(pcm: &[f32], gain: f32) -> Result<bool> {
+    Ok(!trim(raised(pcm, gain))?.is_empty())
 }
 
 fn dictated(mut pcm: Vec<f32>, heard: impl FnOnce(&[f32]) -> Result<bool>) -> Result<Vec<f32>> {
@@ -411,19 +458,7 @@ fn run(
                             backend: Backend::Auto,
                             device: DeviceSelector::Auto,
                         }) {
-                            Ok(_) => {
-                                let run = RunOptions {
-                                    language: (selected.language != "auto")
-                                        .then(|| selected.language.clone()),
-                                    ..RunOptions::default()
-                                };
-                                if let Err(error) =
-                                    supervisor.transcribe(vec![0.0; WARM_SAMPLES], run)
-                                {
-                                    log::warn!("Speech model warm-up failed: {error}");
-                                }
-                                model = Some(selected.path);
-                            }
+                            Ok(_) => model = Some(selected.path),
                             Err(error) => log::warn!("Speech model preload failed: {error}"),
                         }
                     }
@@ -565,9 +600,9 @@ fn run(
             }
             if let Some(chunk) = job.chunks.pop_front() {
                 let pcm = if job.priority == Priority::Dictation {
-                    dictated(chunk, heard_speech)?
+                    dictated(chunk, |pcm| heard_speech(pcm, job.gain))?
                 } else {
-                    trim(chunk)?
+                    trim_at_speech_level(&chunk, job.gain)?
                 };
                 if !pcm.is_empty() {
                     let run = RunOptions {
@@ -632,18 +667,52 @@ mod dictation_audio_tests {
     }
 
     #[test]
-    fn the_model_gets_dictation_at_its_original_level() {
+    fn the_model_gets_audio_at_its_original_level() {
         let mut clip = vec![0.01; 25_600];
         clip[0] = 0.5;
-        let chunks = dictation_chunks(clip).unwrap();
+        let gain = speech_gain(&clip);
+        let chunks = speech_chunks(clip, gain).unwrap();
         assert_eq!(chunks.len(), 1);
         assert!((chunks[0][0] - 0.5).abs() < 0.000_1);
         assert!((chunks[0][25_000] - 0.01).abs() < 0.000_1);
     }
 
     #[test]
+    fn a_dictation_ends_in_a_short_silence_whatever_followed_the_speech() {
+        let mut speech = vec![0.2; 16_000];
+        speech.extend(vec![0.0; 160_000]);
+        let tidy = settled(speech);
+        assert_eq!(tidy.len(), 16_128 + TAIL_KEPT + TAIL_SILENCE);
+        assert_eq!(tidy[15_999], 0.2);
+
+        let cut_off = settled(vec![0.2; 16_000]);
+        assert_eq!(cut_off.len(), 16_000 + TAIL_SILENCE);
+        assert_eq!(cut_off[15_999], 0.2);
+        assert_eq!(cut_off[16_000], 0.0);
+    }
+
+    #[test]
+    fn a_quiet_tail_counts_as_speech_for_a_quiet_voice() {
+        let mut speech = vec![0.01; 16_000];
+        speech.extend(vec![0.002; 16_000]);
+        speech.extend(vec![0.000_1; 160_000]);
+        assert!(settled(speech).len() >= 32_000 + TAIL_SILENCE);
+    }
+
+    #[test]
+    fn shaders_are_prepared_once_per_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(SHADERS_MARKER);
+        assert!(!shaders_ready(&marker, "1.0.0"));
+        std::fs::write(&marker, "1.0.0").unwrap();
+        assert!(shaders_ready(&marker, "1.0.0"));
+        assert!(!shaders_ready(&marker, "1.0.1"));
+    }
+
+    #[test]
     fn digital_silence_is_never_sent_to_the_model() {
-        assert!(dictated(vec![0.0; SHORTEST_CLIP * 2], heard_speech)
+        let clip = vec![0.0; SHORTEST_CLIP * 2];
+        assert!(dictated(clip, |pcm| heard_speech(pcm, 1.0))
             .unwrap()
             .is_empty());
     }

@@ -127,15 +127,17 @@ explicitly rather than depending on actor-thread scheduling.
 Model deletion waits behind inference, unloads the worker first,
 and refuses deletion of an active recording/dictation model. Long audio uses
 30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
-VAD with onset, pre-roll and hangover for recordings. Dictation keeps all audio within each chunk (over 40 seconds it is still cut at a
-pause or the hard limit): VAD on a copy raised to speech level only decides
-whether the chunk goes to the model
-(fragments made the model invent "Uh" from noise, whole clips stayed empty), and
-clips under a second are padded as Handy does. Pause cutting also runs on the raised
-copy, so quiet speech still cuts at pauses; the model always gets the original
-level. Raising means amplified room
-noise can pass the check: Parakeet returns nothing for it; a Whisper model may
-invent a word after an empty tap, which is the accepted cost of keeping quiet speech. Slow catalog models skip live passes.
+VAD with onset, pre-roll and hangover. All of that runs on a copy raised to speech
+level (95th percentile frame level of the whole clip to 0.1, gain 1-50), because Earshot fails below
+about -42 dBFS and lecture audio is deleted once transcribed; the model always gets
+the original level. Dictation is not trimmed: VAD only decides whether a chunk
+goes to the model (fragments made it invent words from noise, whole clips stayed
+empty). Dictation keeps at most 500 ms after its last sound and ends in 300 ms of
+silence: without that batch lost last words, and with 10 s of silence it lost
+punctuation. Clips under a second are padded as Handy does. Raising means amplified
+room noise can pass the check: Parakeet returns nothing for it; a Whisper model may
+invent a word after an empty tap, which is the accepted cost of keeping quiet speech.
+Slow catalog models skip live passes.
 
 `speech/supervisor.rs` owns a crash-isolated worker, re-executing the current
 binary with `--leo-speech-worker` before normal app/CLI startup. Only the worker

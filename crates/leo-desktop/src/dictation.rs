@@ -1,6 +1,7 @@
 use anyhow::{ensure, Context, Result};
 use leo_services::dictation::{
     activation::{Action, Activation},
+    capture::final_text,
     generation::Generation,
     settings::{Popup, Settings, Writing},
     visualizer::Visualizer,
@@ -22,6 +23,7 @@ use tauri::{AppHandle, Emitter};
 
 const FEED_SAMPLES: usize = 512;
 const SHOWN_CHARS: usize = 25_000;
+const ZEROS_BEFORE_LISTENING: f64 = 3.0;
 
 const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 enum Finish {
@@ -74,8 +76,9 @@ impl Dictation {
         if !Self::test_mode() {
             leo_services::session::mic::warm_up();
             std::thread::spawn(|| {
-                if let Ok(selected) = library().and_then(|models| models.selected()) {
-                    engine().warm(selected);
+                let _ = library().and_then(|models| models.selected());
+                if let Ok(config) = leo_core::paths::config_dir() {
+                    engine().prepare_after_update(&config, env!("CARGO_PKG_VERSION"));
                 }
             });
             let keys = crate::shortcut::Shortcuts::start(
@@ -328,7 +331,8 @@ impl Dictation {
         let _awake = leo_services::session::awake::Awake::recording();
         let _reservation = engine().dictation();
         let selected = library()?.selected()?;
-        if !selected.streaming {
+        let live = selected.streaming && selected.live;
+        if !live {
             engine().warm(selected.clone());
         }
         ensure!(self.generation.current(id), "Dictation cancelled.");
@@ -354,7 +358,7 @@ impl Dictation {
             (Some(mic), rx)
         };
         let this = self.clone();
-        let mut stream = if selected.streaming {
+        let mut stream = if live {
             engine()
                 .stream(selected.clone(), move |committed, tentative| {
                     this.change(id, |state| {
@@ -373,7 +377,8 @@ impl Dictation {
             &rx,
             stop,
             |chunk, _, seconds| {
-                if !ready {
+                if !ready && (seconds >= ZEROS_BEFORE_LISTENING || chunk.iter().any(|n| *n != 0.0))
+                {
                     ready = true;
                     let mut began = false;
                     self.change(id, |state| {
@@ -409,12 +414,12 @@ impl Dictation {
             },
         );
         self.capturing.store(false, Ordering::Release);
-        let pcm = pcm?;
         if let Some(mic) = &mic {
             if let Some(problem) = mic.problem.lock().ok().and_then(|p| p.clone()) {
                 anyhow::bail!(problem);
             }
         }
+        let pcm = pcm?;
         ensure!(self.generation.current(id), "Dictation cancelled.");
         self.phase(
             id,
@@ -431,10 +436,11 @@ impl Dictation {
         } else {
             None
         };
-        let text = match transcript {
-            Some(text) => text,
-            None => engine().transcribe(selected.clone(), pcm, Priority::Dictation)?,
-        };
+        ensure!(self.generation.current(id), "Dictation cancelled.");
+        let text = final_text(
+            engine().transcribe(selected.clone(), pcm, Priority::Dictation),
+            transcript,
+        )?;
         ensure!(self.generation.current(id), "Dictation cancelled.");
         let language = if selected.language != "auto" {
             Some(selected.language.as_str())

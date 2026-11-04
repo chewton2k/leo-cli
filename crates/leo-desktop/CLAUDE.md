@@ -86,12 +86,15 @@ and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
 Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
 they play on their own thread. The popup says "Starting microphone…" until the
-first audio arrives; only then does it say Listening and play the start chime
-(Handy's readiness cue), so nobody speaks into a closed microphone. At launch the
-app warms CoreAudio and verifies, loads and runs the selected model once on a
-background thread: a new app version compiles Metal shaders (about 4 s), and the
-pass builds the GPU pipelines, so the first shortcut does not pay for either.
-Non-streaming models that were unloaded load again at keypress.
+first sound arrives (all-zero blocks do not count); only then does it say
+Listening and play the start chime (Handy's readiness cue). After 3 s of zeros it
+goes on anyway, for devices that gate silence; no audio at all in 8 s is an error
+(a Bluetooth headset can take seconds to switch).
+At launch the app warms CoreAudio, checks the model stamp and, on Apple Silicon
+once per app version (`<config>/speech-shaders-ready`), has a throwaway worker
+compile the Metal shaders (about 4 s) so the first shortcut does not. No model is loaded at
+launch (2026-11-04: warming measured 620 ms vs 612 ms for the first stream and
+held about 900 MB on every launch). Audio queues while a model loads.
 Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
 never expose the test actions or write a test paste file.
 
@@ -123,11 +126,12 @@ The popup follows Handy's live preview: state changes are pushed as a
 `dictation` event (revision-stamped, skipped when the popup is Off; the page
 polls only if listening fails), committed and tentative words render with a
 caret, the text pins to its newest line, and 16 FFT buckets
-(`dictation::visualizer`) drive nine smoothed bars. Streaming models get every sample
-in ~32 ms feeds with no VAD in front (2026-11-04, measured on Parakeet Unified:
-Earshot passed nothing from quiet speech and Silero clipped first words, while
-unfiltered audio kept each word and stayed empty on noise); the feed queue holds
-the full five minutes, so a slow model load cannot end the live pass. Text stays
+(`dictation::visualizer`) drive nine smoothed bars. Models fast enough for live text
+(`Selected.live`) stream every sample in ~32 ms feeds with no VAD in front. Slower
+streaming models skip the live pass and are transcribed on stop. The final text
+always comes from a batch pass, with the stream's text as its fallback (2026-11-04,
+74 read clips: batch 2.39% WER vs 2.73%, sentence-final punctuation 34 vs 1 of 74,
+123 ms vs 86 ms for 10 s of speech). Text stays
 visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
