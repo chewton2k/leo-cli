@@ -479,7 +479,7 @@ function highlightSearch(root, query) {
   CSS.highlights.set('leo-search', new Highlight(...ranges));
   const first = ranges[0];
   const rect = first.getBoundingClientRect();
-  if (rect.top < 80 || rect.bottom > window.innerHeight) first.startContainer.parentElement.scrollIntoView({ block: 'center' });
+  if (rect.top < 80 || rect.bottom > window.innerHeight) window.scrollBy({ top: (rect.top + rect.bottom - window.innerHeight) / 2, behavior: 'instant' });
   searchHighlightTimer = setTimeout(clearSearchHighlight, SEARCH_HIGHLIGHT_MS);
   return true;
 }

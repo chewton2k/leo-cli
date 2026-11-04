@@ -14,6 +14,27 @@ test('explicit calendar dates retain the day and deadline', () => {
   assert.equal(S.quickParse('submit Nov 8 2027', now).date, '2027-11-08');
 });
 
+test('explicit years immediately after a comma keep the whole deadline', () => {
+  const now = new Date(2026, 10, 4, 12);
+  for (const date of ['Nov 8,2027', 'Nov 8, 2027', 'Nov 8 2027']) {
+    assert.deepEqual(S.quickParse(`submit ${date}`, now), { kind: 'task', title: 'submit', date: '2027-11-08', time: null });
+  }
+});
+
+test('ISO local datetimes validate and keep the whole deadline', () => {
+  const now = new Date(2026, 10, 4, 12);
+  for (const [clock, expected] of [['00:00', '00:00'], ['11:59', '11:59'], ['23:59', '23:59']]) {
+    assert.deepEqual(S.quickParse(`remind me to submit 2026-11-08T${clock}`, now), { kind: 'task', title: 'submit', date: '2026-11-08', time: expected });
+  }
+  for (const clock of ['24:00', '11:60']) {
+    const input = `submit 2026-11-08T${clock}`;
+    const parsed = S.quickParse('task: ' + input, now);
+    assert.equal(parsed.date, null);
+    assert.equal(parsed.time, null);
+    assert.equal(parsed.title, input);
+  }
+});
+
 test('Quick Leo reads a reminder, a question or a note from one line', () => {
   const now = new Date(2026, 9, 19, 10, 0);
   assert.deepEqual(S.quickParse('remind me to email Bob tomorrow at 3pm', now), { kind: 'task', title: 'email Bob', date: '2026-10-20', time: '15:00' });

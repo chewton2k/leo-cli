@@ -82,3 +82,12 @@ test('the query bound keeps the final Unicode character whole', () => {
   const range = value.registry.get('leo-search')[0];
   assert.equal(range.node.textContent.slice(range.start, range.end), '😀');
 });
+
+test('a match deep inside a tall paragraph scrolls the range into view', () => {
+  const value = fixture(['long paragraph needle']);
+  let top = 2000;
+  value.document.createRange = () => ({ setStart(node, at) { this.startContainer = node; }, setEnd() {}, getBoundingClientRect: () => ({ top, bottom: top + 20 }) });
+  value.window.scrollBy = options => { top -= options.top; };
+  assert.equal(value.highlightSearch({}, 'needle'), true);
+  assert.ok(top >= 80 && top + 20 <= value.window.innerHeight);
+});

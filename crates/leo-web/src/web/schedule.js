@@ -418,18 +418,19 @@
         text = (text.slice(0, t.index) + ' ' + text.slice(t.index + t[0].length)).replace(/\s{2,}/g, ' ').trim();
       }
     }
-    const named = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:,?\s+(\d{4}))?\b/i.exec(text);
-    const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(text);
+    const named = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:(?:,\s*|\s+)(\d{4}))?\b/i.exec(text);
+    const iso = /\b(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?\b(?![:+-])/i.exec(text);
     const explicit = iso || named;
     if (explicit) {
       const month = iso ? Number(iso[2]) - 1 : ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(named[1].slice(0, 3).toLowerCase());
       const day = Number(iso ? iso[3] : named[2]);
       const year = Number(iso ? iso[1] : named[3] || today.getFullYear());
       let candidate = new Date(year, month, day);
-      if (candidate.getFullYear() === year && candidate.getMonth() === month && candidate.getDate() === day) {
+      if (candidate.getFullYear() === year && candidate.getMonth() === month && candidate.getDate() === day && (!iso?.[4] || (Number(iso[4]) < 24 && Number(iso[5]) < 60))) {
         if (!iso && !named[3] && candidate < today) candidate = new Date(year + 1, month, day);
         if (candidate.getMonth() === month && candidate.getDate() === day) {
           date = candidate;
+          if (iso?.[4]) time = `${iso[4]}:${iso[5]}`;
           text = (text.slice(0, explicit.index) + ' ' + text.slice(explicit.index + explicit[0].length)).replace(/\s{2,}/g, ' ').trim();
         }
       }

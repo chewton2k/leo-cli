@@ -12,7 +12,6 @@ pub struct WebSettings;
 impl leo_web::SettingsApi for WebSettings {
     fn describe(&self, notes_dir: &Path) -> Value {
         let cfg = Config::load();
-        leo_services::usage::refresh_codex(&cfg);
         let store = default_store();
         let local = choice::local_models(&cfg);
         let usage = leo_services::usage::load();
@@ -25,6 +24,10 @@ impl leo_web::SettingsApi for WebSettings {
         );
         page["plans"] = serde_json::json!(leo_services::web_settings::coding_plans(&cfg, &usage));
         page
+    }
+
+    fn refresh_usage(&self) {
+        leo_services::usage::refresh_codex(&Config::load());
     }
 
     fn apply(&self, change: &Value) -> Result<String> {
@@ -235,6 +238,84 @@ mod backup_setup_tests {
         assert_eq!(
             super::setup_backup_with("owner/leo-notes", None, || Ok("connected".into())).unwrap(),
             "connected"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod usage_tests {
+    use leo_web::SettingsApi;
+
+    #[test]
+    fn settings_read_saved_usage_without_refreshing_the_cli() {
+        if std::env::var_os("LEO_USAGE_TEST_CHILD").is_some() {
+            let home = leo_core::paths::config_dir().unwrap();
+            let notes = home.join("notes");
+            std::fs::create_dir_all(&notes).unwrap();
+            super::WebSettings.describe(&notes);
+            assert!(!home.join("usage-called").exists());
+            super::WebSettings.refresh_usage();
+            assert!(home.join("usage-called").exists());
+            std::fs::remove_file(home.join("usage-called")).unwrap();
+            let saved = super::WebSettings.describe(&notes)["plans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|plan| plan["provider"] == "codex")
+                .unwrap()["limits"]
+                .clone();
+            assert_eq!(saved["five_hour"]["used"], 0.12);
+            assert!(!home.join("usage-called").exists());
+            std::fs::write(home.join("codex"), "#!/bin/sh\nexit 1\n").unwrap();
+            super::WebSettings.refresh_usage();
+            let after = super::WebSettings.describe(&notes);
+            assert_eq!(
+                after["plans"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|plan| plan["provider"] == "codex")
+                    .unwrap()["limits"],
+                saved
+            );
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("codex");
+        std::fs::write(&bin, r#"#!/bin/sh
+if [ "$1" = login ]; then echo 'Logged in using ChatGPT'; exit 0; fi
+if [ "$1" = features ]; then echo 'shell_tool stable true'; exit 0; fi
+if [ "$2" = --help ]; then echo '--ignore-user-config --ignore-rules'; exit 0; fi
+if [ "$1" != app-server ]; then exit 0; fi
+touch "${0%/*}/usage-called"
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"account/rateLimits/read"'*)
+      printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":300}}}}'
+      exit 0 ;;
+  esac
+done
+"#).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = format!("[chat]\nchain = [\"ollama\"]\n[providers.codex]\nbin = {}\n[providers.claude_code]\nbin = {}\n[providers.ollama]\nbase_url = \"\"\n", serde_json::to_string(&bin).unwrap(), serde_json::to_string(&dir.path().join("no-claude")).unwrap());
+        std::fs::write(dir.path().join("config.toml"), config).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "settings::usage_tests::settings_read_saved_usage_without_refreshing_the_cli",
+                "--nocapture",
+            ])
+            .env("LEO_USAGE_TEST_CHILD", "1")
+            .env("LEO_HOME", dir.path())
+            .env_remove("LEO_USE_KEYCHAIN")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }

@@ -435,6 +435,7 @@ test('calendar tasks have readable blocks and compact accessible action icons', 
         await page.evaluate(() => { cal.selected = '2026-11-05'; drawCalendar(); });
       }
       if (view === 'month') await page.locator('[data-action="cal-view"][data-view="month"]').click();
+      await settled(page);
       await expect(item).toBeVisible();
       const height = (await item.boundingBox()).height;
       expect(height).toBeGreaterThanOrEqual(view === 'all-day' ? 44 : 60);
@@ -473,15 +474,17 @@ test('readable minimum task heights participate in calendar overlap layout', asy
 
 test('enlarged task blocks do not change duration on a horizontal resize drag', async ({ browser }) => {
   await calendarFixture(browser, async page => {
-    for (const end of ['11:01:00', '11:05:00', '11:15:00', '11:17:00', '12:00:00']) {
+    for (const end of [null, '11:01:00', '11:05:00', '11:15:00', '11:17:00', '12:00:00']) {
       await page.evaluate(end => {
         for (const tasks of [cal.data.tasks, window.db.tasks]) tasks.find(task => task.id === 'task-lab').end = end;
         drawCalendar();
       }, end);
+      const before = (await patches(page, 'task-lab')).length;
       const grip = await page.locator('.cal-item[data-id="task-lab"] .cal-grip').boundingBox();
       const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
       await dragTo(page, from, { x: from.x + 12, y: from.y });
       expect((await task(page, 'task-lab')).end).toBe(end);
+      expect((await patches(page, 'task-lab')).length).toBe(before);
     }
   });
 });
@@ -510,5 +513,22 @@ test('larger month tasks keep every preview and the more action inside their day
     await cell.getByRole('button', { name: '3 more' }).click();
     await expect(page.locator('.cal-dayhead')).toHaveCount(1);
     await expect(page.locator('.cal-item[data-kind="task"]')).toHaveCount(5);
+  });
+});
+
+test('a sideways deadline resize at the scroll edge still preserves its absent end', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      for (const tasks of [cal.data.tasks, window.db.tasks]) Object.assign(tasks.find(task => task.id === 'task-lab'), { time: '20:00:00', end: null });
+      drawCalendar();
+      const grip = document.querySelector('.cal-item[data-id="task-lab"] .cal-grip');
+      const scroll = document.querySelector('#cal-scroll');
+      scroll.scrollTop += grip.getBoundingClientRect().bottom - (scroll.getBoundingClientRect().bottom - 10);
+    });
+    const grip = await page.locator('.cal-item[data-id="task-lab"] .cal-grip').boundingBox();
+    const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+    await dragTo(page, from, { x: from.x + 12, y: from.y });
+    expect((await task(page, 'task-lab')).end).toBe(null);
+    expect(await patches(page, 'task-lab')).toHaveLength(0);
   });
 });

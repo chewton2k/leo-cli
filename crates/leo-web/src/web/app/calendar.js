@@ -564,9 +564,9 @@ function calFollow() {
   if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)${stillMotion() ? '' : ' rotate(-1.5deg)'}`;
   if (d.mode === 'resize') {
     const before = d.task.end ? S.minutesOf(d.task.end) : d.start + d.length;
-    const moved = calMinutesIn(d.col, d.y) - d.start - d.offset;
+    const moved = d.y === d.startY ? 0 : calMinutesIn(d.col, d.y) - d.start - d.offset;
     const end = moved ? Math.max(d.start + CAL_SNAP, Math.min(24 * 60, S.snap(before + moved, CAL_SNAP))) : before;
-    d.target = { day: d.day, minutes: d.start, end };
+    d.target = moved ? { day: d.day, minutes: d.start, end } : null;
     d.source.style.height = `${Math.max(CAL_TASK_PX, ((end - d.start) / 60) * CAL_HOUR_PX - 2)}px`;
     const sub = d.source.querySelector('.cal-sub');
     if (sub) sub.textContent = calRange(d.start, end);

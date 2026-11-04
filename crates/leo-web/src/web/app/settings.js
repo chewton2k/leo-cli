@@ -499,11 +499,17 @@ async function showUsage() {
   const box = sheet('<h3>Usage</h3><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn" data-action="usage">Refresh</button></div>');
   box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
+  let saved = false;
+  const mine = seq;
   try {
     const page = await api('/api/settings');
-    if (!box.isConnected || box.classList.contains('scrim-gone')) return;
+    if (mine !== seq || !box.isConnected || box.classList.contains('scrim-gone')) return;
     box.querySelector('.usage-content').innerHTML = codingPlans(page, false) || '<p class="hint">No coding accounts detected.</p>';
+    saved = true;
+    const fresh = await api('/api/settings/usage', { method: 'POST' });
+    if (mine !== seq || !box.isConnected || box.classList.contains('scrim-gone')) return;
+    box.querySelector('.usage-content').innerHTML = codingPlans(fresh, false) || '<p class="hint">No coding accounts detected.</p>';
   } catch (e) {
-    if (box.isConnected && !box.classList.contains('scrim-gone')) { closeSheet(); fail(e); }
+    if (mine === seq && box.isConnected && !box.classList.contains('scrim-gone')) { if (!saved) closeSheet(); fail(e); }
   }
 }

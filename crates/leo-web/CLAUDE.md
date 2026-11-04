@@ -1463,3 +1463,12 @@ Minimum-height blocks resize from the original end plus pointer movement,
 including scroll movement; a sideways grip drag cannot lengthen a short task.
 Month rows grow to fit their previews and More action; the month grid scrolls
 and keeps its position across redraws instead of clipping larger task cards.
+
+Ordinary Settings reads never refresh coding-plan limits. Usage first draws saved
+readings, then POSTs `/api/settings/usage`, behind the session gate and one refresh
+slot, with blocking CLI work outside store locks. Failed refresh leaves saved
+meters visible; responses from closed sheets or old page generations are ignored.
+Search scrolls the matched Range itself, including within very tall paragraphs.
+A resize with zero vertical movement never writes a synthetic end to a deadline.
+Quick Leo accepts a year directly after a comma and validates local minute-based
+ISO datetimes as one date/time before removing them from the title.

@@ -6883,7 +6883,7 @@ test('leaving the website queues one backup without sending note contents or pus
 });
 
 test('Usage opens from the rail with remaining limits inside a stable dialog', async ({ page }) => {
-  await page.route('**/api/settings', route => route.fulfill({ json: {
+  await page.route(/\/api\/settings(?:\/usage)?$/, route => route.fulfill({ json: {
     tasks: [{ task: 'writing', provider: 'ollama' }],
     plans: [{ provider: 'codex', name: 'Codex', installed: true, signed_in: true,
       limits: { five_hour: { used: .25, resets_at: Date.now() / 1000 + 3600 }, seen_at: new Date().toISOString() } }],
@@ -6903,14 +6903,56 @@ test('Usage opens from the rail with remaining limits inside a stable dialog', a
 });
 
 test('note search temporarily highlights the match without changing the note', async ({ page }) => {
-  const note = await (await page.request.post('/api/notes', { data: { title: 'Search highlight fixture', body: 'A unique needlepassage inside this note.', directory: '' } })).json();
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Search highlight fixture', body: 'A long paragraph of reading material. '.repeat(2000) + 'needlepassage', directory: '' } })).json();
   try {
     await page.goto('/#/search/needlepassage');
     await page.locator(`.card[data-id="${note.id}"]`).click();
     await expect(page.locator('#doc')).toContainText('needlepassage');
     await expect.poll(() => page.evaluate(() => CSS.highlights.get('leo-search')?.size || 0)).toBeGreaterThan(0);
+    const visible = await page.evaluate(() => {
+      const range = CSS.highlights.get('leo-search').values().next().value;
+      const rect = range.getBoundingClientRect();
+      return rect.top >= 80 && rect.bottom <= innerHeight;
+    });
+    expect(visible).toBe(true);
+
     expect(await page.locator('#doc mark').count()).toBe(0);
     await expect.poll(() => page.evaluate(() => CSS.highlights.has('leo-search')), { timeout: 8000 }).toBe(false);
     expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe(note.body);
   } finally { await page.request.delete(`/api/notes/${note.id}`); }
+});
+
+test('Usage shows saved limits during refresh and keeps them after a refresh failure', async ({ page }) => {
+  const saved = { tasks: [], plans: [{ provider: 'codex', name: 'Codex', installed: true, signed_in: true, limits: { five_hour: { used: .25 }, seen_at: new Date().toISOString() } }] };
+  await page.route('**/api/settings', route => route.fulfill({ json: saved }));
+  for (const outcome of ['success', 'failure', 'closed']) {
+    let release;
+    const waiting = new Promise(resolve => { release = resolve; });
+    await page.route('**/api/settings/usage', async route => {
+      await waiting;
+      if (outcome === 'failure') return route.fulfill({ status: 503, json: { error: 'Usage could not refresh. Try again in a moment.' } });
+      return route.fulfill({ json: { ...saved, plans: [{ ...saved.plans[0], limits: { five_hour: { used: .6 }, seen_at: new Date().toISOString() } }] } });
+    });
+    await page.locator('.side-foot [data-action="usage"]').click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+    if (outcome === 'closed') {
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.keyboard.press('ControlOrMeta+f');
+      await page.locator('#quick-input').fill('Keep this query');
+    }
+    const response = page.waitForResponse('**/api/settings/usage');
+    release();
+    await response;
+    if (outcome === 'success') await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '40');
+    else if (outcome === 'failure') {
+      await expect(page.locator('.toast')).toContainText('Usage could not refresh');
+      await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+    } else {
+      await expect(page.locator('#quick-input')).toHaveValue('Keep this query');
+      await expect(page.locator('.usage-content')).toHaveCount(0);
+    }
+    await page.keyboard.press('Escape');
+    await page.unroute('**/api/settings/usage');
+  }
 });

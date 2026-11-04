@@ -94,6 +94,7 @@ pub use vectors::Meaning;
 
 pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
+    fn refresh_usage(&self) {}
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
     fn setup_backup(&self, _notes: &std::path::Path, _name: &str) -> Result<String> {
@@ -242,6 +243,7 @@ struct AppState {
     app_settings: Option<Arc<dyn app_settings::AppApi>>,
     backups: Arc<backup::Backups>,
     backup_setups: Arc<tokio::sync::Semaphore>,
+    usage_refreshes: Arc<tokio::sync::Semaphore>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     import_slots: Arc<routes::uploads::ImportSlots>,
@@ -679,6 +681,7 @@ pub(crate) async fn start_in(
         app_settings: powers.app_settings,
         backups: Default::default(),
         backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
+        usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
         importer,
         imports: Default::default(),
         import_slots: Default::default(),
@@ -985,6 +988,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/settings", get(get_settings).post(change_setting))
         .route("/api/settings/test", post(test_setting))
+        .route("/api/settings/usage", post(routes::settings::refresh_usage))
         .route(
             "/api/import",
             post(start_import)

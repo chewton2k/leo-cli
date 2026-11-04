@@ -18,6 +18,7 @@ mod study_context;
 mod tasks;
 mod trash;
 mod uploads;
+mod usage;
 
 use std::sync::{Arc, Mutex};
 
@@ -94,6 +95,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         app_settings: None,
         backups: Default::default(),
         backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
+        usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
         importer: None,
         imports: Default::default(),
         import_slots: Default::default(),

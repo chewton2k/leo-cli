@@ -13,7 +13,9 @@ outside the notes lock and serializes setup requests.
 
 The Usage sheet receives both coding accounts and their saved usage windows;
 detecting a signed-in CLI never changes the user's selected writer. Codex limit
-refresh does not depend on which writing provider is selected.
+refresh does not depend on which writing provider is selected. General Settings
+loads only saved limits; the explicit Usage action performs the bounded CLI
+refresh and preserves saved readings when that CLI cannot return limits.
 
 Lecture listeners pass the engine's shared preview-visibility flag into recorder
 controls, including both call tracks. This flag never pauses capture or final
