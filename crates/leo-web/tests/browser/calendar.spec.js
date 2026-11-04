@@ -77,7 +77,7 @@ async function calendarFixture(browser, run, { width = 1360, height = 900, view 
       throw new Error('No fake for '+method+' '+url);
     }
     ${page}
-    const actions={${calActions}'task-done':el=>{const id=el.dataset.id,on=el.dataset.on||null;const task=calFind(id);const done=!(task&&taskDoneOn(task,on));return setTaskDone(id,done,on);},'task-delete':el=>deleteTask(el.dataset.id),'task-new':()=>{},close:()=>closeSheet()};
+    const actions={${calActions}'task-done':el=>{const id=el.dataset.id,on=el.dataset.on||null;const task=calFind(id);const done=!(task&&taskDoneOn(task,on));return setTaskDone(id,done,on);},'task-delete':el=>deleteTask(el.dataset.id),'task-new':el=>newTaskSheet(el.dataset.day||null),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     window.errors=[];window.db=db;
@@ -155,6 +155,45 @@ test('the calendar fills the room beside the explorer and shows a week of events
     await expect(page.locator('.cal-item[data-id="task-note"] .cal-grip')).toHaveCount(0);
     await expect(page.locator('.cal-tray-list h2.late')).toContainText('Overdue');
     await expect(page.locator('.cal-tray-row', { hasText: 'Draft essay outline' })).toBeVisible();
+  });
+});
+
+test('tasks lead the calendar sidebar and stay visible above a narrow calendar', async ({ browser }) => {
+  for (const width of [1360, 1000, 674]) {
+    await calendarFixture(browser, async page => {
+      const side = page.locator('#cal-side');
+      await expect(side.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible();
+      const row = side.locator('.cal-tray-row', { hasText: 'Draft essay outline' });
+      await expect(row).toBeVisible();
+      const tasks = await row.boundingBox();
+      const mini = side.locator('.cal-mini');
+      if (width === 1360) {
+        const month = await mini.boundingBox();
+        expect(tasks.y + tasks.height).toBeLessThan(month.y);
+      } else {
+        await expect(mini).toBeHidden();
+        const main = await page.locator('#cal-main').boundingBox();
+        expect(tasks.y + tasks.height).toBeLessThanOrEqual(main.y);
+      }
+      await row.locator('.cal-check').click();
+      await settled(page);
+      await expect(side.locator('.cal-tray-row', { hasText: 'Draft essay outline' })).toHaveCount(0);
+    }, { width });
+  }
+});
+
+test('the task sidebar creates undated tasks from its empty state', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(async () => { window.db.tasks = []; await loadSchedule(); });
+    const side = page.locator('#cal-side');
+    await expect(side).toContainText('Tasks without a date appear here.');
+    await side.getByRole('button', { name: 'New task', exact: true }).click();
+    await expect(page.locator('#task-title')).toBeFocused();
+    await page.locator('#task-title').fill('Read the next chapter');
+    await page.locator('#task-add').click();
+    await settled(page);
+    await expect(side.locator('.cal-tray-row', { hasText: 'Read the next chapter' })).toBeVisible();
+    expect(await page.evaluate(() => window.db.tasks[0].date)).toBeNull();
   });
 });
 
@@ -316,11 +355,13 @@ test('Day, Week and Month switch by the control or the keyboard, and the choice 
 
 test('on a narrow window the calendar keeps the explorer and the peek covers only the calendar', async ({ browser }) => {
   await calendarFixture(browser, async page => {
-    await expect(page.locator('.cal-side')).toBeHidden();
+    await expect(page.locator('.cal-side')).toBeVisible();
     await page.locator('.cal-item[data-id="task-lab"] .cal-open').click();
     const side = await page.locator('#cal-side.peek').boundingBox();
     const explorer = await page.locator('#explorer').boundingBox();
     expect(side.x).toBeGreaterThanOrEqual(explorer.x + explorer.width - 1);
+    await page.locator('[data-action="cal-peek-close"]').click();
+    await expect(page.locator('#cal-side .cal-tray-row').first()).toBeVisible();
   }, { width: 1000, view: 'day' });
 });
 

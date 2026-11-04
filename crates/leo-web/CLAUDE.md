@@ -894,7 +894,9 @@ the same idle loop.
   grid (`CAL_HOUR_PX` 48, 15-minute snap) with an All day row of spanning bars
   (`schedule.lanes`), side-by-side overlaps (`schedule.dayColumns`) and a now
   line; Month shows three chips a day and "n more" (Day view). The right tray
-  holds a mini month, Overdue and No date. Pointer drags (boards' rules: 5 px
+  leads with Tasks, Overdue and No date before the mini month. Narrow windows
+  keep this task tray above the calendar instead of hiding it, with its own
+  bounded scroll area and no mini month. Pointer drags (boards' rules: 5 px
   or a 300 ms touch hold, capture on `#app`, Escape cancels, the click after
   a drop is swallowed) move a task (Month: day only), resize a Leo task's end
   by its bottom edge, schedule a tray task, or sweep empty time into an inline
