@@ -342,8 +342,16 @@ test('clicks and shift selections after emoji use the same raw caret offsets', a
       const area = page.locator('#doc textarea');
       await expect(area).toBeFocused();
       expect(await area.evaluate(el => el.selectionStart), sample).toBe((await area.inputValue()).indexOf('target'));
+      const end = await page.locator('#doc .blk').nth(1).evaluate(el => {
+        const text = el.querySelector('p').firstChild;
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, 5);
+        const rect = range.getBoundingClientRect();
+        return { x: rect.right - .2, y: rect.top + rect.height / 2 };
+      });
       await page.keyboard.down('Shift');
-      await page.locator('#doc .blk').nth(1).click({ position: { x: 35, y: 10 } });
+      await page.mouse.click(end.x, end.y);
       await page.keyboard.up('Shift');
       const copied = await page.evaluate(() => {
         const data = new DataTransfer();
