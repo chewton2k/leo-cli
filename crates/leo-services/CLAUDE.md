@@ -108,8 +108,9 @@ ASR models, languages, checksums, benchmark speeds and accuracy. Accuracy uses
 the chosen language, or the geometric mean of measured word error rates for
 auto detection; missing or invalid measurements remain unknown. The selected
 model and language live in `<config>/speech-model.json`; files live in
-`models_dir()/speech`. `Library` verifies exact size and SHA-256, caches verified
-size/mtime stamps, downloads at most two models into owned temporary files,
+`models_dir()/speech`. `Library` verifies exact size and SHA-256, keeps verified
+size/mtime stamps in `<config>/speech-verified.json` (hashing on every launch held
+the first dictation back 1.6 s before its microphone opened), downloads at most two models into owned temporary files,
 checks cancellation while awaiting the network, and promotes atomically.
 Linked paths and hard-linked models are refused. Selection/deletion/promotion
 use a private file lock. The previous ONNX folder is removed after a
@@ -119,14 +120,20 @@ the current model.
 `speech/engine.rs` admits eight jobs, gives dictation priority between audio
 chunks, and pauses lower-priority work during a dictation reservation. One
 actor owns the supervisor and model. Recording pins it; otherwise idle unload
-is 60 seconds. Stop and updater unload retry a full request channel within one
+is five minutes (Handy's default). Stop and updater unload retry a full request channel within one
 five-second deadline shared by enqueue and acknowledgement; ordinary job
 admission stays immediate and bounded. Saturation tests free queue capacity
 explicitly rather than depending on actor-thread scheduling.
 Model deletion waits behind inference, unloads the worker first,
 and refuses deletion of an active recording/dictation model. Long audio uses
 30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
-VAD with onset, pre-roll and hangover. Slow catalog models skip live passes.
+VAD with onset, pre-roll and hangover for recordings. Dictation never cuts: VAD on
+a copy raised to speech level only decides whether the clip goes to the model
+(fragments made the model invent "Uh" from noise, whole clips stayed empty), and
+clips under a second are padded as Handy does. Long dictation is raised before
+pause cutting, so quiet speech still cuts at pauses. Raising means amplified room
+noise can pass the check: Parakeet returns nothing for it; a Whisper model may
+invent a word after an empty tap, which is the accepted cost of keeping quiet speech. Slow catalog models skip live passes.
 
 `speech/supervisor.rs` owns a crash-isolated worker, re-executing the current
 binary with `--leo-speech-worker` before normal app/CLI startup. Only the worker

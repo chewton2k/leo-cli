@@ -28,7 +28,7 @@ pub fn collect(
     rx: &Receiver<Vec<i16>>,
     stop: &AtomicBool,
     mut heard: impl FnMut(&[f32], f32, f64),
-    close: impl FnOnce(),
+    close: impl FnOnce() + Send,
 ) -> Result<Vec<f32>> {
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut pcm = Vec::new();
@@ -43,8 +43,17 @@ pub fn collect(
         }
         Ok(())
     })();
-    close();
+    let closed = std::thread::scope(|scope| -> Result<()> {
+        let closing = scope.spawn(close);
+        while !closing.is_finished() {
+            if let Ok(samples) = rx.recv_timeout(Duration::from_millis(5)) {
+                append(&mut pcm, &samples, &mut heard)?;
+            }
+        }
+        Ok(())
+    });
     result?;
+    closed?;
     for samples in rx.try_iter().take(64) {
         append(&mut pcm, &samples, &mut heard)?;
     }
@@ -78,6 +87,21 @@ mod tests {
 #[cfg(test)]
 mod tail_tests {
     use super::*;
+    #[test]
+    fn audio_is_read_while_the_microphone_closes() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let pcm = collect(
+            &rx,
+            &AtomicBool::new(true),
+            |_, _, _| {},
+            || {
+                for _ in 0..4 {
+                    tx.send(vec![1000; 1600]).unwrap();
+                }
+            },
+        );
+        assert_eq!(pcm.unwrap().len(), 6400);
+    }
     #[test]
     fn closing_the_microphone_precedes_draining_its_last_audio() {
         let (tx, rx) = std::sync::mpsc::channel();

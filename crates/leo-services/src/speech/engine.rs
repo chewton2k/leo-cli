@@ -15,10 +15,17 @@ use super::vad::{
 };
 
 const QUEUED: usize = 8;
-const IDLE: Duration = Duration::from_secs(60);
+const IDLE: Duration = Duration::from_secs(5 * 60);
 const POLL: Duration = Duration::from_millis(20);
 const CONTROL_LIMIT: Duration = Duration::from_secs(5);
 const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
+const MOST_FEEDS: usize = 300 * 16_000 / 512 + 2;
+const WARM_SAMPLES: usize = 16_000;
+const SPEECH_LEVEL: f32 = 0.1;
+const MOST_GAIN: f32 = 50.0;
+const SHORTEST_CLIP: usize = 16_000;
+const SHORT_CLIP_PADDED: usize = 20_000;
+const _: () = assert!(MOST_FEEDS * 512 >= 300 * 16_000);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
@@ -139,6 +146,11 @@ impl Engine {
             })
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again in a moment."))?;
         let admission = Pin(self.admitted.clone());
+        let pcm = if priority == Priority::Dictation {
+            raised(pcm)
+        } else {
+            pcm
+        };
         let chunks = super::prepare(pcm)?.into();
         let (reply, answer) = mpsc::sync_channel(1);
         self.requests.try_send(Message::Run(Job { _admission: admission, selected, chunks, text: Vec::new(), priority, reply }))
@@ -163,7 +175,7 @@ impl Engine {
             !self.stopped.load(Ordering::Acquire),
             "The speech engine is stopping. Reopen Leo."
         );
-        let (feed, audio) = mpsc::sync_channel(128);
+        let (feed, audio) = mpsc::sync_channel(MOST_FEEDS);
         let (reply, answer) = mpsc::sync_channel(1);
         self.requests
             .try_send(Message::Stream {
@@ -329,6 +341,40 @@ fn trim(pcm: Vec<f32>) -> Result<Vec<f32>> {
     Ok(out)
 }
 
+fn speech_gain(pcm: &[f32]) -> f32 {
+    let mut levels: Vec<f32> = pcm
+        .chunks(256)
+        .map(|frame| (frame.iter().map(|n| n * n).sum::<f32>() / frame.len() as f32).sqrt())
+        .collect();
+    levels.sort_by(f32::total_cmp);
+    match levels.get(levels.len() * 95 / 100) {
+        Some(level) if *level > 0.0 => (SPEECH_LEVEL / level).clamp(1.0, MOST_GAIN),
+        _ => 1.0,
+    }
+}
+
+fn raised(mut pcm: Vec<f32>) -> Vec<f32> {
+    let gain = speech_gain(&pcm);
+    for sample in &mut pcm {
+        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    }
+    pcm
+}
+
+fn heard_speech(pcm: &[f32]) -> Result<bool> {
+    Ok(!trim(raised(pcm.to_vec()))?.is_empty())
+}
+
+fn dictated(mut pcm: Vec<f32>, heard: impl FnOnce(&[f32]) -> Result<bool>) -> Result<Vec<f32>> {
+    if !heard(&pcm)? {
+        return Ok(Vec::new());
+    }
+    if pcm.len() < SHORTEST_CLIP {
+        pcm.resize(SHORT_CLIP_PADDED, 0.0);
+    }
+    Ok(pcm)
+}
+
 fn run(
     queue: mpsc::Receiver<Message>,
     supervisor: EngineSupervisor,
@@ -359,7 +405,19 @@ fn run(
                             backend: Backend::Auto,
                             device: DeviceSelector::Auto,
                         }) {
-                            Ok(_) => model = Some(selected.path),
+                            Ok(_) => {
+                                let run = RunOptions {
+                                    language: (selected.language != "auto")
+                                        .then(|| selected.language.clone()),
+                                    ..RunOptions::default()
+                                };
+                                if let Err(error) =
+                                    supervisor.transcribe(vec![0.0; WARM_SAMPLES], run)
+                                {
+                                    log::warn!("Speech model warm-up failed: {error}");
+                                }
+                                model = Some(selected.path);
+                            }
                             Err(error) => log::warn!("Speech model preload failed: {error}"),
                         }
                     }
@@ -500,7 +558,11 @@ fn run(
                 model = Some(job.selected.path.clone());
             }
             if let Some(chunk) = job.chunks.pop_front() {
-                let pcm = trim(chunk)?;
+                let pcm = if job.priority == Priority::Dictation {
+                    dictated(chunk, heard_speech)?
+                } else {
+                    trim(chunk)?
+                };
                 if !pcm.is_empty() {
                     let run = RunOptions {
                         language: (job.selected.language != "auto")
@@ -523,6 +585,53 @@ fn run(
             }
             Ok(()) => pending.push(job),
         }
+    }
+}
+
+#[cfg(test)]
+mod dictation_audio_tests {
+    use super::*;
+
+    #[test]
+    fn dictation_keeps_the_whole_clip_when_any_speech_is_heard() {
+        let clip = vec![0.01; SHORTEST_CLIP * 2];
+        assert_eq!(dictated(clip.clone(), |_| Ok(true)).unwrap(), clip);
+        assert!(dictated(clip, |_| Ok(false)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_short_dictation_is_padded_for_models_that_need_a_full_second() {
+        let padded = dictated(vec![0.5; 4_000], |_| Ok(true)).unwrap();
+        assert_eq!(padded.len(), SHORT_CLIP_PADDED);
+        assert_eq!(padded[3_999], 0.5);
+        assert_eq!(padded[4_000], 0.0);
+    }
+
+    #[test]
+    fn a_quiet_voice_is_raised_for_detection_and_a_loud_one_left_alone() {
+        assert_eq!(speech_gain(&[0.0; 1_024]), 1.0);
+        assert_eq!(speech_gain(&[0.5; 1_024]), 1.0);
+        assert!((speech_gain(&[0.01; 1_024]) - 10.0).abs() < 0.01);
+        assert_eq!(speech_gain(&[0.000_01; 1_024]), MOST_GAIN);
+        let mut mostly_quiet = vec![0.01; 25_600];
+        mostly_quiet[..256].fill(1.0);
+        assert!((speech_gain(&mostly_quiet) - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn raising_a_clip_never_clips_past_full_scale() {
+        let mut clip = vec![0.01; 25_600];
+        clip[0] = 0.5;
+        let raised = raised(clip);
+        assert!((raised[25_000] - 0.1).abs() < 0.001);
+        assert_eq!(raised[0], 1.0);
+    }
+
+    #[test]
+    fn digital_silence_is_never_sent_to_the_model() {
+        assert!(dictated(vec![0.0; SHORTEST_CLIP * 2], heard_speech)
+            .unwrap()
+            .is_empty());
     }
 }
 

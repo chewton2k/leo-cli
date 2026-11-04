@@ -50,6 +50,9 @@ test('popup live and minimal states keep useful errors and timers', () => {
   assert.equal(display({ state: 'listening', minimal: true, text: 'hello' }).text, '');
   assert.equal(display({ state: 'error', minimal: true, message: 'Choose a microphone.' }).text, 'Choose a microphone.');
   assert.equal(display({ state: 'loading' }).label, 'Loading model…');
+  const starting = display({ state: 'starting' });
+  assert.equal(starting.label, 'Starting microphone…');
+  assert.equal(starting.recording, false);
   assert.equal(display({ state: 'writing', committed: 'hi' }).label, 'Polishing with AI…');
   assert.equal(display({ state: 'writing', committed: 'hi' }).caret, false);
   const notice = display({ state: 'notice', message: 'The writing AI took too long.', committed: 'hi' });

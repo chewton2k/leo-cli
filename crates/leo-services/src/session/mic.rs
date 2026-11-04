@@ -206,6 +206,12 @@ impl Resampler {
             self.at -= keep_from as f64;
         }
     }
+
+    pub fn finish(&mut self, out: &mut Vec<i16>) {
+        if (self.step - 1.0).abs() >= f64::EPSILON {
+            self.push(&vec![0.0; self.half + 1], out);
+        }
+    }
 }
 
 fn to_i16(x: f32) -> i16 {
@@ -301,6 +307,8 @@ fn build(
 
 const MOST_AUDIO_CHUNKS: usize = 64;
 const AUDIO_WAIT: Duration = Duration::from_millis(10);
+const LAST_BLOCK_WAIT: Duration = Duration::from_millis(60);
+const LAST_AUDIO_WAIT: Duration = Duration::from_millis(250);
 
 fn deliver_audio(out: &SyncSender<Vec<i16>>, mut samples: Vec<i16>, stop: &AtomicBool) -> bool {
     while !stop.load(Ordering::Relaxed) {
@@ -314,6 +322,20 @@ fn deliver_audio(out: &SyncSender<Vec<i16>>, mut samples: Vec<i16>, stop: &Atomi
         }
     }
     false
+}
+
+fn deliver_last_audio(out: &SyncSender<Vec<i16>>, mut samples: Vec<i16>, wait: Duration) -> bool {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match out.try_send(samples) {
+            Ok(()) => return true,
+            Err(TrySendError::Full(waiting)) if std::time::Instant::now() < deadline => {
+                samples = waiting;
+                std::thread::sleep(AUDIO_WAIT);
+            }
+            Err(_) => return false,
+        }
+    }
 }
 
 pub struct Mic {
@@ -385,12 +407,23 @@ impl Mic {
                                 {
                                     break;
                                 }
+                                converted.clear();
                             }
                             Err(RecvTimeoutError::Timeout) => {}
                             Err(RecvTimeoutError::Disconnected) => break,
                         }
                     }
+                    if let Ok(chunk) = raw_rx.recv_timeout(LAST_BLOCK_WAIT) {
+                        resampler.push(&chunk, &mut converted);
+                    }
                     drop(stream);
+                    for chunk in raw_rx.try_iter() {
+                        resampler.push(&chunk, &mut converted);
+                    }
+                    resampler.finish(&mut converted);
+                    if !converted.is_empty() {
+                        deliver_last_audio(&out_tx, converted, LAST_AUDIO_WAIT);
+                    }
                 })?
         };
         match ready_rx.recv_timeout(Duration::from_secs(30)) {
@@ -509,6 +542,41 @@ mod tests {
     fn level(samples: &[i16]) -> f64 {
         let tail = &samples[samples.len() / 4..];
         (tail.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / tail.len() as f64).sqrt() / 32768.0
+    }
+
+    #[test]
+    fn the_last_audio_waits_briefly_for_room_and_never_forever() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(vec![1]).unwrap();
+        assert!(!deliver_last_audio(&tx, vec![2], Duration::ZERO));
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            (rx.recv().unwrap(), rx.recv().unwrap())
+        });
+        assert!(deliver_last_audio(&tx, vec![2], Duration::from_secs(1)));
+        assert_eq!(reader.join().unwrap(), (vec![1], vec![2]));
+    }
+
+    #[test]
+    fn finishing_the_resampler_keeps_the_last_real_audio() {
+        let mut input = vec![0.0; 4_800];
+        input.extend(vec![0.5; 200]);
+        let mut r = Resampler::new(48_000, 16_000);
+        let mut out = Vec::new();
+        r.push(&input, &mut out);
+        let before = out.len();
+        r.finish(&mut out);
+        assert!(out.len() > before);
+        assert!((out.len() as i64 - input.len() as i64 / 3).abs() <= 2);
+        assert!(out[out.len() - 3..].iter().any(|s| *s > 8_000));
+    }
+
+    #[test]
+    fn finishing_needs_nothing_at_the_same_rate() {
+        let mut r = Resampler::new(16_000, 16_000);
+        let mut out = Vec::new();
+        r.finish(&mut out);
+        assert!(out.is_empty());
     }
 
     #[test]

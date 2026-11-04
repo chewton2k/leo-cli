@@ -80,6 +80,46 @@ fn activation_requires_a_verified_model_and_supported_language() {
 }
 
 #[test]
+fn a_verified_model_is_not_hashed_again_after_a_restart() {
+    let (dir, l) = fixture();
+    let (url, t) = model_server(b"model");
+    l.fetch(
+        "parakeet-tdt-0.6b-v3",
+        &url,
+        &AtomicBool::new(false),
+        &|_, _| {},
+    )
+    .unwrap();
+    t.join().unwrap();
+    l.use_model("parakeet-tdt-0.6b-v3", "en").unwrap();
+    let path = l.selected().unwrap().path;
+    let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+    let restart = || {
+        let mut data = catalog().clone();
+        data.models.retain(|m| m.id == "parakeet-tdt-0.6b-v3");
+        let file = data.models[0].files.get_mut("Q8_0").unwrap();
+        file.size = 5;
+        file.sha256 = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"model"));
+        Library::with_catalog(
+            dir.path().join("models"),
+            dir.path().join("config"),
+            Arc::new(data),
+        )
+    };
+
+    let rewrite = |bytes: &[u8], modified| {
+        std::fs::write(&path, bytes).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(modified).unwrap();
+    };
+    rewrite(b"wrong", stamp);
+    assert!(restart().selected().is_ok());
+    rewrite(b"wrong", stamp + std::time::Duration::from_secs(60));
+    assert!(restart().selected().is_err());
+}
+
+#[test]
 fn a_bad_download_never_replaces_a_good_model() {
     let (_dir, l) = fixture();
     for (bytes, good) in [

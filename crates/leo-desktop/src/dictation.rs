@@ -73,6 +73,11 @@ impl Dictation {
         let input = this.tx.clone();
         if !Self::test_mode() {
             leo_services::session::mic::warm_up();
+            std::thread::spawn(|| {
+                if let Ok(selected) = library().and_then(|models| models.selected()) {
+                    engine().warm(selected);
+                }
+            });
             let keys = crate::shortcut::Shortcuts::start(
                 app,
                 settings.shortcut,
@@ -286,7 +291,7 @@ impl Dictation {
         self.set_escape(true);
         self.update(
             id,
-            json!({"state":"listening","seconds":0,"levels":[],"committed":"","tentative":""}),
+            json!({"state":"starting","seconds":0,"levels":[],"committed":"","tentative":""}),
         );
         self.show(id, &settings);
         let this = self.clone();
@@ -348,7 +353,6 @@ impl Dictation {
             let (mic, rx) = leo_services::session::mic::Mic::open_named(named)?;
             (Some(mic), rx)
         };
-        chime(settings.sounds, true);
         let this = self.clone();
         let mut stream = if selected.streaming {
             engine()
@@ -363,12 +367,25 @@ impl Dictation {
             None
         };
         let mut pending = Vec::new();
-        let mut speech = StreamingVad::new()?;
+        let mut ready = false;
         let mut visualizer = Visualizer::new();
         let pcm = leo_services::dictation::capture::collect(
             &rx,
             stop,
             |chunk, _, seconds| {
+                if !ready {
+                    ready = true;
+                    let mut began = false;
+                    self.change(id, |state| {
+                        if state["state"] == "starting" {
+                            state["state"] = json!("listening");
+                            began = true;
+                        }
+                    });
+                    if began {
+                        chime(settings.sounds, true);
+                    }
+                }
                 if let Some(levels) = visualizer.feed(chunk) {
                     self.change(id, |state| {
                         state["seconds"] = json!(seconds);
@@ -376,7 +393,7 @@ impl Dictation {
                     });
                 }
                 if let Some(live) = stream.as_ref() {
-                    pending.extend(speech.push(chunk));
+                    pending.extend_from_slice(chunk);
                     if pending.len() >= FEED_SAMPLES {
                         if !feed(live, &pending) {
                             stream = None;
@@ -583,38 +600,4 @@ fn newest(text: &str) -> String {
     text.chars()
         .skip(count.saturating_sub(SHOWN_CHARS))
         .collect()
-}
-struct StreamingVad {
-    vad: leo_services::speech::vad::SmoothedVad,
-    pending: Vec<f32>,
-    frame: usize,
-}
-impl StreamingVad {
-    fn new() -> Result<Self> {
-        use leo_services::speech::vad::*;
-        let vad = EarshotVad::new(0.5)?;
-        let frame = vad.frame_samples();
-        Ok(Self {
-            vad: SmoothedVad::new(
-                Box::new(vad),
-                frames_for_duration_ms(VAD_PREFILL_MS, frame),
-                frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, frame),
-                frames_for_duration_ms(VAD_ONSET_MS, frame),
-            ),
-            pending: Vec::new(),
-            frame,
-        })
-    }
-    fn push(&mut self, chunk: &[f32]) -> Vec<f32> {
-        use leo_services::speech::vad::{VadFrame, VoiceActivityDetector};
-        self.pending.extend_from_slice(chunk);
-        let mut out = Vec::new();
-        while self.pending.len() >= self.frame {
-            let frame: Vec<f32> = self.pending.drain(..self.frame).collect();
-            if let Ok(VadFrame::Speech(pcm)) = self.vad.push_frame(&frame) {
-                out.extend_from_slice(pcm);
-            }
-        }
-        out
-    }
 }

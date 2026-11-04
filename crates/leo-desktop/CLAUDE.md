@@ -85,9 +85,13 @@ microphone, trailing space and Press Enter after pasting were removed
 and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
 Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
-they play on their own thread after the microphone is open (Handy's order), so
-the start chime never delays capture and the first words are kept. The app warms
-CoreAudio at launch and non-streaming models load at keypress.
+they play on their own thread. The popup says "Starting microphone…" until the
+first audio arrives; only then does it say Listening and play the start chime
+(Handy's readiness cue), so nobody speaks into a closed microphone. At launch the
+app warms CoreAudio and verifies, loads and runs the selected model once on a
+background thread: a new app version compiles Metal shaders (about 4 s), and the
+pass builds the GPU pipelines, so the first shortcut does not pay for either.
+Non-streaming models that were unloaded load again at keypress.
 Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
 never expose the test actions or write a test paste file.
 
@@ -119,10 +123,12 @@ The popup follows Handy's live preview: state changes are pushed as a
 `dictation` event (revision-stamped, skipped when the popup is Off; the page
 polls only if listening fails), committed and tentative words render with a
 caret, the text pins to its newest line, and 16 FFT buckets
-(`dictation::visualizer`) drive nine smoothed bars. Streaming models get the
-1650 ms streaming VAD hangover and ~32 ms feeds, so the model hears the tail
-it needs for the last words and their punctuation; text stays visible while
-the final pass runs. With AI writing on, Escape stays registered through the
+(`dictation::visualizer`) drive nine smoothed bars. Streaming models get every sample
+in ~32 ms feeds with no VAD in front (2026-11-04, measured on Parakeet Unified:
+Earshot passed nothing from quiet speech and Silero clipped first words, while
+unfiltered audio kept each word and stayed empty on noise); the feed queue holds
+the full five minutes, so a slow model load cannot end the live pass. Text stays
+visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
 reason. Settings warns when no writing AI is set up (`writing_ready`).

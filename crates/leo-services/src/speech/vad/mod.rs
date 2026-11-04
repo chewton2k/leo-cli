@@ -4,7 +4,6 @@ use super::constants;
 
 pub const VAD_PREFILL_MS: u64 = 450;
 pub const VAD_OFFLINE_HANGOVER_MS: u64 = 450;
-pub const VAD_STREAMING_HANGOVER_MS: u64 = 1650;
 pub const VAD_ONSET_MS: u64 = 60;
 
 pub const fn frames_for_duration_ms(duration_ms: u64, frame_samples: usize) -> usize {
@@ -81,7 +80,6 @@ mod tests {
     fn duration_profiles_preserve_silero_timings() {
         assert_eq!(frames_for_duration_ms(VAD_PREFILL_MS, 512), 15);
         assert_eq!(frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, 512), 15);
-        assert_eq!(frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, 512), 52);
         assert_eq!(frames_for_duration_ms(VAD_ONSET_MS, 512), 2);
     }
 
@@ -89,7 +87,6 @@ mod tests {
     fn duration_profiles_round_up_for_earshot_frames() {
         assert_eq!(frames_for_duration_ms(VAD_PREFILL_MS, 256), 29);
         assert_eq!(frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, 256), 29);
-        assert_eq!(frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, 256), 104);
         assert_eq!(frames_for_duration_ms(VAD_ONSET_MS, 256), 4);
     }
 }
