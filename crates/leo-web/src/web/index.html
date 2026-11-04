@@ -452,17 +452,23 @@ body.on-library main, body.on-interviews main:not(:has(.interview-practice)) { p
   background: var(--code-bg); border-radius: 12px; padding: 14px 16px; margin: .4em 0;
 }
 .doc .blk-quote .line-edit { border-left: 3px solid var(--accent); padding-left: 14px; }
-.coding-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; margin-top: 18px; }
-.coding-plan { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
-.coding-plan header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.coding-plan h4 { margin: 0; }
+.coding-plans { display: grid; gap: 28px; }
+.coding-plan { --plan-tone: var(--hue-slate); min-width: 0; }
+.coding-plan[data-provider="claude_code"] { --plan-tone: var(--hue-4); }
+.coding-plan header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.coding-plan h4 { margin: 0; font-size: 14px; font-weight: 550; }
 .coding-plan .chip, .coding-plan .btn { margin-top: 10px; }
-.plan-window { margin-top: 16px; }
-.plan-window .set-line { justify-content: space-between; font-size: 13px; }
-.plan-window strong { font-weight: 500; }
-.plan-meter { height: 20px; border-radius: 6px; overflow: hidden; background: repeating-linear-gradient(135deg, var(--surface-2) 0 3px, var(--line) 3px 4px); margin: 7px 0; }
-.plan-meter i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .18s ease-out; }
+.coding-plan > .hint { margin: 8px 0 0; font-size: 11px; }
+.plan-window { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 4px 20px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-top: 8px; }
+.plan-metric { grid-row: span 2; display: grid; gap: 3px; }
+.plan-metric > span { font-size: 12px; color: var(--muted); }
+.plan-metric strong { font-size: 21px; font-weight: 550; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.plan-window > .hint { grid-column: 2; font-size: 11px; color: var(--muted); text-align: right; }
+.plan-meter { height: 18px; border-radius: 4px; overflow: hidden; background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--plan-tone) 12%, transparent) 3px 4px); }
+.plan-meter i { display: block; height: 100%; border-radius: inherit; background: color-mix(in srgb, var(--plan-tone) 48%, var(--surface)); transition: width .18s ease-out; }
 .plan-meter.near-limit i { background: var(--danger); }
+.scrim .sheet.usage-sheet { width: min(760px, 100%); }
+@media (max-width: 480px) { .plan-window { grid-template-columns: 85px minmax(0, 1fr); gap: 4px 12px; padding: 12px; } .plan-metric strong { font-size: 18px; } }
 @media (prefers-reduced-motion: reduce) { .plan-meter i { transition: none; } }
 .doc-tail { min-height: 40vh; cursor: text; }
 
@@ -1406,7 +1412,9 @@ body.kanban-panel-on .kanban-col { min-width: 230px; }
 .task-more summary { cursor: pointer; font-size: 13.5px; color: var(--muted); }
 .task-more .task-kinds { margin-top: 8px; }
 .task-sheet-title { overflow-wrap: anywhere; }
-.task-acts { flex-wrap: wrap; }
+.task-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-acts .icon-btn { width: 36px; height: 36px; flex: none; border: 1px solid var(--line); border-radius: 9px; text-decoration: none; }
+.task-acts [data-action="task-delete"] { margin-left: auto; color: var(--danger); }
 .task-acts .btn svg { width: 16px; height: 16px; }
 body.on-calendar main { max-width: none; margin: 0; padding: 0 0 var(--bottom); container: cal / inline-size; }
 .cal-page { --cal-line: var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 248px; height: calc(100dvh - var(--top) - 62px - var(--bottom)); min-height: 420px; border-top: 1px solid var(--line); }
@@ -1430,13 +1438,13 @@ body.on-calendar main { max-width: none; margin: 0; padding: 0 0 var(--bottom); 
 .cal-dayhead.today b { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 13px; }
 .cal-dayhead:hover b { text-decoration: underline; text-underline-offset: 3px; }
 .cal-allday-label { align-self: start; padding: 8px 8px 0 0; font-size: 11px; color: var(--muted); text-align: right; }
-.cal-allday-grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), 24px); gap: 2px 0; padding: 4px 0; min-height: 30px; max-height: 108px; overflow-y: auto; }
+.cal-allday-grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), 48px); gap: 2px 0; padding: 4px 0; min-height: 30px; max-height: 108px; overflow-y: auto; }
 .cal-allday-cell { border-left: 1px solid var(--cal-line); margin: -4px 0; }
 .cal-allday-cell.drop-on, .cal-cell.drop-on { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.cal-allday-grid .cal-item { margin: 0 3px; height: 22px; }
+.cal-allday-grid .cal-item { margin: 0 3px; height: 46px; }
 .cal-scroll { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--gutter) minmax(0, 1fr); overflow-y: auto; overscroll-behavior: contain; }
 .cal-scroll { scrollbar-width: none; }
-.cal-scroll::-webkit-scrollbar, .cal-allday-grid::-webkit-scrollbar { display: none; }
+.cal-scroll::-webkit-scrollbar, .cal-allday-grid::-webkit-scrollbar, .cal-month-grid::-webkit-scrollbar { display: none; }
 .cal-allday-grid { scrollbar-width: none; }
 .cal-hours { position: relative; height: calc(var(--hour) * 24); }
 .cal-hours { background-image: repeating-linear-gradient(to bottom, var(--cal-line) 0 1px, transparent 1px var(--hour)); }
@@ -1451,6 +1459,11 @@ body.on-calendar main { max-width: none; margin: 0; padding: 0 0 var(--bottom); 
 .cal-item.event .cal-title { color: color-mix(in srgb, var(--tone) 70%, var(--text)); }
 .cal-item.task { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, .04); }
 .cal-allday-grid .cal-item.task, .cal-cell .cal-item.task { background: color-mix(in srgb, var(--tone) 8%, var(--surface)); box-shadow: none; }
+.cal-item.task { padding: 5px 8px; font-size: 13px; line-height: 1.3; }
+.cal-item.task .cal-check { position: absolute; top: 6px; left: 8px; margin: 0; }
+.cal-item.task .cal-title { text-indent: 20px; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cal-cell .cal-item.task { min-height: 64px; align-items: flex-start; padding: 5px 8px; }
+.cal-cell .cal-item.task .cal-open { flex-direction: column; align-items: flex-start; gap: 2px; }
 .cal-item.peeked { outline: 2px solid var(--accent); outline-offset: -1px; }
 .cal-item.lifted, .cal-tray-row.lifted { opacity: .4; }
 .cal-check { flex: none; width: 14px; height: 14px; margin: 1px 0 0; accent-color: var(--tone, var(--accent)); cursor: pointer; }
@@ -1473,7 +1486,7 @@ body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; user-selec
 .cal-month { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cal-month-names { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--cal-line); }
 .cal-month-names span { padding: 4px 8px 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
-.cal-month-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: repeat(6, minmax(0, 1fr)); }
+.cal-month-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: repeat(6, minmax(max-content, 1fr)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 .cal-cell { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; min-height: 0; padding: 4px 4px 2px; border-left: 1px solid var(--cal-line); border-bottom: 1px solid var(--cal-line); overflow: hidden; cursor: cell; }
 .cal-cell:nth-child(7n + 1) { border-left: 0; }
 .cal-cell.out { background: color-mix(in srgb, var(--surface-2) 40%, var(--surface)); }

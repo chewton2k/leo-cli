@@ -207,7 +207,7 @@ function planLimits(plan) {
     const expired = validReset && reset.getTime() <= now;
     const percent = expired ? 0 : 100 - Math.round(Math.max(0, Math.min(1, window.used)) * 100);
     const when = expired ? 'Waiting for the next update' : validReset ? `Resets ${reset.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Reset time unavailable';
-    return [`<div class="plan-window"><div class="set-line"><span>${name}</span><strong>${expired ? 'Unavailable' : `${percent}% left`}</strong></div><div class="plan-meter${!expired && percent <= 10 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
+    return [`<div class="plan-window"><div class="plan-metric"><span>${key === 'five_hour' ? 'Session' : 'Weekly'}</span><strong>${expired ? 'Unavailable' : `${percent}% left`}</strong></div><div class="plan-meter${!expired && percent <= 10 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
   });
   const seen = limits && new Date(limits.seen_at).getTime();
   const age = Number.isFinite(seen) ? `<p class="hint">${now - seen >= PLAN_STALE_MS ? 'Saved usage · ' : ''}Updated ${esc(rel(limits.seen_at))}</p>` : '';
@@ -217,11 +217,11 @@ function planLimits(plan) {
 function codingPlans(page, selectable = true) {
   if (!page.plans?.length) return '';
   const selected = page.tasks.find(task => task.task === 'writing')?.provider;
-  return `<section class="set-card"><header><h3>Coding accounts</h3></header><p class="hint">Detected from the coding apps on this computer. Sign-in stays with each app; Leo never copies its credentials. Billing follows the account signed into the CLI.</p><div class="coding-plans">${page.plans.map(plan => {
+  return `<div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
-  }).join('')}</div></section>`;
+    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+  }).join('')}</div>`;
 }
 
 const THEME_LABELS = { system: 'Match device', light: 'Light', dark: 'Dark' };
@@ -497,6 +497,7 @@ app.addEventListener('change', (event) => {
 
 async function showUsage() {
   const box = sheet('<h3>Usage</h3><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn" data-action="usage">Refresh</button></div>');
+  box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
   try {
     const page = await api('/api/settings');

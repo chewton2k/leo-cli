@@ -1449,3 +1449,17 @@ The calendar tray puts its mini calendar before tasks, and all-day/timed grids
 share the full width without scrollbar gutters shifting their day boundaries.
 Search-result and Quick Leo note opens carry the query into a bounded CSS Custom
 Highlight, cleared after five seconds or navigation without changing editor DOM.
+
+Usage keeps a single provider column with compact Session/Weekly rows: remaining
+percentage at left, a muted provider-colored bar and reset time at right. The
+dialog has no nested settings card or setup prose; unknown readings stay explicit.
+
+Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
+minimum timed block. Overlap layout includes that visual minimum; saved task
+times stay unchanged. Google export, .ics download and delete/stop-tracking
+actions use icon controls with accessible names and hover titles in both peeks
+and task sheets.
+Minimum-height blocks resize from the original end plus pointer movement,
+including scroll movement; a sideways grip drag cannot lengthen a short task.
+Month rows grow to fit their previews and More action; the month grid scrolls
+and keeps its position across redraws instead of clipping larger task cards.

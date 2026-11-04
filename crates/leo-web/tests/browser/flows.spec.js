@@ -1985,7 +1985,7 @@ test.describe('readability', () => {
       const task = await (await page.request.post('/api/tasks', { data: { title: `Readable task ${tag}` } })).json();
       await page.goto('/#/calendar');
       await page.locator(`.cal-open[data-id="${task.id}"]:visible`).click();
-      await expect(page.locator('#cal-side .btn.danger')).toBeVisible();
+      await expect(page.locator('#cal-side').getByRole('button', { name: 'Delete', exact: true })).toBeVisible();
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.keyboard.press('Escape');
