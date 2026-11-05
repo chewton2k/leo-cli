@@ -68,7 +68,7 @@ test('around gives the words beside a selection on its own line', () => {
 
 test('around never splits a surrogate pair', () => {
   for (const pad of ['', 'x']) {
-    const text = `${pad}${'😀'.repeat(40)}words${'😀'.repeat(40)}${pad}`;
+    const text = `${'😀'.repeat(40)}${pad}words${pad}${'😀'.repeat(40)}`;
     const beside = M.around(text, 'words', 1);
     assert.ok(beside.prefix.isWellFormed() && beside.suffix.isWellFormed());
     assert.ok(JSON.stringify(beside).length > 0);

@@ -3,7 +3,7 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, storage housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, web, room, speech, toolless).
+reader, seer, meaning, web, room, speech, toolless, toolless_chat).
 
 ## Layout
 
@@ -780,31 +780,44 @@ reader, seer, meaning, web, room, speech, toolless).
 
 ## Felix in the margin (`margin.rs`, `routes/margin.rs`, `web/margin.js`, `app/margin-notes.js`, 2026-11-04)
 
-- Storage: `margin_threads`, `margin_modes` and `margin_state` (prefs and the
-  day's read count) in leo.db, never in note files or git. Threads carry `quote`,
-  `prefix`, `suffix`, `status` (open, resolved, dismissed), `source` (read, ask,
-  chat) and `messages`. A deleted note keeps its threads while it is in the trash;
-  `margin::sweep_store` drops them once the note is gone for good (after a trash
-  delete and hourly), never while no notes loaded or a file is unreadable. Export
-  adds `leo/margin.json`; Storage has one delete-all action.
+- Storage: `margin_threads`, `margin_modes` and `margin_state` (prefs, the day's
+  read count, notes seen missing) in leo.db, never in note files or git. Threads
+  carry `quote`, `prefix`, `suffix`, `status` (open, resolved, dismissed), `source`
+  (read, ask, chat) and `messages`. At most `MOST_OPEN` (24) open threads per note,
+  held inside the INSERT and on reopening, and `MOST_CLOSED` (48) closed ones.
+  Replies update messages only, and only while the thread is open.
+- Deletes: a note in the trash keeps its threads, so a restore finds them. Deleting
+  from the trash removes them at once (`forget_notes`). The hourly `sweep_store` is
+  for what vanished another way: it waits `SWEEP_AFTER_DAYS` (7) after first seeing a
+  note missing, in case it was a partial sync or a rename, and never runs while no
+  notes loaded or a file is unreadable. Export adds `leo/margin.json` with Chats,
+  without trashed notes' threads unless Trash is chosen; Storage has one delete-all.
 - Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
-  without one, the global default applies only to notes made after it was set
-  (`Prefs.since`), so turning it on never starts reading old notes.
+  without one, the global default applies only to notes leo made (a v4 id, so never a
+  headerless file) after it was set (`Prefs.since`), so turning it on never starts
+  reading old notes.
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
   sends changed blocks after a pause (4 s, slow 8 s). Silence is the normal answer:
   `{}`, empty or unparsable output is success. The server refuses, whatever the page
   does: a stale version (409), a note not in `along` or not edited in this engine
   run (403, `Reads::edited` is set by the PATCH route, so browsing can never read),
-  a reply streaming (`Steering::any_open`), the daily cap, 5 minutes after a read
-  note on that note, 90 s between reads of a note, and overlapping reads (429 with
-  `why`). Blocks already read are dropped. The count rises before the call, so
-  failures spend the cap too. The model's quote must be in the note now, or the note
-  is dropped.
+  a reply streaming (`Steering::any_open`), 5 minutes after a read note on that note,
+  90 s between reads of a note, overlapping reads and the daily cap (429 with `why`).
+  The cap is spent in one transaction after the read is claimed, so failures spend it
+  too, and a broken day row counts as spent. Blocks already read are dropped. A failed
+  read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
+  A refused read waits for the next edit. The model's quote must be in the note now,
+  or the note is dropped.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
-  `web_search="disabled"`. Note text sits between tags with a per-read random
-  suffix and the prompt says it is never instructions. Model text is only ever set
-  with `textContent`.
+  `web_search="disabled"`, and the chain is cut to its first provider, so a read fails
+  closed instead of falling back to a cloud AI. Replies and asks use
+  `Powers.toolless_chat` on the normal model. Note text sits between tags with a
+  random suffix and the prompts say it is never instructions; thread messages are
+  JSON records inside those tags, one per line, so stored text cannot close the block
+  or forge a turn. Model text is only ever set with `textContent`. Settings says text
+  stays here only for a loopback address and a model without `cloud` in its name
+  (`ai::reads_stay_here`).
 - Daily cap: 40 (20, 40, 80). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
   most 8,000 characters in and 220 tokens out. 90 s between reads means 40 reads
@@ -814,29 +827,37 @@ reader, seer, meaning, web, room, speech, toolless).
 - A failed or missing AI stays silent in the note and leaves `margin::PROBLEM`
   (fixed text, no provider detail) in Settings → Felix and Health until a read works.
 - Selection: Ask Felix (⌘⇧E) opens a draft in the margin, POST
-  `.../margin/threads` (no read-along needed), or Ask in chat. With Felix open, or
-  over 600 characters, it goes to the chat as before. Replies POST
-  `.../threads/{id}/reply` through `Powers.chat`, bounded (`MOST_REPLY`,
-  `MOST_MESSAGES`), and never run twice at once for a thread.
-- Add to note uses `/insert` with a request id and retries once at the end of the
-  note on 409; Undo PATCHes the body back and reopens the thread. Open in chat
-  attaches the quote. `chat::gather_seeing` adds open threads of the open note after
-  the notes (`margin::context`, at most 3,000 characters and an eighth of the note
-  room); warm sessions get them again only when they change (`Warm.margin`).
-- Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix, then
-  lost), `stack`, `sides`, `arrangement`. Right margin needs 928 px of column,
-  Both 1,192 px. While a note has threads or reads along, `.note-columns[data-margin]`
-  narrows the column to at most 760 px for that view (never `leo-note-width`), so a
-  first note cannot reflow text being typed. Full width, too little room or Felix
-  open give Marks only: a small mark above the end of the passage opens the note
-  inline, with `.margin-room` holding the space under its block. A lost anchor goes
-  to `#chat-lost` in the panel.
+  `.../margin/threads` (no read-along needed), or Ask in chat. With Felix open, under
+  3 or over 600 characters, it goes to the chat as before. The server anchors on
+  prefix + quote + suffix exactly and never falls back to another occurrence. Replies
+  POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
+  messages sent), and never run twice at once for a thread.
+- Add to note uses `/insert` with one request id per thread (`/insert` dedupes on note
+  and request, whatever the base), runs once at a time and shows Undo before it closes
+  the thread. After a 409 it re-finds the passage, or says it went to the end and
+  skips the glow. Open in chat attaches the quote. `add_margin_note`'s Undo is refused
+  once the user has replied. `chat::gather_seeing` adds open threads of the open note
+  after the notes (`margin::context`, at most 3,000 characters and an eighth of the
+  note room); the block's fence is keyed per process and stable while its content is,
+  so prefix caches still work, and warm sessions get it only when it changes
+  (`Warm.margin`).
+- Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix of at
+  least 6 characters, or an edge of the note, then lost), `stack`, `sides`,
+  `arrangement`. Right margin needs 928 px of column, Both 1,192 px. While a note has
+  threads or reads along, `.note-columns[data-margin]` narrows the column to at most
+  760 px for that view (never `leo-note-width`), so a first note cannot reflow text
+  being typed. Full width, too little room or Felix open give Marks only: a small mark
+  above the end of the passage opens the note inline, with `.margin-room` holding the
+  space under its block. A lost anchor goes to `#chat-lost` in the panel.
 - Overlay: `.margin-layer` sits in `.note-columns`, outside `#doc`, redrawn on
   ResizeObserver and edits. `doc.spanRects` measures rendered blocks and open
   textareas without touching the caret. Elements are kept by thread id and the reply
   box is never rebuilt. Felix's `think` face shows only while a read runs, after
   200 ms so a refused read never flashes. Timing follows the mockup: squiggle
   .46 s, tether .56 s, words 62 ms apart. Reduced Motion stills all of it. Never prints.
+- Tests: `src/tests/margin.rs` drives the real engine over TCP with fake powers.
+  `leo-test-server` takes `LEO_TEST_FAKE_AI` (the test binary only, never the app) so
+  one flow in flows.spec.js joins the page to the real routes.
 
 ## Interview instant feedback (2026-10-12, `interview_keys.rs`)
 

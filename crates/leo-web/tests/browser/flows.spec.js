@@ -4524,12 +4524,14 @@ test.describe('passages', () => {
       await expect(page.locator('.toast').first()).toContainText(says);
       const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
       await expect.poll(body).toContain('Argon2id');
+      await expect(page.locator('.margin-note')).toHaveCount(0);
       if (says === 'Added to note') {
+        await expect(page.locator('#doc .blk-glow').first()).toBeVisible();
         expect(await body()).toBe('A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nYes. Argon2id, then verify at login.\n\nLast.');
       } else {
         expect(await body()).toBe('Everything was rewritten.\n\nYes. Argon2id, then verify at login.\n');
         await page.waitForTimeout(300);
-        await expect(page.locator('#doc .blk-glow')).toHaveCount(0);
+        expect(await page.locator('#doc .blk-glow').count(), 'nothing glows when the passage is gone').toBe(0);
       }
     });
   }
