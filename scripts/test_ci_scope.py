@@ -7,7 +7,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parent.parent
-FLAGS = ('rust', 'browser', 'node', 'installers', 'go_runner', 'java_runner', 'rust_runner')
+FLAGS = ('rust', 'browser', 'node', 'installers')
 
 
 class ScopeTests(unittest.TestCase):
@@ -77,17 +77,6 @@ class ScopeTests(unittest.TestCase):
     def test_installer_changes_run_their_own_checks(self):
         self.assert_scope(self.scope('scripts/install-app.ps1', 'scripts/test_desktop_release.py'), 'rust', 'installers')
 
-    def test_runner_changes_select_only_the_matching_build_check_and_consumers(self):
-        for name in ('go', 'java', 'rust'):
-            with self.subTest(name=name):
-                result = self.scope(f'scripts/{name}-runner/MANIFEST')
-                self.assert_scope(result, 'rust', 'browser', f'{name}_runner')
-                self.base = self.git('rev-parse', 'HEAD').strip()
-
-    def test_runtime_catalog_changes_check_all_runner_pins(self):
-        self.assert_scope(self.scope('crates/leo-services/src/runtimes.rs'),
-                          'rust', 'browser', 'go_runner', 'java_runner', 'rust_runner')
-
     def test_unknown_inputs_and_workflow_changes_fail_open_to_full_coverage(self):
         for path in ('Cargo.lock', '.cargo/config.toml', '.github/workflows/ci.yml',
                      'scripts/ci-scope.sh', 'new-build-input.txt'):
@@ -125,9 +114,9 @@ class ScopeTests(unittest.TestCase):
         self.assert_scope(self.scope(), 'rust', 'browser')
 
     def test_mixed_scopes_are_independent_of_path_order(self):
-        for paths in [('scripts/go-runner/COMMIT', 'scripts/java-runner/COMMIT'),
-                      ('scripts/java-runner/FILES', 'scripts/go-runner/FILES')]:
-            self.assert_scope(self.scope(*paths), 'rust', 'browser', 'go_runner', 'java_runner')
+        for paths in [('scripts/install-app.sh', 'crates/leo-web/src/web/doc.js'),
+                      ('crates/leo-web/src/web/core.js', 'scripts/install-app.ps1')]:
+            self.assert_scope(self.scope(*paths), 'rust', 'browser', 'node', 'installers')
             self.base = self.git('rev-parse', 'HEAD').strip()
 
 

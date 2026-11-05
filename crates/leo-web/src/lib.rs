@@ -11,18 +11,12 @@ pub mod captions;
 pub mod chat;
 pub mod chat_files;
 pub mod chats;
-mod code_edits;
-mod code_reply;
 mod combine;
 pub mod db;
 pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
-mod interview;
-mod interview_delete;
-mod interview_keys;
-mod interview_tools;
 mod originals;
 mod progress;
 mod read_cache;
@@ -176,24 +170,12 @@ pub type Importer = Arc<
     dyn Fn(Vec<UploadFile>, &str, &mut dyn FnMut(&str, usize, usize)) -> Result<Made> + Send + Sync,
 >;
 
-#[derive(Clone)]
-pub struct Runtime {
-    pub dir: std::path::PathBuf,
-    pub ready: Arc<dyn Fn() -> bool + Send + Sync>,
-    pub fetch: Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>,
-}
-
 #[derive(Clone, Default)]
 pub struct Powers {
     pub writer: Option<Writer>,
     pub quick: Option<Writer>,
     pub housekeeping: Option<Writer>,
     pub usage: Arc<usage::Usage>,
-    pub python: Option<Runtime>,
-    pub cpp: Option<Runtime>,
-    pub go: Option<Runtime>,
-    pub java: Option<Runtime>,
-    pub rust: Option<Runtime>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
@@ -223,16 +205,6 @@ struct AppState {
     quick: Option<Writer>,
     housekeeping: Option<Writer>,
     usage: Arc<usage::Usage>,
-    python: Option<Runtime>,
-    python_fetch: Arc<Mutex<Option<String>>>,
-    cpp: Option<Runtime>,
-    cpp_fetch: Arc<Mutex<Option<String>>>,
-    go: Option<Runtime>,
-    go_fetch: Arc<Mutex<Option<String>>>,
-    java: Option<Runtime>,
-    java_fetch: Arc<Mutex<Option<String>>>,
-    rust: Option<Runtime>,
-    rust_fetch: Arc<Mutex<Option<String>>>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     work: Arc<work::Work>,
@@ -626,11 +598,6 @@ pub(crate) async fn start_in(
     );
     let chats = chats::dir_for(&store.notes_dir);
     let quick = powers.quick;
-    let python = powers.python;
-    let cpp = powers.cpp;
-    let go = powers.go;
-    let java = powers.java;
-    let rust = powers.rust;
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
@@ -661,16 +628,6 @@ pub(crate) async fn start_in(
         quick,
         housekeeping: powers.housekeeping,
         usage: powers.usage,
-        python,
-        python_fetch: Default::default(),
-        cpp,
-        cpp_fetch: Default::default(),
-        go,
-        go_fetch: Default::default(),
-        java,
-        java_fetch: Default::default(),
-        rust,
-        rust_fetch: Default::default(),
         progress: Arc::new(progress::Board::kept_in(&chats)),
         warm: Default::default(),
         work: Default::default(),
@@ -888,71 +845,7 @@ fn router(state: AppState) -> Router {
         .route("/theme.js", get(routes::assets::theme_js))
         .route("/chat.js", get(chat_js))
         .route("/pane-resize.js", get(routes::assets::pane_resize_js))
-        .route("/interview.js", get(routes::assets::interview_js))
-        .route("/code-tools.js", get(routes::assets::code_tools_js))
-        .route("/typescript.js", get(routes::assets::typescript_js))
-        .route("/wasi-shim.js", get(routes::assets::wasi_shim_js))
-        .route(
-            "/api/python",
-            get(routes::python::status).post(routes::python::fetch),
-        )
-        .route(
-            "/api/cpp",
-            get(routes::python::cpp_status).post(routes::python::cpp_fetch),
-        )
-        .route(
-            "/api/go",
-            get(routes::python::go_status).post(routes::python::go_fetch),
-        )
-        .route(
-            "/api/java",
-            get(routes::python::java_status).post(routes::python::java_fetch),
-        )
-        .route(
-            "/api/rust",
-            get(routes::python::rust_status).post(routes::python::rust_fetch),
-        )
-        .route("/api/progress/{key}", get(routes::interviews::progress))
-        .route("/api/interviews", get(routes::interviews::list))
-        .route(
-            "/api/interviews/{id}/key",
-            get(routes::interviews::key).post(routes::interviews::prepare_key),
-        )
-        .route(
-            "/api/interviews/{id}/hidden-tests",
-            post(routes::interviews::hidden_tests),
-        )
-        .route(
-            "/api/interviews/{id}/key/check",
-            post(routes::interviews::check_key),
-        )
-        .route(
-            "/api/interviews/{id}/key/checked",
-            post(routes::interviews::key_checked),
-        )
-        .route(
-            "/api/interviews/{id}/run",
-            post(routes::interviews::save_run),
-        )
-        .route(
-            "/api/interviews/{id}/grade",
-            post(routes::interviews::grade),
-        )
-        .route(
-            "/api/interviews/{id}/coverage",
-            post(routes::interviews::coverage),
-        )
-        .route(
-            "/api/interviews/{id}/language",
-            post(routes::interviews::language),
-        )
-        .route(
-            "/api/interviews/{id}",
-            get(routes::interviews::get)
-                .put(routes::interviews::put)
-                .delete(routes::interviews::remove)
-                .layer(axum::extract::DefaultBodyLimit::max(interview::BODY_BYTES)),
-        )
+        .route("/api/progress/{key}", get(routes::progress::get))
         .route("/api/chat", post(chat_reply))
         .route("/api/quiz/mark", post(routes::felix::mark_quiz))
         .route(
@@ -1071,14 +964,6 @@ fn router(state: AppState) -> Router {
             note_activity,
         ))
         .route("/favicon.svg", get(favicon))
-        .route("/runner.html", get(routes::assets::runner_html))
-        .route("/runner.js", get(routes::assets::runner_js))
-        .route("/pyodide/{name}", get(routes::python::file))
-        .route("/clang/{name}", get(routes::python::cpp_file))
-        .route("/goroot/{*name}", get(routes::python::go_file))
-        .route("/javaroot/{name}", get(routes::python::java_file))
-        .route("/rustroot/{*name}", get(routes::python::rust_file))
-        .route("/sql/{name}", get(routes::assets::sql_file))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))
         .with_state(state)

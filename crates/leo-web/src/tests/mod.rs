@@ -6,7 +6,6 @@ mod combine;
 mod dictation;
 mod felix;
 mod housekeeping;
-mod interview_cost;
 mod notes;
 mod passages;
 mod pictures;
@@ -14,6 +13,7 @@ mod recording;
 mod sources;
 mod speech;
 mod start;
+mod study_compat;
 mod study_context;
 mod tasks;
 mod trash;
@@ -75,16 +75,6 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         quick: None,
         housekeeping: None,
         usage: Default::default(),
-        python: None,
-        python_fetch: Default::default(),
-        cpp: None,
-        cpp_fetch: Default::default(),
-        go: None,
-        go_fetch: Default::default(),
-        java: None,
-        java_fetch: Default::default(),
-        rust: None,
-        rust_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         work: Default::default(),

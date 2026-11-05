@@ -50,7 +50,7 @@ impl Chat {
             title: self.title.clone(),
             named: self.named,
             about: self.about.clone(),
-            mode: self.mode.clone(),
+            mode: crate::chat::mode_of(Some(&self.mode)).into(),
             count: self.messages.len(),
             updated_at: self.updated_at,
         }
@@ -365,7 +365,7 @@ fn chat_of(row: &rusqlite::Row) -> rusqlite::Result<Chat> {
     Ok(Chat {
         id: text(0)?,
         title: text(1)?,
-        mode: text(2)?,
+        mode: crate::chat::mode_of(Some(&text(2)?)).into(),
         refs: serde_json::from_str(&text(3)?).unwrap_or_default(),
         messages: serde_json::from_str(&text(4)?).unwrap_or_default(),
         named: row.get(5)?,
@@ -404,7 +404,7 @@ fn summary_of(row: &rusqlite::Row) -> rusqlite::Result<Summary> {
         title: row.get(1)?,
         named: row.get(2)?,
         about: row.get(3)?,
-        mode: row.get(4)?,
+        mode: crate::chat::mode_of(Some(&row.get::<_, String>(4)?)).into(),
         count: row.get::<_, i64>(5)? as usize,
         updated_at: when(&row.get::<_, String>(6)?),
     })
@@ -481,7 +481,7 @@ pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<
             title: kept_name.unwrap_or_else(|| title_of(&saving.title, &refs, &messages)),
             about: about_of(&messages),
             memory,
-            mode: saving.mode,
+            mode: crate::chat::mode_of(Some(&saving.mode)).into(),
             refs,
             messages,
             created_at,
@@ -589,6 +589,65 @@ pub fn remove(dir: &Path, id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_interview_chats_open_as_chat_without_rewriting_the_saved_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("chats");
+        let now = Utc::now();
+        let messages = vec![serde_json::json!({
+            "role": "assistant", "text": "Saved practice", "interview": {"id": "old-problem"}
+        })];
+        for mode in ["chat", "study", "interview"] {
+            let id = format!("retired-style-{mode}");
+            save(
+                &dir,
+                &id,
+                Saving {
+                    title: "Saved practice".into(),
+                    mode: mode.into(),
+                    refs: vec![],
+                    messages: messages.clone(),
+                },
+                now,
+            )
+            .unwrap();
+            db_of(&dir)
+                .with(|c| {
+                    c.execute(
+                        "UPDATE chats SET mode = ?1 WHERE id = ?2",
+                        rusqlite::params![mode, id],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            let expected = if mode == "interview" { "chat" } else { mode };
+            let loaded = load(&dir, &id).unwrap();
+            assert_eq!(loaded.mode, expected);
+            assert_eq!(loaded.messages, messages);
+            assert_eq!(loaded.summary().mode, expected);
+            assert_eq!(
+                list(&dir).into_iter().find(|s| s.id == id).unwrap().mode,
+                expected
+            );
+            assert_eq!(
+                search(&dir, "practice")
+                    .into_iter()
+                    .find(|s| s.id == id)
+                    .unwrap()
+                    .mode,
+                expected
+            );
+            assert_eq!(
+                db_of(&dir)
+                    .with(|c| c
+                        .query_row("SELECT mode FROM chats WHERE id = ?1", [&id], |r| r
+                            .get::<_, String>(0)))
+                    .unwrap(),
+                mode
+            );
+        }
+    }
 
     #[test]
     fn a_chat_moves_up_only_when_a_message_is_added() {

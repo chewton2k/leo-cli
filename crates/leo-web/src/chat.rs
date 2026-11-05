@@ -176,7 +176,7 @@ const LAST_REPLY_CHARS: usize = 12_000;
 const FULL_ROOM: usize = 32_000;
 pub const REPLY_TOKENS: u32 = 16_000;
 
-pub const MODES: [&str; 3] = ["chat", "study", "interview"];
+pub const MODES: [&str; 2] = ["chat", "study"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Turn {
@@ -1048,7 +1048,6 @@ pub fn before_reply(user: &str, block: &str) -> String {
 pub fn mode_of(requested: Option<&str>) -> &'static str {
     match requested {
         Some("study" | "quiz" | "coach") => "study",
-        Some("interview") => "interview",
         _ => "chat",
     }
 }
@@ -1370,8 +1369,8 @@ mod tests {
     }
 
     #[test]
-    fn interview_is_a_third_style_and_the_old_ones_still_land_in_chat_or_study() {
-        assert_eq!(mode_of(Some("interview")), "interview");
+    fn retired_interview_style_falls_back_to_chat_and_study_keeps_its_rules() {
+        assert_eq!(mode_of(Some("interview")), "chat");
         assert_eq!(mode_of(Some("study")), "study");
         assert_eq!(mode_of(Some("quiz")), "study");
         assert_eq!(mode_of(Some("coach")), "study");
