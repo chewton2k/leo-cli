@@ -6956,3 +6956,41 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
     await page.unroute('**/api/settings/usage');
   }
 });
+
+for (const width of [1280, 390]) {
+  test(`Record and Settings keep consistent headers and compact storage at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    let reference;
+    for (const [route, crumb] of [
+      ['record', 'Record'],
+      ['settings/general', 'Settings / General'],
+      ['settings/storage', 'Settings / Storage'],
+      ['settings/trash', 'Settings / Trash'],
+    ]) {
+      await page.goto('/#/' + route);
+      await expect(page.locator('#crumbs')).toContainText(new RegExp(crumb.replaceAll(' / ', '\\s*/\\s*')));
+      const header = await page.locator('.bar-row').boundingBox();
+      expect(header.width).toBeLessThanOrEqual(760);
+      if (reference) {
+        expect(header.x).toBeCloseTo(reference.x, 0);
+        expect(header.width).toBeCloseTo(reference.width, 0);
+        expect(header.height).toBeCloseTo(reference.height, 0);
+      }
+      reference = header;
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (route === 'settings/storage') {
+        const areas = page.locator('.store-area');
+        await expect(areas.first()).toBeVisible();
+        for (const area of await areas.all()) {
+          const heading = area.locator(':scope > summary');
+          const summary = await heading.boundingBox();
+          const content = await heading.evaluate(el => Math.max(...Array.from(el.children, child => child.getBoundingClientRect().height)));
+          const card = await area.boundingBox();
+          expect(card.height - summary.height).toBeLessThanOrEqual(3);
+          expect(summary.height).toBeLessThanOrEqual(Math.max(52, content + 16) + 1);
+        }
+        await page.screenshot({ path: testInfo.outputPath('storage.png') });
+      }
+    }
+  });
+}

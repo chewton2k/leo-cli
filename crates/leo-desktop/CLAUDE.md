@@ -219,6 +219,9 @@ private atomic one-use `update-foreground` marker, consumed only after the
 single-instance check, so `--hidden` from login cannot hide the updated app.
 Failed installation removes the marker and releases the opening restriction.
 
+Automatic updater checks run at release startup and after an hour without an
+updater command. Installation replaces the running bundle; the staged previous
+bundle is removed, and unrelated application copies are never deleted.
 Foreground requests run on the main thread, move the main window to the active
 macOS Space and explicitly make it the main/key window. Initial activation runs
 at Ready, never after an arbitrary page reload; hidden login launches stay hidden.

@@ -197,7 +197,10 @@ Code's come free with every answer (`rate_limit_event` → `from_claude`, saved
 in `AgentCli::run` even when the request failed); never send a request just to
 check. Codex's come from an isolation-capable `codex app-server` →
 `account/rateLimits/read` (`ask_codex`, no model call); unsupported versions
-retain previously saved usage without starting the app-server. Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
+fall back to recent local Codex `token_count` rate-limit events without starting the
+app-server. This read-only fallback scans bounded recent folders and file tails,
+rejects links, preserves the event timestamp and never exposes conversation text;
+an older event cannot replace newer saved usage. Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
 age past `STALE_AFTER`, a window past its reset reads 0%); the TUI re-asks
 Codex every `task::USAGE_EVERY` (60 s) while Settings is open
 (`App.check_usage`, a no-op fn in tests); doctor adds `<name> limits` with

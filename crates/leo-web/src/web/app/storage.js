@@ -4,7 +4,7 @@ async function showStorage() {
   const mine = ++seq;
   state = { view: 'storage', dir: '', storageOpen: (state.view === 'storage' && state.storageOpen) || new Set() };
   chrome({ showBack: true });
-  $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Storage</button>';
+  $('#crumbs').innerHTML = settingsCrumbs('storage');
   document.title = 'Storage · leo';
   refreshPanel(app, settingsFrame('storage', skeleton(4)));
   const [page, keep] = await Promise.all([api('/api/storage'), api('/api/keep')]);
