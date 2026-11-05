@@ -73,6 +73,7 @@ function libraryTools() {
 
 function libraryClasses() {
   document.body.classList.toggle('on-library', state.view === 'folder');
+  if (state.view === 'folder') document.body.classList.remove('on-note');
 }
 
 function stopLibraryArrival() {

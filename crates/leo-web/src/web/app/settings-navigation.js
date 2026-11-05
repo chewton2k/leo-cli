@@ -234,8 +234,25 @@ function placeSettingsPill(nav, on) {
   pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.22, 1, .36, 1)' });
 }
 
+function fitSettingsEdge() {
+  const body = document.body;
+  const layout = app.querySelector('.settings-layout');
+  const nav = layout && layout.querySelector('.settings-nav');
+  const section = layout && layout.querySelector('.settings-section');
+  if (!nav || !section || !matchMedia('(min-width: 1000px)').matches) {
+    body.classList.remove('settings-edge');
+    return;
+  }
+  const half = (parseFloat(getComputedStyle(body).getPropertyValue('--side')) || 0) / 2;
+  const gap = parseFloat(getComputedStyle(layout).columnGap) || 0;
+  body.style.setProperty('--settings-c', `${Math.round(nav.getBoundingClientRect().right + gap / 2 - half)}px`);
+  body.style.setProperty('--settings-lc', `${Math.round(section.getBoundingClientRect().left - half)}px`);
+  body.classList.add('settings-edge');
+}
+
 const settingsRevealed = new WeakMap();
 function revealSettingsLink() {
+  fitSettingsEdge();
   const nav = app.querySelector('.settings-sections'), on = nav?.querySelector('.settings-link.on');
   if (nav) placeSettingsPill(nav, on);
   if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;

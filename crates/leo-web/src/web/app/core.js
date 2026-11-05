@@ -270,7 +270,8 @@ function toast(message, { action, run, bad } = {}) {
   const el = document.createElement('div');
   el.className = 'toast' + (bad ? ' bad' : '');
   el.setAttribute('role', 'status');
-  el.innerHTML = `<span>${esc(message)}</span>${action ? `<button>${esc(action)}</button>` : ''}`;
+  const lasts = action ? 6000 : 3500;
+  el.innerHTML = `<span>${esc(message)}</span>${action ? `<button>${esc(action)}</button><i class="toast-time" aria-hidden="true" style="animation-duration:${lasts}ms"></i>` : ''}`;
   if (action) {
     el.querySelector('button').addEventListener('click', () => {
       el.remove();
@@ -283,7 +284,7 @@ function toast(message, { action, run, bad } = {}) {
     el.setAttribute('aria-hidden', 'true');
     el.inert = true;
     setTimeout(() => el.remove(), LEAVE_MS);
-  }, action ? 6000 : 3500);
+  }, lasts);
 }
 
 const LEAVE_MS = 150;
@@ -581,15 +582,19 @@ async function showFolder(dir) {
   const arrived = state.view === 'folder' && state.dir !== dir;
   stopLibraryArrival();
   const before = state.view === 'folder' && state.dir === dir ? state : null;
+  const left = state.view === 'note' ? state.session?.note?.id || null : null;
   state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: before ? new Set(before.picked) : new Set() };
-  libraryClasses();
   chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
   if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
   const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
-  drawFolder();
-  if (arrived) arriveOnPage();
+  const moved = await swap(`f:${dir}`, () => { scrollToTop(); drawFolder(); }, {
+    stale: () => mine !== seq,
+    from: () => { const title = $('#title'); return inView(title) ? title : null; },
+    to: () => (left ? morphTitle(left) : null),
+  });
+  if (arrived && !moved) arriveOnPage();
 }
 
 const PAGE = 200;
@@ -657,6 +662,15 @@ function folderKeys() {
 }
 
 function drawFolder() {
+  const keys = folderKeys();
+  const here = `${state.dir}|${library.view}`;
+  const same = drawn.library && drawn.library.here === here && !sameKeys(drawn.library.keys, keys);
+  drawn.library = { here, keys };
+  if (!same) return paintFolder();
+  return flipList(app, '.library-cards > .card[data-id], .folders > .folder[data-dir]', (el) => el.dataset.id || `d:${el.dataset.dir}`, paintFolder);
+}
+
+function paintFolder() {
   const { dirs, notes } = state.listing;
   const dir = state.dir;
   const sel = state.selecting;
@@ -844,33 +858,44 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
-  if (source.note && source.note !== note.id) closeSource();
-  if (state.session && state.session.doc) state.session.doc.destroy();
-  const s = draft || saving.open(note);
-  s.tags = [...s.edit.tags];
-  state = { view: 'note', dir: note.directory, session: s };
-  chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
-  document.title = `${note.title || 'New note'} · leo`;
-  chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
-  const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
-  const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
-  app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
+  let s;
+  const moved = await swap(`n:${note.id || 'new'}`, () => {
+    scrollToTop();
+    document.body.classList.toggle('on-library', false);
+    document.body.classList.toggle('on-note', true);
+    if (source.note && source.note !== note.id) closeSource();
+    if (state.session && state.session.doc) state.session.doc.destroy();
+    s = draft || saving.open(note);
+    s.tags = [...s.edit.tags];
+    state = { view: 'note', dir: note.directory, session: s };
+    chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
+    document.title = `${note.title || 'New note'} · leo`;
+    chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
+    const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
+    const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
+    app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
     <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
     <div class="note-meta">${where}<span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article></div></div>`;
-  s.title = $('#title');
-  drawOriginals(note);
-  hideAskFloat();
-  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
-  arriveOnPage(app.querySelector('article.note'));
-  if (citedLines && citedLines.id === note.id) showCitedLines();
-  else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
-    clearTimeout(reading.timer);
-    reading.id = note.id;
-    reading.user = false;
-  } else restoreReading(note.id, mine);
+    s.title = $('#title');
+    drawOriginals(note);
+    hideAskFloat();
+    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+    if (citedLines && citedLines.id === note.id) showCitedLines();
+    else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
+      clearTimeout(reading.timer);
+      reading.id = note.id;
+      reading.user = false;
+    } else restoreReading(note.id, mine);
+  }, {
+    stale: () => mine !== seq,
+    from: () => morphTitle(note.id),
+    to: () => ($('#title')?.textContent.trim() ? $('#title') : null),
+  });
+  if (mine !== seq || !s) return;
+  if (!moved) arriveOnPage(app.querySelector('article.note'));
   drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
