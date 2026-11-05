@@ -125,6 +125,7 @@ window.addEventListener('hashchange', () => {
     flush(leaving).catch(fail);
     leaving.doc.destroy();
   }
+  marginLeave();
   route();
 });
 
@@ -152,9 +153,14 @@ window.addEventListener(
   { passive: true }
 );
 
+window.addEventListener('resize', () => {
+  if (document.body.classList.contains('on-settings')) fitSettingsEdge();
+});
+
 async function route() {
   closeSheet();
-  window.scrollTo(0, 0);
+  drawn.top = /^#\/(?:f|n|new)(?:\/|$)|^#?\/?$/.test(location.hash);
+  if (!drawn.top) window.scrollTo(0, 0);
   await render();
 }
 
@@ -268,11 +274,12 @@ async function render() {
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
   stopLibraryArrival();
-  document.body.classList.toggle('on-library', !kind || kind === 'f');
-  document.body.classList.toggle('on-note', kind === 'n' || kind === 'new');
+  if (kind && !/^(?:f|n|new)$/.test(kind)) {
+    document.body.classList.toggle('on-library', false);
+    document.body.classList.toggle('on-note', false);
+  }
   if (library.observer) library.observer.disconnect();
   if (kind !== 'search') closeSearch();
-  if (kind !== 'map') leaveMap();
   if (kind !== 'n') chat.setContext(null);
   if (kind !== 'record') recorder.leave();
   if (kind !== 'boards') leaveBoards();
@@ -284,7 +291,6 @@ async function render() {
     else if (kind === 'new') await newNote(arg);
     else if (kind === 'search') await showSearch(arg);
     else if (kind === 'trash') await showTrash();
-    else if (kind === 'map') await showMap(arg);
     else if (kind === 'calendar') await showCalendar();
     else if (kind === 'boards') await showBoards(arg);
     else if (kind === 'interviews') await showInterviews(arg);

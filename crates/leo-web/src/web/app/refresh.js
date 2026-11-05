@@ -12,7 +12,7 @@ function refreshKey(node) {
     return JSON.stringify([node.nodeName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') && !['data-title', 'data-name', 'data-menu'].includes(attr.name)).map((attr) => [attr.name, attr.value]).sort(([a], [b]) => a.localeCompare(b))]);
   }
   if (node.hasAttribute('data-area')) return `${node.nodeName}:area:${node.getAttribute('data-area')}`;
-  if (node.matches('.segmented[aria-label]')) return `segment:${node.getAttribute('aria-label')}`;
+  if (node.matches('.segmented[aria-label],.choice-cards[aria-label]')) return `segment:${node.getAttribute('aria-label')}`;
   if (node.matches('a[href]')) return `link:${node.getAttribute('href')}`;
   return null;
 }

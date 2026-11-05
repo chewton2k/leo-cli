@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -328,6 +330,7 @@ pub(crate) async fn update_note(
     Path(id): Path<String>,
     Json(body): Json<UpdateBody>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
+    let margin = Arc::clone(&state.margin);
     state
         .with_store(move |store| {
             let recorded = crate::tools::has_transcript(&store.notes_dir, &id);
@@ -361,6 +364,9 @@ pub(crate) async fn update_note(
                 ..NoteResponse::from_note(note)
             };
             save(store)?;
+            if edited {
+                margin.edited(&id, &resp.version);
+            }
             Ok(Json(resp))
         })
         .await

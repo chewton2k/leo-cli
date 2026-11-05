@@ -6,9 +6,9 @@ const APP_JS: &str = concat!(
     "(function () {\n'use strict';\n",
     include_str!("../web/app/refresh.js"),
     include_str!("../web/app/core.js"),
+    include_str!("../web/app/motion.js"),
     include_str!("../web/app/browse.js"),
     include_str!("../web/app/trash.js"),
-    include_str!("../web/app/map.js"),
     include_str!("../web/app/settings-navigation.js"),
     include_str!("../web/app/select-menu.js"),
     include_str!("../web/app/settings.js"),
@@ -24,6 +24,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/math.js"),
     include_str!("../web/app/sources.js"),
     include_str!("../web/app/passages.js"),
+    include_str!("../web/app/margin-notes.js"),
     include_str!("../web/app/calendar.js"),
     include_str!("../web/app/boards.js"),
     include_str!("../web/app/actions.js"),
@@ -36,7 +37,6 @@ pub(crate) const MERMAID_PATH: &str = "/vendor/mermaid-11.4.1.js";
 const EDITING_JS: &str = include_str!("../web/editing.js");
 const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
-const GRAPH_JS: &str = include_str!("../web/graph.js");
 const SCHEDULE_JS: &str = include_str!("../web/schedule.js");
 const THEME_JS: &str = include_str!("../web/theme.js");
 const CHAT_JS: &str = include_str!("../web/chat.js");
@@ -231,10 +231,6 @@ pub(crate) async fn doc_js() -> Response {
     javascript(DOC_JS)
 }
 
-pub(crate) async fn graph_js() -> Response {
-    javascript(GRAPH_JS)
-}
-
 pub(crate) async fn schedule_js() -> Response {
     javascript(SCHEDULE_JS)
 }
@@ -261,6 +257,9 @@ pub(crate) async fn favicon() -> Response {
         .into_response()
 }
 
+pub(crate) async fn margin_js() -> Response {
+    javascript(include_str!("../web/margin.js"))
+}
 pub(crate) async fn chat_js() -> Response {
     javascript(CHAT_JS)
 }

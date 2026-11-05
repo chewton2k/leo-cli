@@ -352,6 +352,7 @@ struct Remember {
     notes: std::collections::BTreeMap<String, u64>,
     documents: std::collections::BTreeSet<u64>,
     material: Option<u64>,
+    margin: u64,
     limit: usize,
 }
 
@@ -1320,6 +1321,7 @@ fn answer(
                 notes,
                 documents,
                 material: remember.material,
+                margin: remember.margin,
                 reads,
                 sent,
                 limit: remember.limit,
@@ -1915,6 +1917,16 @@ pub(crate) async fn chat_reply(
         .unwrap_or_default()
     };
     let note_room = chat::notes_room(mode, body.practice, room);
+    let margin_chats = state.chats.clone();
+    let margin_note = note.clone();
+    let margin_context = tokio::task::spawn_blocking(move || {
+        margin_note.map_or(String::new(), |id| {
+            crate::margin::context(&crate::margin::open_on(&margin_chats, &id), note_room / 8)
+        })
+    })
+    .await
+    .unwrap_or_default();
+    let margin_block = margin_context.clone();
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
@@ -1928,6 +1940,7 @@ pub(crate) async fn chat_reply(
                 note_room,
                 Some(&seen),
                 &close,
+                &margin_block,
             ))
         })
         .await;
@@ -2011,6 +2024,7 @@ pub(crate) async fn chat_reply(
         notes: crate::warm::fingerprints(&notes, &sources),
         documents: documents_seen,
         material: None,
+        margin: crate::warm::hash_of(&margin_context),
         limit: crate::warm::context_limit(room, state.context.as_ref().map(|measure| measure())),
     };
     let retained = if let Some(id) = warm_chat {
@@ -2031,14 +2045,14 @@ pub(crate) async fn chat_reply(
             .cloned()
             .collect();
         let message = body.messages.last().map_or("", |t| t.text.as_str());
+        let fresh_margin = warm.margin != crate::warm::hash_of(&margin_context);
+        let more_notes = if fresh_margin {
+            format!("{}{margin_context}", renumbered.text)
+        } else {
+            renumbered.text
+        };
         Continued {
-            text: chat::follow_up(
-                &fresh_documents,
-                &renumbered.text,
-                message,
-                room,
-                documents_room,
-            ),
+            text: chat::follow_up(&fresh_documents, &more_notes, message, room, documents_room),
             sources: renumbered.sources,
             notes: renumbered.notes,
             warm,

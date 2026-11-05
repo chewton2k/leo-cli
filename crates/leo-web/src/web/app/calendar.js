@@ -387,6 +387,7 @@ function drawCalendar() {
   const keep = scroll ? scroll.scrollTop : null;
   main.innerHTML = `${calHead(days)}${body}`;
   main.dataset.view = cal.view;
+  settleNow('cal', (id) => app.querySelector(`.cal-item[data-id="${CSS.escape(id)}"], .cal-tray-row[data-id="${CSS.escape(id)}"]`));
   const box = $('#cal-scroll') || $('.cal-month-grid');
   if (box) {
     const place = `${cal.view} ${days[0]}`;
@@ -539,6 +540,7 @@ function calLift() {
     ghost.textContent = d.task.title || 'Untitled';
     document.body.appendChild(ghost);
     d.ghost = ghost;
+    lift(ghost);
   }
   try { app.setPointerCapture(d.pointer); } catch (e) {}
   calFollow();
@@ -561,7 +563,7 @@ function calFollow() {
   if (!d || !d.live) return;
   calEdge(d);
   calClearMarks();
-  if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)${stillMotion() ? '' : ' rotate(-1.5deg)'}`;
+  if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)`;
   if (d.mode === 'resize') {
     const before = d.task.end ? S.minutesOf(d.task.end) : d.start + d.length;
     const moved = d.y === d.startY ? 0 : calMinutesIn(d.col, d.y) - d.start - d.offset;
@@ -622,6 +624,7 @@ function calDrop() {
     return calCompose(target.day, target.minutes, target.end);
   }
   const task = d.task;
+  if (d.mode !== 'resize') settleLater('cal', task.id, null);
   let next;
   if (d.mode === 'resize') next = { date: target.day, time: calHM(task.time), end: S.timeOf(target.end) };
   else if (target.minutes === 'keep') next = { date: target.day, time: calHM(task.time), end: calHM(task.end) };

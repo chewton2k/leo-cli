@@ -22,6 +22,8 @@ const actions = {
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
   'ask-selection': () => askAboutSelection(),
+  'margin-lost-open': marginLostOpen,
+  'margin-lost-dismiss': marginLostDismiss,
   calendar: () => {
     closeSheet();
     go('#/calendar');
@@ -127,6 +129,7 @@ const actions = {
   'segment-pick': (el) => pickSegment(el),
   'felix-pick': (el) => pickFelix(el),
   'width-pick': (el) => pickWidth(el),
+  'setting-reset': (el) => resetSetting(el),
   'usage': () => showUsage(),
   'quick-leo': () => quickLeo(),
   'quick-run': (el) => quickGo(Number(el.dataset.at)),
@@ -145,10 +148,6 @@ const actions = {
   'folder-delete-now': deleteFolderNow,
   'folder-root': () => { const from = state.dir; closeSheet(); return dropFolder(from, ''); },
   'create-folder': createFolder,
-  map: () => {
-    closeSheet();
-    go('#/map');
-  },
   settings: () => {
     closeSheet();
     go('#/settings');
@@ -173,7 +172,6 @@ const actions = {
   },
   'test-ai': testAi,
   'use-plan': (el) => changeSetting({ set: 'provider', task: 'writing', value: el.dataset.provider }),
-  'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
   'note-picture': () => choosePictures(),
   'view-original': (el) => {
     el.focus({ preventScroll: true });
@@ -214,43 +212,6 @@ const actions = {
     }
     chat.toggle(true);
   },
-  'map-build': () => mapBuild(false),
-  'map-build-now': () => mapBuild(true),
-  'map-rebuild': mapRebuildAsk,
-  'map-rebuild-now': () => mapRebuild().catch(fail),
-  'map-select': (el) => mapView && mapView.select(el.dataset.id, { center: true }),
-  'map-pick': (el) => mapView && mapPick(el.dataset.id),
-  'map-clear': () => mapView && mapView.select(null),
-  'map-fit': () => mapView && mapView.fit(),
-  'map-tidy': () => {
-    if (!mapView) return;
-    const { before, after } = mapView.tidy();
-    toast(after < before ? `Tidied up: ${before - after} fewer crossing ${before - after === 1 ? 'line' : 'lines'}.` : 'Tidied up.');
-  },
-  'map-zoom-in': () => mapView && mapView.zoomBy(1.35),
-  'map-zoom-out': () => mapView && mapView.zoomBy(1 / 1.35),
-  'map-across': () => mapView && mapView.setOptions({ crossOnly: !mapView.options().crossOnly }),
-  'map-ideas': () => mapView && mapView.setOptions({ ideas: !mapView.options().ideas }),
-  'map-unfocus': () => {
-    if (!mapView) return;
-    mapView.setOptions({ focus: null });
-    const chosen = mapView.selected();
-    if (chosen) mapPanel(mapView.graph.byId.get(chosen));
-  },
-  'map-focus': (el) => {
-    if (!mapView) return;
-    const on = mapView.options().focus === el.dataset.id;
-    mapView.setOptions({ focus: on ? null : el.dataset.id, depth: 2 });
-    mapView.select(el.dataset.id);
-  },
-  'map-class': (el) => {
-    if (!mapView) return;
-    const hidden = mapView.options().hidden;
-    if (hidden.has(el.dataset.top)) hidden.delete(el.dataset.top);
-    else hidden.add(el.dataset.top);
-    mapView.setOptions({ hidden });
-  },
-  'map-sheet': () => mapSheetTo(mapSheet === 'open' ? 'peek' : 'open'),
   trash: () => {
     closeSheet();
     go('#/trash');

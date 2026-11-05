@@ -32,7 +32,7 @@ function drawTrash() {
     })
     .join('');
   const all = picked.size === items.length;
-  refreshPanel(app, settingsFrame('trash', `<div class="trash-head"><div class="section-title">Trash · ${items.length} note${items.length === 1 ? '' : 's'}</div>
+  refreshPanel(app, settingsFrame('trash', `<div class="trash-head" data-find="trash-notes"><div class="section-title">Trash · ${items.length} note${items.length === 1 ? '' : 's'}</div>
       <div class="trash-tools">${sel ? '<button class="btn sm plain" data-action="trash-select">Done</button>' : `<button class="btn sm plain" data-action="trash-select">Select</button><button class="btn sm plain danger-text" data-action="trash-empty">Empty trash</button>`}</div></div>
     <div class="panel">${rows}</div>
     <p class="hint" style="margin:14px 4px">${state.trashDays === null ? 'Deleted notes stay here until you empty the trash.' : `Deleted notes stay here for ${state.trashDays === 365 ? 'a year' : plural(state.trashDays, 'day')}, then leave on their own.`} <a href="#/settings/storage">Change</a></p>`));

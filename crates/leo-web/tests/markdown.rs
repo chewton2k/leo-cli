@@ -8,13 +8,9 @@ fn the_markdown_renderer_passes_its_tests() {
 #[test]
 fn the_editor_helpers_pass_their_tests() {
     run_node_tests("editing.test.js");
+    run_node_tests("margin.test.js");
     run_node_tests("drag.test.js");
     run_node_tests("pane-resize.test.js");
-}
-
-#[test]
-fn the_map_of_ideas_passes_its_tests() {
-    run_node_tests("graph.test.js");
 }
 
 #[test]
@@ -71,4 +67,9 @@ fn run_node_tests(file: &str) {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(out.status.success(), "{said}");
+}
+
+#[test]
+fn navigation_passes_its_tests() {
+    run_node_tests("navigation.test.js");
 }

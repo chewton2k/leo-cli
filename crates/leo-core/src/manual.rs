@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 21;
+const MANUAL_VERSION: u32 = 22;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -117,6 +117,8 @@ Choose a model, shortcut, microphone and word rules in Settings → Dictation.
 
 Ask Felix about your notes, have him quiz you, or practise for an interview.
 He can add tasks and notes, and asks first unless you let him act on his own.
+Select words and press ⌘⇧E for an answer in the margin; Settings → Felix lets
+him read along as you write.
 
 ## Writing
 
@@ -126,8 +128,7 @@ question on a line, and the answer appears under it.
 ## Finding and organising
 
 Search finds words and meaning. Drag notes onto folders to move them, or drop
-one note on another to combine them. The knowledge graph shows how notes
-connect.
+one note on another to combine them. Felix can follow connections between notes.
 
 ## Where things live
 

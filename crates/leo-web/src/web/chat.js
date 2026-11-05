@@ -290,7 +290,7 @@
 
   function usageRows(rows) {
     if (!Array.isArray(rows)) return [];
-    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick interview reviews and preparation' };
+    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick interview reviews and preparation', margin_read: 'Reading along' };
     const count = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0;
     const number = (value) => count(value).toLocaleString('en-US');
     return rows.slice(0, 7).filter((row) => row && Object.hasOwn(names, row.purpose)).map((row) => {
@@ -634,13 +634,95 @@
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
   const NOTE_DRAG = 'application/x-leo-note';
 
+  const WORDS = /\s*\S+|\s+/g;
+  const NO_ARRIVAL = 'pre, code, button, svg, textarea, input, .katex, .cite';
+
+  const greeting = (text, escape) => (text.match(WORDS) || []).map((part, i) => `<span class="word" style="animation-delay:${160 + Math.min(i, 14) * 30}ms">${escape(part)}</span>`).join('');
+
+  function arriving(text) {
+    const out = document.createDocumentFragment();
+    (text.match(WORDS) || []).forEach((part, i) => {
+      const word = document.createElement('span');
+      word.className = 'word';
+      word.style.animationDelay = `${Math.min(i, 8) * 40}ms`;
+      word.textContent = part;
+      out.append(word);
+    });
+    return out;
+  }
+
+  function arrive(node) {
+    if (node.nodeType === 3) return node.data.trim() ? arriving(node.data) : node;
+    if (node.nodeType !== 1) return node;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const found = [];
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) if (t.data.trim() && !t.parentElement.closest(NO_ARRIVAL)) found.push(t);
+    for (const t of found) t.replaceWith(arriving(t.data));
+    return node;
+  }
+
+  const isWord = (n) => n.nodeType === 1 && n.classList.contains('word');
+
+  function runs(parent) {
+    const out = [];
+    for (const n of parent.childNodes) {
+      const text = n.nodeType === 3 || isWord(n);
+      const last = out[out.length - 1];
+      if (text && last && last.run) last.nodes.push(n);
+      else out.push({ run: text, nodes: [n] });
+    }
+    return out;
+  }
+
+  const said = (item) => item.nodes.map((n) => n.textContent).join('');
+
+  function match(from, to) {
+    for (const { name } of [...from.attributes]) if (!to.hasAttribute(name)) from.removeAttribute(name);
+    for (const { name, value } of to.attributes) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+  }
+
+  function settle(from, to, arrives) {
+    const was = runs(from);
+    const now = runs(to);
+    now.forEach((b, i) => {
+      const a = was[i];
+      if (!a) {
+        for (const n of b.nodes) from.append(arrives ? arrive(n) : n);
+        return;
+      }
+      if (a.run && b.run) {
+        const before = said(a);
+        const after = said(b);
+        if (before === after) return;
+        const end = a.nodes[a.nodes.length - 1];
+        if (arrives && before && after.startsWith(before)) end.after(arriving(after.slice(before.length)));
+        else {
+          end.after(...b.nodes);
+          a.nodes.forEach((n) => n.remove());
+        }
+        return;
+      }
+      const x = a.nodes[0];
+      const y = b.nodes[0];
+      if (!a.run && !b.run && x.nodeType === 1 && y.nodeType === 1 && x.tagName === y.tagName) {
+        if (x.outerHTML === y.outerHTML) return;
+        match(x, y);
+        settle(x, y, arrives || (x.classList.contains('prose') && Boolean(x.closest('.msg.pending'))));
+        return;
+      }
+      x.before(...b.nodes.map((n) => (arrives ? arrive(n) : n)));
+      a.nodes.forEach((n) => n.remove());
+    });
+    for (const a of was.slice(now.length)) a.nodes.forEach((n) => n.remove());
+  }
+
   const CHAT_LEAVE_MS = 160;
   const PERMISSION_MS = 5000;
   const HISTORY_SIDE_WIDTH = 560;
   const MOST_INTERVIEW_PROBLEMS = 128;
   const MOST_INTERVIEW_TITLE = 160;
 
-  function create({ render, escape, icons = {}, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {}, onBeforeSend = () => true, onCodeEdit = null }) {
+  function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {}, onBeforeSend = () => true, onCodeEdit = null }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
@@ -659,16 +741,19 @@
       <header class="chat-head">
         <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
-        <span class="chat-name"><b>Felix</b><span>your study buddy</span></span>
+        <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
+        <div class="chat-menu">
+          <button type="button" class="chat-pill" id="chat-mode-btn" data-chat="modes" aria-haspopup="menu" aria-expanded="false" aria-controls="chat-mode-menu" title="How Felix helps"><span id="chat-mode-name"></span>${icons.chevron || ''}</button>
+          <div class="chat-popup" id="chat-mode-menu" role="menu" aria-label="How Felix helps" hidden>${MODES.map((m) => `<button type="button" role="menuitemradio" aria-checked="false" class="chat-mode" data-chat="mode" data-mode="${m.id}" title="${escape(m.hint)}">${m.label}${icons.check || ''}</button>`).join('')}<button type="button" role="menuitem" class="chat-leave" data-chat="drop" hidden>Stop reading this note</button></div>
+        </div>
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
       <button class="chat-workspace" data-chat="interview-workspace" hidden><span>Open interview workspace</span>${icons.chevron || ''}</button>
-      <div class="chat-modes" role="tablist" aria-label="How Felix helps">${MODES.map((m) => `<button role="tab" class="chat-mode" data-chat="mode" data-mode="${m.id}" title="${escape(m.hint)}">${m.label}</button>`).join('')}</div>
       <div class="study-progress" id="study-progress" hidden></div>
+      <details class="chat-lost" id="chat-lost" hidden><summary></summary><div class="chat-lost-list"></div></details>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
       <footer class="chat-foot">
-        <div class="chat-context" id="chat-context"></div>
         <div class="chat-pick" id="chat-pick" hidden></div>
         <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
@@ -689,6 +774,11 @@
     const $ = (sel) => panel.querySelector(sel);
     const body = $('#chat-body');
     const input = $('#chat-input');
+
+    function closeMode() {
+      $('#chat-mode-menu').hidden = true;
+      $('#chat-mode-btn').setAttribute('aria-expanded', 'false');
+    }
 
     function attachMenu(open) {
       $('#chat-attach-menu').hidden = !open;
@@ -992,9 +1082,9 @@
         const kept = storage.getItem(SIDEBAR);
         if (kept !== null) return kept === '1' && wide() && !sourceNarrow();
       } catch (e) {
-        return wide() && !sourceNarrow();
+        return false;
       }
-      return wide() && !sourceNarrow();
+      return false;
     }
 
     function showSidebar(on) {
@@ -1502,8 +1592,9 @@
       for (const b of panel.querySelectorAll('.chat-mode')) {
         const on = b.dataset.mode === state.mode;
         b.classList.toggle('on', on);
-        b.setAttribute('aria-selected', String(on));
+        b.setAttribute('aria-checked', String(on));
       }
+      $('#chat-mode-name').textContent = modeName(state.mode);
       drawContext();
       input.placeholder = state.mode === 'study' ? 'Answer, or ask for a question…' : 'Message Felix, or type @ to add a note…';
     }
@@ -1512,9 +1603,9 @@
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
       const interview = state.interview?.id === state.id ? state.interview : null;
-      box.innerHTML = interview ? `<span class="chat-using">Problem ${interview.number} · <b>${escape(interview.title)}</b> · ${escape(interview.tab)}</span>` : ctx
-        ? `<span class="chat-using">Also reading <b>${escape(ctx.title || 'Untitled')}</b> and notes connected to it</span><button class="chat-drop" data-chat="drop" aria-label="Stop using this note">×</button>`
-        : '<span class="chat-using">Looks through your notes when they help</span>';
+      box.textContent = interview ? `Problem ${interview.number} · ${interview.title} · ${interview.tab}` : ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
+      box.title = ctx && !interview ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
+      $('[data-chat="drop"]').hidden = !ctx || Boolean(interview);
     }
 
     const modeName = (id) => (MODES.find((x) => x.id === id) || MODES[0]).label;
@@ -1609,10 +1700,8 @@
     function welcome() {
       const info = modeInfo();
       const where = onNote() ? 'this note' : 'your notes';
-      return `<div class="chat-hello">
-        ${felix(96, 'idle big')}
-        <h3>Hi, I'm Felix!</h3>
-        <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it in your knowledge graph.</p>
+      return `<div class="chat-hello" data-hello="${escape(`${state.id}:${state.mode}:${where}`)}">
+        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${info.hint}. I also read ${where}, and the notes connected to it.`, escape)}</p>
         ${reviewCard()}
         <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}
@@ -1750,7 +1839,7 @@
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
             : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'delete_card' || p.kind === 'delete_board' ? 'Delete' : p.kind === 'restore_note' || p.kind === 'restore_folder' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${typeof p.description === 'string' && (p.kind === 'update_task' || p.description) ? `<div class="proposal-why">${escape(p.description || 'Clear description')}</div>` : ''}${acts}</div>`;
+        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${typeof p.description === 'string' && (p.kind === 'update_task' || p.description) ? `<div class="proposal-why">${escape(p.description || 'Clear description')}</div>` : ''}${p.kind === 'add_margin_note' ? `<div class="proposal-why">“${escape(p.quote)}”: ${escape(p.text)}</div>` : ''}${acts}</div>`;
       }
       const done = p.state === 'applied'
         ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button><button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
@@ -2185,7 +2274,7 @@
       send(all ? (a.starter.text === 'Quiz me across my classes' ? 'Quiz me across all my classes' : `${a.starter.text} for all my classes`) : starterWords(a.starter, picked));
     }
 
-    function draw(stick = true) {
+    function draw(stick = true, live = false) {
       const near = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
       const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('quiz-input') && body.contains(document.activeElement)
         ? { i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
@@ -2193,7 +2282,13 @@
       const kept = body.scrollTop;
       const session = currentSession();
       const recap = session && session.state === 'finished' ? recapCard(session) : '';
-      body.innerHTML = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}${lastSwitch()}` : welcome();
+      const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}${lastSwitch()}` : welcome();
+      const first = body.firstElementChild;
+      const next = document.createElement('div');
+      next.innerHTML = html;
+      const hello = Boolean(first) && first.classList.contains('chat-hello') && Boolean(next.firstElementChild) && next.firstElementChild.dataset.hello === first.dataset.hello;
+      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next, false);
+      else body.innerHTML = html;
       drawProgress();
       if (typing) {
         const again = body.querySelector(`.quiz-input[data-i="${typing.i}"][data-k="${typing.k}"]`);
@@ -2411,7 +2506,7 @@
             }
             if (e.error) answer.error = e.error;
           }
-          draw(false);
+          draw(false, true);
         }
       } catch (e) {
         if (e.name === 'AbortError') controller.abort();
@@ -2465,7 +2560,7 @@
         input.value = [input.value, ...left.map((m) => m.text)].filter((t) => t.trim()).join('\n\n');
         fit();
       }
-      draw(false);
+      draw(false, true);
       remember({ ...thread, messages: thread.messages.slice() });
       if (thread.id === state.id) compactLater();
       if (thread.id === state.id && !(asked.quiz && asked.quiz.correct !== null && asked.quiz.correct !== undefined)) react(answer);
@@ -2478,7 +2573,10 @@
     function toggle(force) {
       const was = state.open;
       state.open = force === undefined ? !state.open : force;
-      if (!state.open) historyResize.stop();
+      if (!state.open) {
+        historyResize.stop();
+        light(null);
+      }
       clearTimeout(leaving);
       const still = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (state.open) {
@@ -2524,6 +2622,7 @@
         $('#chat-access-menu').hidden = true;
         $('#chat-access').setAttribute('aria-expanded', 'false');
       }
+      if (!e.target.closest('[data-chat="modes"]')) closeMode();
       if (e.target.closest('.felix') && !e.target.closest('[data-chat]')) {
         tapped();
         return;
@@ -2592,7 +2691,12 @@
       }
       else if (what === 'review') startReview();
       else if (what === 'forget') forget(el.dataset.id);
-      else if (what === 'mode') {
+      else if (what === 'modes') {
+        const menu = $('#chat-mode-menu');
+        menu.hidden = !menu.hidden;
+        el.setAttribute('aria-expanded', String(!menu.hidden));
+      } else if (what === 'mode') {
+        $('#chat-mode-btn').focus();
         if (el.dataset.mode === state.mode) return;
         state.asking = null;
         closePick();
@@ -2642,6 +2746,7 @@
         remember();
       }
       else if (what === 'drop') {
+        $('#chat-mode-btn').focus();
         state.dropped = state.context && state.context.id;
         drawContext();
         if (!state.messages.length) draw();
@@ -2750,19 +2855,19 @@
       }
     });
     panel.addEventListener('keydown', (e) => {
-      const attach = !$('#chat-attach-menu').hidden;
-      const access = !$('#chat-access-menu').hidden;
-      if (!attach && !access) return;
-      const menu = $(attach ? '#chat-attach-menu' : '#chat-access-menu');
-      const trigger = $(attach ? '[data-chat="attach"]' : '#chat-access');
+      const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access'], ['#chat-mode-menu', '#chat-mode-btn']]
+        .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
+        .find((x) => !x.menu.hidden);
+      if (!open) return;
+      const { menu, trigger } = open;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopImmediatePropagation();
-        if (attach) attachMenu(false);
-        else { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+        menu.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
         trigger.focus();
       } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && (menu.contains(e.target) || e.target === trigger)) {
-        const items = [...menu.querySelectorAll('button')].slice(0, ACCESS.length);
+        const items = [...menu.querySelectorAll('button:not([hidden])')];
         if (!items.length) return;
         e.preventDefault();
         const at = items.indexOf(document.activeElement);
@@ -2805,6 +2910,19 @@
         else toggle(false);
       }
     });
+    let lit = null;
+    function light(from) {
+      const chip = from && from.closest ? from.closest('.cite[data-chat="open"][data-line]') : null;
+      if (chip === lit) return;
+      lit = chip;
+      if (!chip) return onCite(null, null);
+      const [start, end] = chip.dataset.line.split('-').map(Number);
+      onCite(chip.dataset.id, start ? { from: start, to: end || start } : null);
+    }
+    panel.addEventListener('pointerover', (e) => light(e.target));
+    panel.addEventListener('pointerout', (e) => light(e.relatedTarget));
+    panel.addEventListener('focusin', (e) => light(e.target));
+    panel.addEventListener('focusout', (e) => light(e.relatedTarget));
     panel.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !state.busy || e.target === input || e.target.id === 'chat-pick-search') return;
       e.stopPropagation();
@@ -2823,6 +2941,15 @@
         toggle(true);
         drawRefs();
         input.focus();
+      },
+      setLost(threads) {
+        const box = $('#chat-lost');
+        const key = threads.map((t) => t.id).join(',');
+        if (box.dataset.key === key) return;
+        box.dataset.key = key;
+        box.hidden = !threads.length;
+        box.querySelector('summary').textContent = threads.length === 1 ? 'A margin note lost its place' : `${threads.length} margin notes lost their place`;
+        box.querySelector('.chat-lost-list').innerHTML = threads.map((t) => `<div class="chat-lost-row"><q>${escape(t.quote)}</q><p>${escape((t.messages[t.messages.length - 1] || {}).text || '')}</p><button type="button" class="msg-act" data-action="margin-lost-open" data-id="${escape(t.id)}">Open in chat</button><button type="button" class="msg-act" data-action="margin-lost-dismiss" data-id="${escape(t.id)}">Dismiss</button></div>`).join('');
       },
       isOpen: () => state.open,
       isBusy: () => Boolean(state.busy || state.preparingSend),
@@ -2919,5 +3046,5 @@
     };
   }
 
-  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

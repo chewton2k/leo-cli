@@ -17,6 +17,7 @@ pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
+pub mod margin;
 mod originals;
 mod progress;
 mod read_cache;
@@ -57,8 +58,8 @@ use leo_core::store::Store;
 
 use crate::routes::activity::activity;
 use crate::routes::assets::{
-    app_js, chat_js, doc_js, editing_js, favicon, graph_js, index, markdown_js, recorder_js,
-    recording_js, saving_js,
+    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recorder_js, recording_js,
+    saving_js,
 };
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
@@ -68,7 +69,6 @@ use crate::routes::felix::{
     steer_answer,
 };
 use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
-use crate::routes::map::{build_graph, get_graph, graph_status};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
     move_note, rename_dir, search_notes, toggle_checkbox, update_note,
@@ -174,9 +174,11 @@ pub type Importer = Arc<
 pub struct Powers {
     pub writer: Option<Writer>,
     pub quick: Option<Writer>,
+    pub toolless: Option<Writer>,
     pub housekeeping: Option<Writer>,
     pub usage: Arc<usage::Usage>,
     pub chat: Option<Streamer>,
+    pub toolless_chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
     pub dictation: Option<Arc<dyn dictation::DictationApi>>,
@@ -203,12 +205,15 @@ struct AppState {
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
     quick: Option<Writer>,
+    toolless: Option<Writer>,
+    margin: Arc<margin::Reads>,
     housekeeping: Option<Writer>,
     usage: Arc<usage::Usage>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     work: Arc<work::Work>,
     chat: Option<Streamer>,
+    toolless_chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     speech: Option<Arc<dyn speech::SpeechApi>>,
     dictation: Option<Arc<dyn dictation::DictationApi>>,
@@ -282,7 +287,6 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
             path,
             "/api/app" | "/api/dictation" | "/api/speech" | "/api/backup" | "/api/tasks"
         )
-        || path == "/api/graph/status"
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
     !(method == axum::http::Method::GET && polling)
@@ -306,8 +310,16 @@ async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
     let mut read_at = None;
     let mut graphed_at = None;
+    let mut swept_at = None;
     loop {
         tick.tick().await;
+        if margin::sweep_due(swept_at) {
+            swept_at = Some(std::time::Instant::now());
+            let chats = state.chats.clone();
+            let _ = state
+                .read_store(move |store| Ok(margin::sweep_store(&chats, store)))
+                .await;
+        }
         if !state.visible.load(std::sync::atomic::Ordering::Acquire)
             || state.capture_activity.busy()
         {
@@ -609,6 +621,8 @@ pub(crate) async fn start_in(
     let converse = powers.converse;
     let seer = powers.seer;
     let meaning = powers.meaning;
+    let toolless = powers.toolless;
+    let toolless_chat = powers.toolless_chat;
     let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
     let (listener, port) = bind(options.port).await?;
     let gate = Arc::new(sessions::Gate::new(
@@ -616,6 +630,9 @@ pub(crate) async fn start_in(
         sessions::Sessions::load(&places.sessions)?,
     ));
     let state = AppState {
+        toolless,
+        toolless_chat,
+        margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
@@ -781,6 +798,33 @@ fn router(state: AppState) -> Router {
             post(routes::insert::insert_into_note),
         )
         .route(
+            "/api/notes/{id}/margin",
+            get(routes::margin::note_margin).post(routes::margin::set_note_mode),
+        )
+        .route(
+            "/api/notes/{id}/margin/read",
+            post(routes::margin::read)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
+            "/api/notes/{id}/margin/threads",
+            post(routes::margin::ask)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
+            "/api/notes/{id}/margin/threads/{thread}",
+            post(routes::margin::set_status),
+        )
+        .route(
+            "/api/notes/{id}/margin/threads/{thread}/reply",
+            post(routes::margin::reply)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
+            "/api/margin",
+            get(routes::margin::settings).post(routes::margin::change_settings),
+        )
+        .route(
             "/api/notes/{id}/related",
             get(routes::related::related_notes),
         )
@@ -840,8 +884,8 @@ fn router(state: AppState) -> Router {
         .route("/editing.js", get(editing_js))
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))
-        .route("/graph.js", get(graph_js))
         .route("/schedule.js", get(routes::assets::schedule_js))
+        .route("/margin.js", get(routes::assets::margin_js))
         .route("/theme.js", get(routes::assets::theme_js))
         .route("/chat.js", get(chat_js))
         .route("/pane-resize.js", get(routes::assets::pane_resize_js))
@@ -952,9 +996,6 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/notes/{id}/originals.zip", get(originals_zip))
         .route("/api/notes/{id}/originals/{name}", get(get_original))
-        .route("/api/graph", get(get_graph))
-        .route("/api/graph/status", get(graph_status))
-        .route("/api/graph/build", post(build_graph))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -1024,7 +1065,6 @@ mod activity_tests {
             "/api/backup",
             "/api/tasks",
             "/api/activity",
-            "/api/graph/status",
             "/api/record/r1",
             "/api/import/j1",
         ] {

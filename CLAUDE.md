@@ -111,7 +111,7 @@ scan, or a loopback connect with a 300 ms timeout. Never a real request.
 `manual.rs` creates one note on first run: a one-screen quickstart for the app
 (Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
 real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (21); deleting the
+in a `.manual-installed` marker carrying `MANUAL_VERSION` (22); deleting the
 manual survives the next launch, and a version bump rewrites the user's note.
 Tests: under 60 lines, names Settings, Felix, Record and ⌘F, and names no
 terminal command.
@@ -224,7 +224,7 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   existing models directory. Platform installers and release bundles are
   described by their scripts and workflow; updates check the selected catalog
   speech model, and uninstall retains the existing data-removal controls.
-- Knowledge graph (code and routes still say `map`): see crates/leo-web/CLAUDE.md.
+- Note connections (cache code still says `graph`): see crates/leo-web/CLAUDE.md.
 - Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
   line each, tombstones for deletes), so the git backup carries them;
   `sync::GITATTRIBUTES` merges them by union and leo-web reads the newest line.
@@ -232,10 +232,13 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   new slot); the Calendar page is a Notion-style Day/Week/Month screen beside
   the explorer: see crates/leo-web/CLAUDE.md.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
-  search and the knowledge graph cover it): no `#tag` in `new` (split_new returns (dir,
+  search and note connections cover it): no `#tag` in `new` (split_new returns (dir,
   title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips
   on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian), and leo's own markers (`manual`, `listen`) stay.
+- Felix in the margin (2026-11-04, the user's call): threads in `leo.db`, never
+  note files or git; read-along is off by default. Reads use `Powers.toolless`
+  (no tools at all). See crates/leo-web/CLAUDE.md.
 - Boards (2026-11-02, the user's call): Jira-style task boards on their own
   rail page (`#/boards`), several boards, untimed cards (title, subheading,
   description, priority) in custom columns, dragged between columns and boards.

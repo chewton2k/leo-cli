@@ -771,34 +771,6 @@ pub fn build_near(
     problems
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Node {
-    pub id: String,
-    pub kind: &'static str,
-    pub label: String,
-    pub folder: String,
-    pub summary: String,
-    pub concepts: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Edge {
-    pub a: String,
-    pub b: String,
-    pub kind: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub relation: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub why: Option<String>,
-    pub strength: u8,
-}
-
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
-pub struct Graph {
-    pub nodes: Vec<Node>,
-    pub edges: Vec<Edge>,
-}
-
 pub fn wiki_targets(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = body;
@@ -823,104 +795,6 @@ fn ordered(a: &str, b: &str) -> (String, String) {
     } else {
         (b.to_string(), a.to_string())
     }
-}
-
-pub fn assemble(sources: &[Source], cache: &Cache) -> Graph {
-    let present: BTreeSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
-    let mut graph = Graph::default();
-    for source in sources {
-        let read = cache.notes.get(&source.id);
-        graph.nodes.push(Node {
-            id: format!("n:{}", source.id),
-            kind: "note",
-            label: if source.title.trim().is_empty() {
-                "Untitled".to_string()
-            } else {
-                source.title.clone()
-            },
-            folder: source.directory.clone(),
-            summary: read.map(|r| r.summary.clone()).unwrap_or_default(),
-            concepts: read.map(|r| r.concepts.clone()).unwrap_or_default(),
-        });
-    }
-
-    let mut best: BTreeMap<(String, String), &NoteLink> = BTreeMap::new();
-    for link in cache.all_links() {
-        if !present.contains(link.a.as_str()) || !present.contains(link.b.as_str()) {
-            continue;
-        }
-        let pair = ordered(&link.a, &link.b);
-        if best
-            .get(&pair)
-            .is_none_or(|old| link.strength > old.strength)
-        {
-            best.insert(pair, link);
-        }
-    }
-    for link in best.values() {
-        graph.edges.push(Edge {
-            a: format!("n:{}", link.a),
-            b: format!("n:{}", link.b),
-            kind: "related",
-            relation: Some(link.kind.clone()),
-            why: (!link.why.is_empty()).then(|| link.why.clone()),
-            strength: link.strength,
-        });
-    }
-
-    let mut titles: HashMap<String, String> = HashMap::new();
-    for source in sources {
-        titles
-            .entry(source.title.to_lowercase())
-            .or_insert_with(|| source.id.clone());
-    }
-    let mut wired = BTreeSet::new();
-    for source in sources {
-        for target in wiki_targets(&source.body) {
-            let Some(other) = titles.get(&target) else {
-                continue;
-            };
-            if *other == source.id {
-                continue;
-            }
-            let pair = ordered(&source.id, other);
-            if wired.insert(pair.clone()) {
-                graph.edges.push(Edge {
-                    a: format!("n:{}", pair.0),
-                    b: format!("n:{}", pair.1),
-                    kind: "link",
-                    relation: None,
-                    why: None,
-                    strength: 2,
-                });
-            }
-        }
-    }
-
-    for (k, concept) in concepts(sources, cache) {
-        if concept.notes.len() < 2 {
-            continue;
-        }
-        graph.nodes.push(Node {
-            id: format!("c:{k}"),
-            kind: "concept",
-            label: concept.label.clone(),
-            folder: String::new(),
-            summary: String::new(),
-            concepts: Vec::new(),
-        });
-        for note in &concept.notes {
-            graph.edges.push(Edge {
-                a: format!("n:{note}"),
-                b: format!("c:{k}"),
-                kind: "covers",
-                relation: None,
-                why: None,
-                strength: 1,
-            });
-        }
-    }
-    graph
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -1700,48 +1574,27 @@ mod tests {
         assert_eq!(cache.notes["a"].summary, "Breadth-first search");
         assert_eq!(cache.notes["a"].concepts, ["Breadth-First Search", "queue"]);
 
-        let graph = assemble(&sources, &cache);
-        let edge = |a: &str, b: &str, kind: &str| {
-            graph
-                .edges
-                .iter()
-                .find(|e| e.kind == kind && ((e.a == a && e.b == b) || (e.a == b && e.b == a)))
+        let edge = |a: &str, b: &str| {
+            cache
+                .all_links()
+                .find(|e| (e.a == a && e.b == b) || (e.a == b && e.b == a))
+                .unwrap()
         };
-        let across = edge("n:a", "n:c", "related").expect("the cross-class link");
-        assert_eq!(across.relation.as_deref(), Some("same idea"));
+        let across = edge("a", "c");
+        assert_eq!(across.kind, "same idea");
         assert_eq!(across.strength, 3, "the first of a repeated pair is kept");
-        assert_eq!(
-            across.why.as_deref(),
-            Some("both keep work waiting in a queue")
-        );
-        assert_eq!(
-            edge("n:a", "n:b", "related").unwrap().strength,
-            3,
-            "strength is clamped"
-        );
-        assert_eq!(
-            edge("n:b", "n:c", "related").unwrap().relation.as_deref(),
-            Some("same idea")
-        );
-        assert_eq!(
-            graph.edges.iter().filter(|e| e.kind == "related").count(),
-            3
-        );
+        assert_eq!(across.why, "both keep work waiting in a queue");
+        assert_eq!(edge("a", "b").strength, 3, "strength is clamped");
+        assert_eq!(edge("b", "c").kind, "same idea");
+        assert_eq!(cache.all_links().count(), 3);
+        assert_eq!(wiki_targets(&sources[0].body), ["stacks"]);
+        let ideas = concepts(&sources, &cache);
+        assert!(ideas["queue"].notes.contains("a"));
         assert!(
-            edge("n:a", "n:b", "link").is_some(),
-            "the [[Stacks]] link joins the notes"
-        );
-        assert!(edge("n:a", "c:queue", "covers").is_some());
-        assert!(
-            edge("n:c", "c:queue", "covers").is_some(),
+            ideas["queue"].notes.contains("c"),
             "Queue and queue are one idea"
         );
-        assert!(
-            !graph.nodes.iter().any(|n| n.id == "c:stack"),
-            "an idea in one note is not drawn"
-        );
-        let note = graph.nodes.iter().find(|n| n.id == "n:c").unwrap();
-        assert_eq!(note.summary, "Round robin scheduling");
+        assert_eq!(cache.notes["c"].summary, "Round robin scheduling");
 
         let again = build(&sources, &mut cache, &write, &mut |_, _| {});
         assert!(again.is_empty());
@@ -1773,8 +1626,7 @@ mod tests {
             !cache.notes.contains_key("c"),
             "a deleted note leaves the map"
         );
-        let graph = assemble(&changed, &cache);
-        assert!(graph.edges.iter().all(|e| e.a != "n:c" && e.b != "n:c"));
+        assert!(cache.all_links().all(|e| e.a != "c" && e.b != "c"));
     }
 
     #[test]
@@ -2042,11 +1894,7 @@ mod tests {
         assert_eq!(asked.load(Ordering::SeqCst), 0);
         assert!(cache.pairs.is_empty());
         assert_eq!(cache.links.len(), 1);
-        let graph = assemble(&sources, &cache);
-        assert!(graph
-            .edges
-            .iter()
-            .any(|e| e.why.as_deref() == Some("from before")));
+        assert!(cache.all_links().any(|e| e.why == "from before"));
     }
 
     #[test]
@@ -2162,10 +2010,13 @@ mod tests {
             !graphs.load().notes.is_empty(),
             "the build is kept in leo's database"
         );
-        let graph = assemble(&sources, &graphs.load());
-        assert!(graph.edges.iter().any(|e| e.kind == "related"
-            && e.relation.as_deref() == Some("contrasts")
-            && e.why.as_deref() == Some("a queue and a stack order work oppositely")));
+        assert!(
+            graphs
+                .load()
+                .all_links()
+                .any(|e| e.kind == "contrasts"
+                    && e.why == "a queue and a stack order work oppositely")
+        );
 
         let without = Arc::new(Graphs::for_notes(&dir.path().join("other/notes"), None));
         without.start(sources.clone());

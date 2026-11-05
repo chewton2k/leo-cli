@@ -372,7 +372,7 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
     let map_bytes = graphs.bytes();
     out.push(Area {
         id: "map".into(),
-        title: "Knowledge graph".into(),
+        title: "Note connections".into(),
         about: "What the AI found in each note and how notes connect. Clearing it means the next build asks the AI to read every note again.".into(),
         path: graphs.stored_in().display().to_string(),
         bytes: map_bytes,
@@ -380,8 +380,8 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         actions: if map_bytes > 0 {
             vec![act(
                 "clear",
-                "Clear the knowledge graph",
-                Some("The knowledge graph is emptied. Building it again sends your notes to the AI again."),
+                "Clear note connections",
+                Some("Note connections are cleared. Rebuilding them sends your notes to the AI again."),
                 false,
             )]
         } else {
@@ -492,9 +492,9 @@ pub fn act_on(
             remove_pictures(notes_dir, unused.into_iter())
         }
         ("map", "clear") => match graphs.clear() {
-            Ok(true) => Ok("Cleared the knowledge graph.".to_string()),
+            Ok(true) => Ok("Cleared note connections.".to_string()),
             Ok(false) => Err(anyhow::anyhow!(
-                "The knowledge graph is being built right now; clear it when that finishes."
+                "Note connections are being updated right now; clear them when that finishes."
             )),
             Err(e) => Err(e),
         },
@@ -622,6 +622,23 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
                     false,
                 ),
             ],
+        });
+    }
+    let (threads, bytes) = crate::margin::bytes(chats_dir);
+    if threads > 0 {
+        out.push(Area {
+            id: "margin".into(),
+            title: "Felix's margin notes".into(),
+            about: "What Felix wrote beside your notes, with the replies. Kept on this computer, never in the note files or your backup.".into(),
+            path: chats::db_of(chats_dir).path().display().to_string(),
+            bytes,
+            items: Vec::new(),
+            actions: vec![act(
+                "delete-all",
+                "Delete every margin note",
+                Some("Felix's margin notes and their replies go. Your notes stay as they are."),
+                false,
+            )],
         });
     }
     let tasks = crate::tasks::storage_entries(chats_dir);
@@ -790,6 +807,10 @@ pub fn act_on_more(
                 if gone == 1 { "" } else { "s" }
             ))
         }
+        ("margin", "delete-all") => Ok(plural_deleted(
+            crate::margin::clear(chats_dir),
+            "margin note",
+        )),
         ("tasks", "delete") => {
             let gone = request
                 .items
@@ -1464,7 +1485,7 @@ mod tests {
         assert_eq!(size_of(&attachments_dir(&store.notes_dir)), 10);
         assert_eq!(run("trash", "empty", &[]), "Emptied the trash (1 note).");
         assert!(store.trashed().is_empty());
-        assert_eq!(run("map", "clear", &[]), "Cleared the knowledge graph.");
+        assert_eq!(run("map", "clear", &[]), "Cleared note connections.");
         assert!(!graphs.path().exists());
         assert_eq!(
             run("chats", "delete", &["chat-new-0002", "../../notes"]),
