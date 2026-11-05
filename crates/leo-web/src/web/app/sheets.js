@@ -12,8 +12,10 @@ function showLocked() {
 // `modal` sheets ignore a click on the backdrop (first-launch setup must not
 // vanish from a stray click); Escape and their own buttons still close them.
 function sheet(html, { modal = false } = {}) {
+  const foldersReturn = Boolean($('#folders-sheet') || $('.scrim')?.foldersReturn);
   closeSheet(true);
   const scrim = document.createElement('div');
+  scrim.foldersReturn = foldersReturn;
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
   scrim.addEventListener('click', (e) => {
@@ -22,6 +24,18 @@ function sheet(html, { modal = false } = {}) {
   document.body.appendChild(scrim);
   if (!modal) swipeToClose(scrim.querySelector('.sheet'));
   return scrim;
+}
+
+function trapSheetFocus(scrim) {
+  scrim.addEventListener('keydown', (event) => {
+    if (event.key !== 'Tab') return;
+    const controls = [...scrim.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])')].filter((el) => el.getClientRects().length);
+    const at = controls.indexOf(document.activeElement);
+    if (event.shiftKey && at <= 0 || !event.shiftKey && at === controls.length - 1) {
+      event.preventDefault();
+      controls[event.shiftKey ? controls.length - 1 : 0]?.focus();
+    }
+  });
 }
 
 const SWIPE_CLOSE = 90;
@@ -75,6 +89,9 @@ function swipeToClose(panel) {
 function closeSheet(now = false) {
   const open = $('.scrim');
   const returnFocus = open && open.returnFocus;
+  const foldersReturn = open?.foldersReturn && !now;
+  const tree = open?.querySelector('#folders-sheet .side-tree');
+  if (tree) side.sheetScroll = tree.scrollTop;
   if (open && now) open.remove();
   else if (open) {
     const ghost = open.cloneNode(true);
@@ -99,7 +116,8 @@ function closeSheet(now = false) {
     state.keepPending = null;
     if (state.view === 'storage' && state.storage) drawStorage(state.storage);
   }
-  if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+  if (foldersReturn && !sideWide()) showFolders();
+  else if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
 }
 
 const QUICK_PLACES = [
@@ -294,15 +312,16 @@ async function quickGo(at) {
     const note = await api('/api/notes', { method: 'POST', body: { title: first.trim().slice(0, 120) || 'Quick note', body: rest.join('\n').trim() } });
     closeSheet();
     toast(`Saved “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
-    if (state.view === 'folder') showLatest().catch(() => {});
+    if (state.view === 'workspace') showLatest().catch(() => {});
   } finally {
     quick.busy = false;
   }
 }
 
 function menu() {
-  const here = state.view === 'folder' ? state.dir : '';
-  sheet(`
+  const here = creationDir();
+  const box = sheet(`
+    ${!sideWide() ? `<button class="list-row" data-action="folders">${ICON.folder}<span class="grow">Folders</span></button>` : ''}
     <button class="list-row" data-action="quick-leo">${ICON.search}<span class="grow">Search or ask</span></button>
     <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
     <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
@@ -314,11 +333,12 @@ function menu() {
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
     <button class="list-row" data-action="storage">${ICON.storage}<span class="grow">Storage</span></button>
     <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
+  box.returnFocus = $('#menu');
 }
 
 function newFolder(el) {
   const given = el && el.dataset && el.dataset.parent;
-  const parent = given !== undefined ? given : state.view === 'folder' || state.view === 'note' ? state.dir || '' : '';
+  const parent = creationDir(given);
   const scrim = sheet(`<h3>New folder${parent ? ` in ${esc(folderLabel(parent))}` : ''}</h3>
     <label class="field">${ICON.folder}<input id="folder-name" data-parent="${esc(parent)}" placeholder="${parent ? 'Name, e.g. week 3' : 'Name, e.g. cs130'}" autocomplete="off" enterkeyhint="done"></label>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="create-folder">Create</button></div>`);
@@ -329,17 +349,8 @@ function newFolder(el) {
   });
 }
 
-function folderOptions() {
-  if (state.view !== 'folder' || !state.dir) return;
-  sheet(`<h3>${esc(folderLabel(state.dir))}</h3>
-    <button class="list-row" data-action="folder-rename">${ICON.note}<span class="grow">Rename folder</span></button>
-    ${parentOf(state.dir) ? `<button class="list-row" data-action="folder-root">${ICON.move}<span class="grow">Move to top level</span></button>` : ''}
-    <button class="list-row danger" data-action="folder-delete">${ICON.trash}<span class="grow">Delete folder</span></button>`);
-}
-
-function renameFolderSheet() {
-  if (state.view !== 'folder' || !state.dir) return;
-  const from = state.dir;
+function renameFolderSheet(from = state.dir) {
+  if (!from || typeof from !== 'string') return;
   const box = sheet(`<h3>Rename folder</h3>
     <label class="field">${ICON.folder}<input id="folder-rename" data-from="${esc(from)}" value="${esc(folderLabel(from))}" maxlength="120" autocomplete="off" aria-label="Folder name" enterkeyhint="done"></label>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="folder-rename-save">Rename</button></div>`);
@@ -358,11 +369,11 @@ async function renameFolder() {
   const from = input.dataset.from;
   const name = input.value.trim();
   if (!name || name === folderLabel(from)) return;
-  if (new TextEncoder().encode(name).length > 240) return toast('That folder name is too long. Use a shorter name.', { bad: true });
-  if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') return toast('Use a single folder name, without / or ..', { bad: true });
+  if (!validFolderName(name)) return;
   const box = input.closest('.scrim');
   button.disabled = true;
   try {
+    if (state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) await ready();
     const moved = await api('/api/dirs/rename', { method: 'POST', body: { from, name } });
     if (box.isConnected) closeSheet();
     await afterMove(from, moved.path);
@@ -376,9 +387,8 @@ async function renameFolder() {
   } finally { if (button.isConnected) button.disabled = false; }
 }
 
-function deleteFolderAsk() {
-  if (state.view !== 'folder' || !state.dir) return;
-  const from = state.dir;
+function deleteFolderAsk(from = state.dir) {
+  if (!from || typeof from !== 'string') return;
   sheet(`<h3>Delete “${esc(folderLabel(from))}”?</h3>
     <p>This folder, its subfolders and all their notes move to the trash. Undo brings them back.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-delete-now" data-from="${esc(from)}">Move to trash</button></div>`);
@@ -392,12 +402,15 @@ async function deleteFolderNow(el) {
   const mine = seq;
   el.disabled = true;
   try {
+    if (state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) await ready();
     const done = await api('/api/trash/move', { method: 'POST', body: { notes: [], dirs: [from] } });
     if (box.isConnected) closeSheet();
-    if (mine === seq && state.view === 'folder' && (state.dir === from || state.dir.startsWith(`${from}/`))) {
-      await dismissContent(app.querySelectorAll('.cards, .folders, .empty'));
-      if (mine === seq) go(folderHash(parentOf(from)), { replace: true });
-    } else if (mine === seq) await showLatest();
+    if (mine === seq && state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) {
+      state.session.doc.destroy();
+      state.session = null;
+      go('#/', { replace: true });
+    }
+    if (side.target === from || side.target?.startsWith(`${from}/`)) side.target = parentOf(from);
     loadSideFolders();
     toast(`Moved “${folderLabel(from)}” to the trash`, { action: 'Undo', run: () => undoTrashMove(done) });
   } catch (error) { fail(error); }
@@ -406,81 +419,75 @@ async function deleteFolderNow(el) {
 
 async function createFolder() {
   const input = $('#folder-name');
-  const name = input.value.trim().replace(/^\/+|\/+$/g, '');
-  if (!name) return;
+  const name = input.value.trim();
+  if (!validFolderName(name)) return;
   const parent = input.dataset.parent || '';
   const path = parent ? `${parent}/${name}` : name;
+  const box = input.closest('.scrim');
+  const button = box.querySelector('[data-action="create-folder"]');
+  if (button.disabled) return;
+  button.disabled = true;
   try {
     await api('/api/dirs', { method: 'POST', body: { path } });
-    closeSheet();
-    go(folderHash(path));
+    revealFolder(path);
+    await loadSideFolders();
+    if (box.isConnected) closeSheet();
   } catch (e) {
-    if (e.status === 409) toast('That folder already exists.', { bad: true });
+    if (e.status === 409) toast('That folder already exists. Choose another name.', { bad: true });
     else fail(e);
-  }
+  } finally { if (button.isConnected) button.disabled = false; }
+}
+
+function validFolderName(name) {
+  if (!name) { toast('Enter a folder name.', { bad: true }); return false; }
+  if (new TextEncoder().encode(name).length > 240) { toast('That folder name is too long. Use a shorter name.', { bad: true }); return false; }
+  if (/[\/\\]/.test(name) || name === '.' || name === '..') { toast('Use a single folder name, without / or ..', { bad: true }); return false; }
+  return true;
 }
 
 async function moveSheet() {
   const s = await ready();
   if (!s) return toast('Write something first.');
-  const note = s.note;
-  const folders = await api('/api/folders');
-  const row = (name, label) =>
-    `<button class="list-row" data-action="move-to" data-dir="${esc(name)}">${ICON.folder}<span class="grow">${esc(label)}</span>${
-      name === note.directory ? ICON.check : ''
-    }</button>`;
-  sheet(`<h3>Move “${esc(note.title)}”</h3>${row('', 'Top level')}${folders.map((f) => row(f.name, f.name)).join('')}`);
+  return explorerMoveSheet({ kind: 'note', id: s.note.id, dir: s.note.directory }, s.note);
 }
 
-async function moveTo(dir) {
-  const note = state.session.note;
-  closeSheet();
-  if (dir === note.directory) return;
-  try {
-    await api(`/api/notes/${enc(note.id)}/move`, { method: 'POST', body: { directory: dir } });
-    toast(`Moved to ${folderLabel(dir)}`);
-    showNote(note.id);
-  } catch (e) {
-    fail(e);
+async function confirmDelete(note = null) {
+  if (!note) {
+    const s = await ready();
+    if (!s) return back();
+    note = s.note;
   }
+  const box = sheet(`<h3>Move “${esc(note.title)}” to the trash?</h3><p>You can restore it from Trash in Settings.</p>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="delete-now" data-id="${esc(note.id)}">Move to trash</button></div>`);
+  box.returnFocus = document.activeElement;
 }
 
-async function confirmDelete() {
-  const s = await ready();
-  if (!s) return back();
-  sheet(`<h3>Move “${esc(s.note.title)}” to the trash?</h3><p>You can restore it for 30 days, from Trash in the menu.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="delete-now">Move to trash</button></div>`);
-}
-
-async function deleteNow() {
-  const session = state.session;
-  if (!session) return;
-  const note = session.note;
-  const mine = seq;
-  closeSheet();
+async function deleteNow(el) {
+  const id = el.dataset.id;
+  if (!id || el.disabled) return;
+  const box = el.closest('.scrim');
+  el.disabled = true;
   try {
-    await api(`/api/notes/${enc(note.id)}`, { method: 'DELETE' });
-    if (mine === seq && state.session === session) {
-      await dismissContent(app.querySelectorAll('.note-columns'));
-      if (mine === seq && state.session === session) {
-        session.doc.destroy();
-        state.session = null;
-        go(folderHash(note.directory), { replace: true });
-      }
+    await api(`/api/notes/${enc(id)}`, { method: 'DELETE' });
+    if (box.isConnected) closeSheet();
+    if (state.session?.note.id === id) {
+      state.session.doc.destroy();
+      state.session = null;
+      go('#/', { replace: true });
     }
     loadSideFolders();
-    toast('Moved to the trash', { action: 'Undo', run: () => restore(note.id, true) });
-  } catch (e) {
-    fail(e);
-  }
+    toast('Moved to the trash', { action: 'Undo', run: () => restore(id, false) });
+  } catch (e) { fail(e); }
+  finally { if (el.isConnected) el.disabled = false; }
 }
 
 async function restore(id, open) {
   try {
     const note = await api(`/api/trash/${enc(id)}/restore`, { method: 'POST' });
+    loadSideFolders();
     if (open) return go(noteHash(note.id));
     toast(`Restored “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
-    showTrash();
+    if (state.view === 'trash') showTrash();
   } catch (e) {
     fail(e);
   }

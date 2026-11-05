@@ -83,20 +83,6 @@ async function pollAppStatus(generation) {
   } catch (e) {}
   scheduleAppStatus(generation);
 }
-async function setupBackup() {
-  const field = $('#backup-repository');
-  const name = field?.value.trim();
-  if (!name) throw new Error('Enter a GitHub repository name, such as leo-notes.');
-  const mine = seq;
-  const button = $('[data-action="backup-setup"]');
-  if (button) { button.disabled = true; button.textContent = 'Connecting…'; }
-  try {
-    const done = await api('/api/backup/setup', { method: 'POST', body: { name } });
-    if (mine !== seq || state.view !== 'settings' || state.section !== 'backup') return;
-    drawSettings(done.settings);
-    toast(done.message);
-  } finally { if (button?.isConnected) { button.disabled = false; button.textContent = 'Set up Backup'; } }
-}
 app.addEventListener('change', (event) => {
   const field = event.target.closest('[data-app-pref]');
   if (field) appChange({ action: 'preference', field: field.dataset.appPref, value: field.checked }).catch(fail);

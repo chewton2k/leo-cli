@@ -125,7 +125,7 @@ async function storageOpenChat(el) {
 }
 
 function storageAreaOpen(id) {
-  const links = { notes: ['#/', 'View notes'], trash: ['#/trash', 'View trash'], 'calendar-cache': ['#/calendar', 'View calendar'], tasks: ['#/calendar', 'View tasks'], settings: ['#/settings', 'Manage settings'], backup: ['#/settings', 'Manage backup'] };
+  const links = { notes: ['#/', 'View notes'], trash: ['#/trash', 'View trash'], 'calendar-cache': ['#/calendar', 'View calendar'], tasks: ['#/calendar', 'View tasks'], settings: ['#/settings', 'Manage settings'] };
   const link = links[id];
   return link ? `<div class="store-actions"><a class="btn sm plain" href="${link[0]}">${link[1]}</a></div>` : '';
 }

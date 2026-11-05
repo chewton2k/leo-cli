@@ -35,6 +35,21 @@
   const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
   const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
 
+  function containChatPickWheel(list, event) {
+    if (event.ctrlKey || !event.deltaY) return;
+    const max = list.scrollHeight - list.clientHeight;
+    if (max <= 0 || (event.deltaY < 0 && list.scrollTop <= 0) || (event.deltaY > 0 && list.scrollTop >= max)) event.preventDefault();
+  }
+
+  function revealChatPick(list) {
+    const selected = list.querySelector('.chat-pick-row.on');
+    if (!selected) return;
+    const top = selected.offsetTop - list.offsetTop;
+    const bottom = top + selected.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }
+
   function felix(width, extra = '') {
     return `<svg class="felix ${extra}" viewBox="-2 -10 50 42" width="${width}" height="${Math.round((width * 42) / 50)}" shape-rendering="crispEdges" aria-hidden="true">
       <g class="felix-spark"><rect x="-1" y="-6" width="2" height="2"/><rect x="42" y="-4" width="2" height="2"/><rect x="21" y="-8" width="2" height="2"/></g>
@@ -1465,8 +1480,12 @@
         box.innerHTML = `${wantsSearch ? `<input class="chat-pick-search" id="chat-pick-search" placeholder="Find a note…" autocomplete="off" value="${escape(p.query)}">` : ''}<div class="chat-pick-list" role="listbox" aria-label="Notes"></div>`;
         field = $('#chat-pick-search');
         list = box.querySelector('.chat-pick-list');
+        list.addEventListener('wheel', (event) => {
+          if (state.pick?.from === 'mention') containChatPickWheel(list, event);
+        }, { passive: false });
       }
       list.innerHTML = rows;
+      revealChatPick(list);
       if (field && p.focusSearch) {
         field.focus();
         field.setSelectionRange(field.value.length, field.value.length);

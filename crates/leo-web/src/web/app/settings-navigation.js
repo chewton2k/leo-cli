@@ -9,7 +9,6 @@ const SETTINGS_SECTIONS = [
   ] },
   { group: 'Your notes', items: [
     ['calendar', 'Calendar', 'calendar', 'Name recordings after the class or meeting you are in.'],
-    ['backup', 'Backup', 'backup', 'Keep a private copy of your notes on GitHub.'],
   ] },
   { group: 'Data', items: [
     ['storage', 'Storage', 'storage', 'What Leo keeps on this computer, and how long.'],
@@ -49,11 +48,8 @@ const SETTINGS_INDEX = [
   { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
   { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
   { section: 'felix', id: 'felix-pace', label: 'Reading pace', keywords: 'felix margin regular slow pause wait' },
-  { section: 'felix', id: 'felix-cap', label: 'Reads a day', keywords: 'felix margin daily cap limit usage today' },
   { section: 'calendar', id: 'calendar-connect', label: 'Connect a calendar', keywords: 'google ical ics outlook apple link secret address meetings classes' },
   { section: 'calendar', id: 'calendar-next', label: 'Next up', keywords: 'upcoming event check now refresh' },
-  { section: 'backup', id: 'backup-github', label: 'GitHub backup', keywords: 'repository repo copy private notes sync gh' },
-  { section: 'backup', id: 'backup-push', label: 'Push changes', keywords: 'automatic idle quit off when upload backup' },
   { section: 'storage', id: 'storage-keep', label: 'How long Leo keeps things', keywords: 'trash chats days delete retention' },
   { section: 'storage', id: 'storage-areas', label: 'Storage used', keywords: 'disk space size clear cache folders models' },
   { section: 'storage', id: 'storage-export', label: 'Export everything', keywords: 'zip download backup notes uploads chats' },
@@ -70,7 +66,6 @@ const SETTINGS_ICON_PATHS = {
   keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>',
   wave: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>',
   pen: '<path d="M4 20h4L18.5 9.5a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13 7l4 4"/>',
-  backup: '<path d="M7 18.5a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5 3.8 3.8 0 0 1-.3 7.5"/><path d="M12 12.5v7M9 15.5l3-3 3 3"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   update: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5l3.5 3.5 3.5-3.5"/>',
 };
@@ -239,25 +234,8 @@ function placeSettingsPill(nav, on) {
   pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.22, 1, .36, 1)' });
 }
 
-function fitSettingsEdge() {
-  const body = document.body;
-  const layout = app.querySelector('.settings-layout');
-  const nav = layout && layout.querySelector('.settings-nav');
-  const section = layout && layout.querySelector('.settings-section');
-  if (!nav || !section || !matchMedia('(min-width: 1000px)').matches) {
-    body.classList.remove('settings-edge');
-    return;
-  }
-  const half = (parseFloat(getComputedStyle(body).getPropertyValue('--side')) || 0) / 2;
-  const gap = parseFloat(getComputedStyle(layout).columnGap) || 0;
-  body.style.setProperty('--settings-c', `${Math.round(nav.getBoundingClientRect().right + gap / 2 - half)}px`);
-  body.style.setProperty('--settings-lc', `${Math.round(section.getBoundingClientRect().left - half)}px`);
-  body.classList.add('settings-edge');
-}
-
 const settingsRevealed = new WeakMap();
 function revealSettingsLink() {
-  fitSettingsEdge();
   const nav = app.querySelector('.settings-sections'), on = nav?.querySelector('.settings-link.on');
   if (nav) placeSettingsPill(nav, on);
   if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;

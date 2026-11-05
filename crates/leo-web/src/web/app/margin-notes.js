@@ -8,7 +8,7 @@ const GLOW_MS = 2200;
 const MOST_ASKED = 600;
 const marginKit = window.leoMargin;
 const LEAST_ASKED = 3;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), open: null, draft: null, arriving: new Set(), timer: 0, reading: false, readFace: null, faceTimer: 0, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), open: null, draft: null, arriving: new Set(), timer: 0, reading: false, readFace: null, faceTimer: 0, status: '', changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -49,7 +49,7 @@ function marginLeave() {
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
   chat.setLost([]);
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, draft: null, reading: false, readFace: null, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, draft: null, reading: false, readFace: null, status: '', changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -93,33 +93,92 @@ async function marginLoad(s, current = () => true) {
   marginRedraw();
 }
 
+function marginSetStatus(text) {
+  marginPage.status = text;
+  const status = $('#margin-status');
+  if (status) status.textContent = text;
+}
+
+function marginModeMenu(open, focus = false) {
+  const menu = $('#margin-mode-menu');
+  const button = $('#margin-mode');
+  if (!menu || !button) return;
+  menu.hidden = !open;
+  button.setAttribute('aria-expanded', String(open));
+  if (focus) {
+    if (open) menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+    else button.focus({ preventScroll: true });
+  }
+}
+
 function marginControl() {
   const s = marginPage.s;
   const button = $('#margin-mode');
-  if (!s || !button || !s.note.id) return;
+  const menu = $('#margin-mode-menu');
+  if (!s || !button || !menu || !s.note.id) return;
   if (!button.dataset.ready) {
     button.dataset.ready = '1';
-    button.addEventListener('click', () => marginToggleMode().catch(fail));
+    button.addEventListener('click', () => marginModeMenu(menu.hidden, true));
+    menu.addEventListener('click', (e) => {
+      const option = e.target.closest('[data-margin-mode]');
+      if (option) marginChangeMode(option.dataset.marginMode).catch(fail);
+    });
+    button.parentElement.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !menu.hidden) {
+        e.preventDefault();
+        e.stopPropagation();
+        marginModeMenu(false, true);
+      } else if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-margin-mode]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.target.closest('[data-margin-mode]').click();
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const items = [...menu.querySelectorAll('[data-margin-mode]')];
+        const at = items.indexOf(document.activeElement);
+        marginModeMenu(true);
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowUp' ? items.length - 1 : 1)) % items.length;
+        items[next]?.focus({ preventScroll: true });
+      }
+    });
   }
   const along = marginPage.mode === 'along';
-  button.disabled = false;
-  button.textContent = along ? 'Felix reads along' : 'Felix: when you ask';
-  button.setAttribute('aria-pressed', String(along));
-  button.title = along ? 'Felix reads what you change after a pause. The text goes to your writing AI.' : 'Felix reads this note only when you ask him.';
+  button.disabled = marginPage.changing;
+  $('#margin-mode-label').textContent = along ? 'Reads along' : 'When you ask';
+  button.title = along ? 'Reads changes after a pause. The text goes to your writing AI.' : 'Waits until you ask.';
+  for (const option of menu.querySelectorAll('[data-margin-mode]')) {
+    option.setAttribute('aria-checked', String(option.dataset.marginMode === marginPage.mode));
+    option.disabled = marginPage.changing;
+  }
   marginPage.loaded = true;
 }
 
-async function marginToggleMode() {
+async function marginChangeMode(mode) {
   const s = marginPage.s;
-  if (!s || !s.note.id) return;
-  const mode = marginPage.mode === 'along' ? 'ask' : 'along';
-  const done = await api(`/api/notes/${enc(s.note.id)}/margin`, { method: 'POST', body: { mode } });
-  if (marginPage.s !== s) return;
-  marginPage.mode = done.mode;
-  marginPage.baseline = marginKit.blocksOf(s.doc.source());
+  if (!s || !s.note.id || marginPage.changing || !['ask', 'along'].includes(mode)) return;
+  marginModeMenu(false, true);
+  if (mode === marginPage.mode) return;
+  marginPage.changing = true;
   marginControl();
-  marginRedraw();
-  if (done.mode === 'along') toast('Felix now reads what you change here, after a pause. The text goes to your writing AI.');
+  try {
+    const done = await api(`/api/notes/${enc(s.note.id)}/margin`, { method: 'POST', body: { mode } });
+    if (marginPage.s !== s) return;
+    marginPage.mode = done.mode;
+    marginPage.baseline = marginKit.blocksOf(s.doc.source());
+    clearTimeout(marginPage.timer);
+    marginSetStatus('');
+    marginRedraw();
+  } catch (e) {
+    if (marginPage.s !== s) return;
+    if (e instanceof Locked) throw e;
+    marginSetStatus('Could not save this mode. Try again.');
+  } finally {
+    if (marginPage.s === s) {
+      marginPage.changing = false;
+      marginControl();
+    }
+  }
 }
 
 function marginRedraw() {
@@ -214,7 +273,6 @@ function marginPath(id, kind) {
   let path = marginPage.paths.get(key);
   if (!path) {
     path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('pathLength', '1');
     path.setAttribute('class', kind);
     marginPage.svg.appendChild(path);
     marginPage.paths.set(key, path);
@@ -242,7 +300,7 @@ function marginMark(t) {
     mark.className = 'margin-mark';
     mark.dataset.id = t.id;
     mark.setAttribute('aria-label', `Felix’s note on “${t.quote.slice(0, 80)}”`);
-    mark.innerHTML = marginFace();
+    mark.innerHTML = '<span class="margin-anchor" aria-hidden="true"></span>';
     marginPage.layer.appendChild(mark);
     marginPage.marks.set(t.id, mark);
   }
@@ -283,7 +341,8 @@ function marginDraw() {
   else marginPlaceAsMarks(boxes, page, origin);
   for (const { t, rects } of boxes) {
     const squiggle = marginPath(t.id, 'squiggle');
-    squiggle.setAttribute('d', rects.map((r) => marginKit.wave(r.left, r.right, r.bottom + 1)).join(' '));
+    squiggle.setAttribute('d', rects.map((r) => `M${r.left.toFixed(1)} ${(r.bottom + 4).toFixed(1)} H${r.right.toFixed(1)}`).join(' '));
+    squiggle.classList.toggle('active', marginPage.open === t.id);
     squiggle.classList.toggle('arriving', marginPage.arriving.has(t.id));
   }
   if (marginPage.arriving.size && !stillMotion()) {
@@ -316,12 +375,8 @@ function marginPlaceInMargin(boxes, layout, page, origin) {
     el.classList.toggle('arriving', marginPage.arriving.has(t.id));
     marginPage.marks.get(t.id)?.remove();
     marginPage.marks.delete(t.id);
-    const line = on === 'right' ? rects[rects.length - 1] : rects[0];
-    const from = { x: on === 'right' ? line.right : line.left, y: line.bottom + 1 };
-    const to = on === 'right' ? { x: x - 7, y: tops[t.id] + 12 } : { x: x + marginKit.MARGIN_WIDTH + 7, y: tops[t.id] + 12 };
-    const tether = marginPath(t.id, 'tether');
-    tether.setAttribute('d', marginKit.tether(from, to, on === 'right' ? Math.max(from.x, right + 2) : Math.min(from.x, left - 2)));
-    tether.classList.toggle('arriving', marginPage.arriving.has(t.id));
+    marginPage.paths.get(`${t.id}:tether`)?.remove();
+    marginPage.paths.delete(`${t.id}:tether`);
   }
 }
 
@@ -329,7 +384,7 @@ function marginPlaceAsMarks(boxes, page, origin) {
   for (const { t, at, rects, el } of boxes) {
     const end = rects[rects.length - 1];
     const mark = marginMark(t);
-    const glyphX = Math.min(end.right + 5, page.right - origin.left - 6);
+    const glyphX = page.left - origin.left - 14;
     mark.style.transform = `translate(${glyphX - mark.offsetWidth / 2}px, ${end.top - 2 - mark.offsetHeight / 2}px)`;
     marginPage.paths.get(`${t.id}:tether`)?.remove();
     marginPage.paths.delete(`${t.id}:tether`);
@@ -569,23 +624,9 @@ function marginEdited(s) {
   marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(pause, marginPage.nextRead - Date.now()));
 }
 
-function marginShowReading(s, blocks) {
+function marginShowReading(s) {
   marginPage.faceTimer = setTimeout(() => {
-    if (!marginPage.reading || marginPage.s !== s) return;
-    const source = s.doc.source();
-    const last = blocks[blocks.length - 1];
-    const block = s.doc.blockAt(Math.max(0, source.indexOf(last)));
-    const columns = marginPage.layer.parentElement;
-    const origin = columns.getBoundingClientRect();
-    const page = $('article.note', columns).getBoundingClientRect();
-    const face = document.createElement('div');
-    face.className = 'margin-reading';
-    face.innerHTML = marginFace(true);
-    const top = (block ? block.getBoundingClientRect().top : page.top) - origin.top;
-    const inMargin = ['right', 'both'].includes(columns.dataset.margin);
-    face.style.transform = `translate(${page.right - origin.left + (inMargin ? marginKit.MARGIN_GAP : -28)}px, ${top}px)`;
-    marginPage.layer.appendChild(face);
-    marginPage.readFace = face;
+    if (marginPage.reading && marginPage.s === s) marginSetStatus('Reading…');
   }, READ_FACE_AFTER_MS);
 }
 
@@ -596,7 +637,8 @@ async function marginRead(s) {
   }
   if (s !== marginPage.s || marginPage.mode !== 'along' || !s.note.id || document.hidden || chat.isBusy()) return;
   if (!marginKit.changedBlocks(marginPage.baseline, s.doc.source()).length) return;
-  marginPage.reading = true;
+  const reading = {};
+  marginPage.reading = reading;
   try {
     await flush(s);
     if (s !== marginPage.s || saving.unsaved()) return;
@@ -608,6 +650,7 @@ async function marginRead(s) {
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
+    marginSetStatus(got?.failed ? 'Could not read this change. Check Writing AI and try again.' : got?.note ? '' : 'No comment this time');
     if (got?.note) {
       marginPage.threads.push(got.note);
       marginPage.arriving.add(got.note.id);
@@ -617,15 +660,19 @@ async function marginRead(s) {
     }
   } catch (e) {
     if (e instanceof Locked) throw e;
+    if (marginPage.s === s) {
+      const paused = { daily: 'Paused for today', soon: 'Paused after a recent comment', busy: 'Already reading', felix: 'Paused while Felix answers', unedited: 'Reads changes after you edit', mode: 'When you ask' };
+      marginSetStatus(paused[e.data?.why] || 'Could not read this change. Check Writing AI and try again.');
+    }
   } finally {
-    marginPage.reading = false;
-    clearTimeout(marginPage.faceTimer);
-    marginPage.readFace?.remove();
-    marginPage.readFace = null;
-    const again = marginPage.again;
-    marginPage.again = false;
-    if (again && s === marginPage.s && marginPage.mode === 'along') {
-      marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular, marginPage.nextRead - Date.now()));
+    if (s === marginPage.s && marginPage.reading === reading) {
+      marginPage.reading = false;
+      clearTimeout(marginPage.faceTimer);
+      const again = marginPage.again;
+      marginPage.again = false;
+      if (again && marginPage.mode === 'along') {
+        marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular, marginPage.nextRead - Date.now()));
+      }
     }
   }
 }
@@ -653,24 +700,27 @@ function felixSettingsCards(view, page) {
   const where = page.reads_stay_here
     ? `Reads along sends the note’s title and the text you change to ${esc(name)} after each pause. It runs on this computer, so they stay here.`
     : `Reads along sends the note’s title and the text you change to ${esc(name)} after each pause, without a press each time. When you ask sends nothing until you ask.`;
-  return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['ask', 'When you ask', 'Felix stays quiet until you ask him.'], ['along', 'Reads along', 'He reads what changed after a pause and speaks only when it matters.']] })}<p class="hint">Applies to notes made from now on. Each note has its own switch under its title.</p></section>
+  return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['ask', 'When you ask', 'Felix stays quiet until you ask him.'], ['along', 'Reads along', 'He reads what changed after a pause and speaks only when it matters.']] })}<p class="hint">Applies to notes made from now on. Each note has its own menu above its title.</p></section>
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card"><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['regular', 'Regular'], ['slow', 'Slow']] })}</div>
-    <div class="set-row column" data-find="felix-cap"><div class="set-line"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: String(view.cap), choices: (view.caps || []).map((cap) => [String(cap), String(cap)]) })}</div><span class="hint" id="margin-today">${view.today} of ${view.cap} used today. Each read starts your writing AI once.</span>${view.problem ? `<span class="set-note warn">${esc(view.problem)}</span>` : ''}</div></section>`;
+    ${view.problem ? `<p class="set-note warn" role="status">${esc(view.problem)}</p>` : ''}</section>`;
 }
 
 document.addEventListener('change', async (e) => {
   const field = e.target.closest?.('[data-margin-pref]');
   if (!field) return;
   const key = field.dataset.marginPref;
-  const value = key === 'cap' ? Number(field.value) : field.value;
+  const value = field.value;
   try {
     const view = await api('/api/margin', { method: 'POST', body: { [key]: value } });
     marginRemember(view);
     if (state.view === 'settings') state.margin = view;
-    const today = $('#margin-today');
-    if (today) today.textContent = `${view.today} of ${view.cap} used today. Each read starts your writing AI once.`;
   } catch (error) {
     fail(error);
   }
+});
+
+
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest?.('.margin-mode-wrap')) marginModeMenu(false);
 });

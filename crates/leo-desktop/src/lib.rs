@@ -168,7 +168,6 @@ pub fn run() {
                     api.prevent_close();
                     let _ = handle.hide();
                     set_visible(&handle, false);
-                    back_up(handle.app_handle());
                 }
                 if let WindowEvent::Focused(_) | WindowEvent::Resized(_) = event {
                     let visible = handle.is_visible().unwrap_or(true)
@@ -259,14 +258,6 @@ fn reveal_last_download() {
     let _ = leo_core::children::quiet_command("explorer")
         .arg(format!("/select,{}", path.display()))
         .spawn();
-}
-
-fn back_up(app: &AppHandle) {
-    if let Ok(held) = app.state::<Engine>().0.lock() {
-        if let Some(running) = held.as_ref() {
-            running.back_up();
-        }
-    }
 }
 
 pub(crate) fn show(app: &AppHandle) {

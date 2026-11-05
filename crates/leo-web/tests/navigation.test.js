@@ -25,3 +25,29 @@ test('shared count wording works without the removed graph script', () => {
   assert.equal(count(2, 'note'), '2 notes');
   assert.equal(count(2, 'class', 'classes'), '2 classes');
 });
+
+test('creation chooses explicit target, selected folder, open-note folder, then root', () => {
+  const vm = require('node:vm');
+  const declaration = read('web/app/side.js').match(/^const creationDir = .*;$/m)[0];
+  const context = { side: { target: null }, state: { view: 'workspace', dir: '' } };
+  vm.createContext(context);
+  const choose = vm.runInContext(`${declaration} creationDir;`, context);
+  assert.equal(choose(), '');
+  context.state = { view: 'note', dir: 'Open' };
+  assert.equal(choose(), 'Open');
+  context.side.target = 'Selected';
+  assert.equal(choose(), 'Selected');
+  assert.equal(choose('Explicit'), 'Explicit');
+  assert.equal(choose(''), '');
+});
+
+test('context targets capture ids and folders without changing the current note', () => {
+  const vm = require('node:vm');
+  const side = read('web/app/side.js');
+  const source = side.slice(side.indexOf('function explorerTarget('), side.indexOf('\nfunction explorerMenu('));
+  const target = vm.runInNewContext(`${source} explorerTarget;`);
+  const el = (note, folder) => ({ closest: selector => selector === '.side-note-wrap' && note ? { querySelector: () => ({ dataset: note }) } : selector === '.side-folder' && folder ? { dataset: { dropDir: folder } } : null });
+  assert.deepEqual(JSON.parse(JSON.stringify(target(el({ id: 'note-a', from: 'Folder A' })))), { kind: 'note', id: 'note-a', dir: 'Folder A' });
+  assert.deepEqual(JSON.parse(JSON.stringify(target(el(null, 'Folder B')))), { kind: 'folder', dir: 'Folder B' });
+  assert.deepEqual(JSON.parse(JSON.stringify(target(el()))), { kind: 'root', dir: '' });
+});

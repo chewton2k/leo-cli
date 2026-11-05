@@ -21,25 +21,27 @@ test('removal motion finishes before removing content, and reduced motion skips 
   }
 });
 
-test('note deletion preserves the session on failure and never redirects a newer page', async () => {
-  for (const mode of ['success', 'error', 'navigate-api', 'navigate-animation']) {
-    const session = { note: { id: 'note', directory: 'Folder' }, doc: { destroy() {} } };
-    let went = 0, dismissed = 0, failed = 0;
-    const context = { state: { session }, seq: 1, closeSheet() {}, enc: encodeURIComponent, app: { querySelectorAll: () => [] }, loadSideFolders() {}, toast() {}, folderHash: () => '#/f/Folder', restore() {}, fail: () => failed++, go: () => went++ };
-    context.api = async () => { if (mode === 'error') throw Error('offline'); if (mode === 'navigate-api') context.seq++; };
-    context.dismissContent = async () => { dismissed++; if (mode === 'navigate-animation') context.seq++; };
+test('note deletion preserves failures and never redirects another open note', async () => {
+  for (const mode of ['success', 'error', 'navigate']) {
+    let destroyed = 0, went = 0, failed = 0;
+    const session = { note: { id: 'note' }, doc: { destroy() { destroyed++; } } };
+    const box = { isConnected: true };
+    const button = { dataset: { id: 'note' }, isConnected: true, disabled: false, closest: () => box };
+    const context = { state: { session }, closeSheet() {}, enc: encodeURIComponent, loadSideFolders() {}, toast() {}, restore() {}, fail: () => failed++, go: () => went++ };
+    context.api = async () => {
+      if (mode === 'error') throw Error('offline');
+      if (mode === 'navigate') context.state.session = { note: { id: 'other' } };
+    };
     vm.createContext(context);
-    vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow()'), sheets.indexOf('async function restore(')), context);
-    await context.deleteNow();
+    vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow('), sheets.indexOf('async function restore(')), context);
+    await context.deleteNow(button);
     assert.equal(went, mode === 'success' ? 1 : 0);
+    assert.equal(destroyed, mode === 'success' ? 1 : 0);
     assert.equal(failed, mode === 'error' ? 1 : 0);
-    assert.equal(dismissed, mode === 'success' || mode === 'navigate-animation' ? 1 : 0);
-    assert.equal(context.state.session, mode === 'success' ? null : session);
+    assert.equal(button.disabled, false);
+    if (mode === 'error') assert.equal(context.state.session, session);
+    if (mode === 'navigate') assert.equal(context.state.session.note.id, 'other');
   }
-  const empty = { state: { session: null } };
-  vm.createContext(empty);
-  vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow()'), sheets.indexOf('async function restore(')), empty);
-  await empty.deleteNow();
 });
 
 const motionSource = fs.readFileSync(path.resolve(__dirname, '../src/web/app/motion.js'), 'utf8');

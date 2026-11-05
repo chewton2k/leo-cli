@@ -1,6 +1,6 @@
 const NOTE_DRAG = felix.NOTE_DRAG;
 const FOLDER_DRAG = 'application/x-leo-folder';
-const FILE_VIEWS = ['folder', 'search', 'note'];
+const FILE_VIEWS = ['workspace', 'search', 'note'];
 const SPRING_MS = 600;
 const EDGE_PX = 32;
 const dragging = { note: null, folder: null, filesTimer: 0, spring: null };
@@ -26,9 +26,9 @@ function accepts(e, target) {
 }
 
 function marksOf(target) {
-  const tree = target.closest('#side .side-tree');
+  const tree = target.closest('.side-tree');
   const dir = dirOf(target);
-  if (target.closest('#side .side-explorer') && !dir) return { row: document.querySelector('#side .side-group') || target, kids: null };
+  if (target.closest('.side-explorer, #folders-sheet') && !dir) return { row: target.closest('.side-explorer, #folders-sheet')?.querySelector('.side-group') || target, kids: null };
   if (!tree || !dir) return { row: target, kids: null };
   const row = [...tree.querySelectorAll('.side-folder[data-drop-dir]')].find((el) => el.dataset.dropDir === dir) || target;
   return { row, kids: sideKids(dir) };
@@ -43,7 +43,7 @@ function markDrop(target) {
 }
 
 function springFolder(e) {
-  const row = e.target.closest ? e.target.closest('#side .side-tree .side-folder[data-drop-dir]') : null;
+  const row = e.target.closest ? e.target.closest('.side-tree .side-folder[data-drop-dir]') : null;
   const dir = row && (carries(e, NOTE_DRAG) || carries(e, FOLDER_DRAG)) ? row.dataset.dropDir : null;
   if (dragging.spring && dragging.spring.dir === dir) return;
   clearTimeout(dragging.spring?.timer);
@@ -54,7 +54,7 @@ function springFolder(e) {
 }
 
 function scrollTreeNear(e) {
-  const tree = e.target.closest ? e.target.closest('#side .side-tree') : null;
+  const tree = e.target.closest ? e.target.closest('.side-tree') : null;
   if (!tree) return;
   const box = tree.getBoundingClientRect();
   if (e.clientY < box.top + EDGE_PX) tree.scrollTop -= 10;
@@ -278,22 +278,23 @@ async function moveNote(id, dir) {
 }
 
 async function dropNote(note, into) {
+  if (state.session?.note.id === note.id) await ready();
   await moveNote(note.id, into);
-  await afterMove();
+  await afterMove(null, null, note.id);
   toast(`Moved “${note.title}” to ${folderLabel(into)}`, {
     action: 'Undo',
-    run: () => moveNote(note.id, note.dir).then(() => afterMove()).catch(fail),
+    run: () => moveNote(note.id, note.dir).then(() => afterMove(null, null, note.id)).catch(fail),
   });
 }
 
 async function dropFolder(from, into) {
+  if (state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) await ready();
   let moved;
   try {
     moved = await api('/api/dirs/move', { method: 'POST', body: { from, into } });
   } catch (e) {
     if (e.status !== 409) throw e;
-    toast(`${folderLabel(into)} already has a folder named ${folderLabel(from)}.`, { bad: true });
-    return;
+    throw new Error(`${folderLabel(into)} already has a folder named ${folderLabel(from)}. Choose another folder.`);
   }
   await afterMove(from, moved.path);
   toast(`Moved ${folderLabel(from)} into ${folderLabel(into)}`, {
@@ -305,15 +306,15 @@ async function dropFolder(from, into) {
   });
 }
 
-async function afterMove(from, to) {
+async function afterMove(from, to, noteId = null) {
   const dir = state.dir || '';
-  if (from) moveOpenFolders(from, to);
-  if (from && (state.view === 'folder' || state.view === 'note') && (dir === from || dir.startsWith(`${from}/`))) {
-    const now = to + dir.slice(from.length);
-    if (state.view === 'folder') return go(folderHash(now), { replace: true });
-    state.dir = now;
+  if (from) {
+    moveOpenFolders(from, to);
+    if (side.target === from || side.target?.startsWith(`${from}/`)) side.target = to + side.target.slice(from.length);
   }
-  if (state.view === 'note' && state.session && state.session.note.id && !saving.unsaved()) await showNote(state.session.note.id);
+  if (from && state.view === 'note' && (dir === from || dir.startsWith(`${from}/`))) state.dir = to + dir.slice(from.length);
+  const affected = noteId === state.session?.note.id || from && (dir === from || dir.startsWith(`${from}/`));
+  if (affected && state.view === 'note' && state.session?.note.id && !saving.unsaved()) await showNote(state.session.note.id);
   else await showLatest();
-  loadSideFolders();
+  await loadSideFolders();
 }

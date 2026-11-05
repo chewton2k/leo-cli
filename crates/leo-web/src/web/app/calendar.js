@@ -1519,7 +1519,7 @@ function tasksFolded() {
 }
 
 function fitTasksWindow() {
-  const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card');
+  const first = app.querySelector('.cards > .card');
   const box = tasksBox.hidden ? null : dock().getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
   const over = Boolean(card && card.left < box.right && card.top + scrollY < box.bottom);

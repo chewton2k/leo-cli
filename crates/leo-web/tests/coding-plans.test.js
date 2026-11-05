@@ -29,27 +29,46 @@ test('coding accounts distinguish signed in, signed out, unknown and unavailable
   assert.equal(value.codingPlans({ tasks: [] }), '');
 });
 
-test('plan meters handle both windows, limits, resets, saved readings and absent data', () => {
+test('usage shows both windows, clamps remaining percentages, and labels missing, stale, or expired readings', () => {
   const value = context();
   const now = Math.floor(Date.now() / 1000);
-  const plan = { provider: 'codex', name: 'Codex', limits: { five_hour: { used: 0.25, resets_at: now + 3600 }, seven_day: { used: 0.93, resets_at: now + 86400 }, seen_at: new Date().toISOString() } };
+  const plan = { provider: 'codex', name: 'Codex', limits: { five_hour: { used: 0.39, resets_at: now + 3600 }, seven_day: { used: 0.06, resets_at: now + 86400 }, seen_at: new Date().toISOString() } };
   let html = value.planLimits(plan);
-  assert.match(html, /aria-valuenow="75"/);
-  assert.match(html, /aria-valuenow="7"/);
-  assert.match(html, /near-limit/);
-  assert.match(html, /Resets /);
-  assert.ok(!html.includes('Saved usage'));
-  plan.limits.seen_at = new Date(Date.now() - 600000).toISOString();
-  assert.match(value.planLimits(plan), /Saved usage/);
-  for (const [used, resets_at, percent, text] of [[2, null, 0, 'Reset time unavailable'], [-2, null, 100, 'Reset time unavailable'], [0.9, now - 1, 0, 'Waiting for the next update'], [0.2, 1e100, 80, 'Reset time unavailable']]) {
-    plan.limits = { five_hour: { used, resets_at }, seen_at: 'bad-date' };
+  for (const percent of [61, 94]) assert.ok(html.includes(`aria-valuenow="${percent}"`));
+  assert.match(html, /Session/);
+  assert.match(html, /Weekly/);
+  assert.match(html, /Resets in/);
+  assert.match(html, /Updated just now/);
+  for (const [used, percent] of [[-1, 100], [0, 100], [0.95, 5], [0.39, 61], [0.06, 94], [1, 0], [2, 0]]) {
+    plan.limits = { five_hour: { used, resets_at: now + 3600 }, seen_at: new Date().toISOString() };
     html = value.planLimits(plan);
-    assert.ok(html.includes(`aria-valuenow="${percent}"`));
-    assert.ok(html.includes(text));
-    assert.ok(!html.includes('Invalid Date'));
+    assert.ok(html.includes(`aria-valuenow="${percent}"`), `remaining ${percent}%`);
   }
-  for (const limits of [null, {}, { five_hour: { used: 'bad' } }]) {
-    assert.match(value.planLimits({ provider: 'codex', limits }), /Usage unavailable/);
-    assert.match(value.planLimits({ provider: 'claude_code', limits }), /during an answer/);
+  plan.limits = { five_hour: { used: 0.2, resets_at: now - 1 }, seven_day: { used: Infinity }, seen_at: 'bad-date' };
+  html = value.planLimits(plan);
+  assert.match(html, /Waiting for update/);
+  assert.match(html, /Unavailable/);
+  assert.doesNotMatch(html, /aria-valuenow/);
+  assert.doesNotMatch(html, /Invalid Date/);
+  plan.limits = { five_hour: { used: 0.2, resets_at: now + 3600 }, seen_at: new Date(Date.now() - 600000).toISOString() };
+  assert.match(value.planLimits(plan), /Saved · Updated/);
+  for (const limits of [null, {}, ...['bad', NaN, Infinity, -Infinity, null].map(used => ({ five_hour: { used } }))]) {
+    html = value.planLimits({ provider: 'codex', name: 'Codex', limits });
+    assert.match(html, /Unavailable/);
+    assert.match(html, /Usage has not been reported yet/);
   }
+  for (const resets_at of ['bad', NaN, Infinity, null, 1e300]) {
+    html = value.planLimits({ ...plan, limits: { five_hour: { used: .39, resets_at } } });
+    assert.match(html, /aria-valuenow="61"/);
+    assert.match(html, /Reset time unavailable/);
+    assert.doesNotMatch(html, /Invalid Date/);
+  }
+});
+
+test('Usage does not expose writer selection controls', () => {
+  const value = context();
+  const page = { tasks: [{ task: 'writing', provider: 'codex' }], plans: [{ provider: 'codex', name: 'Codex', installed: true, signed_in: true }] };
+  const html = value.codingPlans(page, false);
+  assert.doesNotMatch(html, /data-action="use-plan"|Selected for writing/);
+  assert.equal(page.tasks[0].provider, 'codex');
 });

@@ -87,8 +87,6 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         speech: None,
         dictation: None,
         app_settings: None,
-        backups: Default::default(),
-        backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
         importer: None,
         imports: Default::default(),

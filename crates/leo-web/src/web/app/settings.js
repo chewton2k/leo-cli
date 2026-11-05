@@ -5,7 +5,9 @@ const TASK_USE = {
 };
 
 async function showSettings(section) {
+  const requested = section;
   section = settingsSection(section);
+  if (requested === 'backup' && location.hash === '#/settings/backup') history.replaceState(null, '', '#/settings/general');
   // Trash is a page of notes rather than a setting, so a bare #/settings never reopens it.
   if (section === 'trash') return showTrash();
   try { localStorage.setItem('leo-settings-section', section); } catch (e) {}
@@ -200,19 +202,29 @@ const PLAN_STALE_MS = 5 * 60 * 1000;
 function planLimits(plan) {
   const limits = plan.limits;
   const now = Date.now();
-  const windows = [['five_hour', '5 hour'], ['seven_day', '7 day']].flatMap(([key, name]) => {
+  const windows = [['five_hour', 'Session', '5 hour'], ['seven_day', 'Weekly', '7 day']].map(([key, name, period]) => {
     const window = limits?.[key];
-    if (!window || !Number.isFinite(window.used)) return [];
-    const reset = Number.isFinite(window.resets_at) ? new Date(window.resets_at * 1000) : null;
+    const used = window?.used;
+    const valid = Number.isFinite(used);
+    const reset = Number.isFinite(window?.resets_at) ? new Date(window.resets_at * 1000) : null;
     const validReset = reset && Number.isFinite(reset.getTime());
     const expired = validReset && reset.getTime() <= now;
-    const percent = expired ? 0 : 100 - Math.round(Math.max(0, Math.min(1, window.used)) * 100);
-    const when = expired ? 'Waiting for the next update' : validReset ? `Resets ${reset.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Reset time unavailable';
-    return [`<div class="plan-window"><div class="plan-metric"><span>${key === 'five_hour' ? 'Session' : 'Weekly'}</span><strong>${expired ? 'Unavailable' : `${percent}% left`}</strong></div><div class="plan-meter${!expired && percent <= 10 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
-  });
-  const seen = limits && new Date(limits.seen_at).getTime();
-  const age = Number.isFinite(seen) ? `<p class="hint">${now - seen >= PLAN_STALE_MS ? 'Saved usage · ' : ''}Updated ${esc(rel(limits.seen_at))}</p>` : '';
-  return windows.length ? windows.join('') + age : `<p class="hint">${plan.provider === 'claude_code' ? 'Usage appears after Claude Code reports limits during an answer.' : 'Usage unavailable. Refresh to check Codex account limits.'}</p>`;
+    const available = valid && !expired;
+    const percent = available ? Math.max(0, Math.min(100, 100 - Math.round(used * 100))) : null;
+    const when = expired ? 'Waiting for update' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
+    return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong>${available ? `${percent}% <small>left</small>` : 'Unavailable'}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ' aria-valuetext="Unavailable"'}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
+  }).join('');
+  const seenAt = typeof limits?.seen_at === 'string' && limits.seen_at ? limits.seen_at : null;
+  const seen = seenAt ? new Date(seenAt).getTime() : NaN;
+  const stale = Number.isFinite(seen) && now - seen >= PLAN_STALE_MS;
+  const status = Number.isFinite(seen) ? `${stale ? 'Saved · ' : ''}Updated ${esc(rel(seenAt))}` : 'Usage has not been reported yet';
+  return windows + `<p class="hint usage-status" role="status">${status}</p>`;
+}
+
+function duration(ms) {
+  const minutes = Math.max(1, Math.floor(ms / 60000));
+  const days = Math.floor(minutes / 1440), hours = Math.floor((minutes % 1440) / 60), rest = minutes % 60;
+  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${rest}m` : `${rest}m`;
 }
 
 function codingPlans(page, selectable = true) {
@@ -221,7 +233,7 @@ function codingPlans(page, selectable = true) {
   return `<div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selectable && selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
   }).join('')}</div>`;
 }
 
@@ -310,16 +322,6 @@ function felixUsageCard(page) {
   </section>`;
 }
 
-function backupCard(backup) {
-  return `    <section class="set-card" data-find="backup-github">
-      <header><h3>GitHub</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
-      <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet.'}</p>
-      ${!backup.remote ? '<div class="set-row"><input class="set-input grow" id="backup-repository" value="leo-notes" aria-label="GitHub repository name"><button class="btn primary sm" data-action="backup-setup">Set up Backup</button></div><p class="set-note">Uses GitHub CLI. If needed, install gh from <a href="https://cli.github.com" target="_blank" rel="noopener noreferrer">cli.github.com</a> and sign in once with gh auth login.</p>' : ''}
-      <p class="hint">On quit also backs up notes and tasks when you close the leo window or quit leo.</p>
-      <label class="set-row" data-find="backup-push"><span class="set-label">Push changes</span><span class="select-control"><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select>${ICON.chevron}</span></label>
-    </section>
-`;
-}
 function drawSettings(page) {
   const fields = keepSettingsFields(), segments = keepSegmented();
   state.settings = page;
@@ -331,7 +333,6 @@ function drawSettings(page) {
   else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
   else if (section === 'felix') content = felixSettingsCards(state.margin, page);
   else if (section === 'calendar') content = calendarCard(state.calendar);
-  else if (section === 'backup') content = backupCard(page.backup);
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
   else if (section === 'updates') content = `<div id="app-updates">${updatesCard(desktopApp)}</div>`;
   else content = '';
@@ -512,21 +513,57 @@ app.addEventListener('change', (event) => {
   if (language) speechChange({ action: 'use', id: language.dataset.speechLanguage, language: language.value }).catch(fail);
 });
 
-async function showUsage() {
-  const box = sheet('<h3>Usage</h3><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn" data-action="usage">Refresh</button></div>');
+async function showUsage(trigger = null) {
+  const opener = trigger?.closest?.('.scrim') ? $('#menu') : trigger || document.activeElement;
+  const box = sheet('<header class="usage-head"><h3>Usage</h3><div class="usage-tools"><span aria-current="page">Limits</span><button type="button" class="btn plain sm" data-action="usage-refresh" disabled>Refresh</button><button type="button" class="btn plain sm" data-action="close">Close</button></div></header><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div>');
+  box.returnFocus = opener;
+  trapSheetFocus(box);
   box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
-  let saved = false;
   const mine = seq;
+  let saved = false, refreshing = true;
+  const live = () => mine === seq && box.isConnected && !box.classList.contains('scrim-gone');
+  const content = box.querySelector('.usage-content');
+  const refresh = async () => {
+    if (refreshing || !live()) return;
+    refreshing = true;
+    const button = box.querySelector('[data-action="usage-refresh"]');
+    const focused = document.activeElement === button;
+    button.disabled = true;
+    try {
+      const fresh = await api('/api/settings/usage', { method: 'POST' });
+      if (!live()) return;
+      content.innerHTML = codingPlans(fresh, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+      saved = true;
+    } catch (e) {
+      if (!live()) return;
+      if (!saved) content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
+      else {
+        content.querySelector('.usage-error')?.remove();
+        content.insertAdjacentHTML('beforeend', '<p class="hint usage-error" role="status">Refresh failed · showing saved usage</p>');
+      }
+    } finally {
+      refreshing = false;
+      if (live()) {
+        button.disabled = false;
+        if (focused && document.activeElement === document.body) button.focus();
+      }
+    }
+  };
+  box.addEventListener('click', event => {
+    const button = event.target.closest('[data-action="usage-refresh"]');
+    if (button && !refreshing) { button.focus(); refresh(); }
+  });
   try {
     const page = await api('/api/settings');
-    if (mine !== seq || !box.isConnected || box.classList.contains('scrim-gone')) return;
-    box.querySelector('.usage-content').innerHTML = codingPlans(page, false) || '<p class="hint">No coding accounts detected.</p>';
-    saved = true;
-    const fresh = await api('/api/settings/usage', { method: 'POST' });
-    if (mine !== seq || !box.isConnected || box.classList.contains('scrim-gone')) return;
-    box.querySelector('.usage-content').innerHTML = codingPlans(fresh, false) || '<p class="hint">No coding accounts detected.</p>';
+    if (!live()) return;
+    content.innerHTML = codingPlans(page, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+    saved = Boolean(page.plans?.length);
   } catch (e) {
-    if (mine === seq && box.isConnected && !box.classList.contains('scrim-gone')) { if (!saved) closeSheet(); fail(e); }
+    if (!live()) return;
+    content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
   }
+  refreshing = false;
+  if (live()) box.querySelector('[data-action="usage-refresh"]').disabled = false;
+  refresh();
 }

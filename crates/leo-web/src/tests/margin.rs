@@ -287,7 +287,7 @@ async fn a_read_saves_one_note_anchored_in_the_text() {
 
 #[tokio::test]
 async fn silence_is_a_success_and_saves_nothing() {
-    for answer in ["{}", "", "No note needed."] {
+    for answer in ["{}", "", "```json\n{}\n```"] {
         let (engine, calls) = reading(answer).await;
         let (id, version) = engine.note("Quiet", PASSAGE).await;
         let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
@@ -296,6 +296,33 @@ async fn silence_is_a_success_and_saves_nothing() {
         assert!(engine.get("/api/margin").await.1["problem"].is_null());
         let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
         assert!(view["threads"].as_array().unwrap().is_empty());
+        engine.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn malformed_reads_report_failure_instead_of_successful_silence() {
+    for answer in [
+        "No note needed.",
+        "{bad json}",
+        r#"{"quote":3,"text":"Hm."}"#,
+    ] {
+        let (engine, calls) = reading(answer).await;
+        let (id, version) = engine.note("Invalid", PASSAGE).await;
+        let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+        assert_eq!(status, 200);
+        assert_eq!(read["failed"], true);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            engine.get("/api/margin").await.1["problem"],
+            margin::PROBLEM
+        );
+        assert!(
+            engine.get(&format!("/api/notes/{id}/margin")).await.1["threads"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         engine.stop().await;
     }
 }

@@ -1,4 +1,3 @@
-mod backup;
 mod board_tools;
 mod boards;
 mod browse;
@@ -91,12 +90,6 @@ pub trait SettingsApi: Send + Sync {
     fn refresh_usage(&self) {}
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
-    fn setup_backup(&self, _notes: &std::path::Path, _name: &str) -> Result<String> {
-        anyhow::bail!("Backup setup is unavailable. Reopen Leo and try again.")
-    }
-    fn backup(&self, _notes_dir: &std::path::Path) -> Result<Option<std::process::Command>> {
-        Ok(None)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -218,8 +211,6 @@ struct AppState {
     speech: Option<Arc<dyn speech::SpeechApi>>,
     dictation: Option<Arc<dyn dictation::DictationApi>>,
     app_settings: Option<Arc<dyn app_settings::AppApi>>,
-    backups: Arc<backup::Backups>,
-    backup_setups: Arc<tokio::sync::Semaphore>,
     usage_refreshes: Arc<tokio::sync::Semaphore>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
@@ -285,7 +276,7 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
     let polling = path == "/api/activity"
         || matches!(
             path,
-            "/api/app" | "/api/dictation" | "/api/speech" | "/api/backup" | "/api/tasks"
+            "/api/app" | "/api/dictation" | "/api/speech" | "/api/tasks"
         )
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
@@ -485,8 +476,6 @@ pub(crate) struct Places {
 pub struct Running {
     port: u16,
     token: String,
-    notes: std::path::PathBuf,
-    runtime: tokio::runtime::Handle,
     state: AppState,
     stop: tokio::sync::oneshot::Sender<()>,
     server: tokio::task::JoinHandle<std::io::Result<()>>,
@@ -540,24 +529,14 @@ impl Running {
         self.state.usage.line()
     }
 
-    pub fn back_up(&self) {
-        let Some(settings) = self.state.settings.clone() else {
-            return;
-        };
-        let _entered = self.runtime.enter();
-        let _ = self.state.backups.queue(settings, self.notes.clone());
-    }
-
     pub async fn stop(self) {
         let Running {
-            notes,
             state,
             stop,
             server,
             background,
             ..
         } = self;
-        let settings = state.settings.clone();
         background.stop();
         let _ = stop.send(());
         shutdown::drain(shutdown::GRACE, server).await;
@@ -566,16 +545,6 @@ impl Running {
         drop(state);
         let cleanup = tokio::task::spawn_blocking(move || warm.clear());
         let _ = tokio::time::timeout(shutdown::CLEANUP, cleanup).await;
-        if let Some(settings) = settings {
-            let prepared = tokio::time::timeout(
-                shutdown::LAST_BACKUP,
-                tokio::task::spawn_blocking(move || settings.backup(&notes)),
-            )
-            .await;
-            if let Ok(Ok(Ok(Some(mut command)))) = prepared {
-                let _ = leo_core::children::quiet(&mut command).spawn();
-            }
-        }
     }
 }
 
@@ -653,8 +622,6 @@ pub(crate) async fn start_in(
         speech: powers.speech,
         dictation: powers.dictation,
         app_settings: powers.app_settings,
-        backups: Default::default(),
-        backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
         importer,
         imports: Default::default(),
@@ -708,8 +675,6 @@ pub(crate) async fn start_in(
     Ok(Running {
         port,
         token: options.token,
-        notes,
-        runtime: tokio::runtime::Handle::current(),
         state,
         stop,
         server,
@@ -749,12 +714,6 @@ async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/api/backup", get(backup::status).post(backup::leave))
-        .route(
-            "/api/backup/setup",
-            axum::routing::post(routes::settings::setup_backup)
-                .layer(axum::extract::DefaultBodyLimit::max(4096)),
-        )
         .route("/api/notes", get(list_notes).post(create_note))
         .route(
             "/api/notes/{id}",
@@ -1062,7 +1021,6 @@ mod activity_tests {
             "/api/app",
             "/api/dictation",
             "/api/speech",
-            "/api/backup",
             "/api/tasks",
             "/api/activity",
             "/api/record/r1",

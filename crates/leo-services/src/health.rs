@@ -180,41 +180,6 @@ pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool
     checks
 }
 
-/// The four steps of getting leo set up, as the setup screen lists them: AI
-/// for writing, AI for speech, recording, and backup. Cheap checks only — no
-/// request is sent and the microphone is not opened.
-pub fn setup_steps(
-    config: &Config,
-    store: &dyn SecretStore,
-    notes_dir: &std::path::Path,
-) -> Vec<Check> {
-    let named = |mut check: Check, what: &str| {
-        check.what = what.to_string();
-        check
-    };
-    let recording = Check::ready(
-        "Recording",
-        "recording lectures",
-        Some("built in; Enter checks the microphone".to_string()),
-    );
-    let backup = match (
-        leo_core::sync::is_initialized(notes_dir),
-        leo_core::sync::remote_url(notes_dir),
-    ) {
-        (true, Some(url)) => Check::ready("Backup to GitHub", "a copy in the cloud", Some(url)),
-        _ => Check::missing("Backup to GitHub", "a copy in the cloud", "not set up"),
-    };
-    vec![
-        named(chain_check(config, Chain::Chat, store), "AI for writing"),
-        named(
-            chain_check(config, Chain::Transcribe, store),
-            "AI for speech",
-        ),
-        recording,
-        backup,
-    ]
-}
-
 /// Which chain a check refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chain {
@@ -337,17 +302,6 @@ fn is_loopback(url: &str) -> bool {
     url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]")
 }
 
-/// The platform's install command for a tool, so the fix is copy-pasteable
-/// rather than "install git".
-pub(crate) fn install_hint(tool: &str) -> &'static str {
-    match (tool, cfg!(target_os = "macos"), cfg!(target_os = "windows")) {
-        ("git", true, _) => "xcode-select --install",
-        ("git", _, true) => "winget install Git.Git",
-        ("git", ..) => "sudo apt install git",
-        _ => "see the README",
-    }
-}
-
 /// Where credentials are kept, and whether the file is readable by anyone else.
 ///
 /// Worth reporting because the choice of a file over the keychain trades
@@ -436,7 +390,6 @@ mod tests {
             },
             transcribe: crate::config::provider::TaskChain { chain: vec![] },
             theme: Default::default(),
-            sync: Default::default(),
         }
     }
 
@@ -575,15 +528,6 @@ mod tests {
             !without.iter().any(|c| c.what == "microphone"),
             "screen capture probed the microphone"
         );
-    }
-
-    #[test]
-    fn install_hints_are_platform_specific() {
-        let hint = install_hint("git");
-        if cfg!(target_os = "macos") {
-            assert_eq!(hint, "xcode-select --install");
-        }
-        assert!(!hint.is_empty());
     }
 
     /// A port check must not hang, panic, or resolve DNS on nonsense input.

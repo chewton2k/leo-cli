@@ -7,9 +7,10 @@ entry point dispatches `--leo-speech-worker` before normal startup.
 
 `health::scan` converts doctor checks with external probes disabled to the native
 Health view. Writing CLI sign-in status is bounded and parsed to a boolean; its
-raw output never reaches the page. `WebSettings::setup_backup` validates repository
-names and refuses to replace an existing remote before invoking gh. Web runs it
-outside the notes lock and serializes setup requests.
+raw output never reaches the page. The host exposes no backup setup or push
+capability; existing user repositories are never changed by app lifecycle events.
+The browser-test engine has a real startup/session-gate integration test, so
+Cargo tests also produce the executable used by browser checks.
 
 The Usage sheet receives both coding accounts and their saved usage windows;
 detecting a signed-in CLI never changes the user's selected writer. Codex limit

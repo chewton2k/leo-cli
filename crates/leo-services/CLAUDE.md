@@ -164,7 +164,7 @@ or the optional keychain with `LEO_USE_KEYCHAIN=1`; tests use MemoryStore.
 
 `config/choice.rs` keeps writing model/effort choices and the single local
 speech entry. The full speech catalog reaches the page through `SpeechApi`,
-implemented in leo-host. `web_settings.rs` still owns writing and backup
+implemented in leo-host. `web_settings.rs` owns writing
 settings, validates changes against `choice`, and writes through `toml_edit`.
 
 `claude_code` and `codex` (kinds `ClaudeCode`/`Codex`, `ai/provider/agent_cli.rs`)
@@ -577,3 +577,6 @@ native window's visibility; false skips new preview passes only. Capture, durabl
 segments, final transcription, recovery and the recording activity guard are
 unchanged. An already-running preview finishes; showing the window permits the
 next pass. Dictation and callers without a preview flag retain their behavior.
+
+Git backup settings and Health checks are retired. Legacy `[sync]` is tolerated
+without effects or migration writes; unrelated TOML survives settings edits.

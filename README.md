@@ -61,7 +61,8 @@ The installer replaces the terminal command with the app launcher, so typing
 replaced by the desktop window.
 
 Your notes stay in the same folder. Leo reads the existing database, writing
-settings and backup repository; there is no export/import step. Keep the same
+settings; there is no export/import step. Built-in GitHub backup is retired;
+existing repositories and remotes stay untouched. Keep the same
 operating-system account and data location when switching.
 
 On first launch, allow microphone access for recording and Accessibility access

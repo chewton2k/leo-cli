@@ -1,5 +1,4 @@
-//! `leo doctor`: a full health scan of leo, the notes, the AI, recording and
-//! backup, grouped so a problem is found under the thing it affects.
+//! `leo doctor`: a full health scan of leo, notes, AI and recording.
 //!
 
 use std::path::Path;
@@ -25,8 +24,6 @@ pub struct Probe {
     pub ai: bool,
     /// Record a moment of audio to check the microphone is heard.
     pub microphone: bool,
-    /// Ask the backup remote whether it answers.
-    pub remote: bool,
     pub update: bool,
 }
 
@@ -35,7 +32,6 @@ impl Probe {
         Probe {
             ai: true,
             microphone: !crate::session::mic::disabled(),
-            remote: true,
             update: true,
         }
     }
@@ -68,10 +64,6 @@ pub fn scan(
         Section {
             title: "recording",
             checks: recording_checks(probe),
-        },
-        Section {
-            title: "backup",
-            checks: backup_checks(config, notes_dir, probe),
         },
     ]
 }
@@ -380,103 +372,6 @@ fn recording_checks(probe: Probe) -> Vec<Check> {
     checks
 }
 
-fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> {
-    use leo_core::sync;
-
-    if !health::on_path("git") {
-        return vec![Check::missing(
-            "git",
-            "backing up",
-            health::install_hint("git"),
-        )];
-    }
-    let mut checks = vec![Check::ready("git", "backing up", None)];
-
-    if !sync::is_initialized(notes_dir) {
-        checks.push(warn(
-            "backup",
-            "keeping a copy on GitHub",
-            "off — set it up in Settings, Backup".to_string(),
-        ));
-        return checks;
-    }
-    checks.push(Check::ready(
-        "backup",
-        "keeping a copy on GitHub",
-        Some("every save is committed".to_string()),
-    ));
-
-    match sync::remote_url(notes_dir) {
-        None => checks.push(warn(
-            "GitHub remote",
-            "keeping a copy on GitHub",
-            "none connected — connect one in Settings, Backup".to_string(),
-        )),
-        Some(url) if probe.remote => checks.push(match sync::remote_reachable(notes_dir) {
-            Ok(()) => Check::ready("GitHub remote", "keeping a copy on GitHub", Some(url)),
-            Err(e) => {
-                let mut c = Check::missing(
-                    "GitHub remote",
-                    "keeping a copy on GitHub",
-                    &format!(
-                        "check the address, and that `git push` works from this terminal:\n{url}"
-                    ),
-                );
-                c.detail = Some(e);
-                c
-            }
-        }),
-        Some(url) => checks.push(Check::ready(
-            "GitHub remote",
-            "keeping a copy on GitHub",
-            Some(url),
-        )),
-    }
-
-    if let Some(waiting) = sync::unpushed(notes_dir) {
-        checks.push(if waiting == 0 {
-            Check::ready(
-                "pushed",
-                "keeping a copy on GitHub",
-                Some("GitHub has everything".to_string()),
-            )
-        } else {
-            warn(
-                "pushed",
-                "keeping a copy on GitHub",
-                format!(
-                    "{waiting} change{} not on GitHub yet — the next backup pushes {}",
-                    if waiting == 1 { "" } else { "s" },
-                    if waiting == 1 { "it" } else { "them" }
-                ),
-            )
-        });
-    }
-
-    if let Some(changed) = sync::uncommitted(notes_dir) {
-        checks.push(if changed == 0 {
-            Check::ready("uncommitted changes", "keeping a copy on GitHub", None)
-        } else {
-            warn(
-                "uncommitted changes",
-                "keeping a copy on GitHub",
-                format!(
-                    "{changed} file{} changed outside leo; the next save or backup commits {}",
-                    if changed == 1 { "" } else { "s" },
-                    if changed == 1 { "it" } else { "them" }
-                ),
-            )
-        });
-    }
-
-    checks.push(Check::ready(
-        "automatic backup",
-        "keeping a copy on GitHub",
-        Some(config.sync.auto_push.label().to_string()),
-    ));
-    checks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -618,7 +513,7 @@ mod tests {
             quiet(),
         );
         let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
-        assert_eq!(titles, ["leo", "notes", "AI", "recording", "backup"]);
+        assert_eq!(titles, ["leo", "notes", "AI", "recording"]);
         assert!(matches!(
             meaning_check(crate::providers::ModelState::Missing).state,
             State::Warn { ref note } if note.contains("leo update")
@@ -689,66 +584,6 @@ mod tests {
         assert!(check(section(&sections, "leo"), "config file")
             .state
             .is_ready());
-    }
-
-    /// Backup is optional, so not having it is worth a mention, not a failure.
-    #[test]
-    fn backup_being_off_is_a_note_not_a_failure() {
-        let (_tmp, notes, config) = setup();
-        std::fs::create_dir_all(&notes).unwrap();
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
-        let b = check(section(&sections, "backup"), "backup");
-        match &b.state {
-            State::Warn { note } => assert!(note.contains("Settings, Backup"), "{note}"),
-            other => panic!("expected a note, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_backup_remote_is_checked_and_what_is_waiting_is_counted() {
-        let (tmp, notes, config) = setup();
-        let remote = tmp.path().join("remote.git");
-        assert!(std::process::Command::new("git")
-            .args(["init", "--bare", "-q"])
-            .arg(&remote)
-            .status()
-            .unwrap()
-            .success());
-        std::fs::create_dir_all(&notes).unwrap();
-        leo_core::sync::connect(&notes, remote.to_str().unwrap()).unwrap();
-        std::fs::write(notes.join("new.md"), "x").unwrap();
-
-        let probe = Probe {
-            remote: true,
-            ..Probe::default()
-        };
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            probe,
-        );
-        let backup = section(&sections, "backup");
-        assert!(
-            check(backup, "GitHub remote").state.is_ready(),
-            "{:?}",
-            backup.checks
-        );
-        assert!(
-            matches!(
-                check(backup, "uncommitted changes").state,
-                State::Warn { .. }
-            ),
-            "{:?}",
-            backup.checks
-        );
     }
 
     #[test]

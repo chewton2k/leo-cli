@@ -372,10 +372,18 @@ pub(crate) async fn read(
             return failed(&state);
         }
     };
-    state.margin.set_problem(None);
-    let Some(found) = margin::parsed(&reply) else {
-        return silent();
+    let found = match margin::parsed(&reply) {
+        margin::ReadAnswer::Silent => {
+            state.margin.set_problem(None);
+            return silent();
+        }
+        margin::ReadAnswer::Note(found) => found,
+        margin::ReadAnswer::Invalid => {
+            state.margin.forget_blocks(&id, &blocks);
+            return failed(&state);
+        }
     };
+    state.margin.set_problem(None);
     let now = match open_note(&state, &id).await {
         Ok(now) => now,
         Err(_) => return silent(),

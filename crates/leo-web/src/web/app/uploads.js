@@ -100,7 +100,7 @@ function drawPicked() {
 // default; from the rail or a folder a new note is. Either way, on a note the
 // sheet offers both.
 async function uploadSheet(files, into, { add = false } = {}) {
-  const here = into !== undefined ? into : state.view === 'folder' ? state.dir : state.view === 'note' ? state.dir || '' : '';
+  const here = creationDir(into);
   const open = state.view === 'note' && state.session && state.session.note && state.session.note.id ? state.session.note : null;
   uploadNote = open ? { id: open.id, title: open.title || 'Untitled' } : null;
   const where = uploadNote ? `<div class="upload-where">${segmented({ label: 'Where it goes', choices: [['add', 'Add to this note'], ['new', 'New note']], current: add ? 'add' : 'new', field: 'id="upload-where"' })}<p class="hint">Adding puts what the AI writes at the end of “${esc(uploadNote.title)}”, under its own heading.</p></div>` : '';
@@ -237,7 +237,7 @@ function watchUpload(id, dir, into = null) {
       if (many) toast(`Your ${job.notes.length} notes from the upload are ready.`, { action: 'Open folder', run: () => go(folderHash(dir)) });
       else toast('Your note from the upload is ready.', { action: 'Open', run: () => go(noteHash(job.note)) });
     }
-    if (many && open && state.view === 'folder' && (state.dir || '') === dir) await showLatest().catch(() => {});
+    if (many && open && state.view === 'workspace' && (state.dir || '') === dir) await showLatest().catch(() => {});
   }, 900);
 }
 
@@ -282,7 +282,7 @@ async function addSection(into, section) {
 
 async function showLatest() {
   if ($('.scrim')) return;
-  if (state.view === 'folder' && !state.selecting) await showFolder(state.dir);
+  if (state.view === 'workspace') await loadSideFolders();
   else if (state.view === 'search') await render();
 }
 
