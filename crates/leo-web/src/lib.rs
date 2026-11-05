@@ -64,8 +64,8 @@ use leo_core::store::Store;
 
 use crate::routes::activity::activity;
 use crate::routes::assets::{
-    app_js, chat_js, doc_js, editing_js, favicon, graph_js, index, markdown_js, recorder_js,
-    recording_js, saving_js,
+    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recorder_js, recording_js,
+    saving_js,
 };
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
@@ -75,7 +75,6 @@ use crate::routes::felix::{
     steer_answer,
 };
 use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
-use crate::routes::map::{build_graph, get_graph, graph_status};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
     move_note, rename_dir, search_notes, toggle_checkbox, update_note,
@@ -316,7 +315,6 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
             path,
             "/api/app" | "/api/dictation" | "/api/speech" | "/api/backup" | "/api/tasks"
         )
-        || path == "/api/graph/status"
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
     !(method == axum::http::Method::GET && polling)
@@ -929,7 +927,6 @@ fn router(state: AppState) -> Router {
         .route("/editing.js", get(editing_js))
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))
-        .route("/graph.js", get(graph_js))
         .route("/schedule.js", get(routes::assets::schedule_js))
         .route("/margin.js", get(routes::assets::margin_js))
         .route("/theme.js", get(routes::assets::theme_js))
@@ -1106,9 +1103,6 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/notes/{id}/originals.zip", get(originals_zip))
         .route("/api/notes/{id}/originals/{name}", get(get_original))
-        .route("/api/graph", get(get_graph))
-        .route("/api/graph/status", get(graph_status))
-        .route("/api/graph/build", post(build_graph))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -1186,7 +1180,6 @@ mod activity_tests {
             "/api/backup",
             "/api/tasks",
             "/api/activity",
-            "/api/graph/status",
             "/api/record/r1",
             "/api/import/j1",
         ] {

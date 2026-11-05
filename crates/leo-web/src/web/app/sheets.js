@@ -107,7 +107,6 @@ const QUICK_PLACES = [
   { name: 'Calendar', hash: '#/calendar', icon: 'calendar' },
   { name: 'Boards', hash: '#/boards', icon: 'board' },
   { name: 'Interview practice', hash: '#/interviews', icon: 'chat' },
-  { name: 'Knowledge graph', hash: '#/map', icon: 'map' },
   { name: 'Record', hash: '#/record', icon: 'mic' },
   { name: 'Trash', hash: '#/trash', icon: 'trash' },
   { name: 'Storage', hash: '#/settings/storage', icon: 'storage' },
@@ -313,7 +312,6 @@ function menu() {
     <button class="list-row" data-action="interviews">${ICON.chat}<span class="grow">Interview practice</span></button>
     <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span>${tasksDueBadge()}</button>
     <button class="list-row" data-action="boards">${ICON.board}<span class="grow">Boards</span></button>
-    <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
     <button class="list-row" data-action="storage">${ICON.storage}<span class="grow">Storage</span></button>

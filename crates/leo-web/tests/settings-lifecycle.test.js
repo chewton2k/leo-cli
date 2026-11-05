@@ -38,6 +38,6 @@ test('the note footer keeps its note tools without the bottom Ask button', () =>
   vm.createContext(context);
   vm.runInContext(script, context);
   const html = context.noteActions('note-id', true);
-  assert.doesNotMatch(html, /data-action="ask-selection"/);
-  for (const name of ['Graph', 'Transcript', 'Tasks', 'Picture', 'Move', 'PDF', 'Delete']) assert.ok(html.includes('aria-label="' + name + '"'));
+  assert.doesNotMatch(html, /data-action="(?:ask-selection|note-map)"/);
+  for (const name of ['Transcript', 'Tasks', 'Picture', 'Move', 'PDF', 'Delete']) assert.ok(html.includes('aria-label="' + name + '"'));
 });

@@ -91,11 +91,6 @@ keep tasks close by.
 
 ![Leo's note library with folder cards, note previews, and a tasks panel](public/notes-library.png)
 
-**Find connections.** Explore how ideas relate across your notes and classes,
-with explanations for each connection.
-
-![Knowledge graph linking notes across classes with explanations in a side panel](public/knowledge-graph.png)
-
 **Practice and study with Felix.** Prepare for coding, system design, and other
 interviews, track your progress, or study your notes with questions and feedback.
 

@@ -8,7 +8,6 @@ pub(crate) mod felix;
 pub(crate) mod housekeeping;
 pub(crate) mod insert;
 pub(crate) mod interviews;
-pub(crate) mod map;
 pub(crate) mod margin;
 pub(crate) mod notes;
 pub(crate) mod organize;

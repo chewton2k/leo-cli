@@ -1701,7 +1701,7 @@
       const info = modeInfo();
       const where = onNote() ? 'this note' : 'your notes';
       return `<div class="chat-hello" data-hello="${escape(`${state.id}:${state.mode}:${where}`)}">
-        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${info.hint}. I also read ${where}, and the notes connected to it in your knowledge graph.`, escape)}</p>
+        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${info.hint}. I also read ${where}, and the notes connected to it.`, escape)}</p>
         ${reviewCard()}
         <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}
