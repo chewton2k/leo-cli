@@ -581,6 +581,35 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
 const newButton = (dir, { note = true } = {}) => `<div class="fabs"><button class="fab ghost" data-action="record" data-dir="${esc(dir)}" aria-label="Record" title="Record a lecture or meeting">${ICON.mic}<span>Record</span></button><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button>${note ? `<button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button>` : ''}</div>`;
 const newCard = (dir) => `<button class="card new-card" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}"><span class="new-card-icon">${ICON.plus}</span><span class="new-card-label">New note</span></button>`;
 
+const CRUMB_EDGES = ['.note-columns > .note', '.library-tools', '.cal-head', '.kanban-head'];
+
+function fitCrumbs() {
+  const body = document.body;
+  const row = $('#bar .bar-row');
+  const target = !body.classList.contains('on-settings') && row ? CRUMB_EDGES.map((selector) => app.querySelector(selector)).find(Boolean) : null;
+  const box = target && target.getBoundingClientRect();
+  if (!box || !box.width) {
+    if (body.classList.contains('crumb-fit')) body.classList.remove('crumb-fit');
+    return;
+  }
+  const edge = getComputedStyle(target);
+  const left = box.left + (parseFloat(edge.paddingLeft) || 0);
+  const right = box.right - (parseFloat(edge.paddingRight) || 0);
+  const bar = $('#bar');
+  const start = bar.getBoundingClientRect().left + (parseFloat(getComputedStyle(bar).paddingLeft) || 0);
+  body.style.setProperty('--crumb-shift', `${Math.max(0, Math.round(left - start))}px`);
+  body.style.setProperty('--crumb-width', `${Math.max(0, Math.round(right - left))}px`);
+  if (!body.classList.contains('crumb-fit')) body.classList.add('crumb-fit');
+}
+
+if (typeof MutationObserver === 'function') {
+  new MutationObserver(fitCrumbs).observe(app, { childList: true });
+  new MutationObserver(fitCrumbs).observe(app, { attributes: true, subtree: true, attributeFilter: ['data-margin'] });
+  new MutationObserver(fitCrumbs).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
+if (typeof ResizeObserver === 'function') new ResizeObserver(fitCrumbs).observe(app);
+window.addEventListener('resize', fitCrumbs);
+
 async function showFolder(dir) {
   const mine = ++seq;
   const arrived = state.view === 'folder' && state.dir !== dir;

@@ -153,7 +153,7 @@ a { color: var(--accent); }
 }
 .bar.scrolled::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .bar::after { transition: none; } }
-.bar-row { max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 6px; min-height: var(--bar-row-height); }
+.bar-row { max-width: 728px; margin: 0 auto; display: flex; align-items: center; gap: 6px; min-height: var(--bar-row-height); }
 .brand { font-weight: 750; font-size: 20px; letter-spacing: -.02em; border: 0; background: none; padding: 4px 6px 4px 2px; }
 .crumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 15px; }
 .crumbs button { border: 0; background: none; padding: 4px 6px; border-radius: 8px; color: var(--muted); max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
@@ -331,7 +331,7 @@ body.on-library main, body.on-interviews main:not(:has(.interview-practice)) { p
 .library-choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .library-none { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 2px; color: var(--muted); }
 .library-none p { margin: 0; }
-.library-cards.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 16px; }
+.library-cards.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 340px)); justify-content: center; gap: 16px; }
 .library-cards .card { display: flex; flex-direction: column; position: relative; min-width: 0; }
 .library-cards .card-title { justify-content: space-between; }
 .library-cards .card-snippet { margin-top: 6px; }
@@ -1130,8 +1130,10 @@ html[data-app="mac"] .side-fold { position: fixed; z-index: 1; left: 76px; top: 
 .side-count { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .side-none { margin: 2px 10px 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .side-row .felix { width: 22px; height: auto; flex: none; margin: 0 -1px; }
+body.on-calendar #crumbs .page-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .page-name { display: none; color: var(--text); font-weight: 650; font-size: 16px; padding: 4px 6px; }
 @media (min-width: 1000px) { .page-name { display: inline; } }
+body.crumb-fit .bar-row { width: var(--crumb-width); max-width: none; margin-left: var(--crumb-shift); margin-right: 0; }
 body.side-mini .side { grid-template-columns: 52px; }
 body.side-mini .side-explorer, body.side-mini .side-head .brand { display: none; }
 body.side-folding { transition: --side 180ms cubic-bezier(.2, .8, .2, 1); }
@@ -2397,7 +2399,8 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 .quiz-hint > :first-child { margin-top: 0; }
 .quiz-hint > :last-child { margin-bottom: 0; }
 
-body.on-interviews main, body.on-interviews .bar-row, body.on-interviews .search { max-width: 1200px; }
+body.on-interviews main, body.on-interviews .search { max-width: 1200px; }
+body.on-interviews .bar-row { max-width: 1168px; }
 body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-practice { max-width: none; container: interview / inline-size; }
 .interview-problems { position: relative; z-index: 4; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }

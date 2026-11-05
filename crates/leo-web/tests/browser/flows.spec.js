@@ -6254,6 +6254,22 @@ test('a picture in a note can be resized by dragging its corner, and keeps that 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('the header starts where each page\'s content starts, in a wide window', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const note = await (await page.request.post('/api/notes', { data: { title: `Edge ${Date.now().toString(36)}`, body: 'A line.' } })).json();
+  const board = await (await page.request.post('/api/boards', { data: { name: 'Edge' } })).json();
+  const header = async () => (await page.locator('.bar-row').boundingBox()).x;
+  const left = async (selector) => page.locator(selector).first().evaluate((el) => el.getBoundingClientRect().left + (parseFloat(getComputedStyle(el).paddingLeft) || 0));
+  for (const [hash, selector] of [['#/', '.library-tools'], [`#/n/${note.id}`, '.note-columns > .note'], ['#/calendar', '.cal-head'], ['#/boards', '.kanban-head'], ['#/record', 'main']]) {
+    await page.goto('/' + hash);
+    await expect(page.locator(selector).first()).toBeVisible();
+    await expect.poll(async () => Math.abs((await header()) - (selector === 'main' ? (await left('main')) : await left(selector))), { message: hash }).toBeLessThanOrEqual(1);
+  }
+  await page.request.delete(`/api/notes/${note.id}`);
+  await page.request.delete(`/api/boards/${board.id}`);
+});
+
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
   await page.setViewportSize({ width: 2000, height: 900 });
@@ -6267,7 +6283,9 @@ test('notes read wide by default, and Settings can make them comfortable or full
     check(await width());
   }
   await page.goto('/#/');
-  expect((await page.locator('main').boundingBox()).width, 'the library keeps its own width').toBeLessThanOrEqual(1080);
+  await expect(page.locator('.library-tools')).toBeVisible();
+  const content = await page.locator('main').evaluate((main) => { const cs = getComputedStyle(main); return main.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); });
+  expect(content, 'the library keeps its own width').toBeLessThanOrEqual(1080);
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
@@ -7312,9 +7330,20 @@ for (const width of [1280, 390]) {
       const header = await page.locator('.bar-row').boundingBox();
       expect(header.width).toBeLessThanOrEqual(760);
       if (reference) {
-        expect(header.x).toBeCloseTo(reference.x, 0);
-        expect(header.width).toBeCloseTo(reference.width, 0);
+        if (width < 1000) {
+          expect(header.x).toBeCloseTo(reference.x, 0);
+          expect(header.width).toBeCloseTo(reference.width, 0);
+        }
         expect(header.height).toBeCloseTo(reference.height, 0);
+      }
+      if (width >= 1000) {
+        const edge = await page.evaluate(() => {
+          const section = document.querySelector('.settings-section');
+          if (section) return section.getBoundingClientRect().left;
+          const main = document.querySelector('main');
+          return main.getBoundingClientRect().left + parseFloat(getComputedStyle(main).paddingLeft);
+        });
+        expect(header.x, 'the header starts where the page content starts').toBeCloseTo(edge, 0);
       }
       reference = header;
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
