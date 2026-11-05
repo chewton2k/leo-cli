@@ -26,43 +26,6 @@ pub fn powers() -> leo_web::Powers {
         },
     );
     leo_web::Powers {
-        python: Some(leo_web::Runtime {
-            dir: leo_services::pyodide::dir(),
-            ready: std::sync::Arc::new(leo_services::pyodide::ready),
-            fetch: std::sync::Arc::new(|| leo_services::pyodide::fetch().map(|_| ())),
-        }),
-        cpp: Some(leo_web::Runtime {
-            dir: leo_services::clang::dir(),
-            ready: std::sync::Arc::new(leo_services::clang::ready),
-            fetch: std::sync::Arc::new(|| leo_services::clang::fetch().map(|_| ())),
-        }),
-        go: Some(leo_web::Runtime {
-            dir: leo_services::runtimes::dir(&leo_services::runtimes::GO),
-            ready: std::sync::Arc::new(|| {
-                leo_services::runtimes::ready(&leo_services::runtimes::GO)
-            }),
-            fetch: std::sync::Arc::new(|| {
-                leo_services::runtimes::fetch(&leo_services::runtimes::GO).map(|_| ())
-            }),
-        }),
-        rust: Some(leo_web::Runtime {
-            dir: leo_services::runtimes::dir(&leo_services::runtimes::RUST),
-            ready: std::sync::Arc::new(|| {
-                leo_services::runtimes::ready(&leo_services::runtimes::RUST)
-            }),
-            fetch: std::sync::Arc::new(|| {
-                leo_services::runtimes::fetch(&leo_services::runtimes::RUST).map(|_| ())
-            }),
-        }),
-        java: Some(leo_web::Runtime {
-            dir: leo_services::runtimes::dir(&leo_services::runtimes::JAVA),
-            ready: std::sync::Arc::new(|| {
-                leo_services::runtimes::ready(&leo_services::runtimes::JAVA)
-            }),
-            fetch: std::sync::Arc::new(|| {
-                leo_services::runtimes::fetch(&leo_services::runtimes::JAVA).map(|_| ())
-            }),
-        }),
         writer: Some(writer),
         quick: Some(crate::felix::writer(
             std::sync::Arc::clone(&usage),
