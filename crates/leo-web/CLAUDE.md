@@ -23,7 +23,7 @@ reader, seer, meaning, web, room, speech).
 - Everything leo-web computes or keeps besides notes and uploads lives in one
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
-  meaning vectors, the knowledge graph, calendar feeds, note-task metadata,
+  meaning vectors, note connections, calendar feeds, note-task metadata,
   reading positions, interviews. Old JSON files are brought in on first open
   and renamed `*.before-database`. Writes touch only what changed.
 
@@ -838,21 +838,13 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   (22/24/24 mm), so the PDF is the same on any screen; `beforeprint` also
   marks anything else `position: fixed` with `data-print-off`.
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
-  top). On the knowledge graph the dock moves right of the map tools
-  (`body.on-map .dock`) so zoom and Tidy stay reachable.
+  top).
 
-## Knowledge graph (`graph.rs`, `graph.js`; "map" in code)
+## Note connections (`graph.rs`; "map" in storage)
 
-Summaries and concepts per note, links between note groups (only group pairs
-with meaning neighbours), cached in leo.db; builds follow the model's room
-(`Scale::for_room`, parallel requests) and keep themselves current when idle
-(`keep_graph_current`: 2 min idle, retry after 10 min). A tick whose note
-fingerprint (`Store::fingerprint`) matches one where meaning vectors, the graph
-(`Graphs::settled`) and captions had nothing left to do skips that stage, and
-the "is the meaning model there?" probe (`embed(&[])`) checks files without
-loading it, so the model can unload after 60 s. Canvas view styled on
-Obsidian's graph; Tidy up reduces crossings. Pictures get one-time captions in
-the same idle loop.
+Embeddings, summaries, concepts and note links remain shared by search, related
+notes and Felix, and refresh when idle. The graph page, canvas renderer and
+`/api/graph*` routes were removed; connection caches stay intact.
 
 ## Calendar and tasks (`calendar.rs`, `ics.rs`, `tasks.rs`, `routes/tasks.rs`, `app/calendar.js`, `schedule.js`)
 

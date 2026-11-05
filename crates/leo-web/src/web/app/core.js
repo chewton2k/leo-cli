@@ -1,3 +1,4 @@
+const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const md = window.leoMarkdown;
 const leoDoc = window.leoDoc;
 const felix = window.leoChat;
@@ -429,7 +430,7 @@ function card(note, { words = [], showFolder = false, pick = null, why = null, b
     ${browse ? `<div class="note-thumb" data-id="${esc(note.id)}" data-pending="true" inert aria-hidden="true"></div>` : ''}
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
-    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary in the knowledge graph'}</div>` : ''}
+    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}”` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary'}</div>` : ''}
     <div class="card-meta">${where}<span title="${esc(`Edited ${rel(note.updated_at)}`)}">${browse ? esc(new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : rel(note.updated_at)}</span>${progress(note)}</div>
   </div>`;
 }
@@ -532,7 +533,6 @@ function goBack(hash) {
 function back() {
   const practice = interviewPage;
   if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) goBack('#/interviews'); }).catch(fail);
-  if (state.view === 'map' && state.focus) return goBack(noteHash(state.focus));
   if (state.view === 'storage' && /^#\/settings\/storage(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
   if (state.view === 'note') return goBack(folderHash(state.dir || ''));
@@ -540,7 +540,7 @@ function back() {
   goBack('#/');
 }
 
-const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', map: 'Knowledge graph', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
+const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -823,7 +823,6 @@ async function showPassage(note, name, at) {
 
 function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
-      ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
       ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
       ${id ? `<button data-action="note-tasks">${ICON.calendar}<span>Tasks</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
@@ -918,7 +917,7 @@ async function showSearch(query) {
   chrome({});
   openSearch(query);
   if (!query.trim()) {
-    app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas in the knowledge graph. Abbreviations like BFS work too.');
+    app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas. Abbreviations like BFS work too.');
     return;
   }
   const results = await api(`/api/search?q=${enc(query)}&brief=true`);

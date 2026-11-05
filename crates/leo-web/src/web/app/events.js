@@ -272,7 +272,6 @@ async function render() {
   document.body.classList.toggle('on-note', kind === 'n' || kind === 'new');
   if (library.observer) library.observer.disconnect();
   if (kind !== 'search') closeSearch();
-  if (kind !== 'map') leaveMap();
   if (kind !== 'n') chat.setContext(null);
   if (kind !== 'record') recorder.leave();
   if (kind !== 'boards') leaveBoards();
@@ -284,7 +283,6 @@ async function render() {
     else if (kind === 'new') await newNote(arg);
     else if (kind === 'search') await showSearch(arg);
     else if (kind === 'trash') await showTrash();
-    else if (kind === 'map') await showMap(arg);
     else if (kind === 'calendar') await showCalendar();
     else if (kind === 'boards') await showBoards(arg);
     else if (kind === 'interviews') await showInterviews(arg);

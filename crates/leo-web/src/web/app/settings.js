@@ -1,6 +1,6 @@
 const TASK_TITLE = { writing: 'AI for writing', speech: 'AI for speech' };
 const TASK_USE = {
-  writing: 'Turns recordings into notes, answers @leo questions, powers Felix and the knowledge graph.',
+  writing: 'Turns recordings into notes, answers @leo questions, powers Felix and note connections.',
   speech: 'Turns what was said into text while you record.',
 };
 

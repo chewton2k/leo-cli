@@ -126,8 +126,7 @@ question on a line, and the answer appears under it.
 ## Finding and organising
 
 Search finds words and meaning. Drag notes onto folders to move them, or drop
-one note on another to combine them. The knowledge graph shows how notes
-connect.
+one note on another to combine them. Felix can follow connections between notes.
 
 ## Where things live
 

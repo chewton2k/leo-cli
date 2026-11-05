@@ -123,7 +123,6 @@ function drawSide() {
         ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
         ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
         ${sideRow('boards', ICON.board, 'Boards', { on: here === 'boards', hint: 'Boards · track tasks from To do to Done' })}
-        ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
         ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(actionDir)}"` })}
         ${sideRow('upload', ICON.upload, 'Note from a file', { attrs: ` data-dir="${esc(actionDir)}"` })}
       </nav>

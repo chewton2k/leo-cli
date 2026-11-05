@@ -8,7 +8,6 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/core.js"),
     include_str!("../web/app/browse.js"),
     include_str!("../web/app/trash.js"),
-    include_str!("../web/app/map.js"),
     include_str!("../web/app/settings-navigation.js"),
     include_str!("../web/app/select-menu.js"),
     include_str!("../web/app/settings.js"),
@@ -37,7 +36,6 @@ pub(crate) const MERMAID_PATH: &str = "/vendor/mermaid-11.4.1.js";
 const EDITING_JS: &str = include_str!("../web/editing.js");
 const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
-const GRAPH_JS: &str = include_str!("../web/graph.js");
 const SCHEDULE_JS: &str = include_str!("../web/schedule.js");
 const THEME_JS: &str = include_str!("../web/theme.js");
 const RUNNER_HTML: &str = include_str!("../web/runner.html");
@@ -265,10 +263,6 @@ pub(crate) async fn saving_js() -> Response {
 
 pub(crate) async fn doc_js() -> Response {
     javascript(DOC_JS)
-}
-
-pub(crate) async fn graph_js() -> Response {
-    javascript(GRAPH_JS)
 }
 
 pub(crate) async fn runner_html() -> Response {
