@@ -308,7 +308,7 @@ async function dismissContent(elements) {
       { opacity: 0, transform: 'translateY(6px) scale(.98)' },
     ], { duration: MOTION_MS, easing: EASE_OUT }).finished.catch(() => {})));
   }
-  for (const el of live) el.remove();
+  flipList(app, LIBRARY_ITEMS, libraryKey, () => { for (const el of live) el.remove(); });
 }
 
 function stopSlide(el) {
@@ -665,13 +665,16 @@ function folderKeys() {
   return [...dirs.map((d) => `d:${dir ? `${dir}/${d.name}` : d.name}`), ...notes.map((n) => `n:${n.id}`)];
 }
 
+const LIBRARY_ITEMS = '.library-cards > .card[data-id], .library-cards > .card[data-key], .folders > .folder[data-dir]';
+const libraryKey = (el) => el.dataset.key || (el.dataset.id ? `n:${el.dataset.id}` : `d:${el.dataset.dir}`);
+
 function drawFolder() {
   const keys = folderKeys();
   const here = `${state.dir}|${library.view}`;
   const same = drawn.library && drawn.library.here === here && !sameKeys(drawn.library.keys, keys);
   drawn.library = { here, keys };
   if (!same) return paintFolder();
-  return flipList(app, '.library-cards > .card[data-id], .folders > .folder[data-dir]', (el) => el.dataset.id || `d:${el.dataset.dir}`, paintFolder);
+  return flipList(app, LIBRARY_ITEMS, libraryKey, paintFolder);
 }
 
 function paintFolder() {

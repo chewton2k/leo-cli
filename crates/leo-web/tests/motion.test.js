@@ -10,7 +10,7 @@ test('removal motion finishes before removing content, and reduced motion skips 
   for (const reduced of [false, true]) {
     let complete, removed = 0, animated = 0;
     const element = { isConnected: true, remove: () => removed++, animate: () => { animated++; return { finished: new Promise(resolve => { complete = resolve; }) }; } };
-    const context = { stillMotion: () => reduced, MOTION_MS: 180, EASE_OUT: 'ease-out' };
+    const context = { stillMotion: () => reduced, MOTION_MS: 180, EASE_OUT: 'ease-out', app: {}, LIBRARY_ITEMS: '', libraryKey: () => '', flipList: (root, selector, key, change) => change() };
     vm.createContext(context);
     vm.runInContext(core.slice(core.indexOf('async function dismissContent'), core.indexOf('function stopSlide')), context);
     const pending = context.dismissContent([element]);
