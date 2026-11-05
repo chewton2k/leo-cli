@@ -1388,7 +1388,7 @@ async function openTaskAnywhere(id, on = null) {
   taskSheet(id, on);
 }
 
-var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, tasks: null, finished: new Map(), revision: 0, load: 0 };
+var tasksWin = { folded: false, timer: 0, tasks: null, finished: new Map(), revision: 0, load: 0 };
 const TASKS_FOLDED = 'leo-tasks-folded';
 const TASKS_AHEAD_DAYS = 7;
 const TASK_DONE_MS = 1200;
@@ -1478,8 +1478,6 @@ function tasksDueBadge() {
 }
 
 function drawTasksWindow() {
-  const practice = /^#\/interviews\/([a-zA-Z0-9-]{8,64})$/.exec(location.hash)?.[1] || '';
-  if (practice !== tasksWin.practice) { tasksWin.practice = practice; tasksWin.practiceFolded = true; }
   const folded = tasksFolded();
   const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
   const groups = tasksGroups(tasks, true);
@@ -1517,12 +1515,11 @@ function drawTasksWindow() {
 }
 
 function tasksFolded() {
-  if (tasksWin.practice) return Boolean(tasksWin.practiceFolded);
   return Boolean(tasksWin.folded || (tasksWin.cramped && !tasksWin.opened));
 }
 
 function fitTasksWindow() {
-  const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card') || app.querySelector('.interview-tracks');
+  const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card');
   const box = tasksBox.hidden ? null : dock().getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
   const over = Boolean(card && card.left < box.right && card.top + scrollY < box.bottom);
@@ -1537,7 +1534,7 @@ function fitTasksWindow() {
   const cramped = over && room < TASKS_LEAST_ROOM;
   if (cramped !== Boolean(tasksWin.cramped)) {
     tasksWin.cramped = cramped;
-    if (!tasksWin.practice) drawTasksWindow();
+    drawTasksWindow();
   }
 }
 
@@ -1545,16 +1542,12 @@ new MutationObserver(fitTasksWindow).observe(app, { childList: true });
 window.addEventListener('resize', fitTasksWindow);
 
 function setTasksFolded(folded) {
-  if (tasksWin.practice) {
-    tasksWin.practiceFolded = folded;
-  } else {
-    tasksWin.opened = !folded;
-    if (!(folded && tasksWin.cramped && !tasksWin.folded)) {
-      tasksWin.folded = folded;
-      try {
-        localStorage.setItem(TASKS_FOLDED, folded ? '1' : '0');
-      } catch (e) {}
-    }
+  tasksWin.opened = !folded;
+  if (!(folded && tasksWin.cramped && !tasksWin.folded)) {
+    tasksWin.folded = folded;
+    try {
+      localStorage.setItem(TASKS_FOLDED, folded ? '1' : '0');
+    } catch (e) {}
   }
   drawTasksWindow();
   tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });

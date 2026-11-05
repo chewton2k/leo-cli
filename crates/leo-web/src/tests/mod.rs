@@ -144,7 +144,3 @@ fn json_of(response: Response) -> serde_json::Value {
     let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
 }
-
-pub(crate) fn state_for_python() -> (AppState, tempfile::TempDir, Vec<String>) {
-    state_with(&[])
-}

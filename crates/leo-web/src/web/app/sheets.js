@@ -106,7 +106,6 @@ const QUICK_PLACES = [
   { name: 'Notes', hash: '#/', icon: 'note' },
   { name: 'Calendar', hash: '#/calendar', icon: 'calendar' },
   { name: 'Boards', hash: '#/boards', icon: 'board' },
-  { name: 'Interview practice', hash: '#/interviews', icon: 'chat' },
   { name: 'Record', hash: '#/record', icon: 'mic' },
   { name: 'Trash', hash: '#/trash', icon: 'trash' },
   { name: 'Storage', hash: '#/settings/storage', icon: 'storage' },
@@ -309,7 +308,6 @@ function menu() {
     <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
-    <button class="list-row" data-action="interviews">${ICON.chat}<span class="grow">Interview practice</span></button>
     <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span>${tasksDueBadge()}</button>
     <button class="list-row" data-action="boards">${ICON.board}<span class="grow">Boards</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>

@@ -17,6 +17,7 @@ fn the_editor_helpers_pass_their_tests() {
 fn the_chat_with_felix_passes_its_tests() {
     run_node_tests("chat.test.js");
     run_node_tests("study-survival.test.js");
+    run_node_tests("retirement.test.js");
 }
 
 #[test]

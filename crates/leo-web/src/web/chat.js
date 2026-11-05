@@ -31,11 +31,6 @@
       { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
       { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
     ] },
-    { id: 'interview', label: 'Interview', hint: 'Practise coding, system design, hardware or a role-specific interview with a workspace and feedback', starters: [
-      { text: 'Help me set up interview practice', ask: 'What kind of interview are you preparing for?' },
-      { text: 'Research interviews for my target company', ask: 'Which company and role are you preparing for?' },
-      { text: 'Plan my interview practice', ask: 'What is your interview date and weekly practice time?' },
-    ] },
   ];
   const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
   const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
@@ -290,7 +285,7 @@
 
   function usageRows(rows) {
     if (!Array.isArray(rows)) return [];
-    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick interview reviews and preparation', margin_read: 'Reading along' };
+    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick checks', margin_read: 'Reading along' };
     const count = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0;
     const number = (value) => count(value).toLocaleString('en-US');
     return rows.slice(0, 7).filter((row) => row && Object.hasOwn(names, row.purpose)).map((row) => {
@@ -478,7 +473,7 @@
   }
 
   function historyText(m, canonical = false) {
-    if (m.role === 'user') return [interviewLine(m.interview), passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
+    if (m.role === 'user') return [passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
     const lines = [];
     const by = m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '';
     if (by) lines.push(`[Written by ${by}${m.mode ? `, in ${m.mode} style` : ''}]`);
@@ -547,14 +542,6 @@
     return turns;
   }
 
-  function interviewLine(view) {
-    if (!view || !Number.isInteger(view.number) || view.number < 1 || view.number > MOST_INTERVIEW_PROBLEMS || typeof view.challenge !== 'string' || !/^[a-zA-Z0-9-]{8,64}$/.test(view.challenge) || typeof view.title !== 'string') return '';
-    const title = [];
-    for (const c of view.title) { if (title.length >= MOST_INTERVIEW_TITLE) break; title.push(c); }
-    const data = JSON.stringify({ number: view.number, challenge: view.challenge, title: title.join(''), tab: ['Code', 'Approach', 'Whiteboard', 'Answer'].includes(view.tab) ? view.tab : '' }).replace(/</g, '\\u003c');
-    return `<interview_workspace_reference>\n${data}\n</interview_workspace_reference>`;
-  }
-
   function threadRefs(messages) {
     const out = [];
     for (const m of [...messages].reverse()) {
@@ -619,16 +606,14 @@
   function splitFiles(docs, messages) {
     const ids = new Set();
     const names = new Set();
-    const boards = new Set();
     for (const m of messages || []) {
       if (m.role !== 'user') continue;
-      for (const card of m.cards || []) if (card.interviewBoard) boards.add(card.name);
       for (const id of m.files || []) ids.add(id);
       if (!m.files) for (const name of m.docs || []) names.add(name);
     }
     const sent = [];
     const waiting = [];
-    for (const d of docs || []) (ids.has(d.id) || names.has(d.name) ? sent : waiting).push(boards.has(d.name) ? { ...d, interviewBoard: true } : d);
+    for (const d of docs || []) (ids.has(d.id) || names.has(d.name) ? sent : waiting).push(d);
     return { sent, waiting };
   }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
@@ -719,10 +704,10 @@
   const CHAT_LEAVE_MS = 160;
   const PERMISSION_MS = 5000;
   const HISTORY_SIDE_WIDTH = 560;
-  const MOST_INTERVIEW_PROBLEMS = 128;
-  const MOST_INTERVIEW_TITLE = 160;
 
-  function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {}, onBeforeSend = () => true, onCodeEdit = null }) {
+  const retiredPractice = (p) => typeof p?.kind === 'string' && p.kind.includes('interview');
+
+  function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
@@ -749,7 +734,6 @@
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
-      <button class="chat-workspace" data-chat="interview-workspace" hidden><span>Open interview workspace</span>${icons.chevron || ''}</button>
       <div class="study-progress" id="study-progress" hidden></div>
       <details class="chat-lost" id="chat-lost" hidden><summary></summary><div class="chat-lost-list"></div></details>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
@@ -1371,17 +1355,17 @@
 
     const reading = new Map();
 
-    function addFile(file, interviewBoard = false) {
+    function addFile(file) {
       const key = `${Date.now()}-${Math.random()}`;
       state.files.push({ key, name: file.name, status: 'reading', thumb: null });
       drawRefs();
-      const work = readFile(file, key, state.id, interviewBoard);
+      const work = readFile(file, key, state.id);
       reading.set(key, work);
       work.then(() => reading.delete(key));
       return work;
     }
 
-    async function readFile(file, key, chat, interviewBoard = false) {
+    async function readFile(file, key, chat) {
       const thumb = await thumbOf(file);
       if (thumb) {
         state.files = state.files.map((f) => (f.key === key ? { ...f, thumb } : f));
@@ -1415,7 +1399,7 @@
         notify(said ? `Felix could not read ${file.name}: ${said}` : reply.status === 413 ? `${file.name} is too large for Felix.` : `Felix could not read ${file.name}.`);
         return drop();
       }
-      const doc = { ...(await reply.json()), key, status: 'ready', thumb, ...(interviewBoard ? { interviewBoard: true } : {}) };
+      const doc = { ...(await reply.json()), key, status: 'ready', thumb };
       if (state.id === chat) {
         state.files = state.files.map((f) => (f.key === key ? doc : f));
         drawRefs();
@@ -1424,7 +1408,7 @@
     }
 
     function cardOf(f) {
-      const card = { name: f.name, ...(f.interviewBoard ? { interviewBoard: true } : {}) };
+      const card = { name: f.name };
       if (f.thumb) card.thumb = f.thumb;
       else if (f.excerpt) card.excerpt = String(f.excerpt).slice(0, 320);
       if (f.status === 'reading') card.reading = true;
@@ -1588,7 +1572,6 @@
     }
 
     function drawModes() {
-      $('.chat-workspace').hidden = state.mode !== 'interview';
       for (const b of panel.querySelectorAll('.chat-mode')) {
         const on = b.dataset.mode === state.mode;
         b.classList.toggle('on', on);
@@ -1602,10 +1585,9 @@
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
-      const interview = state.interview?.id === state.id ? state.interview : null;
-      box.textContent = interview ? `Problem ${interview.number} · ${interview.title} · ${interview.tab}` : ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
-      box.title = ctx && !interview ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
-      $('[data-chat="drop"]').hidden = !ctx || Boolean(interview);
+      box.textContent = ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
+      box.title = ctx ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
+      $('[data-chat="drop"]').hidden = !ctx;
     }
 
     const modeName = (id) => (MODES.find((x) => x.id === id) || MODES[0]).label;
@@ -1796,45 +1778,9 @@
 
     function proposalCard(p, i, j) {
       const where = `data-i="${i}" data-j="${j}"`;
-      if (p.kind === 'interview_code_edit') {
-        const actions = p.state === 'applied' ? `<div class="proposal-done">Accepted · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Declined</div>' : p.state === 'applying' || p.state === 'undoing' ? '<div class="proposal-done" role="status">Saving code…</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Accept</button><button class="btn plain sm" data-chat="dismiss" ${where}>Decline</button></div>`;
-        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Code change')}</div><div class="proposal-why">${escape(p.summary || '')}</div><span class="proposal-note">Before</span><pre class="proposal-old">${escape(p.find || 'Empty code')}</pre><span class="proposal-note">After</span><pre class="proposal-new">${escape(p.replace || 'Remove this code')}</pre>${actions}</div>`;
-      }
-      if (p.kind === 'interview_problem_edit') {
-        const before = p.before || {};
-        const after = p.after || {};
-        const shown = (v) => (typeof v === 'string' ? v : JSON.stringify(v ?? ''));
-        const fields = [['title', 'Title'], ['question', 'Question'], ['topics', 'Topics'], ['minutes', 'Minutes'], ['skills', 'Skills']].map(([k, label]) => [label, before[k], after[k]])
-          .concat([['starter', 'Starter'], ['difficulty', 'Difficulty'], ['examples', 'Examples'], ['constraints', 'Constraints'], ['language', 'Language']].map(([k, label]) => [label, (before.coding || {})[k], (after.coding || {})[k]]))
-          .filter(([, a, b]) => JSON.stringify(a) !== JSON.stringify(b));
-        const clip = (text) => { const t = shown(text); return t.length > 600 ? `${t.slice(0, 600)}…` : t; };
-        const changes = fields.map(([label, a, b]) => `<span class="proposal-note">${escape(label)}</span><pre class="proposal-old">${escape(clip(a) || 'Empty')}</pre><pre class="proposal-new">${escape(clip(b) || 'Empty')}</pre>`).join('');
-        const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Change problem</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Problem')}</div><div class="proposal-why">${escape(p.summary || '')}</div>${changes}${actions}</div>`;
-      }
-      if (p.kind === 'delete_interview_problem' || p.kind === 'restore_interview_problem') {
-        const restore = p.kind === 'restore_interview_problem';
-        const actions = p.state === 'applied' ? `<div class="proposal-done">${restore ? 'Restored' : 'Deleted'} · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn ${restore ? 'primary' : 'danger'} sm" data-chat="apply" ${where}>${restore ? 'Restore problem' : 'Delete problem'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        return `<div class="proposal organize"><div class="proposal-title">${escape(p.title || 'Interview problem')}</div><div class="proposal-why">${escape(p.summary || '')}</div>${actions}</div>`;
-      }
-      if (p.kind === 'interview_topics') {
-        const list = (topics) => (Array.isArray(topics) && topics.length ? topics.join(', ') : 'No topic');
-        const rows = (Array.isArray(p.changes) ? p.changes : []).map((c) => `<li><b>${escape(`Problem ${c.number} · ${c.title || ''}`)}</b><span class="proposal-topics"><span class="proposal-topics-old">${escape(list(c.before))}</span> → <span class="proposal-topics-new">${escape(list(c.after))}</span></span></li>`).join('');
-        const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Save topics</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Topics')}</div><div class="proposal-why">${escape(p.summary || '')}</div><ul class="proposal-topic-list">${rows}</ul>${actions}</div>`;
-      }
-      if (p.kind === 'interview_test') {
-        const t = p.test || {};
-        const call = (x) => `(${(Array.isArray(x.args) ? x.args : []).map((a) => JSON.stringify(a)).join(', ')}) → ${JSON.stringify(x.expected)}${x.hidden ? ' · hidden' : ''}`;
-        const verb = p.action === 'add' ? 'Add' : p.action === 'delete' ? 'Delete' : 'Correct';
-        const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${verb} test</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        const before = p.before ? `<span class="proposal-note">Before</span><pre class="proposal-old">${escape(call(p.before))}</pre><span class="proposal-note">After</span>` : '';
-        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(`${p.title || 'Test case'} · ${verb} test ${t.id || ''}`)}</div><div class="proposal-why">${escape(p.summary || '')}</div>${before}<pre class="${p.action === 'delete' ? 'proposal-old' : 'proposal-new'}">${escape(call(t))}</pre>${actions}</div>`;
-      }
+      if (retiredPractice(p)) return '<div class="proposal-done">Interview practice is no longer part of leo.</div>';
       if (p.kind !== 'create' && p.kind !== 'edit') {
-        const acts = p.kind === 'interview_schedule'
-          ? '<div class="proposal-done">Practice schedules are no longer part of leo</div>'
-          : p.state === 'applied'
+        const acts = p.state === 'applied'
           ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
@@ -2081,13 +2027,12 @@
     }
 
     async function organize(p, action, forward) {
+      if (retiredPractice(p)) return;
       const sending = Object.fromEntries(Object.entries(action || {}).filter(([k]) => !['state', 'undo', 'task', 'path'].includes(k)));
       let done;
       const previous = p.state;
-      if (p.kind === 'interview_code_edit') { p.state = forward ? 'applying' : 'undoing'; draw(false); }
       try {
-        if (p.kind === 'interview_code_edit' && onCodeEdit) done = await onCodeEdit(sending);
-        else {
+        {
           const response = await fetch('/api/felix/act', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
           done = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(done.error || 'That could not be done.');
@@ -2101,7 +2046,6 @@
         p.state = 'applied';
         p.undo = done.undo;
       } else {
-        if (['delete_interview_problem', 'restore_interview_problem'].includes(p.kind) && done.undo?.kind === p.kind) Object.assign(p, done.undo);
         p.state = 'new';
         delete p.undo;
       }
@@ -2332,15 +2276,6 @@
       const question = text.trim();
       if (!question || state.busy || state.preparingSend) return;
       const mode = state.mode;
-      const viewing = state.interview?.id === state.id ? state.interview : null;
-      if (viewing || mode === 'interview') {
-        const id = state.id;
-        let prepared = false;
-        state.preparingSend = true;
-        try { if (await onBeforeSend({ id, mode, challenge: viewing?.challenge }) === false || state.id !== id || state.mode !== mode || state.busy) return; prepared = true; }
-        catch (e) { notify(e.message || 'Your practice could not be saved. Try saving it again before asking Felix.'); return; }
-        finally { state.preparingSend = false; if (!prepared) onInterviewReply(id); }
-      }
       if (!extra.held) {
         const held = state.messages.flatMap((m) => (m.quizzes || []).filter((q) => q.held && !q.told));
         if (held.length) {
@@ -2371,7 +2306,7 @@
         state.selection = null;
         drawRefs();
       }
-      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(viewing ? { interview: { ...viewing } } : {}), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}), ...(extra.next ? { next: true } : {}) };
+      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}), ...(extra.next ? { next: true } : {}) };
       const settle = (i, doc) => {
         if (!doc) {
           asked.cards[i] = null;
@@ -2380,7 +2315,7 @@
         asked.cards[i] = cardOf(doc);
         asked.files.push(doc.id);
         if (!doc.thumb) asked.docs.push(doc.name);
-        state.sent = [...state.sent, { id: doc.id, name: doc.name, ...(doc.interviewBoard ? { interviewBoard: true } : {}) }];
+        state.sent = [...state.sent, { id: doc.id, name: doc.name }];
       };
       going.forEach((f, i) => {
         if (f.status === 'ready') settle(i, f);
@@ -2425,7 +2360,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, interview_problem: viewing?.challenge || null, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('leo needs to sign in again. Quit leo and open it again.');
@@ -2448,7 +2383,6 @@
           const { events, rest } = splitLines(buffer);
           buffer = rest;
           for (const e of events) {
-            if (e.interview && typeof e.interview.id === 'string') onInterviewChanged(e.interview.id);
             if (typeof e.answer === 'string') {
               work.answerId = e.answer;
               postPermission(work);
@@ -2495,7 +2429,6 @@
               const { auto, ...shown } = e.proposal;
               const card = { ...shown, state: done ? 'applied' : 'new' };
               answer.proposals = [...(answer.proposals || []), card];
-              if (auto && card.kind === 'interview_code_edit') queueMicrotask(() => organize(card, card, true));
               if (done && e.proposal.kind === 'create' && e.proposal.made) onSaved({ id: e.proposal.made, title: e.proposal.title, directory: e.proposal.folder || '' });
               else if (done && e.proposal.kind === 'edit') onChanged({ id: e.proposal.note, title: e.proposal.title });
               else if (done) onOrganized(e.proposal);
@@ -2554,7 +2487,6 @@
         delete m.late;
       }
       state.busy = null;
-      onInterviewReply(thread.id);
       thinking(false);
       if (stopped && left.length && thread.id === state.id) {
         input.value = [input.value, ...left.map((m) => m.text)].filter((t) => t.trim()).join('\n\n');
@@ -2632,7 +2564,6 @@
       e.preventDefault();
       const what = el.dataset.chat;
       if (what === 'close') toggle(false);
-      else if (what === 'interview-workspace') onInterview(state.id);
       else if (what === 'new') {
         begin();
         if (!wide()) showSidebar(false);
@@ -2934,10 +2865,6 @@
       attachSelection(selection) {
         if (!selection || typeof selection.text !== 'string' || !selection.text.trim()) return;
         state.selection = { note: String(selection.note || ''), title: String(selection.title || ''), from: Number(selection.from) || 0, to: Number(selection.to) || 0, text: selection.text };
-        if (state.mode === 'interview') {
-          state.mode = 'chat';
-          drawModes();
-        }
         toggle(true);
         drawRefs();
         input.focus();
@@ -2980,59 +2907,6 @@
         return true;
       },
       send,
-      async attachBoard(file) {
-        const id = state.id;
-        const old = [...state.files, ...state.sent].filter((f) => f.interviewBoard);
-        for (const doc of old) {
-          const reply = await fetch(`/api/chats/${encodeURIComponent(id)}/files/${encodeURIComponent(doc.id)}`, { method: 'DELETE', credentials: 'same-origin' });
-          if (!reply.ok) throw new Error('The previous board snapshot could not be replaced. Try again.');
-        }
-        if (state.id !== id) return false;
-        const previous = new Set(old.map((f) => f.id));
-        state.files = state.files.filter((f) => !previous.has(f.id));
-        state.sent = state.sent.filter((f) => !previous.has(f.id));
-        if (state.files.length + state.sent.length >= MOST_FILES) throw new Error('This chat already has 10 files. Remove a file or start a new practice before sending a board snapshot.');
-        const doc = await addFile(file, true);
-        return Boolean(doc && state.id === id);
-      },
-      async openInterview(id, available = () => true) {
-        if (!available()) return false;
-        if (state.busy && state.id !== id) return false;
-        if (state.id !== id) {
-          const opened = await resume(id);
-          if (opened === null || !available()) return false;
-          if (!opened) begin(id);
-        }
-        if (state.busy) { toggle(true); return false; }
-        state.mode = 'interview';
-        drawModes();
-        draw();
-        persist();
-        toggle(true);
-        return true;
-      },
-      async useInterview(id, available = () => true) {
-        if (!available()) return 'gone';
-        if (state.id !== id) {
-          if (state.busy || state.preparingSend) return 'busy';
-          const opened = await resume(id);
-          if (opened === null || !available()) return 'gone';
-          if (!opened) begin(id);
-          state.mode = 'interview';
-          drawModes();
-          draw();
-          persist();
-          return 'switched';
-        }
-        if (state.mode !== 'interview' && !state.busy) {
-          state.mode = 'interview';
-          drawModes();
-          draw();
-          persist();
-        }
-        return 'same';
-      },
-      setInterviewContext(context) { state.interview = context; if (state.open) drawContext(); },
       setContext(ctx) {
         const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title, directory: ctx.directory || '' } : null;
         if ((next && next.id) === (state.context && state.context.id) && (!next || next.title === state.context.title)) return;
@@ -3046,5 +2920,5 @@
     };
   }
 
-  root.leoChat = { settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -73,13 +73,6 @@ const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
   icons: ICON,
-  onBeforeSend: async ({ id, challenge }) => {
-    const session = interviewPage;
-    if (!session || session.item.id !== id || !interviewHere(session)) return true;
-    if (session.switching) throw new Error('The problem is switching. Ask Felix once it finishes.');
-    await saveInterviewWorkspace(session);
-    return interviewHere(session) && (!challenge || session.item.challenge?.id === challenge);
-  },
   onOpen: (id, lines) => {
     citedLines = lines ? { id, ...lines } : null;
     if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();
@@ -108,11 +101,7 @@ const chat = felix.create({
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
   onToggle: () => { drawSide(); pageBarLater(); marginRedraw(); },
-  onCodeEdit: action => applyInterviewCodeSuggestion(action),
   onOrganized: (proposal) => {
-    if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
-    if (proposal.kind === 'interview_test') { refreshInterviewTests(proposal.interview, proposal.challenge).catch(fail); return; }
-    if (['interview_problem_edit', 'interview_topics', 'delete_interview_problem', 'restore_interview_problem'].includes(proposal.kind)) { refreshInterview(proposal.interview).catch(fail); return; }
     if (MARGIN_KINDS.includes(proposal.kind)) {
       if (state.view === 'note' && state.session && state.session.note.id === proposal.note) marginLoad(state.session).catch(fail);
       return;
@@ -131,9 +120,6 @@ const chat = felix.create({
     if (!window.matchMedia('(min-width: 900px)').matches) chat.toggle(false);
     addSheet(picked);
   },
-  onInterview: (id) => { if (!sideWide()) chat.toggle(false); go(`#/interviews/${enc(id)}`); },
-  onInterviewChanged: (id) => refreshInterview(id).catch(fail),
-  onInterviewReply: (id) => interviewReplyFinished(id),
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });
@@ -546,8 +532,6 @@ function goBack(hash) {
 }
 
 function back() {
-  const practice = interviewPage;
-  if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) goBack('#/interviews'); }).catch(fail);
   if (state.view === 'storage' && /^#\/settings\/storage(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
   if (state.view === 'note') return goBack(folderHash(state.dir || ''));
@@ -555,7 +539,7 @@ function back() {
   goBack('#/');
 }
 
-const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
+const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];

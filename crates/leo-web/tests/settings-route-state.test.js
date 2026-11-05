@@ -19,7 +19,7 @@ test('Back from a remembered Storage section returns to the note instead of loop
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
   const helper = source.slice(source.indexOf('function back()'), source.indexOf('const PAGE_NAMES'));
   let target;
-  const context = { state:{view:'storage'},location:{hash:'#/settings'},places:{from:'#/settings/storage',before:'#/n/note'},interviewPage:null,asideHash:()=>true,goBack:hash=>{target=hash;} };
+  const context = { state:{view:'storage'},location:{hash:'#/settings'},places:{from:'#/settings/storage',before:'#/n/note'},asideHash:()=>true,goBack:hash=>{target=hash;} };
   vm.createContext(context);vm.runInContext(helper,context);
   context.back();assert.equal(target,'#/n/note');
 });

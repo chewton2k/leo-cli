@@ -135,65 +135,6 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
 }
 
 #[test]
-fn an_unchanged_practice_snapshot_is_not_repeated_but_changed_code_and_questions_are_sent() {
-    for native in [false, true] {
-        let (mut state, _dir, _) = state_with(&[]);
-        let id = "material-cache-0001";
-        let framework = serde_json::from_value(serde_json::json!({"title":"Coding", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
-        crate::interview::configure(&state.chats, id, 0, framework).unwrap();
-        for index in 0..2 {
-            let challenge = serde_json::from_value(serde_json::json!({"id":format!("material-problem-{index}"), "title":format!("Problem {index}"), "question":"Find the pair.", "minutes":30, "skills":["Approach"], "topics":["Arrays"], "origin":"generated", "sources":[]})).unwrap();
-            crate::interview::set_challenge(&state.chats, id, challenge).unwrap();
-        }
-        let heard = Arc::new(Mutex::new(Vec::new()));
-        let ears = Arc::clone(&heard);
-        state.chat = Some(Arc::new(|_, _, _, _, _| {
-            panic!("the retained session should answer")
-        }));
-        state.converse = Some(Arc::new(move |_, _| {
-            Some(Box::new(Kept {
-                native,
-                heard: Arc::clone(&ears),
-            }) as Box<dyn chat::Conversation>)
-        }));
-        let mut messages =
-            vec![serde_json::json!({"role":"user", "text":"Help with this problem."})];
-        for index in 0..4 {
-            if index > 0 {
-                append(&mut messages, "Explain the next step.");
-            }
-            if index == 2 {
-                let item = crate::interview::load(&state.chats, id).unwrap();
-                crate::interview::change(
-                    &state.chats,
-                    id,
-                    crate::interview::Change::Workspace {
-                        revision: item.revision,
-                        challenge: "material-problem-1".into(),
-                        workspace: crate::interview::Workspace {
-                            answer: "UPDATED_CODE_MARKER".into(),
-                            ..Default::default()
-                        },
-                    },
-                )
-                .unwrap();
-            }
-            request(
-                &state,
-                serde_json::json!({"chat":id, "mode":"interview", "access":"ask", "interview_problem":if index==3 {"material-problem-0"} else {"material-problem-1"}, "messages":messages}),
-            );
-        }
-        let seen = heard.lock().unwrap();
-        assert!(seen[0].contains("<interview_material>"));
-        assert!(!seen[1].contains("<interview_material>"));
-        assert!(
-            seen[2].contains("<interview_material>") && seen[2].contains("UPDATED_CODE_MARKER")
-        );
-        assert!(seen[3].contains("<interview_material>") && seen[3].contains("material-problem-0"));
-    }
-}
-
-#[test]
 fn retained_tool_context_counts_toward_the_warm_session_limit() {
     struct Large;
     impl chat::Conversation for Large {

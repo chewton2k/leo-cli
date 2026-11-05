@@ -163,13 +163,6 @@ impl Db {
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
         conn.execute_batch(SCHEMA)?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM interview_problem_undo WHERE updated < ?1",
-            [
-                (chrono::Utc::now() - chrono::Duration::hours(crate::interview_delete::UNDO_HOURS))
-                    .to_rfc3339(),
-            ],
-        )?;
         let has_description: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_tasks') WHERE name = 'description')",
             [],
@@ -291,6 +284,29 @@ pub fn put_aside(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opening_the_database_preserves_expired_retired_problem_recovery_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("leo.db");
+        let db = super::Db::open(&path).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO interview_problem_undo VALUES ('old-undo', 'old-practice', '2000-01-01T00:00:00Z', '{\"kept\":true}')", [])?;
+            Ok(())
+        }).unwrap();
+        drop(db);
+        let reopened = super::Db::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .with(|c| c.query_row(
+                    "SELECT data FROM interview_problem_undo WHERE id = 'old-undo'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                ))
+                .unwrap(),
+            "{\"kept\":true}"
+        );
+    }
+
     use super::*;
 
     #[test]

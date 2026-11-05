@@ -51,21 +51,11 @@ async function goPlace(page, action) {
   await page.locator(`#side [data-action="${action}"]`).click();
 }
 
-async function fillTaskPanel(page) {
-  await page.route('**/api/tasks', route => route.fulfill({ json: { tasks: Array.from({ length: 30 }, (_, index) => ({ id: `interview-task-${index}`, title: `Unfinished task ${index}`, source: 'leo', kind: 'other', done: false, date: '2020-01-01' })) } }));
-}
 
-async function chooseProblem(page, number) {
-  await page.locator('[data-interview="problem-menu"]').click();
-  await page.getByRole('button', { name: new RegExp(`^Problem ${number}:`) }).click();
-}
 
-async function shownProblemNumbers(page) {
-  await page.locator('[data-interview="problem-menu"]').click();
-  const labels = await page.locator('#interview-problem-list [data-interview="problem"]').evaluateAll(rows => rows.map(row => Number(row.getAttribute('aria-label').match(/^Problem (\d+):/)[1])));
-  await page.locator('.scrim [aria-label="Close problems"]').click();
-  return labels;
-}
+
+
+
 
 function control(page, action) {
   return page.locator(`.fab[data-action="${action}"]:visible, .new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
@@ -126,6 +116,32 @@ async function openNote(page, title) {
   await page.locator('.blk').first().click();
   return note;
 }
+
+test('retired practice state opens as Chat and old bookmarks return to the library', async ({ page }) => {
+  const id = `retired-compat-${test.info().project.name}`;
+  const messages = [{ role: 'assistant', text: 'An old saved explanation.', proposals: [{ kind: 'interview_test', state: 'applied', title: 'Old check' }] }];
+  expect((await page.request.put(`/api/chats/${id}`, { data: { title: 'Saved conversation', mode: 'interview', refs: [], messages } })).ok()).toBe(true);
+  for (const hash of ['#/interviews', '#/interviews/old-practice']) {
+    await page.evaluate(({ id, messages, hash }) => {
+      localStorage.setItem('leo-chat-v1', JSON.stringify({ id, mode: 'interview', messages, refs: [] }));
+      localStorage.setItem('leo-last-place', hash);
+      localStorage.setItem('leo-interview-drafts', 'preserve this stale state');
+      sessionStorage.removeItem('leo-launched');
+    }, { id, messages, hash });
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('#app')).not.toBeEmpty();
+    expect(await page.evaluate(() => localStorage.getItem('leo-last-place'))).toBe('#/');
+    await page.goto(`/${hash}`);
+    await expect(page).toHaveURL(/#\/$/);
+  }
+  await page.locator('#chat-toggle').click();
+  await expect(page.locator('#chat-mode-name')).toHaveText('Chat');
+  await expect(page.locator('#chat')).toContainText('An old saved explanation.');
+  await expect(page.locator('#chat')).toContainText('Interview practice is no longer part of leo.');
+  await expect(page.locator('[data-action="interviews"]')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('leo-interview-drafts'))).toBe('preserve this stale state');
+});
 
 test('a failed save survives navigation and reload, then saves on reconnection', async ({ page }) => {
   const note = await openNote(page, 'Draft recovery');
@@ -851,9 +867,6 @@ test.describe('Felix', () => {
     await expect(chat.locator('#chat-mode-menu')).toBeHidden();
     await expect(button).toBeFocused();
     await expect(chat).toBeVisible();
-    await chooseMode(chat, 'interview');
-    await expect(button).toHaveText('Interview');
-    await expect(chat.locator('.chat-mode.on')).toHaveText('Interview');
     await button.click();
     await chat.locator('[data-chat="drop"]').click();
     await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
@@ -957,7 +970,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study', 'Interview']);
+    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study']);
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');
@@ -1992,16 +2005,7 @@ test.describe('readability', () => {
   }
 
   for (const scheme of ['light', 'dark']) {
-    test(`interview submission results read clearly in ${scheme} mode`, async ({ page }) => {
-      await page.emulateMedia({ colorScheme: scheme });
-      await practiceWithResults(page, `readable-results-${scheme}`);
-      await page.locator('#interview-results').scrollIntoViewIfNeeded();
-      await page.locator('.interview-review-more > summary').click();
-      await page.waitForTimeout(300);
-      expect(await lowContrast(page, '#interview-results')).toEqual([]);
-      await page.locator('[data-interview="result-case"]').first().click();
-      expect(await lowContrast(page, '#interview-results')).toEqual([]);
-    });
+
 
     test(`filled danger controls read clearly in ${scheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
@@ -3458,94 +3462,11 @@ test.describe('past chats', () => {
   });
 });
 
-test('opening a practice while Felix is open switches him to that practice\'s chat', async ({ page }) => {
-  const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
-  const id = `practice-chat-${tag}`;
-  const challenge = { id: 'practice-chat-problem', title: 'Pair sum', question: 'Find two indices.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def pair_sum(nums, target):\n    pass', difficulty: 'easy', examples: [{ input: '[2,3], 5', output: '[0,1]' }], constraints: ['One pair.'] } };
-  const item = { id, revision: 1, framework: { title: `Switching practice ${tag}`, track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] }, problems: [{ challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] } }], attempts: [] };
-  await page.request.put(`/api/chats/${id}`, { data: { title: `Practice chat ${tag}`, mode: 'interview', messages: [{ role: 'user', text: `Practice question ${tag}` }, { role: 'assistant', text: 'Practice answer' }] } });
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.goto('/');
-  await page.locator('#chat-toggle').click();
-  const panel = page.locator('aside.chat');
-  await expect(panel).toBeVisible();
-  await expect(panel).not.toContainText(`Practice question ${tag}`);
-  await page.evaluate((hash) => { location.hash = hash; }, `#/interviews/${id}`);
-  await expect(panel).toContainText(`Practice question ${tag}`);
-  await expect(panel.locator('.chat-mode.on')).toHaveText('Interview');
-  await expect(page.locator('.toast')).toContainText(`Felix switched to this practice’s chat: Switching practice ${tag}`);
-  await page.evaluate(() => { location.hash = '#/'; document.querySelectorAll('.toast').forEach((t) => t.remove()); });
-  await page.evaluate((hash) => { location.hash = hash; }, `#/interviews/${id}`);
-  await expect(page.locator('.interview-heading h1')).toHaveText(`Switching practice ${tag}`);
-  await expect(panel).toContainText(`Practice question ${tag}`);
-  await page.waitForTimeout(500);
-  await expect(page.locator('.toast', { hasText: 'Felix switched' })).toHaveCount(0);
-  await page.request.delete(`/api/chats/${id}`);
-});
 
-test('a problem shows its diagrams in the statement and under an example, in light and dark', async ({ page }) => {
-  const id = 'diagram-problem-ui';
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><title>Array</title><rect width="120" height="40" fill="#fff"/><text x="10" y="26" font-size="14">[2, 7, 11]</text></svg>';
-  const challenge = { id: 'diagram-problem-01', title: 'Tree depth', question: 'Return the depth of the tree.\n\n```mermaid\nflowchart TD\n  A((3)) --> B((9))\n  A --> C((20))\n```', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def depth(root):\n    pass', difficulty: 'easy', examples: [{ input: '[3,9,20]', output: '2', diagram: '```svg\n' + svg + '\n```' }, { input: '[]', output: '0' }], constraints: ['Up to 10^4 nodes.'] } };
-  const item = { id, revision: 1, framework: { title: 'Pictures', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] }, problems: [{ challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] } }], attempts: [] };
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  for (const scheme of ['light', 'dark']) {
-    await page.emulateMedia({ colorScheme: scheme });
-    await page.goto(`/#/interviews/${id}`);
-    const question = page.locator('#interview-pane-question');
-    await expect(question.locator('.prose figure.diagram .diagram-art svg')).toBeVisible();
-    await expect(question.locator('.prose figure.diagram .diagram-art')).toContainText('20');
-    const examples = question.locator('.interview-example');
-    await expect(examples).toHaveCount(2);
-    const picture = examples.nth(0).locator('.interview-example-diagram figure.drawing img');
-    await expect(picture).toBeVisible();
-    await expect(picture).toHaveAttribute('alt', 'Array');
-    expect(await picture.evaluate((img) => img.naturalWidth > 0)).toBe(true);
-    await expect(examples.nth(1).locator('.interview-example-diagram')).toHaveCount(0);
-  }
-});
 
-test('changing the language in Preferences rewrites the open problem\'s starting code, with Undo', async ({ page }) => {
-  const id = 'language-switch-ui';
-  const python = 'def pair_sum(nums, target):\n    pass';
-  const java = 'class Solution {\n    public int[] pair_sum(int[] nums, int target) {\n        return new int[0];\n    }\n}';
-  const mine = 'def pair_sum(nums, target):\n    seen = {}\n    return []';
-  const challenge = { id: 'language-problem-01', title: 'Pair sum', question: 'Find two indices that add up to target.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: python, difficulty: 'easy', examples: [{ input: '[2,3], 5', output: '[0,1]' }], constraints: ['One pair.'] } };
-  let item = { id, revision: 1, framework: { title: 'Switching', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: mine, reasoning: '', board: [] }, problems: [{ challenge, workspace: { answer: mine, reasoning: '', board: [] } }], attempts: [] };
-  const asked = [];
-  await page.route('**/api/interviews/*', (route) => {
-    if (route.request().method() === 'PUT') {
-      const body = route.request().postDataJSON();
-      if (body.framework) item.framework = body.framework;
-      if (body.workspace) item.workspace = body.workspace;
-      item.revision++;
-    }
-    return route.fulfill({ json: item });
-  });
-  await page.route('**/api/interviews/*/language', async (route) => {
-    const body = route.request().postDataJSON();
-    asked.push(body);
-    const previous = { language: item.challenge.coding.language, starter: item.challenge.coding.starter, answer: item.workspace.answer };
-    const starter = body.restore ? body.restore.starter : java;
-    const fresh = { ...item.challenge, coding: { ...item.challenge.coding, language: body.language, starter } };
-    item = { ...item, revision: item.revision + 1, challenge: fresh, workspace: { ...item.workspace, answer: body.restore ? body.restore.answer : java }, problems: [{ challenge: fresh, workspace: item.workspace }] };
-    return route.fulfill({ json: { item, changed: true, previous, replaced: true } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await expect(page.locator('#interview-answer')).toHaveValue(mine);
-  await page.locator('[data-interview="configure"]').click();
-  await page.locator('#interview-language').selectOption('Java');
-  await page.locator('#interview-form-save').click();
-  await expect(page.locator('#interview-answer')).toHaveValue(java);
-  await expect(page.locator('label[for="interview-answer"]')).toHaveText('Java');
-  expect(asked[0]).toEqual({ challenge: challenge.id, language: 'Java' });
-  const toast = page.locator('.toast');
-  await expect(toast).toContainText('now in Java');
-  await expect(toast).toContainText('Your Python code is kept in Undo');
-  await toast.getByRole('button', { name: 'Undo' }).click();
-  await expect(page.locator('#interview-answer')).toHaveValue(mine);
-  expect(asked[1]).toEqual({ challenge: challenge.id, language: 'Python', restore: { from: java, starter: python, answer: mine } });
-});
+
+
+
 
 test('Settings chooses light or dark for this browser, or follows the device', async ({ page }) => {
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -4016,24 +3937,6 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.keyboard.press('Enter');
   await expect(details).toHaveAttribute('open', '');
   await page.locator('.sheet [data-action="close"]').click();
-  const id = 'controls-interview';
-  const challenge = { id: 'controls-challenge', title: 'Pair sum', question: 'Find a pair.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [] };
-  const workspace = { answer: 'My submitted approach', reasoning: '', board: [] };
-  await page.route('**/api/interviews/*', route => route.fulfill({ json: { id, revision: 1, framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [{ id: 'controls-attempt', at: new Date().toISOString(), challenge, workspace, feedback: null }], schedule: [] } }));
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('#interview-panes [data-pane="submissions"]').click();
-  const attempt = page.locator('.interview-attempt');
-  await expect(attempt.locator(':scope > summary > svg')).toHaveCount(1);
-  await attempt.locator(':scope > summary').click();
-  const submitted = attempt.locator('details');
-  const angle = el => getComputedStyle(el).transform;
-  await expect(submitted.locator('summary > svg')).toHaveCount(1);
-  expect(await submitted.locator('summary > svg').evaluate(angle)).toBe('none');
-  await submitted.locator('summary').focus();
-  await page.keyboard.press('Enter');
-  await expect(submitted).toHaveAttribute('open', '');
-  await expect(submitted.locator('.interview-submitted')).toHaveText(workspace.answer);
-  await expect.poll(() => submitted.locator('summary > svg').evaluate(angle)).toBe('matrix(0, 1, -1, 0, 0, 0)');
   await page.locator('#chat-toggle').click();
   await page.locator('[data-chat="attach"]').click();
   await expect(page.locator('#chat-attach-menu [data-chat="attach-note"] > svg')).toHaveCount(1);
@@ -4110,210 +4013,11 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await expect(page.locator('.rec-idle')).toBeVisible();
 });
 
-test('interview practice starts without a note, keeps its style and has no practice schedule', async ({ page }) => {
-  await page.request.post('/api/tasks', { data: { title: 'A task alongside interview practice' } });
-  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
-  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"Ready to practise."}\n{"done":true}\n' }));
-  await page.goto('/#/interviews');
-  await page.locator('[data-interview="create"][data-track="systems"]').click();
-  await page.getByText('More preferences', { exact: true }).click();
-  await expect(page.locator('#interview-budget')).toHaveCount(0);
-  await page.locator('#interview-title').fill('System design interview');
-  await page.locator('#interview-company').fill('Example company');
-  await page.locator('[data-interview="form-style"][data-style="mock"]').click();
-  await page.locator('#interview-form-save').click();
-  await expect(page.locator('.interview-heading h1')).toHaveText('System design interview');
-  await expect(page.locator('[data-chat="close"]')).toBeVisible();
-  await page.locator('[data-chat="close"]').click();
-  const id = decodeURIComponent(new URL(page.url()).hash.split('/').pop());
-  if (!test.info().project.name.includes('phone')) {
-    const panel = page.locator('#tasks-window');
-    await expect(panel.locator('.tasks-body')).toHaveCount(0);
-    await panel.locator('[data-action="tasks-fold"]').click();
-    await expect(panel.locator('.tasks-body')).toBeVisible();
-    await panel.locator('[data-action="tasks-fold"]').click();
-    expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
-  }
-  await expect(page.getByText('Practice schedule', { exact: true })).toHaveCount(0);
-  await expect(page.locator('[data-interview="plan"], [data-interview="add-session"]')).toHaveCount(0);
-  expect((await (await page.request.get(`/api/interviews/${id}`)).json()).schedule).toBeUndefined();
-  await page.reload();
-  await expect(page.locator('.interview-heading .eyebrow')).toContainText('Mock interview');
-  await expect(page.locator('.interview-heading h1')).toHaveText('System design interview');
-  await page.request.delete(`/api/interviews/${id}`);
-});
 
-test('practice titles rename inline without losing typing, code or newer preferences', async ({ page }) => {
-  const id = 'practice-rename-01';
-  const challenge = { id: 'rename-problem-01', title: 'Return one', question: 'Return the integer one.', minutes: 15, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: 'solve()', output: '1' }], constraints: ['Return an integer.'] } };
-  const workspace = { answer: 'def solve():\n    return 1', reasoning: 'Keep my approach', board: [] };
-  let item = { id, revision: 1, updated: new Date().toISOString(), framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  let blocked = false;
-  let release;
-  let hold = false;
-  await page.route('**/api/interviews', route => route.fulfill({ json: [item] }));
-  await page.route(`**/api/interviews/${id}/key?*`, route => route.fulfill({ json: { status: 'missing' } }));
-  await page.route(`**/api/interviews/${id}`, async route => {
-    if (route.request().method() === 'PUT') {
-      if (blocked) return route.fulfill({ status: 409, json: { error: 'This practice changed elsewhere. Retry to keep your new name.' } });
-      const body = route.request().postDataJSON();
-      if (hold) { hold = false; await new Promise(resolve => { release = resolve; }); }
-      expect(body.action).toBe('framework');
-      expect(body.revision).toBe(item.revision);
-      item = { ...item, revision: item.revision + 1, framework: body.framework };
-    }
-    return route.fulfill({ json: item });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  const title = page.getByRole('textbox', { name: 'Practice title', exact: true });
-  await expect(title).toHaveText('Coding practice');
-  await expect(page.getByRole('heading', { name: 'Coding practice', exact: true })).toBeVisible();
-  hold = true;
-  await title.fill('Arrays practice');
-  await expect.poll(() => Boolean(release)).toBe(true);
-  await title.fill('Arrays and graphs');
-  await title.evaluate(el => { const range = document.createRange(); range.setStart(el.firstChild, 6); range.collapse(true); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); });
-  release();
-  await expect.poll(() => item.framework.title).toBe('Arrays and graphs');
-  await expect(title).toBeFocused();
-  expect(await title.evaluate(() => getSelection().anchorOffset)).toBe(6);
-  await title.press('Enter');
-  await expect(title).not.toBeFocused();
-  await page.reload();
-  await expect(title).toHaveText('Arrays and graphs');
-  await title.fill('Cancel this name');
-  await title.press('Escape');
-  await expect(title).toHaveText('Arrays and graphs');
-  blocked = true;
-  await title.fill('Interview preparation');
-  await title.press('Enter');
-  await expect(page.locator('.toast')).toContainText('Retry');
-  await expect(title).toHaveText('Interview preparation');
-  item.framework.company = 'Pinterest';
-  item.revision++;
-  blocked = false;
-  await page.locator('.toast button').click();
-  await expect.poll(() => item.framework.title).toBe('Interview preparation');
-  expect(item.framework.company).toBe('Pinterest');
-  await title.fill('');
-  await title.press('Enter');
-  await expect(title).toHaveText('Interview preparation');
-  await title.fill('Final title');
-  await page.locator('#back').click();
-  await expect(page.locator('.interview-plan b')).toHaveText('Final title');
-  expect(item.workspace).toEqual(workspace);
-  expect(item.problems[0].workspace).toEqual(workspace);
-});
 
-test('interview answers keep their focus and draft through saves, a conflict and reload', async ({ page }) => {
-  const id = 'interview-browser-01';
-  let item = { id, revision: 1, updated: new Date().toISOString(), framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach', 'Testing'], wants: '' }, challenge: { id: 'challenge-browser-01', title: 'Pair sum', question: 'Find two distinct indices whose values sum to a target. Explain duplicates.', minutes: 25, skills: ['Approach', 'Testing'], origin: 'generated', sources: [] }, workspace: { answer: '', board: [] }, attempts: [], schedule: [] };
-  let conflict = false;
-  let holdSave = false;
-  let releaseSave;
-  let saveStarted;
-  const files = new Map();
-  let uploads = 0;
-  let refuseImage = false;
-  await page.route(`**/api/interviews/${id}`, async (route) => {
-    if (route.request().method() === 'PUT') {
-      const change = route.request().postDataJSON();
-      if (conflict) { conflict = false; return route.fulfill({ status: 409, json: { error: 'This practice changed in another window. Reload before saving; your draft is kept.' } }); }
-      if (holdSave) { saveStarted(); await new Promise((resolve) => { releaseSave = resolve; }); holdSave = false; }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      if (change.action === 'submit') {
-        item.attempts.push({ id: change.attempt, at: new Date().toISOString(), challenge: structuredClone(item.challenge), workspace: change.workspace, feedback: null });
-        item.workspace = change.workspace;
-      } else item.workspace = change.workspace;
-      item.revision++;
-    }
-    await route.fulfill({ json: item });
-  });
-  await page.route(`**/api/chats/${id}`, (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id } }));
-  await page.route(`**/api/chats/${id}/files**`, async (route) => {
-    const request = route.request();
-    if (request.method() === 'DELETE') { files.delete(request.url().split('/').at(-1)); return route.fulfill({ status: 204 }); }
-    if (request.method() === 'POST') {
-      if (refuseImage) return route.fulfill({ status: 422, json: { error: 'This model cannot read images.' } });
-      const body = request.postDataJSON();
-      expect(body.type).toMatch(/^image\//);
-      expect(body.data.length).toBeGreaterThan(100);
-      const doc = { id: String(++uploads).padStart(32, '0'), name: body.name, excerpt: 'Client and server whiteboard.' };
-      files.set(doc.id, doc);
-      return route.fulfill({ json: doc });
-    }
-    return route.fulfill({ json: [...files.values()] });
-  });
-  await page.route('**/api/chat', (route) => {
-    if (refuseImage) expect(route.request().postDataJSON().messages.at(-1).text).toContain('freehand drawing details could not be assessed');
-    const attempt = item.attempts.at(-1);
-    attempt.feedback = { attempt: attempt.id, summary: 'Good approach; review edge cases.', scores: [{ skill: 'Approach', value: 3, evidence: 'You described a hash map.', next: 'Trace duplicates.' }] };
-    item.revision++;
-    return route.fulfill({ contentType: 'application/x-ndjson', body: `${JSON.stringify({ interview: { id, revision: item.revision } })}\n${JSON.stringify({ t: 'A good start.' })}\n${JSON.stringify({ done: true })}\n` });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  const answer = page.locator('#interview-answer');
-  await answer.fill('Use a hash map. Check duplicates.');
-  await answer.evaluate((el) => el.setSelectionRange(4, 8));
-  await expect.poll(() => item.workspace.answer).toBe('Use a hash map. Check duplicates.');
-  await expect(answer).toBeFocused();
-  expect(await answer.evaluate((el) => [el.selectionStart, el.selectionEnd])).toEqual([4, 8]);
-  conflict = true;
-  await answer.fill('Use a hash map. Check duplicates and negatives.');
-  await expect(page.locator('#interview-save-error')).toBeVisible();
-  await page.locator('[data-interview="retry"]').click();
-  await expect.poll(() => item.workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await boardLabel(page, 'Client → Server', 0.15, 0.2);
-  await expect.poll(() => item.workspace.board.length).toBe(1);
-  await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
-  await page.reload();
-  await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
-  await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  await page.locator('[data-interview="submit"]').click();
-  await page.locator('#interview-results [data-interview="review-result"]').click();
-  await expect(page.locator('#interview-progress')).toContainText('1 reviewed attempt');
-  await page.locator('[data-chat="close"]').click();
-  await expect(page.locator('#chat')).toBeHidden();
-  expect(item.attempts[0].workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
-  expect(item.attempts[0].workspace.board[0].text).toBe('Client → Server');
-  await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await boardLabel(page, 'Another drawing', 0.15, 0.45);
-  await page.locator('[data-interview="submit"]').click();
-  await page.locator('#interview-results [data-interview="review-result"]').click();
-  await expect(page.locator('#interview-progress')).toContainText('2 reviewed attempts');
-  expect(item.attempts[0].workspace.board).toHaveLength(1);
-  expect(item.workspace.board).toHaveLength(2);
-  await page.locator('[data-chat="close"]').click();
-  await expect(page.locator('#chat')).toBeHidden();
-  expect(files.size).toBe(1);
-  expect(uploads).toBe(2);
-  refuseImage = true;
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await boardLabel(page, 'A readable label', 0.15, 0.7);
-  await page.locator('[data-interview="submit"]').click();
-  await page.locator('#interview-results [data-interview="review-result"]').click();
-  await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
-  await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
-  await page.locator('[data-chat="close"]').click();
-  await expect(page.locator('#chat')).toBeHidden();
-  await page.locator('[data-interview="tab"][data-tab="code"]').click();
 
-  holdSave = true;
-  const started = new Promise((resolve) => { saveStarted = resolve; });
-  await answer.fill('A hint request can be cancelled by navigation.');
-  await page.locator('[data-interview="hint"]').click();
-  await started;
-  await page.evaluate(() => { location.hash = '#/interviews'; });
-  await expect(page.locator('h1')).toHaveText('Interview practice');
-  const response = page.waitForResponse((r) => r.url().endsWith(`/api/interviews/${id}`) && r.request().method() === 'PUT');
-  releaseSave();
-  await (await response).finished();
-  await page.waitForTimeout(500);
-  await expect(page.locator('body')).not.toHaveClass(/chat-open/);
-});
+
+
 
 test.describe('passages', () => {
   test('selected note text goes to Felix as a passage he is asked about, not an edit', async ({ page }) => {
@@ -5021,321 +4725,21 @@ test.describe('beside the note', () => {
   });
 });
 
-for (const company of ['Pinterest', '']) {
-  test(`interview start prepares a coding problem in one action for ${company || 'general practice'}`, async ({ page }) => {
-    await fillTaskPanel(page);
-    const requests = [];
-    let item;
-    let ready;
-    let release;
-    const starter = 'def pair_sum(nums, target):\n    pass';
-    await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-    await page.route('**/api/interviews/*', (route) => {
-      const req = route.request();
-      if (req.method() === 'PUT') {
-        const change = req.postDataJSON();
-        if (change.action === 'framework') item = { id: req.url().split('/').at(-1), revision: 1, framework: change.framework, workspace: { answer: '', reasoning: '', board: [] }, challenge: null, attempts: [], schedule: [] };
-        else { item.workspace = change.workspace; item.revision++; }
-      }
-      return route.fulfill({ json: item });
-    });
-    await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id: item.id, title: 'Interview practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
-    await page.route('**/api/chat', async (route) => {
-      requests.push(route.request().postDataJSON());
-      ready();
-      await new Promise((resolve) => { release = resolve; });
-      item.challenge = { id: 'challenge-start-01', title: 'Matching pair', question: 'Find two distinct indices whose values sum to the target.', minutes: 25, skills: item.framework.skills, origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'easy', examples: [{ input: 'nums=[2,3], target=5', output: '[0,1]' }], constraints: ['Exactly one pair exists.'] } };
-      item.workspace = { answer: starter, reasoning: '', board: [] };
-      item.revision++;
-      await route.fulfill({ contentType: 'application/x-ndjson', body: [{ interview: { id: item.id, revision: item.revision } }, { t: 'Your challenge is ready.' }, { done: true }].map((v) => JSON.stringify(v)).join('\n') + '\n' });
-    });
-    await page.goto('/#/interviews');
-    await page.locator('[data-interview="create"][data-track="coding"]').click();
-    await page.locator('#interview-company').fill(company);
-    await page.locator('#interview-role').fill('Software engineer intern');
-    const started = new Promise((resolve) => { ready = resolve; });
-    await page.locator('#interview-form-save').click();
-    await started;
-    await expect(page.locator('#interview-answer')).toHaveCount(0);
-    await expect(page.locator('#interview-challenge')).toContainText('Preparing your first challenge');
-    expect(requests).toHaveLength(1);
-    const instruction = requests[0].messages.at(-1).text;
-    if (company) expect(instruction).toContain('Search the web before');
-    else expect(instruction).toContain('Do not ask for a company');
-    expect(instruction).toContain('interview_challenge');
-    release();
-    await expect(page.locator('#interview-answer')).toHaveValue(starter);
-    await page.locator('[data-chat="close"]').click();
-    await expect(page.locator('[data-interview="research"]')).toHaveCount(0);
-    await expect(page.locator('.interview-example')).toContainText('[0,1]');
-    await page.locator('[data-interview="submit"]').click();
-    expect(requests).toHaveLength(1);
-    await page.locator('[data-interview="tab"][data-tab="write"]').click();
-    const approach = page.locator('#interview-reasoning');
-    await approach.fill('Use a hash map and check duplicates.');
-    await approach.evaluate((el) => el.setSelectionRange(4, 8));
-    await expect.poll(() => item.workspace.reasoning).toContain('check duplicates');
-    await expect(approach).toBeFocused();
-    expect(await approach.evaluate((el) => [el.selectionStart, el.selectionEnd])).toEqual([4, 8]);
-    await page.locator('[data-interview="tab"][data-tab="code"]').click();
-    await expect(page.locator('#interview-answer')).toHaveValue(starter);
-    await page.reload();
-    await expect(page.locator('#interview-answer')).toHaveValue(starter);
-    expect(requests).toHaveLength(1);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  });
-}
 
-test('Felix code suggestions accept and decline independently, merge current typing and guard stale code', async ({ page }) => {
-  const id = 'code-suggestions-ui';
-  const starter = 'def solve():\n    left = 0\n    right = 1\n    return left';
-  const challenge = { id: 'suggestion-problem-01', title: 'Independent changes', question: 'Explain this solution.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['Describe'] } };
-  let item = { id, revision: 1, framework: { title: 'Code changes', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: starter, reasoning: 'Keep my approach', board: [] }, problems: [{ challenge, workspace: { answer: starter, reasoning: 'Keep my approach', board: [] } }], attempts: [], schedule: [] };
-  const proposal = (find, replace, summary) => ({ kind: 'interview_code_edit', title: 'Problem 1 · Independent changes', summary, interview: id, challenge: challenge.id, find, replace });
-  const edits = [proposal('0', '2', 'Initialize the left index'), proposal('right = 1', 'right = 3', 'Initialize the right index'), proposal('1', '(', 'Begin an expression')];
-  let hold, release, acts = 0;
-  await page.route('**/api/interviews/*', route => { if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; } return route.fulfill({ json: item }); });
-  await page.route('**/api/chats/*', route => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No chat yet' } }) : route.fulfill({ json: { id, title: 'Code changes', named: true, count: 2, updated_at: new Date().toISOString() } }));
-  await page.route('**/api/chat', route => route.fulfill({ contentType: 'application/x-ndjson', body: [...edits.map(proposal => ({ proposal })), { t: 'Review each suggested change.' }, { done: true }].map(e => JSON.stringify(e)).join('\n') + '\n' }));
-  await page.route('**/api/felix/act', async route => {
-    acts++;
-    const p = route.request().postDataJSON();
-    if (hold) await hold;
-    const code = item.workspace.answer;
-    if (code.indexOf(p.find) < 0 || code.indexOf(p.find) !== code.lastIndexOf(p.find)) return route.fulfill({ status: 409, json: { error: 'This code changed. Your draft was kept; request a new suggestion.' } });
-    item.workspace.answer = code.replace(p.find, p.replace); item.revision++;
-    const undo = p.replace === '(' ? { ...p, find: 'right = (', replace: 'right = 1' } : { ...p, find: p.replace, replace: p.find };
-    return route.fulfill({ json: { revision: item.revision, undo } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('#chat-toggle').click();
-  await page.locator('#chat-input').fill('Suggest focused fixes to my code.');
-  await page.locator('#chat-input').press('Enter');
-  const cards = page.locator('.proposal-code');
-  await expect(cards).toHaveCount(3);
-  await expect(cards.nth(0).locator('.proposal-old')).toHaveText('0');
-  await expect(cards.nth(0).locator('.proposal-new')).toHaveText('2');
-  expect(item.workspace.answer).toBe(starter);
-  if (await page.locator('#interview-answer').isVisible()) await page.locator('#interview-answer').fill(starter + '\n# Keep my newest draft');
-  else { await page.locator('[data-chat="close"]').click(); await page.locator('#interview-answer').fill(starter + '\n# Keep my newest draft'); await page.locator('#chat-toggle').click(); }
-  await cards.nth(0).locator('[data-chat="apply"]').click();
-  await expect(cards.nth(0)).toContainText('Accepted');
-  await expect.poll(() => item.workspace.answer).toContain('left = 2');
-  expect(item.workspace.answer).toContain('Keep my newest draft');
-  await cards.nth(1).locator('[data-chat="dismiss"]').click();
-  await expect(cards.nth(1)).toContainText('Declined');
-  expect(acts).toBe(1);
-  expect(item.workspace.answer).toContain('right = 1');
-  await cards.nth(0).locator('[data-chat="undo"]').click();
-  await expect(cards.nth(0).locator('[data-chat="apply"]')).toBeVisible();
-  await expect.poll(() => item.workspace.answer).toContain('left = 0');
-  const after = item.workspace.answer;
-  await page.locator('#chat-input').fill('Do not overwrite this next question');
-  hold = new Promise(resolve => { release = resolve; });
-  await cards.nth(0).locator('[data-chat="apply"]').click();
-  await expect(cards.nth(0)).toContainText('Saving code');
-  if (await page.locator('#interview-answer').isVisible()) {
-    await page.locator('#interview-answer').fill(after + '\n# Typed during application');
-    release(); hold = null;
-    await expect(cards.nth(0)).toContainText('Accepted');
-    await expect.poll(() => item.workspace.answer).toContain('Typed during application');
-  } else { release(); hold = null; await expect(cards.nth(0)).toContainText('Accepted'); }
-  await expect(page.locator('#chat-input')).toHaveValue('Do not overwrite this next question');
-  expect(item.workspace.reasoning).toBe('Keep my approach');
-  await cards.nth(0).locator('[data-chat="undo"]').click();
-  await expect(cards.nth(0).locator('[data-chat="apply"]')).toBeVisible();
-  await page.locator('#interview-answer').evaluate(el => el.focus({ preventScroll: true }));
-  await cards.nth(2).locator('[data-chat="apply"]').evaluate(el => el.click());
-  await expect(cards.nth(2)).toContainText('Accepted');
-  await expect(page.locator('#interview-answer')).toHaveValue(item.workspace.answer);
-  expect(item.workspace.answer).toContain('right = (\n');
-  expect(item.workspace.answer).not.toContain('right = ()');
-  await cards.nth(2).locator('[data-chat="undo"]').click();
-  await expect(cards.nth(2).locator('[data-chat="apply"]')).toBeVisible();
-  item.workspace.answer = item.workspace.answer.replace('left = 0', 'left = 99');
-  await cards.nth(0).locator('[data-chat="apply"]').click();
-  await expect(page.locator('.toast')).toContainText('Your draft was kept');
-  expect(item.workspace.answer).toContain('left = 99');
-});
 
-const EDITOR_LANGUAGES = ['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go'];
 
-test('coding language dropdown defaults to Python and offers every supported language', async ({ page }) => {
-  await fillTaskPanel(page);
-  await page.route('**/api/interviews', route => route.fulfill({ json: [] }));
-  await page.goto('/#/interviews');
-  await page.locator('[data-interview="create"][data-track="coding"]').click();
-  const dropdown = page.locator('select#interview-language');
-  await expect(dropdown).toHaveValue('Python');
-  expect(await dropdown.locator('option').allTextContents()).toEqual(EDITOR_LANGUAGES);
-  await expect(dropdown.locator('..').locator(':scope > svg')).toBeVisible();
-  await dropdown.selectOption('C++');
-  await expect(dropdown).toHaveValue('C++');
-  await page.locator('.sheet [data-action="close"]').click();
-});
 
-for (const [index, language] of EDITOR_LANGUAGES.entries()) {
-  test(`coding typing pairs brackets, preserves scroll, Undo and saves in ${language}`, async ({ page }) => {
-    await fillTaskPanel(page);
-    const id = `typing-languages-${index}`;
-    const challenge = { id: `typing-problem-${index}`, title: 'Typing practice', question: 'Work through this exercise.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: '', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['Describe the approach.'] } };
-    const item = { id, revision: 1, framework: { title: 'Typing', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: '', reasoning: '', board: [] }, problems: [], attempts: [], schedule: [] };
-    await page.route(`**/api/interviews/${id}`, route => {
-      if (route.request().method() === 'PUT') { const data = route.request().postDataJSON(); item.workspace = data.workspace || item.workspace; item.revision++; }
-      return route.fulfill({ json: item });
-    });
-    await page.route('**/api/interviews/*/key?*', route => route.fulfill({ json: { status: 'unavailable', tests: [], asks: [], rubric: [] } }));
-    await page.goto(`/#/interviews/${id}`);
-    const area = page.locator('#interview-answer');
-    await expect(page.locator('#interview-colors')).toBeVisible();
-    if (language === 'Python') {
-      const header = 'class Solution:\n    def solve(self):';
-      await area.fill(header); await area.press('End'); await area.press('Enter');
-      await expect(area).toHaveValue(header + '\n        ');
-    }
-    const fragment = '        value = 1;';
-    await area.fill(fragment); await area.press('End'); await area.press('Enter');
-    await expect(area).toHaveValue(fragment + '\n        ');
-    await expect(area).toBeFocused();
-    await area.press('ControlOrMeta+z'); await expect(area).toHaveValue(fragment);
-    await area.press('ControlOrMeta+Shift+z'); await expect(area).toHaveValue(fragment + '\n        ');
-    await area.evaluate(el=>el.dispatchEvent(new InputEvent('beforeinput',{inputType:'insertLineBreak',bubbles:true,cancelable:true})));
-    await expect(area).toHaveValue(fragment + '\n\n        ');
-    await expect.poll(()=>item.workspace.answer).toBe(fragment + '\n\n        ');
-    if (language === 'Rust') {
-      await area.fill('&'); await area.press("'"); await area.press('a');
-      await expect(area).toHaveValue("&'a");
-    }
-    await area.fill('');
-    await area.press('('); await area.press('['); await area.press('x');
-    await expect(area).toHaveValue('([x])');
-    await area.press(']'); await area.press(')');
-    await expect(area).toHaveValue('([x])');
-    expect(await area.evaluate(el => el.selectionStart)).toBe(5);
-    await area.fill(''); await area.press('{');
-    await expect(area).toHaveValue('{}');
-    await area.press('Backspace'); await expect(area).toHaveValue('');
-    const long = 'value;\n'.repeat(60) + '{}';
-    await area.fill(long);
-    await area.scrollIntoViewIfNeeded();
-    await area.evaluate(el => { const at = el.value.length - 1; el.setSelectionRange(at, at); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
-    const position = await area.evaluate(el => ({ page: scrollY, editor: el.scrollTop }));
-    expect(position.editor).toBeGreaterThan(100);
-    await area.press('Enter');
-    const expanded = long.slice(0, -1) + '\n    \n}';
-    await expect(area).toHaveValue(expanded);
-    await expect(area).toBeFocused();
-    expect(Math.abs(await page.evaluate(() => scrollY) - position.page)).toBeLessThan(2);
-    expect(await area.evaluate(el => el.scrollTop)).toBeGreaterThan(position.editor - 24);
-    await area.press('ControlOrMeta+z'); await expect(area).toHaveValue(long);
-    await area.press('ControlOrMeta+Shift+z'); await expect(area).toHaveValue(expanded);
-    await area.press('Tab');
-    await expect(area).toHaveValue(expanded.replace('\n    \n}', '\n        \n}'));
-    await area.press('Shift+Tab'); await expect(area).toHaveValue(expanded);
-    await area.fill('a\nb'); await area.selectText();
-    await area.press('Tab'); await expect(area).toHaveValue('    a\n    b');
-    await area.press('Shift+Tab'); await expect(area).toHaveValue('a\nb');
-    await area.fill('答😀'); await area.selectText(); await area.press('[');
-    await expect(area).toHaveValue('[答😀]');
-    expect(await area.evaluate(el => el.value.slice(el.selectionStart, el.selectionEnd))).toBe('答😀');
-    await expect.poll(() => item.workspace.answer).toBe('[答😀]');
-    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-    await expect(page.locator('#interview-save')).toHaveText('Saved');
-    await page.reload();
-    await expect(area).toHaveValue('[答😀]');
-  });
-}
 
-const EDITOR_SAMPLES = [['C++', 'int solve() {\nreturn 2;\n}', 3], ['Rust', 'fn solve() -> i32 {\n2\n}', 3], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}', 3], ['Python', 'def solve():\n  return 2', 2], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;', 3], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}', 3], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}', 3], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}', 3]];
 
-for (const [index, [language, code, tabWidth]] of EDITOR_SAMPLES.entries()) {
-  test(`coding colors and indentation preserve input, Undo, saves and scroll in ${language}`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme: 'light' });
-    const id = `coding-colors-${index}`;
-    const item = { id, revision: 1, framework: { title: 'Coding colors', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: `challenge-colors-${index}`, title: 'Solve the problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: code, difficulty: 'easy', examples: [{ input: '2', output: '2' }], constraints: ['Be clear.'] } }, workspace: { answer: code, reasoning: '', board: [] }, attempts: [], schedule: [] };
-    let requests = 0;
-    await page.route(`**/api/interviews/${id}`, async (route) => {
-      if (route.request().method() === 'PUT') {
-        const body = route.request().postDataJSON();
-        if (body.action === 'workspace') item.workspace = body.workspace;
-        item.revision++;
-      }
-      await route.fulfill({ json: item });
-    });
-    await page.route('**/api/chat', async (route) => { requests++; await route.fulfill({ status: 500, json: { error: 'No model is needed here.' } }); });
-    await page.goto(`/#/interviews/${id}`);
-    const area = page.locator('#interview-answer');
-    const colors = page.locator('#interview-colors');
-    await expect(area).toHaveValue(code);
-    await expect(colors.locator('.code-keyword').first()).toBeVisible();
-    expect(await colors.textContent()).toBe(code);
-    const originalColor = await colors.locator('.code-keyword').first().evaluate(el => getComputedStyle(el).color);
-    await page.emulateMedia({ colorScheme: 'dark' });
-    expect(await colors.locator('.code-keyword').first().evaluate(el => getComputedStyle(el).color)).not.toBe(originalColor);
-    await page.emulateMedia({ colorScheme: 'light' });
-    await area.focus();
-    await area.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
-    await area.press('Tab');
-    const tab = ' '.repeat(tabWidth);
-    await expect(area).toHaveValue(code + tab);
-    await expect(area).toBeFocused();
-    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([code.length + tabWidth, code.length + tabWidth]);
-    await expect.poll(() => item.workspace.answer).toBe(code + tab);
-    await area.press('ControlOrMeta+z');
-    await expect(area).toHaveValue(code);
-    await expect.poll(() => item.workspace.answer).toBe(code);
-    const long = Array.from({ length: 25 }, (_, i) => `${code}\n${' '.repeat(130)}${i}`).join('\n');
-    await area.fill(long);
-    await expect.poll(() => colors.textContent()).toBe(long);
-    await area.evaluate(el => { el.scrollTop = el.scrollHeight; el.scrollLeft = el.scrollWidth; el.dispatchEvent(new Event('scroll')); });
-    await expect.poll(() => colors.evaluate(el => [el.scrollTop, el.scrollLeft])).toEqual(await area.evaluate(el => [el.scrollTop, el.scrollLeft]));
-    await expect(area).toBeFocused();
-    await expect.poll(() => item.workspace.answer).toBe(long);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-    await expect(page.locator('#interview-save')).toHaveText('Saved');
-    await page.reload();
-    await expect(area).toHaveValue(long);
-    await expect(colors.locator('.code-keyword').first()).toBeVisible();
-    expect(await colors.textContent()).toBe(long);
-    expect(requests).toBe(0);
-    await page.emulateMedia({ forcedColors: 'active' });
-    await expect(page.locator('#interview-colors')).toBeHidden();
-    expect(await page.locator('#interview-answer').evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
-  });
-}
 
-test('typing before syntax tools load and a failed load keep the code editable', async ({ page }) => {
-  const id = 'coding-lazy-01';
-  let workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
-  await page.route(`**/api/interviews/${id}`, route => {
-    if (route.request().method() === 'PUT') workspace = route.request().postDataJSON().workspace || workspace;
-    return route.fulfill({ json: { id, revision: 1, framework: { title: 'Lazy tools', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: 'challenge-lazy-01', title: 'A problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [] }, workspace, attempts: [], schedule: [] } });
-  });
-  let release;
-  const held = new Promise(resolve => { release = resolve; });
-  await page.route('**/code-tools.js', async route => { await held; await route.continue(); });
-  await page.goto(`/#/interviews/${id}`, { waitUntil: 'domcontentloaded' });
-  const area = page.locator('#interview-answer');
-  const value = 'def solve():\n    return "<img src=x onerror=alert(1)>答え"';
-  await area.fill(value);
-  await area.evaluate(el => el.setSelectionRange(4, 9));
-  release();
-  await expect(page.locator('#interview-colors .code-keyword').first()).toBeVisible();
-  await expect(area).toHaveValue(value);
-  await expect(area).toBeFocused();
-  expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([4, 9]);
-  await expect(page.locator('#interview-colors img')).toHaveCount(0);
-  await expect.poll(() => workspace.answer).toBe(value);
-  await page.unroute('**/code-tools.js');
-  await page.route('**/code-tools.js', route => route.abort());
-  await page.reload();
-  await expect(area).toHaveValue(value);
-  await expect(page.locator('[data-interview="indent-code"]')).toHaveCount(0);
-  await expect(page.locator('#interview-colors')).toBeHidden();
-  await area.fill('def solve():\n    return 3');
-  await expect.poll(() => workspace.answer).toContain('return 3');
-  await expect(area).toBeFocused();
-});
+
+
+
+
+
+
+
+
 
 test.describe('Felix organizes', () => {
   test('a suggested move is applied from its card and undone', async ({ page }) => {
@@ -5364,244 +4768,9 @@ test.describe('Felix organizes', () => {
 });
 
 
-test('coding problems keep separate drafts, wrap long functions and open their own Felix chat', async ({ page }) => {
-  const id = 'coding-problems-ui';
-  const starter = 'def shortest_category_segment(feed: list[str], required_categories_with_counts: list[str], preferred_category_order: list[str]) -> list[int]:\n    pass';
-  const challenge = (n) => ({ id: `challenge-problem-${n}`, title: `Category coverage ${n}`, question: 'Find the shortest contiguous segment covering every required count. Explain duplicates, ties and complexity.', minutes: 45, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'medium', examples: [{ input: 'feed=["art","food"], required=["food"]', output: '[1,1]' }], constraints: ['Up to 200000 categories.'] } });
-  const first = { challenge: challenge(1), workspace: { answer: starter, reasoning: 'A sliding window', board: [] } };
-  const second = { challenge: challenge(2), workspace: { answer: 'def other():\n    return [0, 1]', reasoning: 'Earlier explanation', board: [{ kind: 'text', text: 'Earlier diagram', points: [[20, 40]] }] } };
-  let item = { id, revision: 1, framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: first.challenge, workspace: first.workspace, problems: [first, second], attempts: [], schedule: [] };
-  let failSelect = false;
-  let prepareRelease;
-  let archiveRelease;
-  const requests = [];
-  await page.route('**/api/interviews/*', async (route) => {
-    if (route.request().method() === 'PUT') {
-      const change = route.request().postDataJSON();
-      if (change.action === 'select') {
-        if (failSelect) { failSelect = false; return route.fulfill({ status: 409, json: { error: 'This practice changed. Reload before switching; your draft is kept.' } }); }
-        const problem = item.problems.find((p) => p.challenge.id === change.challenge);
-        item.challenge = problem.challenge;
-        item.workspace = problem.workspace;
-      } else if (change.action === 'submit') {
-        item.attempts.push({ id: change.attempt, challenge: structuredClone(item.challenge), workspace: structuredClone(change.workspace), at: new Date().toISOString(), feedback: null });
-        item.workspace = change.workspace;
-      } else if (change.action === 'workspace') {
-        const problem = item.problems.find((p) => p.challenge.id === change.challenge);
-        if (item.challenge.id !== change.challenge) await new Promise((resolve) => { archiveRelease = resolve; });
-        problem.workspace = change.workspace;
-        if (item.challenge.id === change.challenge) item.workspace = change.workspace;
-      }
-      item.revision++;
-    }
-    await route.fulfill({ json: item });
-  });
-  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Coding practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
-  await page.route('**/api/chat', async (route) => {
-    const request = route.request().postDataJSON();
-    requests.push(request);
-    if (!request.messages.at(-1).text.includes('interview_challenge')) return route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Your code stays in this workspace. Keep iterating.' }) + '\n' + JSON.stringify({ done: true }) + '\n' });
-    await new Promise((resolve) => { prepareRelease = resolve; });
-    const third = { challenge: challenge(3), workspace: { answer: starter, reasoning: '', board: [] } };
-    item.problems.push(third);
-    item.challenge = third.challenge;
-    item.workspace = third.workspace;
-    item.revision++;
-    await route.fulfill({ contentType: 'application/x-ndjson', body: [{ interview: { id, revision: item.revision } }, { t: 'Problem 3 is ready in your workspace.' }, { done: true }].map((event) => JSON.stringify(event)).join('\n') + '\n' });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  const area = page.locator('#interview-answer');
-  await expect(area).toHaveValue(starter);
-  await expect(page.locator('#interview-colors .code-keyword').first()).toBeVisible();
-  const wrapping = await area.evaluate((el) => ({ whiteSpace: getComputedStyle(el).whiteSpace, scroll: el.scrollWidth, width: el.clientWidth }));
-  expect(wrapping.whiteSpace).toBe('pre-wrap');
-  expect(wrapping.scroll).toBeLessThanOrEqual(wrapping.width);
-  await expect(page.locator('[data-interview="indent-code"]')).toHaveCount(0);
-  await area.fill(starter + '\n        ');
-  await area.evaluate((el) => el.setSelectionRange(el.value.length, el.value.length));
-  await area.press('Backspace');
-  await expect(area).toHaveValue(starter + '\n    ');
-  await area.press('ControlOrMeta+z');
-  await expect(area).toHaveValue(starter + '\n        ');
-  const draft = starter.replace('pass', 'return [0, 2]');
-  await area.fill(draft);
-  await chooseProblem(page, 2);
-  await expect(area).toHaveValue(second.workspace.answer);
-  expect(item.problems[0].workspace.answer).toBe(draft);
-  await page.locator('[data-interview="tab"][data-tab="write"]').click();
-  await expect(page.locator('#interview-reasoning')).toHaveValue('Earlier explanation');
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await expect(page.locator('#interview-board')).toContainText('Earlier diagram');
-  failSelect = true;
-  await chooseProblem(page, 1);
-  await expect(page.locator('.toast')).toContainText('Reload before switching');
-  expect(item.challenge.id).toBe(second.challenge.id);
-  await chooseProblem(page, 1);
-  await page.locator('[data-interview="tab"][data-tab="code"]').click();
-  await expect(area).toHaveValue(draft);
-  await page.locator('[data-interview="submit"]').click();
-  await page.locator('#interview-results [data-interview="review-result"]').click();
-  await expect(page.locator('.msg.leo').last()).toContainText('Keep iterating');
-  await expect(area).toHaveValue(draft);
-  expect(item.attempts[0].workspace.answer).toBe(draft);
-  await page.locator('[data-chat="close"]').click();
-  await page.locator('#chat-toggle').click();
-  await expect(page.locator('.chat')).toBeVisible();
-  await page.locator('#chat-input').fill('Which problem am I working on?');
-  await page.locator('#chat-input').press('Enter');
-  await expect.poll(() => requests.length).toBe(2);
-  expect(requests[1].mode).toBe('interview');
-  expect(requests[1].chat).toBe(id);
-  await expect(page.locator('.msg.leo').last()).toContainText('Keep iterating');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  await page.locator('[data-chat="close"]').click();
-  await page.getByRole('button', { name: '+ Problem', exact: true }).click();
-  await expect.poll(() => typeof prepareRelease).toBe('function');
-  const lateDraft = draft + '\n    result = [0, 2]';
-  await area.fill(lateDraft);
-  prepareRelease();
-  await expect.poll(() => typeof archiveRelease).toBe('function');
-  await expect(area).toHaveJSProperty('readOnly', true);
-  archiveRelease();
-  await expect(page.locator('[data-interview="problem-menu"]')).toContainText('Problem 3 of 3');
-  expect(item.problems[0].workspace.answer).toBe(lateDraft);
-  await expect(area).toHaveValue(starter);
-  expect(requests).toHaveLength(3);
-  expect(requests[0].mode).toBe('interview');
-  expect(requests[0].chat).toBe(id);
-  expect(requests.at(-1).messages.at(-1).text).toContain('interview_challenge');
-  await page.locator('[data-chat="close"]').click();
-  await chooseProblem(page, 1);
-  await expect(area).toHaveValue(lateDraft);
-  await page.reload();
-  await expect(area).toHaveValue(lateDraft);
-  expect(item.problems).toHaveLength(3);
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.locator('#back').click();
-  await expect(page).toHaveURL(/#\/interviews$/);
-  await expect(page.getByRole('heading', { name: 'Interview practice', exact: true })).toBeVisible();
-});
 
-test('whiteboards pan, labels drag and typed labels land where clicked while Reset affects only the active problem tab', async ({ page }) => {
-  const id = 'whiteboard-workspace';
-  const starter = 'def solve(values):\n    pass';
-  const make = n => ({ challenge: { id: `whiteboard-problem-${n}`, title: `Problem title ${n}`, question: 'Explain the system and implement its queue.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'medium', examples: [{ input: '[1]', output: '1' }], constraints: ['Explain trade-offs'] } }, workspace: { answer: `${starter}\n# draft ${n}`, reasoning: `Approach ${n}`, board: [] } });
-  const problems = [make(1), make(2)];
-  let item = { id, revision: 1, framework: { title: 'Interview workspace', track: 'coding', company: 'Example', role: 'Engineer', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: problems[0].challenge, workspace: problems[0].workspace, problems, attempts: [], schedule: [] };
-  const chats = [];
-  await page.route('**/api/interviews/*', route => {
-    if (route.request().method() === 'PUT') {
-      const change = route.request().postDataJSON();
-      const problem = item.problems.find(p => p.challenge.id === change.challenge);
-      if (change.action === 'select') { item.challenge = problem.challenge; item.workspace = problem.workspace; }
-      else if (change.action === 'workspace') { problem.workspace = change.workspace; if (item.challenge.id === change.challenge) item.workspace = change.workspace; }
-      item.revision++;
-    }
-    return route.fulfill({ json: item });
-  });
-  await page.route('**/api/chats/*', route => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No chat yet' } }) : route.fulfill({ json: { id, title: 'Interview workspace', count: 2, named: true, updated_at: new Date().toISOString() } }));
-  await page.route('**/api/chat', route => { chats.push({ body: route.request().postDataJSON(), challenge: item.challenge.id, workspace: structuredClone(item.workspace) }); return route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"I see the active problem and your draft."}\n{"done":true}\n' }); });
-  await page.goto(`/#/interviews/${id}`);
-  await expect(page.locator('[data-interview="clear-workspace"], [data-interview="reset-code"], [data-interview="clear-board"], [data-interview="chat"]')).toHaveCount(0);
-  await expect(page.locator('.interview-submit [data-interview="reset"]')).toHaveText('Reset');
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await boardLabel(page, 'Client → Queue', 0.2, 0.25);
-  await expect(page.locator('#interview-board text')).toHaveText('Client → Queue');
-  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(() => item.workspace.board.length).toBe(1);
-  const original = structuredClone(item.workspace.board[0]);
-  const label = await page.locator('#interview-board text').boundingBox();
-  await page.mouse.move(label.x + label.width / 2, label.y + label.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(label.x + label.width / 2 + 45, label.y + label.height / 2 + 35, { steps: 4 });
-  await page.mouse.up();
-  await expect.poll(() => item.workspace.board[0].points[0][0]).toBeGreaterThan(original.points[0][0]);
-  const moved = structuredClone(item.workspace.board[0]);
-  await page.locator('[data-interview="undo-board"]').click();
-  await expect.poll(() => item.workspace.board[0].points).toEqual(original.points);
-  const board = page.locator('#interview-board');
-  const before = await board.locator('svg').getAttribute('viewBox');
-  const saved = JSON.stringify(item.workspace.board);
-  await board.scrollIntoViewIfNeeded();
-  const box = await board.boundingBox();
-  await board.focus();
-  await page.keyboard.down('Space');
-  await page.mouse.move(box.x + box.width * .75, box.y + box.height * .7);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * .75 + 60, box.y + box.height * .7 + 40, { steps: 3 });
-  await page.mouse.up();
-  await page.keyboard.up('Space');
-  expect(await board.locator('svg').getAttribute('viewBox')).not.toBe(before);
-  expect(JSON.stringify(item.workspace.board)).toBe(saved);
-  await board.dispatchEvent('wheel', { deltaY: 1800, deltaMode: 0, clientX: box.x + 80, clientY: box.y + 80 });
-  await boardLabel(page, 'Far away label', 0.2, 0.5);
-  await expect.poll(() => item.workspace.board.length).toBe(2);
-  expect(item.workspace.board[1].points[0][1]).toBeGreaterThan(1000);
-  await page.locator('[data-interview="tool"][data-tool="box"]').click();
-  const current = await board.boundingBox();
-  await page.mouse.move(current.x + current.width * .4, current.y + current.height * .4);
-  await page.mouse.down();
-  await page.mouse.move(current.x + current.width * .7, current.y + current.height * .7, { steps: 3 });
-  await page.mouse.up();
-  await expect.poll(() => item.workspace.board.length).toBe(3);
-  expect(item.workspace.board[2].kind).toBe('box');
-  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('[data-interview="fit-board"]').click();
-  expect(await board.locator('svg').getAttribute('viewBox')).not.toBe(before);
-  const reset = async () => { await page.locator('.interview-submit [data-interview="reset"]').click(); await page.locator('[data-interview="confirm-reset"]').click(); };
-  const code = item.workspace.answer, reasoning = item.workspace.reasoning;
-  await reset();
-  await expect.poll(() => item.workspace.board.length).toBe(0);
-  expect(item.workspace.answer).toBe(code);
-  expect(item.workspace.reasoning).toBe(reasoning);
-  await page.locator('[data-interview="undo-board"]').click();
-  await expect.poll(() => item.workspace.board.length).toBe(3);
-  const drawing = JSON.stringify(item.workspace.board);
-  await page.locator('[data-interview="tab"][data-tab="write"]').click();
-  await reset();
-  await expect.poll(() => item.workspace.reasoning).toBe('');
-  expect(item.workspace.answer).toBe(code);
-  expect(JSON.stringify(item.workspace.board)).toBe(drawing);
-  await page.locator('[data-interview="tab"][data-tab="code"]').click();
-  await reset();
-  await expect.poll(() => item.workspace.answer).toBe(starter);
-  expect(JSON.stringify(item.workspace.board)).toBe(drawing);
-  await chooseProblem(page, 2);
-  await expect(page.locator('#interview-answer')).toHaveValue(`${starter}\n# draft 2`);
-  await page.locator('#chat-toggle').click();
-  await expect(page.locator('#chat-context')).toContainText('Problem 2');
-  await expect(page.locator('#chat-context')).toContainText('Problem title 2');
-  if (await page.locator('#interview-answer').isVisible()) await page.locator('#interview-answer').fill('Newest unsaved code for problem two');
-  else { await page.locator('[data-chat="close"]').click(); await page.locator('#interview-answer').fill('Newest unsaved code for problem two'); await page.locator('#chat-toggle').click(); }
-  await page.locator('#chat-input').fill('Can you help me with this?');
-  await page.locator('#chat-input').press('Enter');
-  await expect(page.locator('#chat .msg:not(.user)').last()).toContainText('active problem');
-  expect(chats.at(-1).body.mode).toBe('interview');
-  expect(chats.at(-1).body.interview_problem).toBe('whiteboard-problem-2');
-  expect(chats.at(-1).challenge).toBe('whiteboard-problem-2');
-  expect(chats.at(-1).workspace.answer).toBe('Newest unsaved code for problem two');
-  expect(item.problems[0].workspace.answer).toBe(starter);
-  await page.locator('[data-chat="close"]').click();
-  await page.reload();
-  await chooseProblem(page, 1);
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await expect(board.locator('text')).toHaveText(['Client → Queue', 'Far away label']);
-  expect(JSON.stringify(item.workspace.board)).toBe(drawing);
-  const shape = board.locator('[data-board-shape="0"]');
-  await shape.focus();
-  await page.keyboard.press('ArrowRight');
-  await expect.poll(() => item.workspace.board[0].points[0][0]).toBeGreaterThan(original.points[0][0]);
-  await expect(board.locator('[data-board-shape="0"]')).toBeFocused();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  item.framework.track = 'systems'; item.challenge.coding = null;
-  await page.reload();
-  const geometry = await page.locator('.interview-practice').evaluate(el => ({ width: el.getBoundingClientRect().width, parent: el.parentElement.clientWidth - 32 }));
-  expect(Math.abs(geometry.width - geometry.parent)).toBeLessThan(2);
-  await page.locator('#chat-toggle').click();
-  const overlap = await page.evaluate(() => { const workspace = document.querySelector('.interview-workspace').getBoundingClientRect(), chat = document.querySelector('#chat').getBoundingClientRect(); return innerWidth >= 900 && workspace.right > chat.left + 1; });
-  expect(overlap).toBe(false);
-  expect(moved.points).not.toEqual(original.points);
-});
+
+
 
 test('Felix permission changes reach an active reply and Ask first keeps later edits as proposals', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('leo-felix-access', 'auto'));
@@ -5641,7 +4810,7 @@ test('Felix permission changes reach an active reply and Ask first keeps later e
   await page.evaluate(() => window.finishPermissionReply({ kind: 'create', title: 'Daily study', body: 'Study on weekdays', folder: '' }));
   await expect(page.locator('.proposal [data-chat="apply"]')).toBeVisible();
   await expect(page.locator('#chat .msg:not(.user)').last()).toContainText('I am preparing the change. Ready.');
-  await page.locator('#chat-input').fill('Plan my weekday interview studying');
+  await page.locator('#chat-input').fill('Plan my weekday studying');
   await page.locator('#chat-input').press('Enter');
   await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Stop');
   await page.evaluate(() => window.finishPermissionReply({ kind: 'add_task', summary: 'Add the task “Study weekdays” · every Mon, Tue, Wed, Thu, Fri', title: 'Study weekdays', date: '2026-10-12', repeat: [0, 1, 2, 3, 4] }));
@@ -5675,7 +4844,7 @@ test('Felix permission changes reach an active reply and Ask first keeps later e
 });
 
 test('Felix tool activity stays between the response passages it belongs to after reload', async ({ page }) => {
-  const events = [{ t: 'I will read your submitted code first.\n\n' }, { step: 'Read your submitted attempt', tool: 'interview_attempt' }, { t: 'Your sliding-window approach fits the problem.\n\n' }, { step: 'Looked at your interview progress', tool: 'interview_progress' }, { step: 'Reviewed your interview attempt', tool: 'interview_feedback' }, { t: 'Next, check repeated categories and ties.' }, { done: true }];
+  const events = [{ t: 'I will read your submitted code first.\n\n' }, { step: 'Read your submitted attempt', tool: 'open_note' }, { t: 'Your sliding-window approach fits the problem.\n\n' }, { step: 'Searched your notes', tool: 'search_notes' }, { step: 'Read your saved notes', tool: 'open_note' }, { t: 'Next, check repeated categories and ties.' }, { done: true }];
   await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: events.map((event) => JSON.stringify(event)).join('\n') + '\n' }));
   await page.goto('/');
   await page.locator('#chat-toggle').click();
@@ -5685,7 +4854,7 @@ test('Felix tool activity stays between the response passages it belongs to afte
   await expect(answer).toContainText('Next, check repeated categories and ties.');
   const ordered = async () => {
     const content = await answer.innerText();
-    const pieces = ['I will read your submitted code first.', 'Read your submitted attempt', 'Your sliding-window approach fits the problem.', 'Looked at your interview progress', 'Reviewed your interview attempt', 'Next, check repeated categories and ties.'];
+    const pieces = ['I will read your submitted code first.', 'Read your submitted attempt', 'Your sliding-window approach fits the problem.', 'Searched your notes', 'Read your saved notes', 'Next, check repeated categories and ties.'];
     for (let i = 1; i < pieces.length; i++) expect(content.indexOf(pieces[i])).toBeGreaterThan(content.indexOf(pieces[i - 1]));
   };
   await ordered();
@@ -5695,426 +4864,19 @@ test('Felix tool activity stays between the response passages it belongs to afte
   await ordered();
 });
 
-test('repeated code runs release temporary scripts in the shared runner', async ({ page }) => {
-  await page.evaluate(() => new Promise((resolve) => {
-    const frame = document.createElement('iframe');
-    frame.setAttribute('sandbox', 'allow-scripts');
-    frame.hidden = true;
-    const ready = (event) => {
-      if (event.source !== frame.contentWindow || event.data?.kind !== 'ready') return;
-      window.removeEventListener('message', ready);
-      window.__runnerCleanupFrame = frame;
-      resolve();
-    };
-    window.addEventListener('message', ready);
-    frame.src = '/runner.html';
-    document.body.appendChild(frame);
-  }));
-  const frame = page.frames().find((frame) => frame.url().endsWith('/runner.html'));
-  await frame.evaluate(() => {
-    const create = URL.createObjectURL.bind(URL);
-    const revoke = URL.revokeObjectURL.bind(URL);
-    window.__runnerScriptUrls = new Set();
-    URL.createObjectURL = (blob) => { const url = create(blob); window.__runnerScriptUrls.add(url); return url; };
-    URL.revokeObjectURL = (url) => { window.__runnerScriptUrls.delete(url); return revoke(url); };
-  });
-  for (let run = 0; run < 25; run++) {
-    const result = await page.evaluate((run) => new Promise((resolve) => {
-      const frame = window.__runnerCleanupFrame;
-      const heard = (event) => {
-        if (event.source !== frame.contentWindow || event.data?.run !== run || event.data.kind !== 'done') return;
-        window.removeEventListener('message', heard);
-        resolve(event.data);
-      };
-      window.addEventListener('message', heard);
-      frame.contentWindow.postMessage({ kind: 'run', run, language: 'javascript', code: 'class Solution { twice(x) { return x * 2; } }', entry: 'twice', tests: [{ id: 'one', args: [4] }] }, '*');
-    }), run);
-    expect(result.results[0].got).toBe(8);
-  }
-  expect(await frame.evaluate(() => window.__runnerScriptUrls.size)).toBe(0);
-  await page.evaluate(() => window.__runnerCleanupFrame.remove());
-});
 
-test('the code runner runs only your code in a sandbox, stops endless loops and cannot reach leo', async ({ page }) => {
-  const run = (job) => page.evaluate((job) => new Promise((resolve) => {
-    const frame = document.createElement('iframe');
-    frame.setAttribute('sandbox', 'allow-scripts');
-    frame.hidden = true;
-    const started = Date.now();
-    const heard = (e) => {
-      if (e.source !== frame.contentWindow) return;
-      if (e.data.kind === 'ready') frame.contentWindow.postMessage({ ...job, kind: 'run', run: 'r1' }, '*');
-      if (e.data.kind === 'done') { window.removeEventListener('message', heard); frame.remove(); resolve({ ...e.data, took: Date.now() - started }); }
-    };
-    window.addEventListener('message', heard);
-    frame.src = '/runner.html';
-    document.body.appendChild(frame);
-  }), job);
-  const ok = await run({ code: 'function pair_sum(nums, target) { console.log("seen", nums.length); const at = new Map(); for (let i = 0; i < nums.length; i++) { if (at.has(target - nums[i])) return [at.get(target - nums[i]), i]; at.set(nums[i], i); } return []; }', entry: 'pair_sum', tests: [{ id: 't1', args: [[2, 7, 11], 9] }, { id: 't2', args: [[], 1] }] });
-  expect(ok.error).toBeUndefined();
-  expect(ok.results.map((r) => r.got)).toEqual([[0, 1], []]);
-  expect(ok.logs[0]).toBe('seen 3');
-  const solution = await run({ code: 'class Solution { twice(x) { return x * 2; } }', entry: 'twice', tests: [{ id: 't1', args: [4] }] });
-  expect(solution.results[0].got).toBe(8);
-  const ticking = page.evaluate(() => new Promise((resolve) => { let n = 0; const timer = setInterval(() => { n++; if (n === 5) { clearInterval(timer); resolve(n); } }, 100); }));
-  const loop = await run({ code: 'function spin() { while (true) {} }', entry: 'spin', tests: [{ id: 't1', args: [] }], limit: 1000 });
-  expect(loop.error).toMatch(/Stopped after 1 seconds/);
-  expect(await ticking).toBe(5);
-  const nosy = await run({ code: 'function steal() { const x = new XMLHttpRequest(); x.open("GET", "/api/notes", false); x.send(); return x.status; }', entry: 'steal', tests: [{ id: 't1', args: [] }] });
-  expect(nosy.results[0].error).toBeTruthy();
-  expect(nosy.results[0].got).toBeUndefined();
-  const broken = await run({ code: 'function f( {', entry: 'f', tests: [] });
-  expect(broken.error).toMatch(/did not run/);
-  const injected = await run({ code: 'function f() { return 1; }', entry: 'f; fetch("/api/notes")', tests: [] });
-  expect(injected.error).toMatch(/no function to call/);
-});
 
-test('Storage shows interview practices and browser copies, opens them and confirms selective deletion', async ({ page }) => {
-  await page.addInitScript(() => {
-    let queue;
-    Object.defineProperty(window, 'leoAudioQueue', {configurable:true,get:()=>queue,set:value=>{
-      const pick = value.pick;
-      value.pick = () => { const data = pick(); const summaries = data.summaries; data.summaries = async () => { await new Promise(resolve=>setTimeout(resolve,750)); return summaries(); }; return data; };
-      queue = value;
-    }});
-  });
-  await page.reload();
-  const tag = `${test.info().project.name}-${Date.now()}`;
-  const ids = [`storage-practice-one-${tag}`, `storage-practice-two-${tag}`];
-  for (const [index, id] of ids.entries()) {
-    const response = await page.request.put(`/api/interviews/${id}`, { data: { action: 'framework', revision: 0, framework: { title: `Storage practice ${index + 1} ${tag}`, track: 'coding', company: 'Pinterest', role: 'Intern', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' } } });
-    expect(response.ok()).toBe(true);
-  }
-  const chatId = `storage-open-chat-${tag}`;
-  expect((await page.request.put(`/api/chats/${chatId}`, {data:{mode:'chat',refs:[],messages:[{role:'user',text:`Stored conversation ${tag}`}]} })).ok()).toBe(true);
-  await page.evaluate((ids) => {
-    localStorage.setItem('leo-interview-drafts', JSON.stringify(Object.fromEntries(ids.map(id => [`${id}:problem-one`, {answer:'unsaved private code',reasoning:'',board:[]}]))));
-    localStorage.setItem('another-app-data', 'keep');
-  }, ids);
-  await page.evaluate(async () => { await window.leoAudioQueue.pick().put({id:'storage-recovery-01',seq:0,bytes:new Uint8Array(16).buffer}); });
-  await page.goto('/#/settings/storage');
-  const restore = await page.locator('#tasks-restore').elementHandle();
-  await page.locator('[data-export="chats"]').uncheck();
-  await page.locator('#tasks-restore').setInputFiles({name:'tasks.json',mimeType:'application/json',buffer:Buffer.from('{"wrong":[]}')});
-  await expect(page.locator('.toast.bad')).toContainText('Choose tasks.json');
-  const chats = page.locator('[data-area="chats"].store-area');
-  await expect(page.locator('[data-area="browser-local"].store-area')).toBeVisible();
-  expect(await restore.evaluate(el=>el.isConnected)).toBe(true);
-  await expect(page.locator('[data-export="chats"]')).not.toBeChecked();
-  await chats.locator('summary').click();
-  await chats.locator('.store-item', {hasText:`Stored conversation ${tag}`}).getByRole('button', {name:'Open chat'}).click();
-  await expect(page.locator('#chat')).toContainText(`Stored conversation ${tag}`);
-  await page.locator('#chat [data-chat="close"]').click();
-  const practices = page.locator('[data-area="interviews"].store-area');
-  await expect(page.locator('[data-area="browser-local"].store-area')).toBeVisible();
-  if (!(await practices.evaluate(el => el.open))) await practices.locator('summary').click();
-  await expect(practices).toContainText('Storage practice 1');
-  await expect(practices).toContainText('Pinterest');
-  await expect(practices).toContainText('saved problems');
-  const first = practices.locator('.store-item', {hasText:`Storage practice 1 ${tag}`});
-  await first.getByRole('link', {name:'Open practice'}).click();
-  await expect(page).toHaveURL(new RegExp(`#/interviews/${ids[0]}$`));
-  await expect(page.locator('#app')).toContainText('Storage practice 1');
-  await page.goto('/#/settings/storage');
-  await expect(practices).toContainText('Storage practice 1');
-  if (!(await practices.evaluate(el => el.open))) await practices.locator('summary').click();
-  const local = page.locator('[data-area="browser-local"].store-area');
-  await expect(local).toBeVisible();
-  await local.locator('summary').click();
-  await expect(local).toContainText('Interview draft backup');
-  await expect(page.locator('.storage')).not.toContainText('unsaved private code');
-  await first.locator('input').check();
-  await practices.locator('[data-act="delete"]').click();
-  await expect(page.locator('.sheet')).toContainText('deleted permanently');
-  await page.locator('.sheet [data-action="close"]').click();
-  await expect(first).toBeVisible();
-  await expect(first.locator('input')).toBeChecked();
-  await practices.locator('[data-act="delete"]').click();
-  await page.locator('.sheet [data-action="storage-go"]').click();
-  await expect(first).toHaveCount(0);
-  await expect(practices).toContainText('Storage practice 2');
-  expect((await page.request.get(`/api/interviews/${ids[0]}`)).status()).toBe(404);
-  expect((await page.request.get(`/api/interviews/${ids[1]}`)).ok()).toBe(true);
-  const remaining = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('leo-interview-drafts'))));
-  expect(remaining).toEqual([`${ids[1]}:problem-one`]);
-  const recovery = page.locator('[data-area="browser-recovery"].store-area');
-  await recovery.locator('summary').click();
-  const audio = recovery.locator('.store-item', {hasText:'storage-recovery-01'});
-  await expect(audio).toContainText('16 bytes');
-  await audio.locator('input').check();
-  await recovery.locator('[data-act="delete"]').click();
-  await expect(page.locator('.sheet')).toContainText('Already saved server audio and notes stay');
-  await page.locator('.sheet [data-action="storage-go"]').click();
-  await expect(audio).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem('another-app-data'))).toBe('keep');
-  await page.evaluate(() => { for (let n = 0; n < 125; n++) localStorage.setItem(`leo-storage-test-${n}`, '{}'); });
-  await page.reload();
-  await expect(local).toBeVisible();
-  await local.evaluate(el => { el.open = true; });
-  await expect(local.locator('[data-store-item]')).toHaveCount(100);
-  const selected = local.locator('[data-store-item]').first();
-  const value = await selected.getAttribute('value');
-  await selected.check();
-  await local.getByRole('button', {name:/Show more/}).click();
-  await expect(local.locator('[data-store-item]')).not.toHaveCount(100);
-  await expect(local.locator(`[data-store-item][value="${value}"]`)).toBeChecked();
-  await page.request.delete(`/api/interviews/${ids[1]}`);
-  await page.request.delete(`/api/chats/${chatId}`);
-});
 
-test('interview attempts and late feedback stay under their own problem while practice progress stays shared', async ({ page }) => {
-  const id = 'scoped-attempts-ui';
-  const problem = n => ({challenge:{id:`scoped-problem-${n}`,title:'Same exercise title',question:`Solve problem ${n}.`,minutes:30,skills:['Approach'],origin:'generated',sources:[],coding:{language:'Python',starter:'def solve():\n    pass',difficulty:'easy',examples:[{input:'1',output:'1'}],constraints:['Explain it.']}},workspace:{answer:'def solve():\n    pass',reasoning:'',board:[]}});
-  const problems = [problem(3),problem(4),problem(5)];
-  const feedback = text => ({summary:text,scores:[{skill:'Approach',value:3,evidence:'Clear steps',next:'Check boundaries'}]});
-  const attempt = (n, suffix, summary) => ({id:`scoped-attempt-${n}-${suffix}`,at:'2026-10-13T12:00:00Z',challenge:structuredClone(problems[n-3].challenge),workspace:structuredClone(problems[n-3].workspace),feedback:summary?feedback(summary):null});
-  let item = {id,revision:1,framework:{title:'Attempts by problem',track:'coding',company:'',role:'',language:'Python',style:'coach',date:'',weekly_minutes:120,skills:['Approach'],wants:''},challenge:problems[1].challenge,workspace:problems[1].workspace,problems,attempts:[attempt(3,'first','Feedback for problem 3'),attempt(4,'first','First feedback for problem 4'),attempt(4,'second','Second feedback for problem 4')],schedule:[]};
-  await page.route('**/api/interviews/*/key?*', route=>route.fulfill({json:{status:'unavailable',tests:[],asks:[],rubric:[]}}));
-  await page.route(`**/api/interviews/${id}`, async route => {
-    if (route.request().method()==='PUT') { const change=route.request().postDataJSON(); if(change.action==='select'){const p=problems.find(p=>p.challenge.id===change.challenge);item.challenge=p.challenge;item.workspace=p.workspace;} item.revision++; }
-    await route.fulfill({json:item});
-  });
-  await page.route('**/api/chats/*', route=>route.request().method()==='GET'?route.fulfill({status:404,json:{error:'No conversation'}}):route.fulfill({json:{id,title:'Attempts',updated_at:new Date().toISOString(),count:2,named:true}}));
-  await page.route('**/api/chat', route=>{
-    item.attempts[0].feedback=feedback('Late feedback for problem 3');item.revision++;
-    return route.fulfill({contentType:'application/x-ndjson',body:[{interview:{id,revision:item.revision}},{t:'Review saved.'},{done:true}].map(e=>JSON.stringify(e)).join('\n')+'\n'});
-  });
-  await page.goto(`/#/interviews/${id}`);
-  const attempts = page.locator('#interview-attempts');
-  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
-  await expect(attempts).not.toContainText('Feedback for problem 3');
-  await expect(attempts).toContainText('First feedback for problem 4');
-  await expect(attempts).toContainText('Second feedback for problem 4');
-  expect(await attempts.locator('.prose').allTextContents()).toEqual(['Second feedback for problem 4','First feedback for problem 4']);
-  expect(await attempts.evaluate(el=>document.querySelector('#interview-pane-submissions').contains(el) && document.querySelector('#interview-challenge').contains(el))).toBe(true);
-  await expect(page.locator('#interview-panes [data-pane="submissions"]')).toHaveText('Submissions · 2');
-  await page.locator('#interview-panes [data-pane="submissions"]').click();
-  await expect(attempts).toBeVisible();
-  await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
-  await page.locator('#chat-toggle').click();
-  await page.locator('#chat-input').fill('Review the earlier submission.');
-  await page.locator('#chat-input').press('Enter');
-  await expect(page.locator('.msg.leo').last()).toContainText('Review saved');
-  await expect(attempts).not.toContainText('Late feedback for problem 3');
-  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
-  await page.locator('#chat [data-chat="close"]').click();
-  await chooseProblem(page, 1);
-  await expect(attempts.locator('.interview-attempt')).toHaveCount(1);
-  await expect(attempts).toContainText('Late feedback for problem 3');
-  await expect(attempts).not.toContainText('feedback for problem 4');
-  await chooseProblem(page, 3);
-  await expect(attempts.locator('.interview-attempt')).toHaveCount(0);
-  await expect(attempts).toContainText('No submissions for this problem yet');
-  await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
-  await chooseProblem(page, 2);
-  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
-  await page.reload();
-  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
-  await expect(attempts).not.toContainText('Late feedback for problem 3');
-});
 
-test('submission results show a compact case strip with one detail panel that keeps its place', async ({ page }) => {
-  const id = 'results-cases-01';
-  const challenge = (n) => ({ id: `results-problem-0${n}`, title: `Results problem ${n}`, question: 'Return the sum of the list.', minutes: 20, skills: ['Approach', 'Correctness'], origin: 'generated', sources: [], coding: { language: 'Go', starter: 'func solve(nums []int) int {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } });
-  const first = { challenge: challenge(1), workspace: { answer: 'func solve(nums []int) int {\n}', reasoning: '', board: [] } };
-  const second = { challenge: challenge(2), workspace: { answer: 'func solve(nums []int) int {\n}', reasoning: '', board: [] } };
-  const item = { id, revision: 1, framework: { title: 'Results practice', track: 'coding', company: '', role: '', language: 'Go', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach', 'Correctness'], wants: '' }, challenge: first.challenge, workspace: first.workspace, problems: [first, second], attempts: [], schedule: [] };
-  const long = Array.from({ length: 400 }, (_, i) => `line ${i} of a very long output that keeps going`).join('\n');
-  const mixed = [
-    ...Array.from({ length: 10 }, (_, i) => ({ id: `t${i + 1}`, kind: 'test', label: i < 3 ? `solve([${i}, ${i + 1}])` : 'Hidden test', pass: ![2, 5, 7].includes(i), given: i === 5 ? long : String(2 * i + 1), expected: String(2 * i + 1) })),
-    { id: 'a1', kind: 'value', label: 'Time complexity in n', pass: false, given: 'n^2', expected: 'n' },
-    { id: 's1', kind: 'section', label: 'Edge cases', pass: true, given: '', expected: '' },
-  ];
-  let checks = mixed;
-  let gradeRelease;
-  const asked = [];
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'solve', tests: [], hidden_tests: 10, asks: [], sections: [], criteria: 2 } } }));
-  await page.route(`**/api/interviews/${id}/grade`, async (route) => {
-    const attempt = route.request().postDataJSON().attempt;
-    await new Promise((resolve) => { gradeRelease = resolve; });
-    const found = item.attempts.find((a) => a.id === attempt);
-    found.grade = { criteria: [{ id: 'c1', text: 'Handles an empty list', verdict: 'missed', why: 'Returns garbage for [].' }, { id: 'c2', text: 'Explains the complexity', verdict: 'met', why: 'Says linear.' }], overall: 'A sound start; cover the empty list.', at: new Date().toISOString() };
-    item.revision++;
-    await route.fulfill({ json: item });
-  });
-  await page.route(`**/api/interviews/${id}`, async (route) => {
-    if (route.request().method() === 'PUT') {
-      const change = route.request().postDataJSON();
-      if (change.action === 'submit') item.attempts.push({ id: change.attempt, challenge: structuredClone(item.challenge), workspace: structuredClone(change.workspace), at: new Date().toISOString(), feedback: null, checks: structuredClone(checks) });
-      if (change.action === 'select') {
-        const problem = item.problems.find((p) => p.challenge.id === change.challenge);
-        item.challenge = problem.challenge;
-        item.workspace = problem.workspace;
-      }
-      if (change.action === 'workspace') item.workspace = change.workspace;
-      item.revision++;
-    }
-    await route.fulfill({ json: item });
-  });
-  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Results practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
-  await page.route('**/api/chat', (route) => {
-    asked.push(route.request().postDataJSON());
-    return route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Noted.' }) + '\n' + JSON.stringify({ done: true }) + '\n' });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  const area = page.locator('#interview-answer');
-  await area.fill('func solve(nums []int) int {\n\ttotal := 0\n\treturn total\n}');
-  const tabs = page.locator('#interview-panes [data-interview="pane"]');
-  await expect(tabs).toHaveText(['Question', 'Submissions']);
-  await expect(page.getByText('Practice schedule', { exact: true })).toHaveCount(0);
-  await page.locator('[data-interview="submit"]').click();
-  const results = page.locator('#interview-results');
-  await expect(tabs).toHaveText(['Question', 'Result · 8/12', 'Submissions · 1']);
-  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#interview-pane-question')).toBeHidden();
-  await expect(results).toBeVisible();
-  await expect(results.locator('.interview-result-summary')).toContainText('8 passed');
-  await expect(results.locator('.interview-result-summary')).toContainText('4 failed');
-  const chips = results.locator('[data-interview="result-case"]');
-  await expect(chips).toHaveCount(12);
-  const strip = await results.locator('.interview-cases').evaluate((el) => ({ tops: [...el.children].map((c) => c.offsetTop), scroll: el.scrollWidth, width: el.clientWidth }));
-  expect(new Set(strip.tops).size).toBe(1);
-  expect(strip.scroll).toBeGreaterThan(strip.width);
-  await expect(chips.nth(2)).toHaveAttribute('aria-selected', 'true');
-  const panel = results.locator('#interview-case');
-  await expect(panel).toContainText('Case 3');
-  await expect(panel).toContainText('Failed');
-  await expect(panel.locator('.interview-io').first()).toContainText('solve([2, 3])');
-  await expect(panel).toContainText('Your output');
-  await expect(panel).toContainText('Expected output');
-  await expect(panel.locator('[data-interview="check-wrong"]')).toBeVisible();
-  await results.locator('.interview-cases').scrollIntoViewIfNeeded();
-  const before = await page.evaluate(() => ({ y: scrollY, answer: document.querySelector('#interview-answer').value }));
-  await chips.nth(0).click();
-  await expect(panel).toContainText('Passed');
-  await expect(panel.locator('[data-interview="check-wrong"]')).toHaveCount(0);
-  await chips.nth(5).click();
-  await expect(panel).toContainText('hidden test');
-  await expect(panel.getByText('Input', { exact: true })).toHaveCount(0);
-  const output = await panel.locator('.interview-output').first().evaluate((el) => ({ height: el.clientHeight, scroll: el.scrollHeight, wraps: getComputedStyle(el).whiteSpace }));
-  expect(output.height).toBeLessThanOrEqual(170);
-  expect(output.scroll).toBeGreaterThan(output.height);
-  expect(output.wraps).toBe('pre-wrap');
-  await chips.nth(10).click();
-  await expect(panel).toContainText('Time complexity in n');
-  await expect(panel).toContainText('Your answer');
-  await chips.nth(11).click();
-  await expect(panel).toContainText('Your answer covers this part.');
-  await chips.nth(10).focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(chips.nth(11)).toBeFocused();
-  await expect(chips.nth(11)).toHaveAttribute('aria-selected', 'true');
-  await page.keyboard.press('Home');
-  await expect(chips.nth(0)).toBeFocused();
-  const after = await page.evaluate(() => ({ y: scrollY, answer: document.querySelector('#interview-answer').value }));
-  expect(after.answer).toBe(before.answer);
-  expect(Math.abs(after.y - before.y)).toBeLessThan(2);
-  await tabs.nth(0).click();
-  await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
-  await expect(results).toBeHidden();
-  await tabs.nth(0).focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(tabs.nth(1)).toBeFocused();
-  await expect(results).toBeVisible();
-  await expect(chips.nth(0)).toHaveAttribute('aria-selected', 'true');
-  await chips.nth(7).click();
-  await expect(results.locator('.interview-review')).toHaveCount(0);
-  await expect(results.locator('.interview-review-ask')).toContainText('Submitted without an AI review');
-  expect(asked.length).toBe(0);
-  await results.locator('[data-interview="review-result"]').click();
-  await expect.poll(() => typeof gradeRelease).toBe('function');
-  await expect(results.locator('#interview-grade-meter[role="progressbar"]')).toContainText('Quick review ·');
-  gradeRelease();
-  await expect(results.locator('.interview-review')).toContainText('A sound start');
-  await expect(results.locator('.interview-review .interview-tally')).toHaveText(['1 met', '1 missed']);
-  await expect(results.locator('.interview-review-more')).not.toHaveAttribute('open', '');
-  await expect(results.getByText('Returns garbage for [].')).toBeHidden();
-  await expect(chips.nth(7)).toHaveAttribute('aria-selected', 'true');
-  await expect(panel).toContainText('Case 8');
-  await expect.poll(() => asked.length).toBe(1);
-  await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
-  await page.locator('[data-chat="close"]').click();
-  await results.locator('.interview-review-more > summary').click();
-  await expect(results.getByText('Returns garbage for [].')).toBeVisible();
-  await expect(chips.nth(7)).toHaveAttribute('aria-selected', 'true');
-  await chips.nth(2).click();
-  await panel.locator('[data-interview="check-wrong"]').click();
-  await expect.poll(() => asked.length).toBe(2);
-  expect(asked[1].messages.at(-1).text).toContain('solve([2, 3])');
-  await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
-  await page.locator('[data-chat="close"]').click();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  await chooseProblem(page, 2);
-  await expect(results.locator('.interview-result')).toHaveCount(0);
-  await expect(tabs).toHaveText(['Question', 'Submissions']);
-  await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
-  await chooseProblem(page, 1);
-  await expect(results.locator('[data-interview="result-case"]')).toHaveCount(12);
-  checks = mixed.map((c) => ({ ...c, pass: true }));
-  await area.fill('func solve(nums []int) int {\n\treturn 0\n}');
-  await page.locator('[data-interview="submit"]').click();
-  await expect(tabs.nth(1)).toHaveText('Result · 12/12');
-  await expect(results).toBeVisible();
-  await expect(results.locator('.interview-result-summary')).toContainText('12 passed');
-  await expect(results.locator('.interview-result-summary')).not.toContainText('failed');
-  await expect(results.locator('[data-interview="result-case"]').first()).toHaveAttribute('aria-selected', 'true');
-  await expect(panel).toContainText('Passed');
-  await expect(panel.locator('[data-interview="check-wrong"]')).toHaveCount(0);
-  gradeRelease();
-});
 
-async function practiceWithResults(page, id) {
-  const challenge = { id: `${id}-problem`, title: 'Two sum', question: 'Return two indices.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Go', starter: 'func twoSum(nums []int, target int) []int {\n}', difficulty: 'easy', examples: [{ input: '[2,7], 9', output: '[0,1]' }], constraints: ['n <= 100'] } };
-  const workspace = { answer: 'func twoSum(nums []int, target int) []int {\n}', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Results', track: 'coding', company: '', role: '', language: 'Go', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [], schedule: [] };
-  const checks = [{ id: 't1', kind: 'test', label: 'twoSum([2, 7], 9)', pass: true, given: '[0,1]', expected: '[0,1]' }, { id: 't2', kind: 'test', label: 'Hidden test', pass: false, given: 'Error: index out of range', expected: '[]' }, { id: 'a1', kind: 'value', label: 'Time complexity in n', pass: false, given: 'n^2', expected: 'n' }, { id: 's1', kind: 'section', label: 'Edge cases', pass: true, given: '', expected: '' }];
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'twoSum', tests: [], hidden_tests: 1, asks: [], sections: [], criteria: 3 } } }));
-  await page.route(`**/api/interviews/${id}/grade`, (route) => {
-    item.attempts.at(-1).grade = { criteria: [{ id: 'c1', text: 'Handles duplicates', verdict: 'partly', why: 'Misses equal pairs.' }, { id: 'c2', text: 'States complexity', verdict: 'met', why: 'Linear.' }, { id: 'c3', text: 'Explains the plan', verdict: 'missed', why: 'No plan given.' }], overall: 'Correct idea; explain the plan first.', at: new Date().toISOString() };
-    return route.fulfill({ json: item });
-  });
-  await page.route(`**/api/interviews/${id}`, (route) => {
-    if (route.request().method() === 'PUT') {
-      const change = route.request().postDataJSON();
-      if (change.action === 'submit') item.attempts.push({ id: change.attempt, challenge, workspace: change.workspace, at: new Date().toISOString(), feedback: null, checks });
-      item.revision++;
-    }
-    return route.fulfill({ json: item });
-  });
-  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Results', updated_at: new Date().toISOString(), count: 2, named: true } }));
-  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Here is my review.' }) + '\n' + JSON.stringify({ done: true }) + '\n' }));
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('#interview-answer').fill('func twoSum(nums []int, target int) []int {\n\treturn nil\n}');
-  await page.locator('[data-interview="submit"]').click();
-  await page.locator('#interview-results [data-interview="review-result"]').click();
-  await expect(page.locator('.interview-review')).toBeVisible();
-  await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
-  await page.locator('[data-chat="close"]').click();
-}
 
-test('an open submission and folded review stay open when Felix answers and the practice refreshes', async ({ page }) => {
-  await practiceWithResults(page, 'keep-open-01');
-  const review = page.locator('#interview-results .interview-review details').first();
-  if (await review.count()) {
-    await review.locator(':scope > summary').click();
-    await expect(review).toHaveAttribute('open', '');
-  }
-  await page.locator('[data-interview="pane"][data-pane="submissions"]').click();
-  const attempt = page.locator('#interview-attempts details.interview-attempt').first();
-  await attempt.locator(':scope > summary').click();
-  await expect(attempt).toHaveAttribute('open', '');
-  await page.locator('#chat-toggle').click();
-  await page.locator('#chat-input').fill('Why did the hidden test fail?');
-  await page.locator('#chat-input').press('Enter');
-  await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
-  await expect(page.locator('.msg.leo')).toHaveCount(2);
-  await page.waitForTimeout(500);
-  await expect(page.locator('#interview-attempts details.interview-attempt').first()).toHaveAttribute('open', '');
-  await expect(page.locator('[data-interview="pane"][data-pane="submissions"]')).toHaveAttribute('aria-selected', 'true');
-  if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
-});
+
+
+
+
+
+
+
 
 test('the library starts with a New note card in grid and list, in place of the floating button', async ({ page }) => {
   const dir = `newcard-${test.info().project.name}-${Date.now().toString(36)}`;
@@ -6545,134 +5307,13 @@ test('Back from Settings, Storage or Trash returns to the note you were reading'
   await page.request.delete(`/api/notes/${made.slice(4)}`);
 });
 
-test('the practice list shows type, company or General, position, and problems submitted and solved', async ({ page }) => {
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [
-    { id: 'list-tally-01', updated: new Date().toISOString(), attempts: 25, bytes: 1, framework: { title: 'Coding practice', track: 'coding', company: 'Pinterest', role: 'Software Engineering Intern', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, tally: { problems: 14, submitted: 9, solved: 6 } },
-    { id: 'list-tally-02', updated: new Date().toISOString(), attempts: 1, bytes: 1, framework: { title: 'Quant prep', track: 'quant', company: '', role: 'Trader', language: '', style: 'mock', date: '', weekly_minutes: 120, skills: ['Probability'], wants: '' }, tally: { problems: 1, submitted: 1, solved: 0 } },
-  ] }));
-  await page.goto('/#/interviews');
-  const rows = page.locator('.interview-plan');
-  await expect(rows.nth(0).locator('.hint')).toHaveText('Coding · Pinterest · Software Engineering Intern');
-  await expect(rows.nth(0).locator('.interview-plan-tally > span')).toHaveText(['14 problems', '9 submitted', '6 solved']);
-  await expect(rows.nth(1).locator('.hint')).toHaveText('Quant · General · Trader');
-  await expect(rows.nth(1).locator('.interview-plan-tally > span')).toHaveText(['1 problem', '1 submitted', '0 solved']);
-  const hue = (name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
-  const color = async (locator) => locator.evaluate((el) => getComputedStyle(el).color);
-  const rgb = (value) => page.evaluate((v) => { const probe = document.createElement('i'); probe.style.color = v; document.body.append(probe); const c = getComputedStyle(probe).color; probe.remove(); return c; }, value);
-  expect(await color(page.locator('.interview-plan-row').nth(0).locator('.track-icon'))).toBe(await rgb(await hue('--hue-0')));
-  expect(await color(page.locator('.interview-plan-row').nth(1).locator('.track-icon'))).toBe(await rgb(await hue('--hue-2')));
-  expect(await color(page.locator('.interview-track[data-track="systems"] .track-icon'))).toBe(await rgb(await hue('--hue-1')));
-  await expect(page.locator('.interview-track .track-icon svg')).toHaveCount(8);
-  expect(await color(page.locator('.interview-track[data-track="hardware"] .track-icon'))).toBe(await rgb(await hue('--hue-7')));
-  const bar = rows.nth(0).locator('.interview-plan-bar');
-  await expect(bar).toHaveAttribute('aria-label', '6 of 14 problems solved');
-  expect(await bar.locator('i').evaluate((el) => el.style.width)).toBe('43%');
-  expect(await rows.nth(1).locator('.interview-plan-bar i').evaluate((el) => el.style.width)).toBe('0%');
-});
 
-test('problems filter by topic from a dropdown, the choice is remembered, and the question shows its topics', async ({ page }) => {
-  const id = 'topic-filter-01';
-  const problem = (n, topics) => ({ id: `topic-problem-${n}`, title: `Problem about ${topics[0] || 'anything'} ${n}`, question: 'Solve it.', minutes: 20, skills: ['Approach'], topics, origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } });
-  const list = [problem(1, ['DFS']), problem(2, ['Dynamic programming']), problem(3, ['DFS', 'Graphs']), problem(4, [])];
-  const workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
-  const attempt = (n, pass) => ({ id: `topic-attempt-${n}-${pass}`, challenge: list[n - 1], workspace, at: new Date().toISOString(), feedback: null, checks: [{ id: 't1', kind: 'test', label: 'case', pass }] });
-  const item = { id, revision: 1, framework: { title: 'Topics', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: list[2], workspace, problems: list.map((challenge) => ({ challenge, workspace })), attempts: [attempt(3, false), attempt(3, true), attempt(3, true), attempt(1, false)] };
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.goto(`/#/interviews/${id}`);
-  const button = page.locator('[data-interview="topic-menu"]');
-  const menu = page.locator('.interview-topic-picker .picker-menu');
-  const rows = menu.locator('[data-interview="topic"] .pick-name');
-  await expect(button).toHaveText('All topics');
-  await expect(button.locator('svg').first()).toBeVisible();
-  await expect(menu).toBeHidden();
-  expect(await shownProblemNumbers(page)).toEqual([1, 2, 3, 4]);
-  await expect(page.locator('#interview-pane-question .interview-topic')).toHaveText(['DFS', 'Graphs']);
-  await button.click();
-  await expect(menu).toBeVisible();
-  await expect(button).toHaveAttribute('aria-expanded', 'true');
-  await expect(rows).toHaveText(['All topics', 'DFS', 'Dynamic programming', 'Graphs', 'No topic']);
-  await expect(menu.locator('[data-interview="topic"] .pick-price')).toHaveText(['1/4 solved', '1/2 solved', '0/1 solved', '1/1 solved', '0/1 solved']);
-  await expect(menu.locator('[data-interview="sort-topics"]')).toContainText('1 without a topic');
-  await menu.locator('[data-interview="topic"]', { hasText: 'Dynamic programming' }).click();
-  await expect(menu).toBeHidden();
-  await expect(button).toHaveText('Dynamic programming');
-  await expect(button).toHaveClass(/filtered/);
-  expect(await shownProblemNumbers(page)).toEqual([2]);
-  await page.reload();
-  expect(await shownProblemNumbers(page)).toEqual([2]);
-  await button.click();
-  await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('Enter');
-  expect(await shownProblemNumbers(page)).toEqual([1, 3]);
-  await button.click();
-  await page.keyboard.press('Escape');
-  await expect(menu).toBeHidden();
-  await expect(button).toBeFocused();
-  await button.click();
-  await menu.locator('[data-interview="topic"]', { hasText: 'No topic' }).click();
-  expect(await shownProblemNumbers(page)).toEqual([4]);
-  await button.click();
-  await page.locator('.interview-heading h1').click();
-  await expect(menu).toBeHidden();
-  await button.click();
-  await menu.locator('[data-interview="topic"]', { hasText: 'All topics' }).click();
-  expect(await shownProblemNumbers(page)).toEqual([1, 2, 3, 4]);
-  expect(await page.evaluate((key) => localStorage.getItem(key), `leo-interview-topic:${id}`)).toBeNull();
-});
 
-test('older problems get topics from Felix in one card, and the filter appears once saved', async ({ page }) => {
-  const id = 'topic-sort-01';
-  const problem = (n, title) => ({ id: `topic-sort-${n}`, title, question: 'Solve it.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } });
-  const list = [problem(1, 'Number of islands'), problem(2, 'Climbing stairs')];
-  const workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Sorting', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: list[1], workspace, problems: list.map((challenge) => ({ challenge, workspace })), attempts: [] };
-  const changes = [{ challenge: 'topic-sort-1', number: 1, title: 'Number of islands', before: [], after: ['DFS', 'Graphs'] }, { challenge: 'topic-sort-2', number: 2, title: 'Climbing stairs', before: [], after: ['Dynamic programming'] }];
-  const proposal = { kind: 'interview_topics', title: 'Topics for 2 problems', summary: 'Tag the older problems', interview: id, changes };
-  let asked = '';
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No chat yet' } }) : route.fulfill({ json: { id, title: 'Sorting', named: true, count: 2, updated_at: new Date().toISOString() } }));
-  await page.route('**/api/chat', (route) => { asked = route.request().postData() || ''; return route.fulfill({ contentType: 'application/x-ndjson', body: [{ proposal }, { t: 'Here are topics for both problems.' }, { done: true }].map((e) => JSON.stringify(e)).join('\n') + '\n' }); });
-  await page.route('**/api/felix/act', (route) => {
-    for (const c of changes) item.problems.find((p) => p.challenge.id === c.challenge).challenge.topics = c.after;
-    item.challenge = item.problems[1].challenge;
-    item.revision++;
-    return route.fulfill({ json: { undo: { ...proposal, summary: 'Undo: Tag the older problems', changes: changes.map((c) => ({ ...c, before: c.after, after: c.before })) } } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await expect(page.locator('[data-interview="topic-menu"]')).toHaveText('All topics');
-  await page.locator('[data-interview="topic-menu"]').click();
-  await page.locator('[data-interview="sort-topics"]').click();
-  await expect.poll(() => asked).toContain('interview_topics');
-  const card = page.locator('.proposal', { hasText: 'Topics for 2 problems' });
-  await expect(card).toContainText('Problem 1 · Number of islands');
-  await expect(card.locator('.proposal-topics-new')).toHaveText(['DFS, Graphs', 'Dynamic programming']);
-  await expect(card.locator('.proposal-topics-old').first()).toHaveText('No topic');
-  await card.getByRole('button', { name: 'Save topics' }).click();
-  await expect(card).toContainText('Saved');
-  await page.locator('[data-chat="close"]').click();
-  await page.locator('[data-interview="topic-menu"]').click();
-  await expect(page.locator('.interview-topic-picker [data-interview="topic"] .pick-name')).toHaveText(['All topics', 'DFS', 'Dynamic programming', 'Graphs']);
-  await expect(page.locator('[data-interview="sort-topics"]')).toHaveCount(0);
-  await expect(page.locator('#interview-pane-question .interview-topic')).toHaveText(['Dynamic programming']);
-});
 
-test('the line numbers run the full height of the tall code editor', async ({ page }) => {
-  const id = 'tall-editor-01';
-  const code = Array.from({ length: 70 }, (_, i) => `x${i + 1} = ${i + 1}`).join('\n');
-  const challenge = { id: 'tall-editor-problem', title: 'Long code', question: 'Write a lot.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } };
-  const workspace = { answer: code, reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Tall editor', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.goto(`/#/interviews/${id}`);
-  const editor = page.locator('#interview-answer');
-  await expect(editor).toHaveValue(code);
-  const box = await editor.boundingBox();
-  const gutter = await page.locator('#interview-lines').boundingBox();
-  expect(box.height).toBeGreaterThanOrEqual(479);
-  expect(Math.abs(gutter.height - box.height)).toBeLessThanOrEqual(2);
-  const last = await page.locator('#interview-lines .interview-line-number').evaluateAll((numbers, bottom) => numbers.filter((n) => n.getBoundingClientRect().bottom <= bottom).length, box.y + box.height);
-  expect(last).toBeGreaterThan(Math.floor((box.height - 32) / 23));
-});
+
+
+
+
 
 test('buttons keep room from the text and sections around them', async ({ page }) => {
   test.setTimeout(60000);
@@ -6695,541 +5336,39 @@ test('buttons keep room from the text and sections around them', async ({ page }
     return out;
   };
   await page.request.post('/api/tasks', { data: { title: 'Spacing task' } });
-  for (const hash of ['/#/', '/#/settings', '/#/calendar', '/#/interviews']) {
+  for (const hash of ['/#/', '/#/settings', '/#/calendar']) {
     await page.goto(hash);
     await page.waitForTimeout(500);
     expect(await page.evaluate(cramped), hash).toEqual([]);
   }
-  await practiceWithResults(page, 'spacing-results');
-  expect(await page.evaluate(cramped), 'result').toEqual([]);
-  await page.locator('[data-interview="pane"][data-pane="submissions"]').click();
-  for (const summary of await page.locator('#interview-attempts details.interview-attempt > summary').all()) await summary.click();
-  expect(await page.evaluate(cramped), 'submissions').toEqual([]);
+
 });
 
-test('Run shows its results in the Test cases tab beside the question', async ({ page }) => {
-  const id = 'run-cases-01';
-  const challenge = { id: 'run-cases-problem', title: 'Sum a list', question: 'Return the sum of the list.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
-  const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Run practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'solve', tests: [{ id: 't1', args: [[1, 2]], expected: 3, hidden: false, unordered: false }, { id: 't2', args: [[]], expected: 0, hidden: false, unordered: false }], hidden_tests: 3, asks: [], sections: [], criteria: 1 } } }));
-  await page.route(`**/api/interviews/${id}`, (route) => {
-    if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
-    return route.fulfill({ json: item });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  const tabs = page.locator('#interview-panes [data-interview="pane"]');
-  await expect(tabs).toHaveText(['Question', 'Test cases', 'Submissions']);
-  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
-  await page.locator('#interview-answer').fill('function solve(nums) {\n  return nums.length ? nums.reduce((a, b) => a + b) : 1;\n}');
-  const before = await page.evaluate(() => document.querySelector('#interview-answer').value);
-  await page.locator('[data-interview="run"]').click();
-  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
-  const cases = page.locator('#interview-pane-cases');
-  await expect(cases).toBeVisible();
-  await expect(cases.locator('.interview-tally')).toHaveText('1/2 passed');
-  await expect(cases.locator('li.pass')).toHaveCount(1);
-  await expect(cases.locator('li.fail')).toContainText('yours: 1');
-  await expect(page.locator('#interview-checks .interview-tests')).toHaveCount(0);
-  expect(await page.evaluate(() => document.querySelector('#interview-answer').value)).toBe(before);
-  await tabs.nth(0).click();
-  await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
-  await expect(cases).toBeHidden();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-});
 
-test('test cases are checked against a reference solution first, Run is kept for Felix, and hidden tests show after Submit', async ({ page }) => {
-  const id = 'checked-cases-01';
-  const challenge = { id: 'checked-cases-problem', title: 'Sum a list', question: 'Return the sum of the list.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
-  const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Checked practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  const t1 = { id: 't1', args: [[1, 2]], expected: 3, hidden: false, unordered: false };
-  const t2 = { id: 't2', args: [[2, 2]], expected: 5, hidden: false, unordered: false };
-  const t3 = { id: 't3', args: [[]], expected: 0, hidden: true, unordered: false };
-  const base = { entry: 'solve', asks: [], sections: [], criteria: 1 };
-  let key = { ...base, tests: [t1, t2], hidden_tests: 1, revealed: false, verify: true };
-  let checked = null;
-  let saved = null;
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key } }));
-  await page.route(`**/api/interviews/${id}/key/check`, (route) => route.fulfill({ json: { entry: 'solve', solution: 'function solve(nums) { return nums.reduce((a, b) => a + b, 0); }', stamp: 'stamp-1', tests: [t1, t2, t3] } }));
-  await page.route(`**/api/interviews/${id}/key/checked`, (route) => {
-    checked = route.request().postDataJSON();
-    key = { ...base, tests: [t1], hidden_tests: 1, revealed: false, verify: false };
-    return route.fulfill({ json: { status: 'ready', key, dropped: 1 } });
-  });
-  await page.route(`**/api/interviews/${id}/run`, (route) => { saved = route.request().postDataJSON(); return route.fulfill({ status: 204 }); });
-  await page.route(`**/api/interviews/${id}/hidden-tests`, (route) => route.fulfill({ json: { tests: [t3] } }));
-  await page.route(`**/api/interviews/${id}/grade`, (route) => route.fulfill({ status: 400, json: { error: 'No quick review in this test.' } }));
-  await page.route(`**/api/interviews/${id}`, (route) => {
-    if (route.request().method() === 'PUT') {
-      const change = route.request().postDataJSON();
-      if (change.action === 'submit') {
-        item.attempts.push({ id: change.attempt, challenge: structuredClone(challenge), workspace: structuredClone(change.workspace), at: new Date().toISOString(), feedback: null, checks: change.tests.map((r) => { const t = [t1, t3].find((x) => x.id === r.id); return { id: r.id, kind: 'test', label: `solve(${JSON.stringify(t.args[0])})`, pass: r.pass, given: r.got, expected: JSON.stringify(t.expected), ...(t.hidden ? { hidden: true } : {}) }; }) });
-        key = { ...base, tests: [t1, t3], hidden_tests: 1, revealed: true, verify: false };
-      } else if (change.workspace) item.workspace = change.workspace;
-      item.revision++;
-    }
-    return route.fulfill({ json: item });
-  });
-  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Checked practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
-  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Noted.' }) + '\n' + JSON.stringify({ done: true }) + '\n' }));
-  await page.goto(`/#/interviews/${id}`);
-  await expect.poll(() => checked && checked.stamp).toBe('stamp-1');
-  expect(checked.reports.map((r) => [r.id, r.pass])).toEqual([['t1', true], ['t2', false], ['t3', true]]);
-  expect(checked.error).toBe('');
-  const tabs = page.locator('#interview-panes [data-interview="pane"]');
-  await expect(tabs).toHaveText(['Question', 'Test cases', 'Submissions']);
-  await tabs.nth(1).click();
-  const cases = page.locator('#interview-pane-cases');
-  await expect(cases.locator('li')).toHaveCount(1);
-  await expect(cases).not.toContainText('[2,2]');
-  await page.locator('#interview-answer').fill('function solve(nums) {\n  return nums.reduce((a, b) => a + b);\n}');
-  await page.locator('[data-interview="run"]').click();
-  await expect(cases.locator('.interview-tally')).toHaveText('1/1 passed');
-  await expect.poll(() => saved && saved.challenge).toBe(challenge.id);
-  expect(saved.reports).toEqual([{ id: 't1', pass: true, got: '3' }]);
-  await page.locator('[data-interview="submit"]').click();
-  await expect(tabs.nth(2)).toHaveText('Result · 1/2');
-  const results = page.locator('#interview-results');
-  await expect(results.locator('#interview-case-t3')).toHaveAttribute('aria-selected', 'true');
-  await expect(results).toContainText('solve([])');
-  await expect(results).toContainText('hidden test');
-  await expect(results.locator('[data-interview="review-result"]')).toBeVisible();
-  await expect(page.locator('.msg.leo')).toHaveCount(0);
-  await tabs.nth(1).click();
-  await expect(cases.locator('li')).toHaveCount(2);
-  await expect(cases.locator('li').nth(1)).toContainText('Hidden');
-  await expect(cases).toContainText('including the ones hidden until you submitted');
-});
 
-for (const [language, starter, answer, tests, passed] of [
-  ['TypeScript', 'function solve(nums: number[]): number {\n}', 'function solve(nums: number[]): number {\n  const total: number = nums.reduce((a: number, b: number) => a + b, 0);\n  return total;\n}', [{ id: 't1', args: [[1, 2]], expected: 3, hidden: false, unordered: false }, { id: 't2', args: [[]], expected: 0, hidden: false, unordered: false }], '2/2 passed'],
-  ['SQL', 'SELECT -- your query', 'SELECT name FROM people WHERE age >= 18 ORDER BY name;', [{ id: 't1', args: ["CREATE TABLE people(name TEXT, age INTEGER); INSERT INTO people VALUES ('Ana', 30), ('Bo', 12), ('Cy', 18);"], expected: [['Ana'], ['Cy']], hidden: false, unordered: false }, { id: 't2', args: ['CREATE TABLE people(name TEXT, age INTEGER);'], expected: [['Nobody']], hidden: false, unordered: false }], '1/2 passed'],
-]) {
-  test(`${language} problems run their tests in the browser sandbox`, async ({ page }) => {
-    const id = `run-${language.toLowerCase()}-01`;
-    const challenge = { id: `run-${language.toLowerCase()}-problem`, title: `${language} practice`, question: 'Do the thing.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter, difficulty: 'easy', examples: [{ input: 'x', output: 'y' }], constraints: ['small'] } };
-    const workspace = { answer: starter, reasoning: '', board: [] };
-    const item = { id, revision: 1, framework: { title: `${language} practice`, track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-    await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-    await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: language === 'SQL' ? 'sql' : 'solve', tests, hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
-    await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
-    await page.route(`**/api/interviews/${id}`, (route) => {
-      if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
-      return route.fulfill({ json: item });
-    });
-    await page.goto(`/#/interviews/${id}`);
-    await page.locator('#interview-answer').fill(answer);
-    await page.locator('[data-interview="run"]').click();
-    const cases = page.locator('#interview-pane-cases');
-    await expect(cases.locator('.interview-tally')).toHaveText(passed, { timeout: 20000 });
-    if (language === 'SQL') {
-      await expect(cases.locator('li').first()).toContainText('CREATE TABLE people');
-      await expect(cases.locator('li.fail')).toContainText('yours: []');
-    }
-  });
-}
 
-test('preparing instant checks shows a moving progress bar with time left, says when it runs long, and fills before the checks appear', async ({ page }) => {
-  const id = 'progress-key-01';
-  const challenge = { id: 'progress-key-problem', title: 'Sum a list', question: 'Return the sum.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
-  const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Progress practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  let fraction = 0.2;
-  let ready = false;
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: ready ? { status: 'failed', error: 'stopped for the test' } : { status: 'preparing', progress: { fraction, seconds: Math.round(fraction * 60), expected: 45, left: Math.max(0, 45 - Math.round(fraction * 60)), slow: fraction > 0.9 } } }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.goto(`/#/interviews/${id}`);
-  const meter = page.locator('#interview-key-meter');
-  await expect(meter).toHaveAttribute('role', 'progressbar');
-  await expect(meter).toContainText('Preparing instant checks · 20% · 12 s · about 33 s left');
-  fraction = 0.6;
-  await expect(meter).toHaveAttribute('aria-valuenow', '60');
-  await expect(meter).toContainText('60% · 36 s · about 9 s left');
-  fraction = 0.95;
-  await expect(meter).toContainText('95% · 57 s · taking longer than usual');
-  await page.evaluate(() => {
-    window.meterSeen = [];
-    new MutationObserver(() => {
-      const m = document.getElementById('interview-key-meter');
-      const now = m ? `${m.getAttribute('aria-valuenow')} ${m.querySelector('.meter-text').textContent}` : 'gone';
-      if (window.meterSeen.at(-1) !== now) window.meterSeen.push(now);
-    }).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
-  });
-  ready = true;
-  await expect(meter).toHaveCount(0);
-  expect((await page.evaluate(() => window.meterSeen)).filter((seen) => !seen.startsWith('95 '))).toEqual(['100 Preparing instant checks · done', 'gone']);
-});
 
-test('C++ downloads its compiler once with a progress bar and explains types it cannot fill in', async ({ page }) => {
-  const id = 'cpp-wiring-01';
-  const starter = 'ListNode* reverse(ListNode* head) {\n}';
-  const challenge = { id: 'cpp-wiring-problem', title: 'Reverse a list', question: 'Reverse it.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'C++', starter, difficulty: 'easy', examples: [{ input: '[1,2]', output: '[2,1]' }], constraints: ['small'] } };
-  const workspace = { answer: starter, reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'C++ practice', track: 'coding', company: '', role: '', language: 'C++', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  let done = 0;
-  let asked = 0;
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'reverse', tests: [{ id: 't1', args: [[1, 2]], expected: [2, 1], hidden: false, unordered: false }], hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
-  await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.route('**/api/cpp', (route) => {
-    if (route.request().method() === 'POST') asked++;
-    else if (!asked) return route.fulfill({ json: { status: 'missing', mb: 27 } });
-    if (done >= 3) return route.fulfill({ json: { status: 'ready' } });
-    done++;
-    return route.fulfill({ json: { status: 'fetching', mb: 27, done: done * 9000000, total: 27112311 } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('[data-interview="run"]').click();
-  await expect(page.locator('#interview-runtime-meter')).toContainText('Getting C++ ready, once (about 27 MB)');
-  const cases = page.locator('#interview-pane-cases');
-  await expect(cases.locator('.set-note.warn')).toContainText('types the browser can’t fill in yet');
-  await expect(cases.locator('li.fail')).toHaveCount(1);
-  expect(asked).toBe(1);
-});
 
-test('Go downloads once with a progress bar and explains code it cannot test', async ({ page }) => {
-  const id = 'go-wiring-01';
-  const starter = 'func main() {\n}\n\nfunc twoSum(nums []int, target int) []int {\n}';
-  const challenge = { id: 'go-wiring-problem', title: 'Two sum', question: 'Return indices.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Go', starter, difficulty: 'easy', examples: [{ input: '[2,7], 9', output: '[0,1]' }], constraints: ['small'] } };
-  const workspace = { answer: starter, reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Go practice', track: 'coding', company: '', role: '', language: 'Go', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  let done = 0;
-  let asked = 0;
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'twoSum', tests: [{ id: 't1', args: [[2, 7], 9], expected: [0, 1], hidden: false, unordered: false }], hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
-  await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.route('**/api/go', (route) => {
-    if (route.request().method() === 'POST') asked++;
-    else if (!asked) return route.fulfill({ json: { status: 'missing', mb: 21 } });
-    if (done >= 3) return route.fulfill({ json: { status: 'ready' } });
-    done++;
-    return route.fulfill({ json: { status: 'fetching', mb: 21, done: done * 7000000, total: 20900000 } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('[data-interview="run"]').click();
-  await expect(page.locator('#interview-runtime-meter')).toContainText('Getting Go ready, once (about 21 MB)');
-  const cases = page.locator('#interview-pane-cases');
-  await expect(cases.locator('.set-note.warn')).toContainText('Remove func main');
-  await expect(cases.locator('li.fail')).toHaveCount(1);
-  expect(asked).toBe(1);
-});
 
-test('Java downloads once with a progress bar and explains types it cannot fill in', async ({ page }) => {
-  const id = 'java-wiring-01';
-  const starter = 'class Solution {\n    public int count(Map<String, Integer> words) {\n    }\n}';
-  const challenge = { id: 'java-wiring-problem', title: 'Count', question: 'Count them.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Java', starter, difficulty: 'easy', examples: [{ input: '{}', output: '0' }], constraints: ['small'] } };
-  const workspace = { answer: starter, reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Java practice', track: 'coding', company: '', role: '', language: 'Java', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  let done = 0;
-  let asked = 0;
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'count', tests: [{ id: 't1', args: [{}], expected: 0, hidden: false, unordered: false }], hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
-  await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.route('**/api/java', (route) => {
-    if (route.request().method() === 'POST') asked++;
-    else if (!asked) return route.fulfill({ json: { status: 'missing', mb: 5 } });
-    if (done >= 3) return route.fulfill({ json: { status: 'ready' } });
-    done++;
-    return route.fulfill({ json: { status: 'fetching', mb: 5, done: done * 1400000, total: 4320000 } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('[data-interview="run"]').click();
-  await expect(page.locator('#interview-runtime-meter')).toContainText('Getting Java ready, once (about 5 MB)');
-  const cases = page.locator('#interview-pane-cases');
-  await expect(cases.locator('.set-note.warn')).toContainText('types the browser can’t fill in yet');
-  expect(asked).toBe(1);
-});
 
-test('Rust downloads once with a progress bar and explains code it cannot test', async ({ page }) => {
-  const id = 'rust-wiring-01';
-  const starter = 'fn main() {\n}\n\nimpl Solution {\n    pub fn two_sum(nums: Vec<i32>, target: i32) -> Vec<i32> {\n    }\n}';
-  const challenge = { id: 'rust-wiring-problem', title: 'Two sum', question: 'Return indices.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Rust', starter, difficulty: 'easy', examples: [{ input: '[2,7], 9', output: '[0,1]' }], constraints: ['small'] } };
-  const workspace = { answer: starter, reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Rust practice', track: 'coding', company: '', role: '', language: 'Rust', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  let done = 0;
-  let asked = 0;
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'two_sum', tests: [{ id: 't1', args: [[2, 7], 9], expected: [0, 1], hidden: false, unordered: false }], hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
-  await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.route('**/api/rust', (route) => {
-    if (route.request().method() === 'POST') asked++;
-    else if (!asked) return route.fulfill({ json: { status: 'missing', mb: 46 } });
-    if (done >= 3) return route.fulfill({ json: { status: 'ready' } });
-    done++;
-    return route.fulfill({ json: { status: 'fetching', mb: 46, done: done * 15000000, total: 46200000 } });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('[data-interview="run"]').click();
-  await expect(page.locator('#interview-runtime-meter')).toContainText('Getting Rust ready, once (about 46 MB)');
-  const cases = page.locator('#interview-pane-cases');
-  await expect(cases.locator('.set-note.warn')).toContainText('Remove fn main');
-  expect(asked).toBe(1);
-});
 
-async function boardLabel(page, text, fx = 0.2, fy = 0.25) {
-  await page.locator('[data-interview="tool"][data-tool="text"]').click();
-  const board = page.locator('#interview-board');
-  await board.scrollIntoViewIfNeeded();
-  const box = await board.boundingBox();
-  await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
-  const editor = page.locator('.interview-board-editor');
-  await expect(editor).toBeFocused();
-  await editor.fill(text);
-  await editor.press('Enter');
-  await expect(editor).toHaveCount(0);
-}
 
-test('the whiteboard works like a slide editor: icon tools, selecting inside shapes, drag boxes, handles, editing text and shortcuts', async ({ page }) => {
-  const id = 'slide-board-01';
-  const challenge = { id: 'slide-board-problem', title: 'Design a cache', question: 'Sketch it.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [] };
-  const workspace = { answer: 'Draft', reasoning: '', board: [
-    { kind: 'box', points: [[100, 100], [300, 220]], text: '' },
-    { kind: 'text', points: [[500, 170]], text: 'Cache' },
-    { kind: 'arrow', points: [[310, 160], [480, 160]], text: '' },
-    { kind: 'pen', points: [[150, 420], [250, 470], [350, 430]], text: '' },
-  ] };
-  const item = { id, revision: 1, framework: { title: 'Board practice', track: 'systems', company: '', role: '', language: '', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
-  await page.route(`**/api/interviews/${id}`, (route) => {
-    if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
-    return route.fulfill({ json: item });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  const board = page.locator('#interview-board');
-  await board.scrollIntoViewIfNeeded();
-  const tools = page.locator('[data-interview="tool"]');
-  await expect(tools).toHaveCount(7);
-  expect(await tools.evaluateAll((els) => els.map((el) => [el.dataset.tool, el.textContent.trim(), Boolean(el.querySelector('svg')), el.getAttribute('aria-label')]))).toEqual([['select', '', true, 'Select and move'], ['pen', '', true, 'Pen'], ['box', '', true, 'Box'], ['circle', '', true, 'Circle'], ['arrow', '', true, 'Arrow'], ['line', '', true, 'Line'], ['text', '', true, 'Text']]);
-  await expect(page.locator('[data-interview="tool"][data-tool="pan"]')).toHaveCount(0);
-  await expect(tools.first()).toHaveAttribute('aria-pressed', 'true');
-  expect(await board.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el.querySelector('svg')).color])).toEqual(['rgb(255, 255, 255)', 'rgb(25, 25, 27)']);
-  const at = (x, y) => board.locator('svg').evaluate((svg, [x, y]) => { const p = new DOMPoint(x, y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y }; }, [x, y]);
-  const click = async (x, y, { shift = false } = {}) => { const p = await at(x, y); if (shift) await page.keyboard.down('Shift'); await page.mouse.click(p.x, p.y); if (shift) await page.keyboard.up('Shift'); };
-  const drag = async (from, to) => { const a = await at(...from), b = await at(...to); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); };
-  const chosen = () => board.locator('[data-board-shape][aria-pressed="true"]').evaluateAll((els) => els.map((el) => Number(el.dataset.boardShape)).sort());
-  await click(200, 160);
-  await expect.poll(chosen).toEqual([0]);
-  await expect(board.locator('[data-board-handle]')).toHaveCount(8);
-  await drag([300, 220], [380, 260]);
-  await expect.poll(() => item.workspace.board[0].points).toEqual([[100, 100], [380, 260]]);
-  await page.keyboard.press('Escape');
-  await expect.poll(chosen).toEqual([]);
-  await drag([60, 60], [620, 300]);
-  await expect.poll(chosen).toEqual([0, 1, 2]);
-  await click(200, 445, { shift: true });
-  await expect.poll(chosen).toEqual([0, 1, 2, 3]);
-  await click(200, 445, { shift: true });
-  await expect.poll(chosen).toEqual([0, 1, 2]);
-  await expect(board.locator('[data-board-handle]')).toHaveCount(0);
-  await page.keyboard.press('Delete');
-  await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['pen']);
-  await page.keyboard.press('ControlOrMeta+z');
-  await expect.poll(() => item.workspace.board.length).toBe(4);
-  await page.keyboard.press('ControlOrMeta+Shift+z');
-  await expect.poll(() => item.workspace.board.length).toBe(1);
-  await page.locator('[data-interview="undo-board"]').click();
-  await expect.poll(() => item.workspace.board.length).toBe(4);
-  const label = await at(530, 160);
-  await page.mouse.dblclick(label.x, label.y);
-  const editor = page.locator('.interview-board-editor');
-  await expect(editor).toBeFocused();
-  await expect(editor).toHaveValue('Cache');
-  await editor.fill('Redis cache');
-  await editor.press('Enter');
-  await expect.poll(() => item.workspace.board[1].text).toBe('Redis cache');
-  const middle = await at(240, 180);
-  await page.mouse.dblclick(middle.x, middle.y);
-  await expect(editor).toBeFocused();
-  await editor.fill('API');
-  await editor.press('Enter');
-  await expect.poll(() => item.workspace.board[0].text).toBe('API');
-  await expect(board.locator('text', { hasText: 'API' })).toHaveCount(1);
-  await page.mouse.dblclick(label.x, label.y);
-  await editor.fill('Never saved');
-  await editor.press('Escape');
-  await expect.poll(() => item.workspace.board[1].text).toBe('Redis cache');
-  await board.focus();
-  await page.keyboard.press('ControlOrMeta+a');
-  await expect.poll(chosen).toEqual([0, 1, 2, 3]);
-  await page.keyboard.press('ControlOrMeta+d');
-  await expect.poll(() => item.workspace.board.length).toBe(8);
-  await expect.poll(chosen).toEqual([4, 5, 6, 7]);
-  await page.keyboard.press('ArrowRight');
-  await expect.poll(() => item.workspace.board[4].points[0][0]).toBeGreaterThan(item.workspace.board[0].points[0][0]);
-  await page.keyboard.press('Escape');
-  await page.keyboard.press('t');
-  await expect(page.locator('[data-interview="tool"][data-tool="text"]')).toHaveAttribute('aria-pressed', 'true');
-  await click(600, 380);
-  await expect(editor).toBeFocused();
-  await editor.fill('Read replica');
-  await editor.press('Enter');
-  await expect.poll(() => item.workspace.board.at(-1)).toMatchObject({ kind: 'text', text: 'Read replica' });
-  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-});
 
-test('a hardware practice draws its circuit and equations, previews the maths in an answer, and has circles and wires on the board', async ({ page }) => {
-  const id = 'hardware-board-01';
-  const question = 'Find the fastest clock for this pipeline stage.\n\n$$\nf_{max} = \\frac{1}{t_{cq} + t_{pd} + t_{su}}\n$$\n\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><rect x="5" y="5" width="30" height="30" fill="none" stroke="black"/><text x="10" y="25">FF</text></svg>\n```';
-  const challenge = { id: 'hardware-board-problem', title: 'Clock a pipeline stage', question, minutes: 30, skills: ['Diagrams'], origin: 'generated', sources: [] };
-  const workspace = { answer: '', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Hardware practice', track: 'hardware', company: '', role: '', language: '', style: 'coach', date: '', weekly_minutes: 120, skills: ['Diagrams'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
-  await page.route(`**/api/interviews/${id}`, (route) => {
-    if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
-    return route.fulfill({ json: item });
-  });
-  await page.goto(`/#/interviews/${id}`);
-  await expect(page.locator('.interview-heading .eyebrow')).toContainText('Hardware');
-  const asked = page.locator('#interview-pane-question');
-  await expect(asked.locator('.math-block .katex')).toHaveCount(1);
-  await expect(asked.locator('figure.drawing img')).toHaveCount(1);
-  const preview = page.locator('#interview-math');
-  await expect(preview).toBeHidden();
-  await page.locator('#interview-answer').fill('The period is $T = t_{cq} + t_{pd} + t_{su}$.');
-  await expect(preview.locator('.katex')).toHaveCount(1);
-  await expect(preview).toBeVisible();
-  await page.locator('#interview-answer').fill('No maths yet');
-  await expect(preview).toBeHidden();
-  await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  const board = page.locator('#interview-board');
-  await board.scrollIntoViewIfNeeded();
-  const at = (x, y) => board.locator('svg').evaluate((svg, [x, y]) => { const p = new DOMPoint(x, y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y }; }, [x, y]);
-  const drag = async (from, to) => { const a = await at(...from), b = await at(...to); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); };
-  await board.focus();
-  await page.keyboard.press('o');
-  await expect(page.locator('[data-interview="tool"][data-tool="circle"]')).toHaveAttribute('aria-pressed', 'true');
-  await drag([100, 100], [220, 220]);
-  await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['circle']);
-  await expect(board.locator('ellipse')).toHaveCount(1);
-  const middle = await at(160, 160);
-  await page.mouse.dblclick(middle.x, middle.y);
-  const editor = page.locator('.interview-board-editor');
-  await expect(editor).toBeFocused();
-  await editor.fill('S0');
-  await editor.press('Enter');
-  await expect.poll(() => item.workspace.board[0].text).toBe('S0');
-  await board.focus();
-  await page.keyboard.press('Escape');
-  await page.keyboard.press('l');
-  await expect(page.locator('[data-interview="tool"][data-tool="line"]')).toHaveAttribute('aria-pressed', 'true');
-  await drag([220, 160], [420, 160]);
-  await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['circle', 'line']);
-  await expect.poll(() => item.workspace.board[1].points).toEqual([[220, 160], [420, 160]]);
-  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(board.locator('[data-board-handle]')).toHaveCount(2);
-  if (test.info().project.name === 'desktop') {
-    await page.locator('[data-interview="tool"][data-tool="box"]').click();
-    const a = await at(500, 60), b = await at(640, 200);
-    await page.mouse.move(a.x, a.y);
-    await page.mouse.down();
-    await page.mouse.move(b.x, b.y, { steps: 4 });
-    const cdp = await page.context().newCDPSession(page);
-    for (const d of [20, 60]) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x + d, y: b.y + d, button: 'none', buttons: 0 });
-    await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['circle', 'line', 'box']);
-    await expect.poll(() => item.workspace.board[2].points).toEqual([[500, 60], [640, 200]]);
-    await page.mouse.up();
-  }
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-});
 
-test('a big hardware diagram reaches Felix as a sharp snapshot and a submitted derivation shows its equations', async ({ page }) => {
-  const id = 'hardware-snapshot-01';
-  const challenge = { id: 'hardware-snapshot-problem', title: 'Draw a datapath', question: 'Draw the datapath.', minutes: 30, skills: ['Diagrams'], origin: 'generated', sources: [] };
-  const board = [
-    { kind: 'box', points: [[0, 0], [300, 160]], text: 'Register file' },
-    { kind: 'circle', points: [[1200, 0], [1400, 200]], text: 'ALU' },
-    { kind: 'line', points: [[300, 80], [1200, 100]], text: 'A' },
-    { kind: 'box', points: [[2300, 0], [2600, 160]], text: 'Memory' },
-  ];
-  const workspace = { answer: 'The critical path is $t_{cq} + t_{ALU} + t_{su}$.', reasoning: '', board };
-  const item = { id, revision: 1, framework: { title: 'Datapaths', track: 'hardware', company: '', role: '', language: '', style: 'coach', date: '', weekly_minutes: 120, skills: ['Diagrams'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [{ id: 'hardware-attempt-1', challenge, workspace, at: new Date().toISOString(), feedback: null, checks: [] }] };
-  const sent = [];
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Datapaths', updated_at: new Date().toISOString(), count: 2, named: true } }));
-  await page.route(`**/api/chats/${id}/files`, (route) => {
-    if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
-    sent.push(route.request().postDataJSON());
-    return route.fulfill({ status: 201, json: { id: 'doc-board-1', name: sent.at(-1).name, chars: 40, excerpt: 'A datapath.' } });
-  });
-  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Here is my review.' }) + '\n' + JSON.stringify({ done: true }) + '\n' }));
-  await page.goto(`/#/interviews/${id}`);
-  await page.locator('[data-interview="pane"][data-pane="submissions"]').click();
-  const attempt = page.locator('#interview-attempts details.interview-attempt').first();
-  await attempt.locator(':scope > summary').click();
-  await attempt.locator('details.interview-work > summary').click();
-  await expect(attempt.locator('.interview-submitted-prose .katex')).toHaveCount(1);
-  await expect(attempt.locator('.interview-board-snapshot ellipse')).toHaveCount(1);
-  await attempt.locator('[data-interview="review-attempt"]').click();
-  await expect.poll(() => sent.length).toBe(1);
-  expect(sent[0].type).toBe('image/jpeg');
-  const size = await page.evaluate((data) => new Promise((resolve) => { const image = new Image(); image.onload = () => resolve([image.naturalWidth, image.naturalHeight]); image.onerror = () => resolve(null); image.src = `data:image/jpeg;base64,${data}`; }), sent[0].data);
-  expect(size).toEqual([2000, 1400]);
-  await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
-});
 
-test('the question and workspace split can be dragged, nudged, reset and is remembered', async ({ page }) => {
-  const id = 'split-practice-01';
-  const challenge = { id: 'split-problem', title: 'Sum a list', question: 'Return the sum.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve(nums):\n    pass', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
-  const workspace = { answer: 'def solve(nums):\n    pass', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Split practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
-  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
-  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
-  await page.evaluate(() => localStorage.removeItem('leo-interview-split'));
-  await page.goto(`/#/interviews/${id}`);
-  const handle = page.locator('.interview-split');
-  if (test.info().project.name.includes('phone')) {
-    await expect(page.locator('#interview-answer')).toBeVisible();
-    await expect(handle).toBeHidden();
-    return;
-  }
-  await expect(handle).toBeVisible();
-  const share = () => page.evaluate(() => { const solve = document.querySelector('.interview-solve').getBoundingClientRect(); return Math.round(document.querySelector('.interview-question').getBoundingClientRect().width / solve.width * 100); });
-  expect(Math.abs(await share() - 45)).toBeLessThanOrEqual(1);
-  const box = await handle.boundingBox();
-  const solve = await page.locator('.interview-solve').boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + 40);
-  await page.mouse.down();
-  await page.mouse.move(solve.x + solve.width * 0.6, box.y + 40, { steps: 6 });
-  await page.mouse.up();
-  expect(Math.abs(await share() - 60)).toBeLessThanOrEqual(2);
-  const moved = await handle.boundingBox();
-  expect(moved.x).toBeGreaterThan(box.x + 50);
-  await page.mouse.move(moved.x + moved.width / 2, box.y + 40);
-  await page.mouse.down();
-  await page.mouse.move(solve.x + solve.width * 0.95, box.y + 40, { steps: 6 });
-  await page.mouse.up();
-  expect(await share()).toBeLessThanOrEqual(70);
-  await page.reload();
-  await expect(handle).toBeVisible();
-  expect(Math.abs(await share() - 70)).toBeLessThanOrEqual(1);
-  await handle.focus();
-  await page.keyboard.press('ArrowLeft');
-  await page.keyboard.press('Shift+ArrowLeft');
-  expect(Math.abs(await share() - 58)).toBeLessThanOrEqual(1);
-  await expect(handle).toHaveAttribute('aria-valuenow', '58');
-  await page.keyboard.press('Home');
-  expect(Math.abs(await share() - 45)).toBeLessThanOrEqual(1);
-  await page.keyboard.press('ArrowRight');
-  await handle.dblclick();
-  expect(Math.abs(await share() - 45)).toBeLessThanOrEqual(1);
-  await expect(page).toHaveURL(new RegExp(`#/interviews/${id}$`));
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-});
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 test('leaving the website queues one backup without sending note contents or pushing on folder navigation', async ({ page, context }) => {
   const departures = [];
@@ -7238,8 +5377,8 @@ test('leaving the website queues one backup without sending note contents or pus
   });
   await context.route('**/api/backup', (route) => route.request().method() === 'GET'
     ? route.fulfill({ json: { state: 'idle', at: 0, message: '' } }) : route.fulfill({ status: 204 }));
-  await page.goto('/#/interviews');
-  await expect(page.locator('.interview-home')).toBeVisible();
+  await page.goto('/#/calendar');
+  await expect(page.locator('.cal-page')).toBeVisible();
   await page.goto('/#/');
   await expect(page.locator('.library-tools')).toBeVisible();
   expect(departures).toEqual([]);

@@ -12,12 +12,9 @@ function environment({ beacon = true, draft = false } = {}) {
   const context = {
     window: { addEventListener: (name, fn) => { windows[name] = fn; } },
     document: { visibilityState: 'visible', activeElement: null, body: {}, addEventListener: (name, fn) => { documents[name] = fn; } },
-    state: { view: 'interviews', session: null },
+    state: { view: 'folder', session: null },
     app: { contains: () => false },
-    saving: { unsaved: () => false, retry: () => { saved.push('notes'); return Promise.resolve([]); } },
-    interviewPage: draft ? { generation: 1, saved: 0 } : null,
-    interviewHere: () => true,
-    saveInterviewWorkspace: () => { saved.push('interview'); return Promise.resolve(); },
+    saving: { unsaved: () => draft, retry: () => { saved.push('notes'); return Promise.resolve([]); } },
     navigator: { sendBeacon: (url, body) => { if (beacon === 'throw') throw new Error('Unavailable'); sent.push({ url, body, beacon: true }); return beacon; } },
     fetch: (url, options) => { sent.push({ url, ...options }); return Promise.resolve({ status: 204 }); },
     api: async () => context.backup,
@@ -33,12 +30,12 @@ function environment({ beacon = true, draft = false } = {}) {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-test('leaving flushes note and interview work and sends one tiny beacon per departure', async () => {
+test('leaving flushes note work and sends one tiny beacon per departure', async () => {
   const e = environment({ draft: true });
   e.context.document.visibilityState = 'hidden';
   e.documents.visibilitychange();
   e.windows.pagehide();
-  assert.deepEqual(e.saved, ['notes', 'interview', 'notes', 'interview']);
+  assert.deepEqual(e.saved, ['notes', 'notes']);
   assert.equal(e.sent.length, 1);
   assert.equal(e.sent[0].url, '/api/backup');
   assert.equal(e.sent[0].body.type, 'application/json');
@@ -61,13 +58,13 @@ test('a refused or unsupported beacon falls back to a same-origin keepalive requ
   }
 });
 
-test('pending interview work warns before closing but a cancelled close does not request a push', () => {
+test('unsaved note work warns before closing but a cancelled close does not request a push', () => {
   for (const draft of [false, true]) {
     const e = environment({ draft });
     let prevented = false;
     e.windows.beforeunload({ preventDefault: () => { prevented = true; } });
     assert.equal(prevented, draft);
-    assert.equal(e.saved.includes('interview'), draft);
+    assert.equal(e.saved.includes('notes'), draft);
     assert.equal(e.sent.length, 0);
   }
 });

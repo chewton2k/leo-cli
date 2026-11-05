@@ -51,13 +51,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved() || Boolean(interviewPage && interviewHere(interviewPage) && (interviewPage.generation !== interviewPage.saved || interviewPage.name != null));
+const unsaved = () => saving.unsaved();
 let websiteLeaveSent = false;
 let websiteBackupShown = 0;
 
 function saveWebsiteWork() {
   saving.retry().catch(() => {});
-  if (interviewPage && interviewHere(interviewPage)) saveInterviewWorkspace(interviewPage).catch(() => {});
 }
 
 function leaveWebsite() {
@@ -101,7 +100,7 @@ window.addEventListener('beforeunload', (e) => {
 // hashchange (a new note getting its id, a deleted note's page closing). A
 // note that turns out to be gone resets it to the library.
 const LAST_PLACE_KEY = 'leo-last-place';
-const LAST_PLACES = /^#\/(n|f|boards|calendar|map|interviews)(\/|$)/;
+const LAST_PLACES = /^#\/(n|f|boards|calendar)(\/|$)/;
 function rememberPlace() {
   try {
     const here = location.hash || '#/';
@@ -114,6 +113,7 @@ function reopenLastPlace() {
     sessionStorage.setItem('leo-launched', '1');
     if (location.hash && location.hash !== '#/') return;
     const last = localStorage.getItem(LAST_PLACE_KEY);
+    if (/^#\/interviews(?:\/|$)/.test(last || '')) localStorage.setItem(LAST_PLACE_KEY, '#/');
     if (last && LAST_PLACES.test(last)) history.replaceState(history.state, '', last);
   } catch (e) {}
 }
@@ -262,14 +262,16 @@ let renderGeneration = 0;
 async function render() {
   const generation = ++renderGeneration;
   hideAskFloat();
-  interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
   // Plain groups: tests/wording.rs flags a colon right before "settings" (an old command).
   document.body.classList.toggle('on-settings', /^#\/(settings|trash)(\/|$)/.test(location.hash));
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   document.body.classList.toggle('on-boards', /^#\/boards(?:\/|$)/.test(location.hash));
-  document.body.classList.toggle('on-interviews', /^#\/interviews(?:\/|$)/.test(location.hash));
+  if (/^#\/interviews(?:\/|$)/.test(location.hash)) {
+    history.replaceState(history.state, '', '#/');
+    try { localStorage.setItem(LAST_PLACE_KEY, '#/'); } catch (e) {}
+  }
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
@@ -293,7 +295,6 @@ async function render() {
     else if (kind === 'trash') await showTrash();
     else if (kind === 'calendar') await showCalendar();
     else if (kind === 'boards') await showBoards(arg);
-    else if (kind === 'interviews') await showInterviews(arg);
     else if (kind === 'settings') await showSettings(arg);
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');

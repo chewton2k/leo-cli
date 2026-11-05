@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 22;
+const MANUAL_VERSION: u32 = 23;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -115,7 +115,7 @@ Choose a model, shortcut, microphone and word rules in Settings → Dictation.
 
 ## Felix
 
-Ask Felix about your notes, have him quiz you, or practise for an interview.
+Ask Felix about your notes or have him quiz you in Study.
 He can add tasks and notes, and asks first unless you let him act on his own.
 Select words and press ⌘⇧E for an answer in the margin; Settings → Felix lets
 him read along as you write.

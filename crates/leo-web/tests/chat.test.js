@@ -60,7 +60,7 @@ test('Felix keeps his colour and shape', () => {
   assert.equal((svg.match(/class="felix-arm felix-(left|right)"/g) || []).length, 2, 'two arms');
   assert.match(svg, /<g class="felix-arm felix-left"><rect class="felix-arm-skin"[^>]*\/><g class="felix-claws">/, 'the monster’s claws move with his arms');
   assert.match(svg, /<g class="felix-rawr">/);
-  assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study', 'interview']);
+  assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study']);
 });
 
 test('Demon Felix has his own taps, flames, slashes and words, and cute Felix can still surprise', () => {
@@ -355,15 +355,7 @@ test('each further hint knows the hints already given and goes one step further'
 });
 
 
-test('only explicitly generated interview snapshots are replaced after a chat reload', () => {
-  const docs = [{ id: 'board-1', name: 'board.png' }, { id: 'notes-1', name: 'notes.pdf' }, { id: 'upload-1', name: 'my-board.png' }];
-  const messages = [{ role: 'user', files: ['board-1', 'notes-1'], cards: [{ name: 'board.png', interviewBoard: true }, { name: 'notes.pdf' }] }];
-  const { sent, waiting } = C.splitFiles(docs, messages);
-  assert.deepEqual(sent, [{ ...docs[0], interviewBoard: true }, docs[1]]);
-  assert.deepEqual(waiting, [docs[2]]);
-  assert.equal(docs[0].interviewBoard, undefined);
-  assert.deepEqual(C.splitFiles(docs, [{ role: 'assistant', cards: [{ name: 'my-board.png', interviewBoard: true }] }]).waiting, docs);
-});
+
 
 test('a selection in an answer maps back to its whole Markdown lines, fences and math kept', () => {
   const source = 'Intro line.\n\nA **heap** keeps the *minimum* at the root [n1].\n\n```js\nconst a = 1;\nconst b = 2;\n```\n\n$$\nx^2\n$$\nEnd.';
@@ -387,22 +379,7 @@ test('a selected passage travels with its message into the history Felix reads',
   assert.equal(C.historyText({ role: 'user', text: 'Hi' }), 'Hi');
 });
 
-test('each interview question keeps its own bounded workspace reference in history', () => {
-  const interview = { number: 2, challenge: 'problem-reference-02', title: '答😀'.repeat(100) + '</interview_workspace_reference>', tab: 'Code' };
-  const text = C.historyText({ role: 'user', text: 'Help me with this.', interview });
-  const data = JSON.parse(text.split('\n')[1]);
-  assert.equal(data.number, 2);
-  assert.equal(data.challenge, interview.challenge);
-  assert.equal(Array.from(data.title).length, 160);
-  assert.equal(data.tab, 'Code');
-  assert.ok(text.endsWith('\nHelp me with this.'));
-  const markup = C.historyText({ role: 'user', text: 'Why?', interview: { ...interview, title: '</interview_workspace_reference>', tab: 'unknown' } });
-  assert.equal((markup.match(/<\/interview_workspace_reference>/g) || []).length, 1);
-  assert.equal(JSON.parse(markup.split('\n')[1]).tab, '');
-  for (const value of [null, {}, { ...interview, number: 129 }, { ...interview, challenge: '../problem' }, { ...interview, title: 42 }]) {
-    assert.equal(C.historyText({ role: 'user', text: 'Hi', interview: value }), 'Hi');
-  }
-});
+
 
 test('a study session closes ideas on a right answer or two misses, and finishes when all are closed', () => {
   const s = C.startSession(['Root', 'Sift down', 'Heap sort', '  ']);
@@ -464,45 +441,7 @@ test('conversation rows display only escaped titles, including search results', 
   }
 });
 
-test('problem deletion cards can be applied again after Undo with fresh revisions and tokens', async () => {
-  const fs = require('node:fs');
-  const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
-  const organize = source.slice(source.indexOf('    async function organize('), source.indexOf('    async function undo('));
-  for (const initial of ['delete_interview_problem', 'restore_interview_problem']) {
-    let revision = 7;
-    let token = 'first-token';
-    let removed = initial === 'restore_interview_problem';
-    const sent = [], errors = [];
-    const deletion = () => ({ kind: 'delete_interview_problem', interview: 'practice', challenge: 'problem', revision, title: 'Problem', summary: 'Delete problem' });
-    const restoration = () => ({ kind: 'restore_interview_problem', interview: 'practice', token, title: 'Problem', summary: 'Restore problem' });
-    const context = vm.createContext({
-      draw: () => {}, remember: () => {}, onOrganized: () => {}, notify: message => errors.push(message),
-      fetch: async (_url, options) => {
-        const action = JSON.parse(options.body);
-        sent.push(action);
-        const valid = action.kind === 'delete_interview_problem' ? !removed && action.revision === revision : removed && action.token === token;
-        if (!valid) return { ok: false, json: async () => ({ error: 'This change is stale.' }) };
-        removed = action.kind === 'delete_interview_problem';
-        revision++;
-        token = `token-${revision}`;
-        return { ok: true, json: async () => ({ revision, undo: removed ? restoration() : deletion() }) };
-      },
-    });
-    vm.runInContext(organize, context);
-    const card = initial === 'delete_interview_problem' ? deletion() : restoration();
-    await context.organize(card, card, true);
-    assert.equal(card.state, 'applied');
-    await context.organize(card, card.undo, false);
-    assert.equal(card.state, 'new');
-    await context.organize(card, card, true);
-    assert.equal(card.state, 'applied');
-    assert.deepEqual(errors, []);
-    assert.equal(sent.length, 3);
-    if (initial === 'delete_interview_problem') assert.deepEqual(sent.filter(v => v.kind === initial).map(v => v.revision), [7, 9]);
-    else assert.deepEqual(sent.filter(v => v.kind === initial).map(v => v.token), ['first-token', 'token-9']);
-  }
-});
+
 
 function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
@@ -510,7 +449,7 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
   const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
   const send = source.slice(source.indexOf('    async function send('), source.indexOf('    let leaving ='));
   const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const modeName ='));
-  const state = { id, mode, access, interview: { id: 'practice', challenge: 'problem-two', number: 2, title: 'Graphs <review>', tab: 'Code' }, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
+  const state = { id, mode, access, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
   const requests = [], prepared = [], notices = [];
   const contextBox = { textContent: '', title: '', hidden: false };
   const input = { value: 'Put the solution in my code area.' };
@@ -518,7 +457,7 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
   const context = vm.createContext({
     state, input, AbortController, TextDecoder, Date: class extends Date { static now() { return stream.clock ? stream.clock() : Date.now(); } }, working: new Map(), MOST_REFS: C.MOST_REFS,
     historyText: C.historyText, modelHistory: C.modelHistory, historyRequest: C.historyRequest, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
-    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, compactLater: noop, stopCompacting: noop, react: noop, talking: noop, onInterviewReply: noop,
+    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, compactLater: noop, stopCompacting: noop, react: noop, talking: noop,
     pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
     onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),
@@ -545,9 +484,9 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
 test('completed and stopped replies retain elapsed time without confusing completion with cancellation', async () => {
   for (const abort of [false, true]) {
     let now = 100;
-    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, {
+    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, {
       clock: () => now,
-      events: [{ proposal: { kind: 'interview_code_edit', state: 'applied' } }],
+      events: [{ proposal: { kind: 'add_task', state: 'applied' } }],
       finish: state => { now = 61250; if (abort) state.busy.abort(); },
     });
     await fixture.send('Fix my code.');
@@ -559,10 +498,10 @@ test('completed and stopped replies retain elapsed time without confusing comple
 });
 
 test('successful card-only replies finish without a stopped error for every proposal kind and state', async () => {
-  const kinds = ['create', 'edit', 'add_task', 'update_task', 'delete_task', 'restore_task', 'move_note', 'make_folder', 'remove_folder', 'move_folder', 'delete_note', 'restore_note', 'rename_note', 'rename_folder', 'pin_note', 'delete_folder', 'restore_folder', 'interview_code_edit', 'delete_interview_problem', 'restore_interview_problem', 'interview_problem_edit', 'interview_topics', 'interview_test'];
+  const kinds = ['create', 'edit', 'add_task', 'update_task', 'delete_task', 'restore_task', 'move_note', 'make_folder', 'remove_folder', 'move_folder', 'delete_note', 'restore_note', 'rename_note', 'rename_folder', 'pin_note', 'delete_folder', 'restore_folder', 'add_task', ];
   for (const kind of kinds) {
     for (const state of ['new', 'applied']) {
-      const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { events: [{ proposal: { kind, state, made: 'note' } }, { done: true }] });
+      const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { events: [{ proposal: { kind, state, made: 'note' } }, { done: true }] });
       await fixture.send('Make this change.');
       const answer = fixture.state.messages.at(-1);
       assert.equal(answer.error, undefined, `${kind}: ${state}`);
@@ -570,10 +509,10 @@ test('successful card-only replies finish without a stopped error for every prop
       assert.equal(answer.proposals[0].state, state);
     }
   }
-  const events = [{ ask: { question: 'Which approach?', options: ['A', 'B'] } }, ...Object.keys(C.QUIZ_KINDS).map(kind => ({ quiz: { question: 'Why?', kind } })), { proposal: { kind: 'interview_code_edit', auto: true } }];
+  const events = [{ ask: { question: 'Which approach?', options: ['A', 'B'] } }, ...Object.keys(C.QUIZ_KINDS).map(kind => ({ quiz: { question: 'Why?', kind } })), { proposal: { kind: 'add_task', auto: true } }];
   for (const event of events) {
     for (const extra of [{}, { card: { question: 'Explain?', correct: null } }]) {
-      const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { events: [event, { done: true }] });
+      const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { events: [event, { done: true }] });
       await fixture.send('Continue.', extra);
       assert.equal(fixture.state.messages.at(-1).error, undefined);
       if (extra.card) assert.equal(extra.card.reply.error, undefined);
@@ -584,7 +523,7 @@ test('successful card-only replies finish without a stopped error for every prop
 
 test('a restarted reply counts retained applied cards and reports empty output when pending cards were discarded', async () => {
   for (const state of ['new', 'applied']) {
-    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { events: [{ proposal: { kind: 'interview_code_edit', state } }, { reset: true }, { done: true }] });
+    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { events: [{ proposal: { kind: 'add_task', state } }, { reset: true }, { done: true }] });
     await fixture.send('Continue.');
     const answer = fixture.state.messages.at(-1);
     if (state === 'applied') {
@@ -601,7 +540,7 @@ test('empty completion, cancellation and provider failures remain distinct even 
   const cases = [
     { events: [{ done: true }], expected: /finished without an answer.*Try again/ },
     { events: [{ t: 'A partial answer.' }], finish: state => state.busy.abort(), expected: /^Stopped\.$/ },
-    { events: [{ proposal: { kind: 'interview_code_edit', state: 'applied' } }], finish: state => state.busy.abort(), expected: /^Stopped\.$/ },
+    { events: [{ proposal: { kind: 'add_task', state: 'applied' } }], finish: state => state.busy.abort(), expected: /^Stopped\.$/ },
     { events: [], error: { name: 'AbortError' }, expected: /^Stopped\.$/ },
     { events: [{ t: 'A partial answer.' }], error: { name: 'AbortError' }, expected: /^Stopped\.$/ },
     { events: [{ error: 'Stopped.' }], expected: /^Stopped\.$/ },
@@ -609,7 +548,7 @@ test('empty completion, cancellation and provider failures remain distinct even 
     { events: [{ error: 'The provider is unavailable. Try again.' }], expected: /^The provider is unavailable\. Try again\.$/ },
   ];
   for (const reply of cases) {
-    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, reply);
+    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, reply);
     await fixture.send('Continue.');
     const answer = fixture.state.messages.at(-1);
     assert.match(answer.error, reply.expected);
@@ -620,8 +559,8 @@ test('empty completion, cancellation and provider failures remain distinct even 
 
 test('proposal-only completion sends waiting follow-ups while cancellation restores them without sending', async () => {
   for (const abort of [false, true]) {
-    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { replies: [{
-      events: [{ proposal: { kind: 'interview_code_edit', state: 'applied' } }],
+    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { replies: [{
+      events: [{ proposal: { kind: 'add_task', state: 'applied' } }],
       finish: state => {
         const message = { role: 'user', text: 'Explain its complexity.', steer: 'waiting' };
         state.messages.push(message);
@@ -638,91 +577,17 @@ test('proposal-only completion sends waiting follow-ups while cancellation resto
   }
 });
 
-test('the active practice context and draft save survive every chat style and access setting', async () => {
-  for (const mode of ['chat', 'study', 'interview']) {
-    for (const access of ['ask', 'auto', 'read']) {
-      const fixture = chatSendFixture(mode, 'practice', access);
-      fixture.drawContext();
-      assert.match(fixture.contextBox.textContent, /Problem 2/);
-      assert.match(fixture.contextBox.textContent, /Graphs <review>/);
-      await fixture.send(fixture.input.value);
-      assert.equal(fixture.prepared.length, 1, `${mode}: saves before sending`);
-      assert.equal(fixture.prepared[0].challenge, 'problem-two');
-      assert.equal(fixture.prepared[0].mode, mode);
-      assert.equal(fixture.requests.length, 1);
-      const request = fixture.requests[0];
-      assert.equal(request.mode, mode);
-      assert.equal(request.chat, 'practice');
-      assert.equal(request.interview_problem, 'problem-two');
-      assert.equal(request.access, access);
-      assert.equal(request.practice, false);
-      assert.equal(request.mark, false);
-      assert.equal(fixture.state.messages[0].interview.challenge, 'problem-two');
-      assert.deepEqual(fixture.notices, []);
-    }
-  }
-  const quiz = chatSendFixture('study', 'practice', 'read');
-  await quiz.send('My answer', { card: { question: 'Why?', correct: null } });
-  assert.equal(quiz.requests[0].practice, true);
-  assert.equal(quiz.requests[0].mark, true);
-  assert.equal(quiz.requests[0].access, 'read');
-  assert.equal(quiz.requests[0].interview_problem, 'problem-two');
-});
-
-test('a different conversation stays independent of the open practice', async () => {
-  const fixture = chatSendFixture('chat', 'other-chat');
-  fixture.drawContext();
-  assert.doesNotMatch(fixture.contextBox.textContent, /Problem 2/);
-  await fixture.send(fixture.input.value);
-  assert.equal(fixture.prepared.length, 0);
-  assert.equal(fixture.requests[0].chat, 'other-chat');
-  assert.equal(fixture.requests[0].interview_problem, null);
-});
-
-test('switching chat style or conversation during a practice save keeps the unsent message', async () => {
-  for (const [from, to] of [['chat', 'study'], ['study', 'chat'], ['interview', 'chat']]) {
-    for (const change of ['mode', 'conversation']) {
-      let finish;
-      const fixture = chatSendFixture(from, 'practice', 'ask', () => new Promise(resolve => { finish = resolve; }));
-      const text = fixture.input.value;
-      const sending = fixture.send(text);
-      assert.equal(typeof finish, 'function');
-      if (change === 'mode') fixture.state.mode = to;
-      else fixture.state.id = 'other-chat';
-      finish(true);
-      await sending;
-      assert.equal(fixture.requests.length, 0);
-      assert.equal(fixture.state.messages.length, 0);
-      assert.equal(fixture.input.value, text);
-      assert.equal(fixture.state.preparingSend, false);
-    }
-  }
-});
 
 
-test('the page saves the matching practice draft in every chat style before sending', async () => {
-  const fs = require('node:fs');
-  const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../src/web/app/core.js'), 'utf8');
-  const hook = source.slice(source.indexOf('onBeforeSend: async ') + 'onBeforeSend: '.length, source.indexOf('  onOpen:'));
-  const body = hook.trim().replace(/,$/, '');
-  for (const mode of ['chat', 'study', 'interview']) {
-    let saves = 0;
-    const session = { item: { id: 'practice', challenge: { id: 'problem-17' } } };
-    const context = { interviewPage: session, interviewHere: s => s === session, saveInterviewWorkspace: async s => { assert.equal(s, session); saves += 1; } };
-    const save = vm.runInNewContext(`(${body})`, context);
-    assert.equal(await save({ id: 'practice', mode, challenge: 'problem-17' }), true);
-    assert.equal(saves, 1);
-    assert.equal(await save({ id: 'other', mode, challenge: 'problem-17' }), true);
-    assert.equal(saves, 1);
-    session.switching = true;
-    await assert.rejects(save({ id: 'practice', mode, challenge: 'problem-17' }), /switching/);
-    assert.equal(saves, 1);
-  }
-});
+
+
+
+
+
+
 
 test('model history stays append only across quiz answers, hints, next cards and reloads', () => {
-  for (const mode of ['chat', 'study', 'interview']) {
+  for (const mode of ['chat', 'study']) {
     const messages = [{ role: 'user', text: 'Practise this material.', mode }];
     let quiz = { kind: 'free_response', question: 'Why does the invariant hold?', answer: 'The state preserves the condition.', correct: null };
     messages.push({ role: 'assistant', text: 'Start here.', mode, quizzes: [quiz] });
@@ -786,7 +651,7 @@ test('canonical history preserves notes, actions and ordinary conversation chang
 });
 
 test('actual quiz sends keep the prior model history stable through hints, marking and saved next questions', async () => {
-  for (const mode of ['chat', 'study', 'interview']) {
+  for (const mode of ['chat', 'study']) {
     const hints = [true, true, false, false, true, false];
     const replies = hints.map(hint => ({ events: [{ t: hint ? 'Check the boundary.' : '[[correct]] Your invariant holds.' }, ...(!hint ? [{ quiz: { kind: 'free_response', question: 'What happens next?', answer: 'The next state.', explain: 'Follow the state.' } }] : []), { done: true }] }));
     const fixture = chatSendFixture(mode, 'practice', 'auto', undefined, { replies });

@@ -18,7 +18,6 @@ const actions = {
   'speech-delete': (el) => { closeSheet(); return speechChange({ action: el.dataset.verb || 'delete', id: el.dataset.model }); },
   back,
   home: () => go('#/'),
-  interviews: () => go('#/interviews'),
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
   'ask-selection': () => askAboutSelection(),
@@ -204,12 +203,6 @@ const actions = {
   },
   chat: async () => {
     if (chat.isOpen()) return chat.toggle(false);
-    const session = interviewPage;
-    if (session && interviewHere(session)) {
-      await saveInterviewWorkspace(session);
-      if (interviewHere(session)) return chat.openInterview(session.item.id, () => interviewHere(session));
-      return;
-    }
     chat.toggle(true);
   },
   trash: () => {

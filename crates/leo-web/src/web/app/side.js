@@ -125,7 +125,6 @@ function drawSide() {
         ${sideRow('new', ICON.plus, 'New note', { attrs: ` data-dir="${esc(actionDir)}"`, hint: actionDir ? `New note in ${folderLabel(actionDir)}` : 'New note' })}
         ${sideRow('quick-leo', ICON.search, 'Search', { hint: `Search, ask, remind or jot anything (${shortcutLabel})` })}
         ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
-        ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
         ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
         ${sideRow('boards', ICON.board, 'Boards', { on: here === 'boards', hint: 'Boards · track tasks from To do to Done' })}
         ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(actionDir)}"` })}
