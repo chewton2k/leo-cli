@@ -44,9 +44,9 @@ test('note deletion preserves the session on failure and never redirects a newer
 
 const motionSource = fs.readFileSync(path.resolve(__dirname, '../src/web/app/motion.js'), 'utf8');
 function motion(extra = {}) {
-  const context = { stillMotion: () => false, EASE_OUT: 'ease-out', document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
+  const context = { stillMotion: () => false, EASE_OUT: 'ease-out', MOTION_MS: 180, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
   vm.createContext(context);
-  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, sameKeys, transitionSkip, swap, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
+  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, sameKeys, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
   return context.api;
 }
 
@@ -94,49 +94,44 @@ test('a moved row animates from where it was, and a stable one does not', () => 
   assert.equal(played[0].options.duration, 150);
 });
 
-test('a page change transitions only when the API exists, motion is allowed, no sheet is open and the page differs', () => {
+test('a page change animates only when motion is allowed, no sheet is open and the page differs', () => {
   const m = motion();
-  const base = { supported: true, reduced: false, sheet: false, same: false, first: false };
+  const base = { reduced: false, sheet: false, same: false, first: false };
   assert.equal(m.transitionSkip(base), '');
-  assert.equal(m.transitionSkip({ ...base, supported: false }), 'unsupported');
   assert.equal(m.transitionSkip({ ...base, reduced: true }), 'reduced');
   assert.equal(m.transitionSkip({ ...base, sheet: true }), 'sheet');
   assert.equal(m.transitionSkip({ ...base, same: true }), 'same');
   assert.equal(m.transitionSkip({ ...base, first: true }), 'first');
 });
 
-test('without the API, or on the same page, the draw happens at once and no transition starts', async () => {
-  let started = 0, drawn = 0;
-  const m = motion({ document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } } });
-  assert.equal(await m.swap('f:a', () => drawn++), false);
-  assert.equal(await m.swap('f:a', () => drawn++), false);
-  assert.equal(drawn, 2);
-  const withApi = motion({ document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } }, startViewTransition: () => { started++; } } });
-  await withApi.swap('f:a', () => {});
-  await withApi.swap('f:a', () => {});
+test('a page change never starts a view transition, which would put the root element under every click, and draws at once', () => {
+  let started = 0, draws = 0;
+  const document = { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } }, startViewTransition: () => { started++; } };
+  const m = motion({ document });
+  assert.equal(m.swap('f:a', () => draws++), false);
+  assert.equal(draws, 1);
+  assert.equal(m.swap('f:b', () => draws++), true);
+  assert.equal(draws, 2);
+  assert.equal(m.swap('f:b', () => draws++), false);
   assert.equal(started, 0);
 });
 
-test('a transition draws once inside its callback, never for a stale page, and clears the page tone class', async () => {
-  for (const stale of [false, true]) {
-    const classes = new Set();
-    let draws = 0, finish;
-    const document = {
-      addEventListener() {}, querySelector: () => null, querySelectorAll: () => [],
-      documentElement: { classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } },
-      startViewTransition: (update) => {
-        const done = Promise.resolve().then(update);
-        return { ready: Promise.resolve(), finished: done.then(() => { finish?.(); }), updateCallbackDone: done };
-      },
-    };
-    const m = motion({ document });
-    await m.swap('f:a', () => draws++);
-    const moved = await m.swap('f:b', () => draws++, { stale: () => stale });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(moved, true);
-    assert.equal(draws, stale ? 1 : 2);
-    assert.equal(classes.has('vt'), false);
-  }
+test('the title glides from where its text was, only when the page changed and the text moved', () => {
+  const m = motion();
+  assert.deepEqual({ ...m.glideOffset({ left: 100, top: 300, width: 120, height: 18 }, { left: 360, top: 120, width: 240, height: 34 }) }, { dx: -260, dy: 180, scale: 0.5 });
+  assert.equal(m.glideOffset({ left: 5, top: 5, width: 100, height: 20 }, { left: 5.2, top: 5.1, width: 100, height: 20 }), null);
+  assert.equal(m.glideOffset(null, { left: 0, top: 0, width: 10, height: 10 }), null);
+  const played = [];
+  const range = { selectNodeContents() {}, getBoundingClientRect: () => ({ left: 360, top: 120, width: 240, height: 34 }) };
+  const el = { isConnected: true, style: {}, getBoundingClientRect: () => ({ left: 340, top: 110 }), animate: (frames, options) => { const run = {}; played.push({ frames, options, run }); return run; } };
+  const g = motion({ document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], createRange: () => range } });
+  const run = g.glideTitle({ left: 100, top: 300, width: 120, height: 18 }, el);
+  assert.equal(played.length, 1);
+  assert.equal(played[0].frames[0].transform, 'translate(-260px, 180px) scale(0.5)');
+  assert.equal(played[0].options.duration, 180);
+  assert.equal(el.style.transformOrigin, '20px 10px');
+  run.onfinish();
+  assert.equal(el.style.transformOrigin, '');
 });
 
 test('a drop settles the element wherever the redraw puts it, with the time already spent, and stops after 180 ms', () => {

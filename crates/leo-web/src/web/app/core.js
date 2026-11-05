@@ -593,12 +593,11 @@ async function showFolder(dir) {
   const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
-  const moved = await swap(`f:${dir}`, () => { scrollToTop(); drawFolder(); }, {
-    stale: () => mine !== seq,
+  const moved = swap(`f:${dir}`, () => { scrollToTop(); drawFolder(); }, {
     from: () => { const title = $('#title'); return inView(title) ? title : null; },
     to: () => (left ? morphTitle(left) : null),
   });
-  if (arrived && !moved) arriveOnPage();
+  if (arrived || moved) arriveOnPage();
 }
 
 const PAGE = 200;
@@ -866,7 +865,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
   let s;
-  const moved = await swap(`n:${note.id || 'new'}`, () => {
+  swap(`n:${note.id || 'new'}`, () => {
     scrollToTop();
     document.body.classList.toggle('on-library', false);
     document.body.classList.toggle('on-note', true);
@@ -897,12 +896,10 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
       reading.user = false;
     } else restoreReading(note.id, mine);
   }, {
-    stale: () => mine !== seq,
     from: () => morphTitle(note.id),
     to: () => ($('#title')?.textContent.trim() ? $('#title') : null),
   });
-  if (mine !== seq || !s) return;
-  if (!moved) arriveOnPage(app.querySelector('article.note'));
+  arriveOnPage(app.querySelector('article.note'));
   drawRelated(note.id, mine);
   marginMount(s, mine).catch(fail);
   if (s.dirty) {

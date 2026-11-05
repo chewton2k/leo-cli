@@ -4,7 +4,6 @@ const FLIP_ROWS = 200;
 const QUICK_FLIP_MS = 120;
 const SETTLE_MS = 180;
 const SETTLE_SCALE = 1.02;
-const MORPH_NAME = 'note-title';
 
 const drawn = { key: '', source: null, at: 0, top: false };
 
@@ -74,8 +73,7 @@ function sameKeys(a, b) {
   return a.length === b.length && a.every((key, i) => key === b[i]);
 }
 
-function transitionSkip({ supported, reduced, sheet, same, first }) {
-  if (!supported) return 'unsupported';
+function transitionSkip({ reduced, sheet, same, first }) {
   if (reduced) return 'reduced';
   if (sheet) return 'sheet';
   if (first) return 'first';
@@ -105,48 +103,48 @@ function morphTitle(id) {
   return null;
 }
 
-function nameMorph(el) {
-  if (el) el.style.viewTransitionName = MORPH_NAME;
+function textRect(el) {
+  if (!el || !el.isConnected) return null;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const { left, top, width, height } = range.getBoundingClientRect();
+  return width > 0 && height > 0 ? { left, top, width, height } : null;
 }
 
-function clearMorph() {
-  for (const el of document.querySelectorAll('[style*="view-transition-name"]')) el.style.viewTransitionName = '';
+function glideOffset(from, to) {
+  if (!from || !to || !from.width || !to.width) return null;
+  const scale = from.width / to.width;
+  const dx = from.left - to.left;
+  const dy = from.top - to.top;
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(scale - 1) < .01) return null;
+  return { dx, dy, scale };
 }
 
-function startTransition(update) {
-  const transition = document.startViewTransition(update);
-  transition.ready.catch(() => {});
-  transition.finished.catch(() => {});
-  return transition;
+function glideTitle(from, el, ms = MOTION_MS) {
+  const to = textRect(el);
+  const move = glideOffset(from, to);
+  if (!move || typeof el.animate !== 'function') return null;
+  const box = el.getBoundingClientRect();
+  el.style.transformOrigin = `${to.left - box.left}px ${to.top - box.top}px`;
+  const run = el.animate([{ transform: `translate(${move.dx}px, ${move.dy}px) scale(${move.scale})` }, { transform: 'none' }], { duration: ms, easing: EASE_OUT });
+  const done = () => { el.style.transformOrigin = ''; };
+  run.onfinish = done;
+  run.oncancel = done;
+  return run;
 }
 
-async function swap(key, draw, { stale = () => false, from = null, to = null } = {}) {
+function swap(key, draw, { from = null, to = null } = {}) {
   const skip = transitionSkip({
-    supported: typeof document.startViewTransition === 'function',
     reduced: stillMotion(),
     sheet: Boolean(document.querySelector('.scrim')),
     same: drawn.key === key,
     first: !drawn.key,
   });
   drawn.key = key;
-  if (skip) {
-    draw();
-    return false;
-  }
-  const root = document.documentElement;
-  root.classList.add('vt');
-  nameMorph(from && from());
-  const transition = startTransition(() => {
-    if (stale()) return;
-    clearMorph();
-    draw();
-    nameMorph(to && to());
-  });
-  transition.finished.finally(() => {
-    clearMorph();
-    root.classList.remove('vt');
-  });
-  await transition.updateCallbackDone;
+  const was = skip || !from ? null : textRect(from());
+  draw();
+  if (skip) return false;
+  if (was && to) glideTitle(was, to());
   return true;
 }
 

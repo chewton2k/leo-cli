@@ -1051,18 +1051,6 @@ body.on-map main { padding: 0; max-width: none; }
 }
 
 @property --side { syntax: '<length>'; inherits: true; initial-value: 0px; }
-::view-transition, ::view-transition-group(*), ::view-transition-image-pair(*), ::view-transition-old(*), ::view-transition-new(*) { pointer-events: none; }
-::view-transition-old(root), ::view-transition-new(root) { animation-duration: 140ms; animation-timing-function: ease-out; }
-.vt #side { view-transition-name: leo-side; }
-.vt body.chat-open .chat { view-transition-name: leo-chat; }
-::view-transition-group(leo-side), ::view-transition-group(leo-chat) { animation: none; }
-::view-transition-old(leo-side), ::view-transition-old(leo-chat) { display: none; }
-::view-transition-new(leo-side), ::view-transition-new(leo-chat) { animation: none; }
-::view-transition-group(note-title) { animation-duration: 180ms; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
-::view-transition-old(note-title) { display: none; }
-::view-transition-new(note-title) { animation: none; }
-.vt #title { width: fit-content; max-width: 100%; }
-@media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; } }
 .side { display: none; }
 @media (min-width: 1000px) {
   body { --side: var(--explorer-w, 284px); padding-left: var(--side); }

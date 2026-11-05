@@ -245,6 +245,23 @@ test('a tap on any checkbox ticks it and saves without moving the note or openin
   await expect(page.locator('.doc textarea')).toHaveCount(1);
 });
 
+test('a click 60 ms after a page change reaches the page, never the root element', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: `Quick ${test.info().project.name}`, body: '- [ ] first' } })).json();
+  await page.goto('/#/');
+  const card = page.locator(`.card[data-id="${note.id}"]`);
+  await card.scrollIntoViewIfNeeded();
+  await card.locator('.card-title').click();
+  const seen = await page.evaluate(async () => {
+    while (!document.querySelector('.doc input[data-box]')) await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const box = document.querySelector('.doc input[data-box]').getBoundingClientRect();
+    return { hit: document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2).tagName, root: document.documentElement.className };
+  });
+  expect(seen).toEqual({ hit: 'INPUT', root: '' });
+  await page.locator('.doc input[data-box]').click({ timeout: 1000, trial: false });
+  await expect(page.locator('.doc input[data-box]')).toBeChecked();
+});
+
 test('on a wide screen the sidebar reaches every place and can be narrowed', async ({ page }) => {
   const wide = test.info().project.name === 'desktop';
   await page.request.post('/api/dirs', { data: { path: 'side-course' } });
