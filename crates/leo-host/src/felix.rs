@@ -13,7 +13,9 @@ pub fn writer(
             system: system.into(),
             user: user.into(),
         };
-        let result = if matches!(
+        let result = if purpose == leo_web::usage::Purpose::MarginRead {
+            leo_services::ai::toolless_outcome(prompt, most)
+        } else if matches!(
             purpose,
             leo_web::usage::Purpose::Summary | leo_web::usage::Purpose::QuickReview
         ) {

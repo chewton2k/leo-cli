@@ -164,6 +164,29 @@ pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Cha
     chat::complete(&quick_config(&cfg), &store, prompt, max_tokens)
 }
 
+pub fn toolless_outcome(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    chat::complete(&toolless_config(&cfg), &store, prompt, max_tokens)
+}
+
+fn toolless_config(cfg: &Config) -> Config {
+    let mut quick = quick_config(cfg);
+    for name in &cfg.chat.chain {
+        let provider = quick
+            .provider(name)
+            .cloned()
+            .or_else(|| Config::built_in_provider(name));
+        if let Some(mut provider) = provider {
+            provider.no_tools = true;
+            quick.providers.insert(name.clone(), provider);
+        }
+    }
+    quick
+}
+
 pub fn dictation_outcome(
     prompt: chat::Prompt,
     max_tokens: u32,

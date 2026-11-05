@@ -68,6 +68,10 @@ pub fn powers() -> leo_web::Powers {
             std::sync::Arc::clone(&usage),
             leo_web::usage::Purpose::QuickReview,
         )),
+        toolless: Some(crate::felix::writer(
+            std::sync::Arc::clone(&usage),
+            leo_web::usage::Purpose::MarginRead,
+        )),
         housekeeping: Some(crate::felix::writer(
             std::sync::Arc::clone(&usage),
             leo_web::usage::Purpose::Summary,

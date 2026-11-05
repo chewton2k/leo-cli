@@ -18,6 +18,7 @@ pub enum Purpose {
     Summary,
     OtherWriting,
     QuickReview,
+    MarginRead,
 }
 
 #[derive(Default)]
