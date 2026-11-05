@@ -115,21 +115,28 @@ reader, seer, meaning, web, room, speech).
   `chip`/`pick-chip`, `sheet()` (swipe-to-close on phones), toasts with Undo,
   `library-views` segmented control, settings-style `<select>`. Settings
   controls (`settings-navigation.js`): `settingsSwitch` (an iOS-style switch
-  that stays a real checkbox, `role="switch"`) for every on/off preference,
+  that stays a real checkbox, `role="switch"`, ink when on) for every on/off preference,
   never a bare checkbox; `segmented` (a pill that slides to the pick) for
   choices of two to four short options, either a hidden `field` input that
   fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
-  longer or open-ended lists stay `<select>`, which inside Settings
+  `choiceCards` (2026-11-04) is the same idea for a choice that wants a picture:
+  a `radiogroup` of cards (title, sentence, optional small SVG diagram) over real
+  radios, so arrow keys are the browser's own; a hidden `field` carries the value and
+  fires `change`; one ring (`--text`, ink) glides between cards at `--t-follow` on
+  `--ease-soft`, and `keepSegmented`/`restoreSettingsFields` keep it where it was
+  across redraws. No setting uses it yet (Felix's arrives with the margin).
+  Longer or open-ended lists stay `<select>`, which inside Settings
   `select-menu.js` draws as a custom listbox (2026-11-02, the user's call: no
   system menus). The `<select>` stays underneath, invisible and unclickable, as
   the value: change handlers, drafts and `selectOption` keep working; its
   `value` setter keeps the button label in step, the redraw after a save gives
   focus back to the new button, and forced colors keeps the native control.
   Settings motion: the menu unfolds like the model picker; the section list's
-  highlight is one pill that glides to the new section (260 ms, started from
-  where the old pill is drawn, so the placeholder-then-content double draw
-  does not cut it off; hidden under 760 px); a section switch has one 180 ms
-  arrival leaning the way you moved; "Saved" fades. Labels are 500 weight in
+  highlight is one white (`--raised`) pill that glides to the new section
+  (260 ms on `--ease-soft`, started from where the old pill is drawn, so the
+  placeholder-then-content double draw does not cut it off; hidden under
+  760 px); a section switch has one 180 ms arrival leaning the way you moved;
+  "Saved" fades. Labels are 500 weight in
   the text color. Pressing a menu's button keeps focus where it is (WebKit
   does not focus clicked buttons, which made a second press reopen it).
   Speech model filters keep the filter bar where it was on screen and hold
@@ -1054,10 +1061,13 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
 - Settings (`SettingsApi`, `leo_host::WebSettings`): one model picker
   per AI with prices and effort chips.
 - Theme (2026-10-14, the user's request): Settings → Appearance picks Match
-  this device, Light or Dark, kept per browser in `leo-theme`. Theme and
-  Felix choices are large `.choice-card`s (icons `device`, `sun`, `moon`;
-  Felix pictures with `felix-preview cute-look` / `demon-look`, which the
-  mood code skips and which look the same whatever mode is on). `/theme.js`
+  this device, Light or Dark, kept per browser in `leo-theme`. Theme, Felix and
+  Note width are segmented controls (icons `device`, `sun`, `moon`; Felix pictures
+  with `felix-preview cute-look` / `demon-look`, which the mood code skips and
+  which look the same whatever mode is on). Each has a row reset (`settingReset`,
+  a small icon button that shows only while the value differs from
+  `APPEARANCE_DEFAULTS`: Match device, Cute, Wide; `data-action="setting-reset"`,
+  named "Reset <setting> to default"). Add one only where the default is real. `/theme.js`
   loads in `<head>` (before any paint, no inline script under the CSP) and
   sets `html[data-theme]`; the dark colours apply under
   `prefers-color-scheme: dark` unless `data-theme="light"`, and always with
@@ -1396,20 +1406,49 @@ history only; fields, drafts, focus and caret survive. There is no Save button
 wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
-Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels
-in sentence case, no "Settings" title in the section list (the bar says it),
-no card title repeating the page title, flat cards (border, no shadow), labels
-on one line with controls hugging their content at the right edge; a card under
-500 px stacks segmented rows (container query), and switch rows stay inline on
-phones. Writing AI uses a pen icon, never a sparkle.
-Settings (2026-11-02, the user's call) is a sidebar beside the content: a
-rounded panel set apart from the explorer by a gap on every side (sticky under
-the bar, its own scroll), panel and section centred together at any width,
-every card 20 px from the next (a section's wrapper `<div id>` is
-`display: contents`, so its cards share that gap), grouped Leo / Your
-notes / Data / This app, each section with an icon and a page heading with a
-one-line description; under 760 px it becomes a sideways-scrolling chip strip
-that centres the current section. Routes stay `#/settings/<section>`; Storage
+Settings look (2026-11-02, the user's call, stageshow's craft rules; redone
+2026-11-04): group labels in sentence case, no "Settings" title in the section
+list (the bar says it), no card title repeating the page title, labels on one
+line with controls hugging their content at the right edge; a card under 500 px
+stacks segmented rows (container query), and switch rows stay inline on phones.
+`.set-card` is a tinted group (`--tint`, no border, no shadow, no rule between
+rows: space separates them; inputs, selects and plain buttons inside it fill
+with `--raised`). Inputs keep their border; nothing else in Settings' own layout
+has a 1px rule (the Trash list, Storage items, Calendar form and menus included).
+Selection is ink (segment and nav pills are `--raised`, switches `--text`);
+indigo stays for focus, links and the search pulse. Writing AI uses a pen icon,
+never a sparkle.
+Settings (2026-11-02, the user's call) is a sidebar beside the content. Since
+2026-11-04 the sidebar has no card: it sits directly on `--ground` (a band
+drawn by `.settings-layout::before`, from the window's left edge to just past the
+nav) and the section on `--page`, with no border between. Sticky under the bar
+with its own scroll; nav and section are centred together at any width (a
+four-column grid, the outer columns `1fr`); every card 20 px from the next (a
+section's wrapper `<div id>` is `display: contents`, so its cards share that gap);
+grouped Leo / Your notes / Data / This app, each section with an icon and a page
+heading with a one-line description; under 760 px the nav is a bar on `--ground`
+with the search above a sideways-scrolling chip strip that centres the current
+section (results replace the strip while searching).
+
+Settings search (2026-11-04, after T3 Code): `SETTINGS_INDEX` in
+`settings-navigation.js`, next to `SETTINGS_SECTIONS`, is plain data of
+`{section, label, keywords, id}`, one entry per setting a person can name. Its
+`id` is the `data-find` attribute on that row or card in the page markup;
+`settings-navigation.test.js` fails when an entry names a section that does not
+exist, a duplicate id, or an id no source draws. Add the entry and the
+`data-find` together. Filtering is local and case-insensitive (every typed word
+must appear in the label or keywords; a label that starts with the query comes
+first). The input is a combobox with `aria-activedescendant` over a listbox of
+rows (label, then the section as a second line); arrow keys move, Enter picks,
+Escape clears (and is swallowed while a query is typed), an empty result says
+so, and the query lives in `settingsFind` so redraws keep it. Choosing a result
+sets the route if needed and `seekSettingsTarget` waits (MutationObserver on
+`#app`, 2.5 s, then falls back to the page heading) until `[data-find]` exists
+inside that section's own element, so the placeholder-then-content double draw
+cannot lose it; then it waits for the arrival animation, scrolls the target to
+the centre, focuses it (`tabindex=-1`) and pulses it once: a 650 ms opacity pulse
+on `::after` in `--accent`; Reduced Motion skips the pulse and shows an outline
+until blur. Routes stay `#/settings/<section>`; Storage
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a

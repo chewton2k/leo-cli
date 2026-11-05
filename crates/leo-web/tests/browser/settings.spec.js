@@ -90,7 +90,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       throw new Error(url);
     }
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
-    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else resetSetting(el);});
     ${read('theme.js')}
     ${read('app/refresh.js')}
     ${read('app/trash.js')}
@@ -190,6 +190,20 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(push).toHaveAttribute('aria-expanded','false');
       const pillOn=async()=>page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top)+Math.abs(pill.height-on.height);});
       expect(await pillOn()).toBeLessThan(2);
+      await page.locator('#settings-search').fill('zzzz');
+      await expect(page.getByText('No settings match “zzzz”.')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#settings-search')).toHaveValue('');
+      await expect(page.getByRole('listbox',{name:'Settings search results'})).toHaveCount(0);
+      await page.locator('#settings-search').fill('custom words');
+      await expect(page.getByRole('option',{name:/Custom words/})).toHaveAttribute('aria-selected','true');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading',{level:1,name:'Dictation'})).toBeVisible();
+      await expect(page.locator('[data-find="dictation-words"]')).toBeFocused();
+      const found=await page.locator('[data-find="dictation-words"]').evaluate(el=>{const box=el.getBoundingClientRect();return Math.abs(box.top+box.height/2-innerHeight/2);});
+      expect(found).toBeLessThan(60);
+      await expect(page.locator('#settings-search')).toHaveValue('');
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
       await expect(page.getByRole('heading',{level:1,name:'Dictation'})).toBeVisible();
       expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
@@ -226,6 +240,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.evaluate(()=>window.audit.redraw());
       await expect(words).toBeFocused();
       expect(await words.evaluate(el=>[el.selectionStart,el.selectionEnd])).toEqual([2,7]);
+      await page.getByRole('link',{name:'General',exact:true}).click();
+      const themeReset=page.getByRole('button',{name:'Reset Theme to default'});
+      await expect(themeReset).toBeHidden();
+      await page.getByRole('button',{name:'Dark',exact:true}).click();
+      await expect(themeReset).toBeVisible();
+      await themeReset.click();
+      await expect(themeReset).toBeHidden();
+      await expect(page.getByRole('button',{name:'Match device',exact:true})).toHaveAttribute('aria-pressed','true');
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
       await page.waitForTimeout(400);
       expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);

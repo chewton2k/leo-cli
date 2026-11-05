@@ -127,6 +127,7 @@ const actions = {
   'segment-pick': (el) => pickSegment(el),
   'felix-pick': (el) => pickFelix(el),
   'width-pick': (el) => pickWidth(el),
+  'setting-reset': (el) => resetSetting(el),
   'usage': () => showUsage(),
   'quick-leo': () => quickLeo(),
   'quick-run': (el) => quickGo(Number(el.dataset.at)),
