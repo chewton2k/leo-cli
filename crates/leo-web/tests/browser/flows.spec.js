@@ -2035,7 +2035,8 @@ test.describe('large libraries', () => {
 
 test.describe('readability', () => {
   async function lowContrast(page, within = 'body') {
-    return page.evaluate((within) => {
+    return page.evaluate(async (within) => {
+      await Promise.all(document.getAnimations().filter((run) => run.effect && run.effect.getComputedTiming().iterations !== Infinity).map((run) => run.finished.catch(() => {})));
       const parse = (s) => {
         const m = /rgba?\(([^)]+)\)/.exec(s || '');
         if (!m) return [0, 0, 0, 0];
@@ -2074,7 +2075,6 @@ test.describe('readability', () => {
       for (const el of document.querySelectorAll(`${within} *`)) {
         if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
         if (el.closest('[disabled], [aria-disabled="true"], .skeleton, canvas, svg, option, select, [hidden]')) continue;
-        if (el.matches('.word, .starter') && el.getAnimations().length) continue;
         const style = getComputedStyle(el);
         const box = el.getBoundingClientRect();
         if (style.visibility !== 'visible' || box.width < 1 || box.height < 1 || style.display === 'none') continue;
