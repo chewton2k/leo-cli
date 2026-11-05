@@ -262,6 +262,38 @@ test('a click 60 ms after a page change reaches the page, never the root element
   await expect(page.locator('.doc input[data-box]')).toBeChecked();
 });
 
+test.describe('forced colors', () => {
+  test.use({ forcedColors: 'active' });
+  test('surfaces keep an edge and every selected state differs from its neighbours', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Edge ${test.info().project.name}`, body: 'text' } })).json();
+    await page.goto('/#/');
+    await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
+    const look = (selector) => page.locator(selector).first().evaluate((el) => { const cs = getComputedStyle(el); return { border: parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth), bg: cs.backgroundColor, color: cs.color }; });
+    expect((await look('.card')).border, 'library cards have an edge').toBeGreaterThan(0);
+    expect((await look('.library-views')).border, 'the Grid/List group has an edge').toBeGreaterThan(0);
+    const on = await look('.library-views .on');
+    const off = await look('.library-views button:not(.on)');
+    expect(on.bg, 'Grid/List shows which is selected').not.toBe(off.bg);
+    await page.goto('/#/settings/general');
+    await expect(page.locator('.segment.on').first()).toBeVisible();
+    expect((await look('.set-card')).border, 'settings groups have an edge').toBeGreaterThan(0);
+    expect((await look('.segment.on')).bg, 'a segmented choice shows which is selected').not.toBe((await look('.segment:not(.on)')).bg);
+    expect((await look('.settings-link.on')).bg, 'the settings section list shows where you are').not.toBe((await look('.settings-link:not(.on)')).bg);
+    await page.locator('.set-card').first().evaluate((card) => card.insertAdjacentHTML('beforeend', '<div class="choice-cards" style="--count:2;--at:0"><span class="choice-ring"></span><label class="choice-pick on"><input type="radio" name="fc" checked><span class="choice-title">A</span></label><label class="choice-pick"><input type="radio" name="fc"><span class="choice-title">B</span></label></div>'));
+    const chosen = await look('.choice-pick.on');
+    expect(chosen.border + (await look('.choice-pick:not(.on)')).border, 'choice cards have edges').toBeGreaterThan(0);
+    expect(chosen.bg, 'the chosen card differs from the others').not.toBe((await look('.choice-pick:not(.on)')).bg);
+  });
+  test('the explorer shows the open place and the rail has edges', async ({ page }) => {
+    await page.goto('/#/settings/general');
+    await expect(page.locator('#side .side-rail .side-row.on')).toBeVisible();
+    const row = await page.locator('#side .side-rail .side-row.on').evaluate((el) => { const cs = getComputedStyle(el); return { bg: cs.backgroundColor, border: parseFloat(cs.borderTopWidth) }; });
+    const other = await page.locator('#side .side-rail .side-row:not(.on)').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(row.bg).not.toBe(other);
+    expect(row.border).toBeGreaterThan(0);
+  });
+});
+
 test('on a wide screen the sidebar reaches every place and can be narrowed', async ({ page }) => {
   const wide = test.info().project.name === 'desktop';
   await page.request.post('/api/dirs', { data: { path: 'side-course' } });
