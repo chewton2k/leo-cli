@@ -216,7 +216,13 @@ pageBar.addEventListener('pointerdown', (e) => {
   const y = e.clientY - pageBar.getBoundingClientRect().top;
   scrollBy(0, (y < pageBarSize.top ? -1 : 1) * innerHeight * 0.9);
 });
-addEventListener('scroll', pageBarLater, { passive: true });
+let pageBarIdle = 0;
+addEventListener('scroll', () => {
+  pageBarLater();
+  pageBar.classList.add('active');
+  clearTimeout(pageBarIdle);
+  pageBarIdle = setTimeout(() => pageBar.classList.remove('active'), 900);
+}, { passive: true });
 addEventListener('resize', pageBarLater);
 if (window.ResizeObserver) new ResizeObserver(pageBarLater).observe(document.body);
 new MutationObserver(pageBarLater).observe(document.body, { attributes: true, attributeFilter: ['class'] });

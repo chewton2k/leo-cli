@@ -94,6 +94,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     ${read('theme.js')}
     ${read('app/refresh.js')}
     ${read('app/trash.js')}
+    const stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
     ${read('app/settings-navigation.js')}
     ${read('app/select-menu.js')}
     ${read('app/settings.js')}
@@ -135,7 +136,8 @@ test('Settings sections keep drafts and selections across redraws in both themes
       for(const width of [900,1600]) {
         await page.setViewportSize({width,height:850});
         const [start,end]=await page.evaluate(()=>{const main=document.querySelector('main').getBoundingClientRect();return [document.querySelector('.settings-nav').getBoundingClientRect().left-main.left,main.right-document.querySelector('.settings-section').getBoundingClientRect().right];});
-        expect(Math.abs(start-end)).toBeLessThan(2);
+        if(width<1000) expect(Math.abs(start-end)).toBeLessThan(2);
+        else expect(start,'beside the explorer the section list sits close to it').toBeLessThanOrEqual(80);
       }
       await page.setViewportSize({width:900,height:850});
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});

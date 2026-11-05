@@ -5000,8 +5000,11 @@ test.describe('beside the note', () => {
     expect(barBox.x + barBox.width).toBeLessThanOrEqual(chatLeft + 1);
     expect(barBox.x + barBox.width).toBeGreaterThan(chatLeft - 4);
     const thumb = page.locator('.page-bar-thumb');
+    await page.mouse.move(10, 400);
+    await expect.poll(() => thumb.evaluate((el) => getComputedStyle(el).opacity), { message: 'the scroll thumb hides at rest, so no rule stands between the note and Felix' }).toBe('0');
     const start = await thumb.boundingBox();
     await page.mouse.move(start.x + start.width / 2, start.y + 10);
+    await expect.poll(() => thumb.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
     await page.mouse.down();
     await page.mouse.move(start.x + start.width / 2, start.y + 210, { steps: 5 });
     await page.mouse.up();
@@ -6276,6 +6279,15 @@ test('the header starts where each page\'s content starts, in a wide window', as
   }
   await page.request.delete(`/api/notes/${note.id}`);
   await page.request.delete(`/api/boards/${board.id}`);
+});
+
+test('Settings keeps its section list close to the explorer in a wide window', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto('/#/settings/general');
+  await expect(page.locator('.settings-nav')).toBeVisible();
+  const gap = await page.evaluate(() => document.querySelector('.settings-nav').getBoundingClientRect().left - document.querySelector('#side').getBoundingClientRect().right);
+  expect(gap, 'the explorer and the section list are the same tone, so a wide gap reads as dead space').toBeLessThanOrEqual(80);
 });
 
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {

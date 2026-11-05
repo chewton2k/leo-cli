@@ -185,6 +185,22 @@ test('sidebar and page header rows align across desktop layouts', async ({ brows
   });
 });
 
+test('folder chevrons are at least 24 px to press, and open notes line up under their folder', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    const twist = page.locator('.side-tree .side-twist').first();
+    await expect(twist).toBeVisible();
+    const box = await twist.boundingBox();
+    expect(box.width).toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    const folderIcon = await page.locator('.side-tree .side-row[data-dir="Course"] svg').boundingBox();
+    const noteIcon = await page.locator('.side-tree .side-note').first().locator('svg').boundingBox();
+    expect(Math.abs(noteIcon.x - folderIcon.x - 14)).toBeLessThanOrEqual(14);
+  });
+});
+
 test('clicking parent folder labels toggles descendants without navigating or disturbing the draft', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page = await context.newPage({viewport:{width:1280,height:800}});
