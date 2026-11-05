@@ -1166,14 +1166,14 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 .side-folder.on .side-row { background: none; color: var(--text); font-weight: 600; }
 .side-folder:hover:not(.on) { background: color-mix(in srgb, var(--text) 6%, transparent); }
 .side-folder:hover .side-row { background: none; }
-.side-twist { flex: none; width: 20px; height: 28px; display: grid; place-items: center; border: 0; padding: 0; background: none; color: var(--muted); }
+.side-twist { flex: none; width: 24px; height: 28px; display: grid; place-items: center; border: 0; padding: 0; background: none; color: var(--muted); }
 .side-twist svg { width: 13px; height: 13px; }
 .side-twist.open svg { transform: rotate(90deg); }
 .side-twist.none { display: block; }
 .side-explorer .side-row { min-height: 30px; gap: 7px; font-size: 13.5px; border-radius: 5px; }
 .side-explorer .side-row svg { width: 16px; height: 16px; }
 .side-kids { position: relative; }
-.side-kids::before { content: ''; position: absolute; top: 0; bottom: 0; left: calc(var(--depth, 0) * 14px + 9px); width: 2px; border-radius: 1px; background: color-mix(in srgb, var(--text) 8%, transparent); pointer-events: none; }
+.side-kids::before { content: ''; position: absolute; top: 0; bottom: 0; left: calc(var(--depth, 0) * 14px + 11px); width: 2px; border-radius: 1px; background: color-mix(in srgb, var(--text) 8%, transparent); pointer-events: none; }
 @media (min-width: 1000px) {
   .side-pill { position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--raised); pointer-events: none; }
   .side-tree { isolation: isolate; }
@@ -1181,8 +1181,8 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
   .side-folder.on:has(> .side-pill), .side-note.on:has(> .side-pill) { background: transparent; }
 }
 @media (max-width: 999px) { .side-pill { display: none; } }
-.side-note { padding-left: calc(var(--depth, 0) * 14px + 24px); }
-.side-note-status { padding: 4px 4px 6px calc(var(--depth, 0) * 14px + 24px); color: var(--muted); font-size: 12px; }
+.side-note { padding-left: calc(var(--depth, 0) * 14px + 28px); }
+.side-note-status { padding: 4px 4px 6px calc(var(--depth, 0) * 14px + 28px); color: var(--muted); font-size: 12px; }
 .side-note-page { display: block; border: 0; background: none; color: var(--accent); font: inherit; padding: 3px 0; text-align: left; }
 .side-sub { position: absolute; right: 4px; opacity: 0; }
 .side-folder:hover .side-sub, .side-sub:focus-visible { opacity: 1; }
