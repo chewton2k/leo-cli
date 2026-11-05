@@ -73,17 +73,14 @@ const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
   icons: ICON,
-  onBeforeSend: async ({ id, challenge }) => {
-    const session = interviewPage;
-    if (!session || session.item.id !== id || !interviewHere(session)) return true;
-    if (session.switching) throw new Error('The problem is switching. Ask Felix once it finishes.');
-    await saveInterviewWorkspace(session);
-    return interviewHere(session) && (!challenge || session.item.challenge?.id === challenge);
-  },
   onOpen: (id, lines) => {
     citedLines = lines ? { id, ...lines } : null;
     if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();
     else go(noteHash(id));
+  },
+  onCite: (id, lines) => {
+    const open = state.view === 'note' ? state.session : null;
+    if (open && open.doc) open.doc.glow(...(id && lines && open.note.id === id ? [lines.from, lines.to] : []));
   },
   onOriginal: (note, name, at) => showPassage(note, name, at).catch(fail),
   prepare: async (file) => {
@@ -103,12 +100,12 @@ const chat = felix.create({
     if (open && !saving.unsaved()) showNote(note.id);
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
-  onToggle: () => { drawSide(); pageBarLater(); },
-  onCodeEdit: action => applyInterviewCodeSuggestion(action),
+  onToggle: () => { drawSide(); pageBarLater(); marginRedraw(); },
   onOrganized: (proposal) => {
-    if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
-    if (proposal.kind === 'interview_test') { refreshInterviewTests(proposal.interview, proposal.challenge).catch(fail); return; }
-    if (['interview_problem_edit', 'interview_topics', 'delete_interview_problem', 'restore_interview_problem'].includes(proposal.kind)) { refreshInterview(proposal.interview).catch(fail); return; }
+    if (MARGIN_KINDS.includes(proposal.kind)) {
+      if (state.view === 'note' && state.session && state.session.note.id === proposal.note) marginLoad(state.session).catch(fail);
+      return;
+    }
     if (BOARD_KINDS.includes(proposal.kind)) {
       if (state.view === 'boards') showBoards((kanban.board && kanban.board.id) || '').catch(fail);
       return;
@@ -123,9 +120,6 @@ const chat = felix.create({
     if (!window.matchMedia('(min-width: 900px)').matches) chat.toggle(false);
     addSheet(picked);
   },
-  onInterview: (id) => { if (!sideWide()) chat.toggle(false); go(`#/interviews/${enc(id)}`); },
-  onInterviewChanged: (id) => refreshInterview(id).catch(fail),
-  onInterviewReply: (id) => interviewReplyFinished(id),
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });
@@ -208,7 +202,13 @@ pageBar.addEventListener('pointerdown', (e) => {
   const y = e.clientY - pageBar.getBoundingClientRect().top;
   scrollBy(0, (y < pageBarSize.top ? -1 : 1) * innerHeight * 0.9);
 });
-addEventListener('scroll', pageBarLater, { passive: true });
+let pageBarIdle = 0;
+addEventListener('scroll', () => {
+  pageBarLater();
+  pageBar.classList.add('active');
+  clearTimeout(pageBarIdle);
+  pageBarIdle = setTimeout(() => pageBar.classList.remove('active'), 900);
+}, { passive: true });
 addEventListener('resize', pageBarLater);
 if (window.ResizeObserver) new ResizeObserver(pageBarLater).observe(document.body);
 new MutationObserver(pageBarLater).observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -267,7 +267,8 @@ function toast(message, { action, run, bad } = {}) {
   const el = document.createElement('div');
   el.className = 'toast' + (bad ? ' bad' : '');
   el.setAttribute('role', 'status');
-  el.innerHTML = `<span>${esc(message)}</span>${action ? `<button>${esc(action)}</button>` : ''}`;
+  const lasts = action ? 6000 : 3500;
+  el.innerHTML = `<span>${esc(message)}</span>${action ? `<button>${esc(action)}</button><i class="toast-time" aria-hidden="true" style="animation-duration:${lasts}ms"></i>` : ''}`;
   if (action) {
     el.querySelector('button').addEventListener('click', () => {
       el.remove();
@@ -280,7 +281,7 @@ function toast(message, { action, run, bad } = {}) {
     el.setAttribute('aria-hidden', 'true');
     el.inert = true;
     setTimeout(() => el.remove(), LEAVE_MS);
-  }, action ? 6000 : 3500);
+  }, lasts);
 }
 
 const LEAVE_MS = 150;
@@ -300,7 +301,7 @@ async function dismissContent(elements) {
       { opacity: 0, transform: 'translateY(6px) scale(.98)' },
     ], { duration: MOTION_MS, easing: EASE_OUT }).finished.catch(() => {})));
   }
-  for (const el of live) el.remove();
+  flipList(app, LIBRARY_ITEMS, libraryKey, () => { for (const el of live) el.remove(); });
 }
 
 function stopSlide(el) {
@@ -531,8 +532,6 @@ function goBack(hash) {
 }
 
 function back() {
-  const practice = interviewPage;
-  if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) goBack('#/interviews'); }).catch(fail);
   if (state.view === 'storage' && /^#\/settings\/storage(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
   if (state.view === 'note') return goBack(folderHash(state.dir || ''));
@@ -540,7 +539,7 @@ function back() {
   goBack('#/');
 }
 
-const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
+const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -572,20 +571,52 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
 const newButton = (dir, { note = true } = {}) => `<div class="fabs"><button class="fab ghost" data-action="record" data-dir="${esc(dir)}" aria-label="Record" title="Record a lecture or meeting">${ICON.mic}<span>Record</span></button><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button>${note ? `<button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button>` : ''}</div>`;
 const newCard = (dir) => `<button class="card new-card" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}"><span class="new-card-icon">${ICON.plus}</span><span class="new-card-label">New note</span></button>`;
 
+const CRUMB_EDGES = ['.note-columns > .note', '.library-tools', '.cal-head', '.kanban-head'];
+
+function fitCrumbs() {
+  const body = document.body;
+  const row = $('#bar .bar-row');
+  const target = !body.classList.contains('on-settings') && row ? CRUMB_EDGES.map((selector) => app.querySelector(selector)).find(Boolean) : null;
+  const box = target && target.getBoundingClientRect();
+  if (!box || !box.width) {
+    if (body.classList.contains('crumb-fit')) body.classList.remove('crumb-fit');
+    return;
+  }
+  const edge = getComputedStyle(target);
+  const left = box.left + (parseFloat(edge.paddingLeft) || 0);
+  const right = box.right - (parseFloat(edge.paddingRight) || 0);
+  const bar = $('#bar');
+  const start = bar.getBoundingClientRect().left + (parseFloat(getComputedStyle(bar).paddingLeft) || 0);
+  body.style.setProperty('--crumb-shift', `${Math.max(0, Math.round(left - start))}px`);
+  body.style.setProperty('--crumb-width', `${Math.max(0, Math.round(right - left))}px`);
+  if (!body.classList.contains('crumb-fit')) body.classList.add('crumb-fit');
+}
+
+if (typeof MutationObserver === 'function') {
+  new MutationObserver(fitCrumbs).observe(app, { childList: true });
+  new MutationObserver(fitCrumbs).observe(app, { attributes: true, subtree: true, attributeFilter: ['data-margin'] });
+  new MutationObserver(fitCrumbs).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
+if (typeof ResizeObserver === 'function') new ResizeObserver(fitCrumbs).observe(app);
+window.addEventListener('resize', fitCrumbs);
+
 async function showFolder(dir) {
   const mine = ++seq;
   const arrived = state.view === 'folder' && state.dir !== dir;
   stopLibraryArrival();
   const before = state.view === 'folder' && state.dir === dir ? state : null;
+  const left = state.view === 'note' ? state.session?.note?.id || null : null;
   state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: before ? new Set(before.picked) : new Set() };
-  libraryClasses();
   chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
   if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
   const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
-  drawFolder();
-  if (arrived) arriveOnPage();
+  const moved = swap(`f:${dir}`, () => { scrollToTop(); drawFolder(); }, {
+    from: () => { const title = $('#title'); return inView(title) ? title : null; },
+    to: () => (left ? morphTitle(left) : null),
+  });
+  if (arrived || moved) arriveOnPage();
 }
 
 const PAGE = 200;
@@ -652,7 +683,19 @@ function folderKeys() {
   return [...dirs.map((d) => `d:${dir ? `${dir}/${d.name}` : d.name}`), ...notes.map((n) => `n:${n.id}`)];
 }
 
+const LIBRARY_ITEMS = '.library-cards > .card[data-id], .library-cards > .card[data-key], .folders > .folder[data-dir]';
+const libraryKey = (el) => el.dataset.key || (el.dataset.id ? `n:${el.dataset.id}` : `d:${el.dataset.dir}`);
+
 function drawFolder() {
+  const keys = folderKeys();
+  const here = `${state.dir}|${library.view}`;
+  const same = drawn.library && drawn.library.here === here && !sameKeys(drawn.library.keys, keys);
+  drawn.library = { here, keys };
+  if (!same) return paintFolder();
+  return flipList(app, LIBRARY_ITEMS, libraryKey, paintFolder);
+}
+
+function paintFolder() {
   const { dirs, notes } = state.listing;
   const dir = state.dir;
   const sel = state.selecting;
@@ -823,12 +866,12 @@ async function showPassage(note, name, at) {
 
 function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
-      ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
-      ${id ? `<button data-action="note-tasks">${ICON.calendar}<span>Tasks</span></button>` : ''}
-      <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
-      <button data-action="move">${ICON.move}<span>Move</span></button>
-      <button data-action="share">${ICON.share}<span>PDF</span></button>
-      <button data-action="delete" class="danger">${ICON.trash}<span>Delete</span></button>
+      ${id && recorded ? `<button type="button" data-action="note-sources" aria-label="Transcript">${ICON.mic}</button>` : ''}
+      ${id ? `<button type="button" data-action="note-tasks" aria-label="Tasks">${ICON.calendar}</button>` : ''}
+      <button type="button" data-action="note-picture" aria-label="Picture">${ICON.image}</button>
+      <button type="button" data-action="move" aria-label="Move">${ICON.move}</button>
+      <button type="button" data-action="share" aria-label="PDF">${ICON.share}</button>
+      <button type="button" data-action="delete" class="danger" aria-label="Delete">${ICON.trash}</button>
     </nav>`;
 }
 
@@ -838,34 +881,45 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   clearSearchHighlight();
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
+  await marginLoadPrefs();
   if (mine !== seq) return;
-  if (source.note && source.note !== note.id) closeSource();
-  if (state.session && state.session.doc) state.session.doc.destroy();
-  const s = draft || saving.open(note);
-  s.tags = [...s.edit.tags];
-  state = { view: 'note', dir: note.directory, session: s };
-  chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
-  document.title = `${note.title || 'New note'} · leo`;
-  chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
-  const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
-  const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
-  app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
+  let s;
+  swap(`n:${note.id || 'new'}`, () => {
+    scrollToTop();
+    document.body.classList.toggle('on-library', false);
+    document.body.classList.toggle('on-note', true);
+    if (source.note && source.note !== note.id) closeSource();
+    if (state.session && state.session.doc) state.session.doc.destroy();
+    s = draft || saving.open(note);
+    s.tags = [...s.edit.tags];
+    state = { view: 'note', dir: note.directory, session: s };
+    chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
+    document.title = `${note.title || 'New note'} · leo`;
+    chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
+    const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
+    const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
+    app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
     <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
-    <div class="note-meta">${where}<span id="save-state">${when}</span></div></header>
+    <div class="note-meta">${where}<span id="save-state">${when}</span><button type="button" id="margin-mode" class="chip margin-mode" aria-pressed="false" disabled>Felix: when you ask</button></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article></div></div>`;
-  s.title = $('#title');
-  drawOriginals(note);
-  hideAskFloat();
-  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+    s.title = $('#title');
+    drawOriginals(note);
+    hideAskFloat();
+    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => { changed(s); marginEdited(s); }, placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+    marginMount(s, mine).catch(fail);
+    if (citedLines && citedLines.id === note.id) showCitedLines();
+    else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
+      clearTimeout(reading.timer);
+      reading.id = note.id;
+      reading.user = false;
+    } else restoreReading(note.id, mine);
+  }, {
+    from: () => morphTitle(note.id),
+    to: () => ($('#title')?.textContent.trim() ? $('#title') : null),
+  });
   arriveOnPage(app.querySelector('article.note'));
-  if (citedLines && citedLines.id === note.id) showCitedLines();
-  else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
-    clearTimeout(reading.timer);
-    reading.id = note.id;
-    reading.user = false;
-  } else restoreReading(note.id, mine);
   drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');

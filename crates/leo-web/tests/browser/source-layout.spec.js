@@ -156,6 +156,8 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     const source = {}, chat = {setContext() {}};
     const saving = {open(note) {return {note, edit: {...note, tags: []}}}};
     const chrome = () => {}, arriveOnPage = () => {}, drawOriginals = () => {}, hideAskFloat = () => {}, restoreReading = () => {}, drawRelated = () => {}, placeAskFloat = () => {};
+    const swap = (_key, draw) => draw(), scrollToTop = () => window.scrollTo(0, 0), morphTitle = () => null;
+    const marginLoadPrefs = async () => {}, marginMount = async () => {}, marginEdited = () => {}, fail = error => { throw error; };
     const cleanTitle = text => text.trim(), folderLabel = () => 'Top level', rel = () => 'now';
     function changed(s) {saved = s.doc.source();}
     ${icons}
@@ -184,7 +186,7 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     await expect(page.locator('.note-outline details')).not.toHaveAttribute('open', '');
     const rail = await page.locator('.note-outline').evaluate(el => {
       const ticks = el.querySelector('.outline-ticks').getBoundingClientRect(), note = document.querySelector('.note').getBoundingClientRect(), columns = document.querySelector('.note-columns').getBoundingClientRect();
-      return {ticks:ticks.left - note.right, centre:(note.left - columns.left) - (columns.right - note.right), count:el.querySelectorAll('.outline-ticks span').length};
+      return {ticks:note.left - ticks.right, centre:(note.left - columns.left) - (columns.right - note.right), count:el.querySelectorAll('.outline-ticks span').length};
     });
     expect(rail.ticks).toBeGreaterThanOrEqual(0);
     expect(Math.abs(rail.centre)).toBeLessThanOrEqual(2);

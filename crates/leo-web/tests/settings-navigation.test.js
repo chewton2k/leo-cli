@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-function helpers() {
-  const context = { esc: value => String(value).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), localStorage: { getItem: () => 'dictation', setItem() {} }, document: { addEventListener() {} }, app: { querySelector: () => null }, svg: paths => `<svg>${paths}</svg>`, ICON: {} };
+function helpers(listeners = {}) {
+  const context = { Event, esc: value => String(value).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), localStorage: { getItem: () => 'dictation', setItem() {} }, document: { addEventListener: (type, handler) => (listeners[type] = listeners[type] || []).push(handler) }, app: { querySelector: () => null }, svg: paths => `<svg>${paths}</svg>`, ICON: {}, stillMotion: () => false };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), context);
   return context;
@@ -22,8 +22,11 @@ test('all grouped Settings routes resolve, with Storage and Trash under Data', (
   assert.ok(html.includes('<h1>Storage</h1>'));
   assert.ok(html.includes('<span class="settings-nav-pill" aria-hidden="true"></span>'));
   assert.ok(html.includes('class="settings-section arrive"'));
-  assert.equal((html.match(/class="settings-link/g) || []).length, 10);
-  assert.equal((html.match(/<svg>/g) || []).length, 7, 'every section without a shared icon draws its own');
+  assert.equal((html.match(/class="settings-link/g) || []).length, 11);
+  assert.equal((html.match(/<svg>/g) || []).length, 8, 'the search icon and every section without a shared icon draw their own');
+  assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections">'));
+  assert.ok(html.includes('id="settings-search" type="text" role="combobox" aria-label="Search settings"'));
+  assert.ok(html.includes('<div class="settings-results" id="settings-results"></div>'));
 });
 test('switches stay checkboxes and segmented choices carry their value', () => {
   const h = helpers();
@@ -47,4 +50,90 @@ test('every Settings section names its current page in the same breadcrumb', () 
   for (const [id, title] of [['general', 'General'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['backup', 'Backup'], ['storage', 'Storage'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
     assert.equal(h.settingsCrumbs(id), `<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button aria-current="page">${title}</button>`);
   }
+});
+
+const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'storage.js', 'trash.js', 'margin-notes.js'].map(name => fs.readFileSync(path.join(__dirname, '../src/web/app', name), 'utf8')).join('\n');
+test('every searchable setting names a real section and a target the page draws', () => {
+  const h = helpers();
+  const index = vm.runInContext('SETTINGS_INDEX', h);
+  const sections = vm.runInContext('settingsItems()', h).map(([id]) => id);
+  const ids = new Set();
+  for (const entry of index) {
+    assert.ok(sections.includes(entry.section), `${entry.id} lists section ${entry.section}, which does not exist`);
+    assert.ok(entry.label.trim() && entry.keywords === entry.keywords.toLowerCase(), `${entry.id} needs a label and lower-case keywords`);
+    assert.ok(!ids.has(entry.id), `${entry.id} is listed twice`);
+    ids.add(entry.id);
+    assert.ok(sources.includes(`data-find="${entry.id}"`) || sources.includes(`'${entry.id}'`), `${entry.id} has no data-find target in the page`);
+  }
+  for (const section of sections) assert.ok(index.some(entry => entry.section === section), `${section} has nothing searchable`);
+});
+test('search is local, case-insensitive and ranks label matches first', () => {
+  const h = helpers();
+  const ids = query => Array.from(h.settingsMatches(query), entry => entry.id);
+  assert.deepEqual(ids(''), []);
+  assert.deepEqual(ids('   '), []);
+  assert.deepEqual(ids('zzzz'), []);
+  assert.deepEqual(ids('THEME'), ids('theme'));
+  assert.equal(ids('theme')[0], 'theme');
+  assert.ok(ids('dark').includes('theme'), 'keywords match');
+  assert.ok(ids('note width').includes('note-width') && !ids('note width').includes('theme'), 'every word must match');
+  assert.deepEqual(ids('popup'), ['dictation-popup', 'dictation-position']);
+  assert.equal(ids('trash')[0], 'trash-notes');
+});
+test('the frame draws results as a listbox, an empty message, and keeps the query', () => {
+  const h = helpers();
+  vm.runInContext("settingsFind.query = 'popup'; settingsFind.active = 1", h);
+  let html = h.settingsFrame('general', '');
+  assert.ok(html.includes('value="popup"') && html.includes('aria-expanded="true" aria-controls="settings-listbox" aria-activedescendant="settings-result-1"'));
+  assert.ok(html.includes('role="listbox" aria-label="Settings search results"'));
+  assert.ok(html.includes('id="settings-result-1" aria-selected="true" data-find-pick="dictation-position"'));
+  assert.ok(html.includes('id="settings-result-0" aria-selected="false"'));
+  assert.ok(html.includes('settings-result-where">Dictation<'));
+  assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections" data-searching>'));
+  vm.runInContext("settingsFind.query = '<b>'", h);
+  html = h.settingsFrame('general', '');
+  assert.ok(html.includes('role="status">No settings match “&lt;b&gt;”.</p>') && html.includes('aria-expanded="false"') && !html.includes('aria-controls'));
+});
+test('choice cards are real radios in a group, with a hidden field that fires change', () => {
+  const listeners = {};
+  const h = helpers(listeners);
+  const html = h.choiceCards({ label: 'Where "notes" go', current: 'right', field: 'data-where="x"', choices: [['both', 'Both', 'Middle.', '<svg></svg>'], ['right', 'Right<', 'Beside.'], ['none', 'None']] });
+  assert.ok(html.includes('role="radiogroup" aria-label="Where &quot;notes&quot; go" style="--count:3;--at:1"'));
+  assert.ok(html.includes('<input type="hidden" data-where="x" value="right">'));
+  assert.equal((html.match(/type="radio"/g) || []).length, 3);
+  assert.ok(html.includes('value="right" checked') && !html.includes('value="both" checked'));
+  assert.ok(html.includes('<span class="choice-diagram" aria-hidden="true"><svg></svg></span>') && html.includes('Right&lt;'));
+  assert.equal((html.match(/choice-diagram/g) || []).length, 1);
+  assert.ok(h.choiceCards({ label: 'L', current: 'zzz', choices: [['a', 'A'], ['b', 'B']] }).includes('--at:0'));
+  const name = html.match(/name="(choice-\d+)"/)[1];
+  assert.notEqual(h.choiceCards({ label: 'L', current: 'a', choices: [['a', 'A']] }).match(/name="(choice-\d+)"/)[1], name, 'each group has its own radio name');
+  const radios = ['both', 'right', 'none'].map((value, i) => ({ value, checked: i === 1 }));
+  const picks = radios.map(radio => ({ classList: { on: false, toggle(_, on) { this.on = on; }, contains() { return this.on; } }, querySelector: () => radio }));
+  const set = {}, field = { value: 'right', heard: [], dispatchEvent(e) { this.heard.push([e.type, e.bubbles]); } }, ring = { style: {}, offsetWidth: 0 };
+  const box = { querySelectorAll: () => picks, querySelector: selector => (selector.includes('hidden') ? field : ring), style: { setProperty: (key, value) => { set[key] = value; } } };
+  h.syncChoiceCards(box);
+  assert.equal(set['--at'], 1);
+  field.value = 'none';
+  h.syncChoiceCards(box, 0);
+  assert.deepEqual(radios.map(radio => radio.checked), [false, false, true]);
+  assert.equal(set['--at'], 2);
+  const radio = Object.assign(radios[0], { closest: selector => (selector === '.choice-cards' ? box : radio) });
+  listeners.change.at(-1)({ target: { closest: selector => (selector.includes('radio') ? radio : null) } });
+  assert.equal(field.value, 'both');
+  assert.deepEqual(field.heard, [['change', true]]);
+  assert.equal(set['--at'], 0);
+  listeners.change.at(-1)({ target: { closest: () => null } });
+  assert.equal(field.heard.length, 1, 'other change events are ignored');
+});
+test('a reset button shows only while the value differs and names its setting', () => {
+  const h = helpers();
+  const shown = h.settingReset('Note width', 'width', true), hidden = h.settingReset('Note width', 'width', false);
+  assert.ok(shown.includes(' data-on ') && !hidden.includes('data-on'));
+  for (const html of [shown, hidden]) assert.ok(html.includes('data-action="setting-reset" data-reset="width" aria-label="Reset Note width to default"'));
+});
+
+test('Settings motion asks stillMotion, the one place that reads Reduced Motion', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8');
+  assert.ok(!source.includes('prefers-reduced-motion'));
+  assert.ok(source.includes('stillMotion()'));
 });

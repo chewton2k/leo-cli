@@ -46,6 +46,8 @@ async function sidebarFixture(browser, run) {
       return result;
     }
     ${read('app/refresh.js')}
+    const EASE_OUT='ease-out';
+    ${read('app/motion.js')}
     ${read('app/side.js')}
     ${drag}
     const folderClick=${open};
@@ -100,7 +102,7 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       await expect(rail.locator('kbd')).toHaveCount(0);
       // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
       await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
-      for(const label of ['New note','Ask Felix','Search','Record','Note from a file','Calendar','Boards','Interview practice','Settings']) {
+      for(const label of ['New note','Ask Felix','Search','Record','Note from a file','Calendar','Boards','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();
         await expect(button).toHaveAttribute('title',/.+/);
@@ -149,7 +151,7 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
   });
 });
 
-test('sidebar and page header dividers align across desktop layouts', async ({ browser }) => {
+test('sidebar and page header rows align across desktop layouts', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page=await context.newPage();
     await page.goto(url);
@@ -180,6 +182,22 @@ test('sidebar and page header dividers align across desktop layouts', async ({ b
     await expect(page.locator('#side')).toBeHidden();
     expect((await page.locator('.bar').boundingBox()).height).toBe(81);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  });
+});
+
+test('folder chevrons are at least 24 px to press, and open notes line up under their folder', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page = await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    const twist = page.locator('.side-tree .side-twist').first();
+    await expect(twist).toBeVisible();
+    const box = await twist.boundingBox();
+    expect(box.width).toBeGreaterThanOrEqual(24);
+    expect(box.height).toBeGreaterThanOrEqual(24);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    const folderIcon = await page.locator('.side-tree .side-row[data-dir="Course"] svg').boundingBox();
+    const noteIcon = await page.locator('.side-tree .side-note').first().locator('svg').boundingBox();
+    expect(Math.abs(noteIcon.x - folderIcon.x - 14)).toBeLessThanOrEqual(14);
   });
 });
 
@@ -613,6 +631,8 @@ test('Chats divider resizes independently, keeps drafts and restores its width',
     await page.goto(url);
     await openFixtureChat(page);
     const grip=page.getByRole('separator',{name:'Chats list width',exact:true}), history=page.locator('.chat-history');
+    await expect(history).toBeHidden();
+    await page.locator('.chat-history-toggle').click();
     await expect(grip).toBeVisible();
     await page.locator('#chat-input').fill('Keep this draft 文字');
     const start=Math.round((await history.boundingBox()).width), total=(await page.locator('.chat').boundingBox()).width;

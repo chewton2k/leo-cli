@@ -18,10 +18,11 @@ const actions = {
   'speech-delete': (el) => { closeSheet(); return speechChange({ action: el.dataset.verb || 'delete', id: el.dataset.model }); },
   back,
   home: () => go('#/'),
-  interviews: () => go('#/interviews'),
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
   'ask-selection': () => askAboutSelection(),
+  'margin-lost-open': marginLostOpen,
+  'margin-lost-dismiss': marginLostDismiss,
   calendar: () => {
     closeSheet();
     go('#/calendar');
@@ -127,6 +128,7 @@ const actions = {
   'segment-pick': (el) => pickSegment(el),
   'felix-pick': (el) => pickFelix(el),
   'width-pick': (el) => pickWidth(el),
+  'setting-reset': (el) => resetSetting(el),
   'usage': () => showUsage(),
   'quick-leo': () => quickLeo(),
   'quick-run': (el) => quickGo(Number(el.dataset.at)),
@@ -201,12 +203,6 @@ const actions = {
   },
   chat: async () => {
     if (chat.isOpen()) return chat.toggle(false);
-    const session = interviewPage;
-    if (session && interviewHere(session)) {
-      await saveInterviewWorkspace(session);
-      if (interviewHere(session)) return chat.openInterview(session.item.id, () => interviewHere(session));
-      return;
-    }
     chat.toggle(true);
   },
   trash: () => {

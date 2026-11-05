@@ -3,7 +3,7 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, storage housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, web, room, speech).
+reader, seer, meaning, web, room, speech, toolless, toolless_chat).
 
 ## Layout
 
@@ -12,19 +12,22 @@ reader, seer, meaning, web, room, speech).
   `pub(crate)` only when another file uses them. Handler tests are in
   `src/tests/<area>.rs` (helpers `state_with`, `run`, `json_of`, `host` in
   `src/tests/mod.rs`).
+
 - `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
   (`concat!`). The parts share scope on purpose (pages reassign `state`). Add
   a new part to the list: `every_part_of_the_page_script_is_served` fails
   otherwise and `the_page_script_parses` runs `node --check` on the whole.
+
 - Pure helpers are separate files served on their own and node-tested from
   `tests/markdown.rs` `run_node_tests`: `markdown.js`, `editing.js`,
-  `graph.js`, `schedule.js`, `interview.js`, `saving.js`, `audio-queue.js`,
-  `recording.js` (tests in `tests/*.test.js`).
+  `schedule.js`, `saving.js`, `audio-queue.js`,
+  `recording.js`, `margin.js` (tests in `tests/*.test.js`).
+
 - Everything leo-web computes or keeps besides notes and uploads lives in one
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
   meaning vectors, note connections, calendar feeds, note-task metadata,
-  reading positions, interviews. Old JSON files are brought in on first open
+  reading positions. Old JSON files are brought in on first open
   and renamed `*.before-database`. Writes touch only what changed.
 
 ## Serving and security
@@ -36,26 +39,31 @@ reader, seer, meaning, web, room, speech).
   sessions within `CLEANUP`. Tests use `start_in(Places { store, sessions })`.
   The app passes `fresh_token()`; `leo-test-server` (Playwright) uses
   `saved_token()`, the `<config>/serve-token` file the specs read.
+
 - Only the app's window talks to the engine (2026-10-31, the user's call):
   `same_host` refuses any Host but `127.0.0.1:<port>`/`localhost:<port>` (421),
   `?token=` on GET `/` → 303 + a `leo_session` cookie (`SameSite=Strict`, 30
   days, `serve-sessions.json`). No tunnel, Wi-Fi bind, QR, signed-in browsers
   list or link rotation; keys and calendar links are accepted from the window.
+
 - Page CSP: no inline JS (`script-src 'self'`), `data:` images, `frame-src
   'self'` (original viewer), `font-src 'self'` (KaTeX). Mermaid 11.4.1, KaTeX
   0.16.11 and CodeMirror parsers are vendored under `web/vendor/` (checked
   against npm's sha512, served `immutable`).
+
 - Keys and calendar links are write-only: never returned to the page. A stored
   key shows as `secret::masked` placeholder; nothing changes until Save.
 
 ## Page architecture
 
 - Hash router (`#/f/dir`, `#/n/id`, `#/new/dir`, `#/search/q`, `#/trash`,
-  `#/map[/id]`, `#/calendar`, `#/boards[/id]`, `#/interviews[/chat]`, `#/record[/dir]`,
+  `#/calendar`, `#/boards[/id]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
+
 - Native quit confirmation keeps the current page and uses its existing toast
   (`events.js`); Updates explains that every successful installation reopens Leo.
+
 - Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
   `--note-width`, 980 px by default; Settings → Appearance → Note width picks
   Comfortable (760 px), Wide or Full width, kept per browser in
@@ -63,6 +71,7 @@ reader, seer, meaning, web, room, speech).
   Width checks measure the reading column; its outer wrapper also reserves the
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
+
 - Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+F
   anywhere, the sidebar
   Search button, the header search button or the phone menu opens one line
@@ -85,9 +94,11 @@ reader, seer, meaning, web, room, speech).
   was typed, so a fast Enter still opens the note), arrow keys move. Empty, it lists what is overdue or due
   today with boxes to tick. Lookups are scoped to the open sheet
   (`inQuick`), since a closing one can still be in the page.
+
 - Felix's chat list: the × turns into Delete on the first press; pressing
   or focusing anywhere else turns it back (`spare`, in place, so the press
   still reaches what was clicked).
+
 - Back from Settings, Storage or Trash returns to the page before them
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.
@@ -95,14 +106,10 @@ reader, seer, meaning, web, room, speech).
   its position in `history.state.leoAt`; in-place URL rewrites keep it), it
   steps back with `history.back()` instead of adding an entry, so the
   browser's or phone's own back does not return to Settings (2026-10-20).
-- Drag handles (Felix's edge, the original pane's grip, the interview split,
-  the page bar, a picture's resize corner, the whiteboard and the knowledge
-  graph) end on pointerup, pointercancel, lostpointercapture or a move
-  with no button held, so a release the page never sees (outside the window,
-  a context menu) cannot leave a drag stuck (2026-10-19). A whiteboard shape
-  drawn or moved when that happens is kept, not thrown away (2026-10-20).
+
 - `api()` treats an empty body as `null`; every success is JSON or a bodiless
   204 (a browser test sweeps the API).
+
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`
   (Felix and/or the original pane), `--mid`. Fixed things (toolbar, select
   bar, toasts, FABs, `#dock`, the map) use them so nothing covers anything.
@@ -111,64 +118,6 @@ reader, seer, meaning, web, room, speech).
   (core.js) draws one at the left edge of Felix (and the original pane), so
   the notes' scrollbar sits beside the notes; the page still scrolls the
   window, so reading positions and paging are unchanged.
-- Reuse what exists: `set-card`, `set-row`, `set-input`, `btn sm|plain|primary|danger`,
-  `chip`/`pick-chip`, `sheet()` (swipe-to-close on phones), toasts with Undo,
-  `library-views` segmented control, settings-style `<select>`. Settings
-  controls (`settings-navigation.js`): `settingsSwitch` (an iOS-style switch
-  that stays a real checkbox, `role="switch"`) for every on/off preference,
-  never a bare checkbox; `segmented` (a pill that slides to the pick) for
-  choices of two to four short options, either a hidden `field` input that
-  fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
-  longer or open-ended lists stay `<select>`, which inside Settings
-  `select-menu.js` draws as a custom listbox (2026-11-02, the user's call: no
-  system menus). The `<select>` stays underneath, invisible and unclickable, as
-  the value: change handlers, drafts and `selectOption` keep working; its
-  `value` setter keeps the button label in step, the redraw after a save gives
-  focus back to the new button, and forced colors keeps the native control.
-  Settings motion: the menu unfolds like the model picker; the section list's
-  highlight is one pill that glides to the new section (260 ms, started from
-  where the old pill is drawn, so the placeholder-then-content double draw
-  does not cut it off; hidden under 760 px); a section switch has one 180 ms
-  arrival leaning the way you moved; "Saved" fades. Labels are 500 weight in
-  the text color. Pressing a menu's button keeps focus where it is (WebKit
-  does not focus clicked buttons, which made a second press reopen it).
-  Speech model filters keep the filter bar where it was on screen and hold
-  the section's height so a shorter list cannot snap the page up. Redraws keep the pill where it
-  was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
-  `flows.spec.js` measures every visible text's contrast in light and dark
-  (≥3:1).
-  Filled danger buttons, error toasts and chat deletion confirmations reuse
-  `--accent-text` for legible text on colored backgrounds in both themes.
-  Chat deletion icons stay fully opaque on touch screens; readability checks
-  seed multiple chats so unselected icons are covered too.
-  Interview section disclosures reuse `source-more` and `ICON.chevron`,
-  including the existing keyboard behavior and quick expand/collapse motion.
-  Native dropdowns share `select-control` and the same SVG chevron across
-  the library, Settings, Storage, uploads and recording. Keep their labels,
-  native options and keyboard behavior; forced colors restores the OS arrow.
-  Icon buttons share centered flex alignment. Disclosure selectors affect
-  only their own summary, so opening a parent never rotates a child's icon.
-  Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
-  the menu and returns focus to its button without closing the conversation.
-- Motion (reworked 2026-10-10, the user found the first pass tacky): only what
-  follows a click, quick (`MOTION_MS` 180), transform/clip/height/opacity only. No
-  idle animation or hover lifts. `<details>` slide their height
-  (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
-  ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
-  content. Notes fade in place so text never moves during an immediate selection; confirmed note/folder removals leave
-  over 180 ms only after the delete succeeds, and delayed deletes never navigate
-  a newer page. Reduced Motion turns all of it off. Tapping Felix is the one
-  playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
-  giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
-  turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
-  (2.8 s; taps during it are ignored). Demon Felix (2026-10-14, the user's
-  request): Settings → Appearance → Felix, Cute or Demon, kept per browser in
-  `leo-felix` and set early by `/theme.js` as `html[data-felix="demon"]`. He
-  is purple with horns, red eyes, fangs and claws everywhere he appears, and
-  taps play `DEMON_TAPS` (rawr, cackle, blaze, glare, swipe). His surprise is
-  `sweet`: cute Felix, big, with hearts and "hi!!". Either surprise comes one
-  tap in `MONSTER_ONE_IN`, or always after `TICKLED_TOO_LONG` (8) taps each
-  within 1.5 s of the last.
 
 ## Notes, editing and browsing
 
@@ -199,11 +148,13 @@ reader, seer, meaning, web, room, speech).
   and preserves the checkbox’s viewport position and focus.
   Cmd/Ctrl+A selects the whole note at once, even from inside one line
   (2026-10-19; it used to take a second press).
+
 - `markdown.js` escapes first, numbers checkboxes exactly like
   `Note::toggle_checkbox`, draws `[[Title]]` links, callouts (`> [!type]`,
   `-`/`+` dropdowns), ```mermaid (`diagrams.js`), math (`math.js`), ```svg as
   a sandboxed `<img src="data:…">`, and local pictures (`/api/image`; outside
   images stay links). `interactive: false` makes task boxes read-only.
+
 - Picture sizes (2026-10-19, the user's request, like Google Docs): a
   picture's width is kept in the Obsidian style, `![alt|400](path)` or
   `![[file|400]]` (`markdown.js` `sized`, 16-4000 px, a `width` attribute).
@@ -213,12 +164,15 @@ reader, seer, meaning, web, room, speech).
   edit. It counts only pictures the page draws (not outside links or
   `code`), so the size lands on the picture that was framed. Double-clicking the picture edits its Markdown; Escape closes only the
   frame.
+
 - Upload names (`safe_file_name`) drop trailing dots and spaces and dash
   Windows device names (`CON-.pdf`); originals already stored under older rules
   still open (`stored_file_name`). The page labels shortcuts with `ON_MAC`
   (Ctrl on Windows) and monospace falls back to Consolas.
+
 - Pictures live in `<notes>/attachments/` (`leo_core::attachments`, sniffed
   PNG/JPEG/GIF/WebP only, ≤20 MB); paste or drop in `doc.js`.
+
 - Library (`browse.rs`, `app/browse.js`): Grid (default) or List. The first
   card is New note (`newCard`, 2026-10-19, the user's call; a small dashed
   button on its own row, not a full tile), so the floating
@@ -231,9 +185,11 @@ reader, seer, meaning, web, room, speech).
   week (`show` on GET `/api/notes`, applied before paging, so `x-total` is the
   filtered count). View, sort and show are remembered together in
   `leo-library`. A filter with no matches says so with Show all notes.
+
 - Paging: `/api/notes?offset&limit&brief=true` (400-char excerpt, `tasks:
   [done, all]`, `x-total`), `PAGE` 200 with an IntersectionObserver; previews
   are rendered lazily and cached (`PREVIEWS_KEPT`). Browsing never calls an AI.
+
 - Folders: Select mode (`d:path`/`n:id`) → POST `/api/trash/move` with Undo
   (`/api/trash/restore {ids, dirs}`); rename `/api/dirs/rename`; drag and drop
   (`drag.js`) moves notes and folders (`Store::move_dir` refuses itself, its
@@ -250,6 +206,7 @@ reader, seer, meaning, web, room, speech).
   labelled (`recording::copy_to`, `Archive.from`, "Recording n · from
   “Title”", read_transcript); Undo restores the body and the note and removes
   the copied transcripts (POST `uncombine`).
+
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
   Settings pinned below (Trash and Storage live inside Settings since
   2026-11-02, the user's call; the rail shows Settings for them). The rail has no
@@ -282,7 +239,8 @@ reader, seer, meaning, web, room, speech).
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
   The sidebar head and page toolbar share `--bar-height`, including the safe-area
-  inset, so their bottom dividers stay aligned with the explorer open or hidden.
+  inset, so their rows stay aligned with the explorer open or hidden (no rule
+  under either since 2026-11-04).
   Settings uses the same height for its sticky navigation offset.
   `leo-side` hides only the explorer, keeping the rail. The fold slides
   (2026-11-02, the user's call; the one width animation): `--side` is an
@@ -306,7 +264,7 @@ reader, seer, meaning, web, room, speech).
   the page, skipped while the explorer is hidden, so later redraws keep the
   user's scroll); and a fresh launch reopens
   where the user left off (`leo-last-place`: the last note, folder, board,
-  calendar, graph or practice page, restored only when a new window session
+  calendar or board page, restored only when a new window session
   opens on the library, never on reloads or in-app navigation). It is kept after
   every page that drew and when the window hides or quits (`pagehide`), since a
   new note's id and a deleted note's redirect rewrite the address without a
@@ -315,10 +273,13 @@ reader, seer, meaning, web, room, speech).
   reads with ten-second aborts, 64 cached folders and 32 automatic visible reads.
   Further expanded folders offer Show notes. Late reads check page generation and
   entry identity, and failures offer Try again. Phones keep the existing ⋯ menu.
+
 - Search (`search.rs`): title words and acronyms, text, graph concepts and
   summaries, then meaning (`vectors.rs`, `CLOSE_ENOUGH`); hits carry `why`.
+
 - Reading position (`/api/notes/{id}/reading`): saved 2 s after the user
   scrolls, restored once on open unless something else moved the page.
+
 - Related notes (`/api/notes/{id}/related`): graph links then `[[links]]`.
 
 ## Felix (`chat.rs`, `routes/felix.rs`, `tools.rs`, `web/chat.js`)
@@ -327,20 +288,7 @@ reader, seer, meaning, web, room, speech).
   `proposal`, `ask`, `quiz`, `plan`, `spent`, `reset`, `done`/`error`). The
   user prompt is `<selected_passage>` (when given), `<documents>`, notes,
   the chat, then `<today>` (date, time and IANA zone, `chat::today_line`).
-- Context (`gather`): explicitly attached notes (`refs`, ≤8) and the open
-  note come first and share a bounded budget. Automatic retrieval adds at most
-  four notes total across recent chat sources, word matches, meaning matches and
-  graph neighbours. Automatic excerpts are at most 1,500 characters, focus on
-  the matching passage and preserve original line numbers; `open_note` reads
-  more on demand. Gathered notes never exceed 32,000 characters, even for large
-  model windows; smaller provider budgets still apply. Recording/upload synthesis
-  budgets are independent. The prompt keeps what changes least first (documents, notes,
-  earlier chat, conversation); the `<today>` line (it changes every minute)
-  and the interview context go last, before the reply line
-  (`chat::before_reply`), so compatible provider prefix caches reuse the rest. Claude Code places its own cache breakpoints, so across
-  answers it reuses only the system prompt (measured: 10.5k of 31.8k tokens). Note bodies are line-numbered; citations `[n2 L14-18]`
-  and `[f1 p4]` become chips. Citations never go into notes
-  (`tools::linked` → `[[Title]]`).
+
 - Warm sessions (`warm.rs`): up to three recent conversations, sharing a
   480,000-character context ceiling. Switching chats keeps eligible sessions;
   same-chat history/style/access/config mismatches replace only that chat.
@@ -351,6 +299,7 @@ reader, seer, meaning, web, room, speech).
   Study marking can reuse a session when its Read only access key matches.
   Failed sessions fall back with a fresh
   read cache; provider context accounting still bounds each retained session.
+
 - Idle compaction (2026-11-02, the user's request; usage drained fast): after
   `COMPACT_IDLE_MS` (10 min, warm.rs `IDLE`) without a message, the page POSTs
   `/api/chat/compact` with the model history; when at least
@@ -361,6 +310,7 @@ reader, seer, meaning, web, room, speech).
   window (hash-checked), so a chat picked up after a pause sends the summary and
   the last turns instead of every recent turn on a cold cache. The chat on
   screen is unchanged.
+
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).
   History carries who wrote each answer, what Felix did, cards and passages,
@@ -376,7 +326,8 @@ reader, seer, meaning, web, room, speech).
   `clip_turn` closes a code fence it cut through (``` or ~~~, with the
   opening fence's own length), says how many characters
   are left out and tells Felix to ask for the rest as a file.
-- Styles (`MODES`): chat, study, interview. Study marks critically (a right
+
+- Styles (`MODES`): chat and study. Study marks critically (a right
   result by wrong reasoning is `[[incorrect]]`), asks about the reasoning
   step by step, mostly free response and fill-in, and treats subjective
   material as criteria and trade-offs. Practice cards (`quiz`, `ask_user`)
@@ -406,6 +357,7 @@ reader, seer, meaning, web, room, speech).
   whose right option is clearly the longest (`gives_itself_away`). Study sessions: `study_plan` / `end_session`, quizzes
   carry `idea`, the page scores ideas and stops at `MOST_SESSION_QUESTIONS`.
   Study review (`review.rs`) brings back missed questions after 20 h.
+
 - Tools: a text protocol (`<tool>{…}</tool>`) so every provider works, plus
   native sessions where available; generated from `tools::SPECS` (`manual()`,
   every call `check`ed; mistakes answered with the spec). At most
@@ -426,23 +378,12 @@ reader, seer, meaning, web, room, speech).
   agent session sends `{"reset"}` and is redone through the text protocol
   (`FALLBACK_TRIES`). Web tools only for AIs without their own web
   (`web::allowed`, public addresses only).
-- Access (`tools::Access`, `leo-felix-access`, Shift+Tab): Ask first (cards to
-  Apply), Auto (applied at once, cards come back applied with Undo), Read only
-  (change tools left out of the manual and refused, interview writes included:
-  `interview_tools::changes`). Deleting a folder, a board or an interview problem
-  always asks, even in Auto (`Proposal::always_asks`, 2026-11-02, the user's call).
-  A tool runs only where it is offered (`Desk::not_offered`): interview tools need
-  a practice chat, and an unknown or unoffered name is answered with this chat's
-  own tool list. `run_tool` reads true/false, numbers, arrays and objects as text
-  (`Call::normalized`) so native Claude Code and Codex calls never fail on types,
-  and no parameter may be called `name` (the text protocol's tool key; a test).
-  Changes during a reply POST to `/api/chat/{answer}/access`; both protocols
-  check the live setting before tool execution and automatic application.
-  A failed permission update stops the reply; a closed stream prevents further changes.
+
 - Read tools: search_notes, open_note, connected_notes, read_document,
   read_transcript, read_original, look_at_picture, calculate (`calc.rs`, a
   safe evaluator), list_schedule, list_trash, search_chats, list_boards,
   open_board.
+
 - Change tools: edit_note / create_note (cards; Apply POSTs
   `/api/notes/{id}/suggestion`, 409 unless `find` is there exactly once),
   and the organizing tools in `routes/organize.rs`: add_task (`repeat`:
@@ -459,327 +400,140 @@ reader, seer, meaning, web, room, speech).
   there is only one. They validate against the
   store, become `Proposal` cards, run through POST `/api/felix/act` (reusing
   the normal routes) and return the inverse card as `undo`. The page redraws
-  an open board after one applies (`BOARD_KINDS`). The text manual stays under
+  an open board after one applies (`BOARD_KINDS`). add_margin_note (`quote` must
+  be in the note; Undo is `remove_margin_note`) redraws the open note's margin
+  (`MARGIN_KINDS`); it never changes the note. The text manual stays under
   14,500 bytes. `MOST_PROPOSALS` counts every change tool.
+
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
+
+- Panel look (2026-11-04, the user's call; plan phase 1): the panel sits one
+  tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
+  the composer, user bubbles, pills, popups and the Chats column) with no
+  left border, header rule, footer rule or column rule; a soft shadow shows
+  only where it overlays the note (under 1200 px). The Chats column is closed
+  until opened (`leo-chat-sidebar` still remembers an explicit choice;
+  `leo-chat-history-width` and the grip are unchanged). The header holds the
+  history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
+  “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
+  attribute says the connected notes are read too), a style button
+  (`#chat-mode-btn`, a `.chat-popup` menu with the Chat and Study
+  `menuitemradio`s and, while a note is attached, `Stop reading this note`,
+  which is what the old context bar's × did; Arrow keys, Home/End, Escape back
+  to the button) and New/Close. Felix's words (greeting, answers) use
+  `--voice`; the user's messages stay sans in a `--field` bubble. The greeting
+  and starters arrive once per chat and style (`data-hello` key): words fade
+  in (`.word`, `word-in` .5 s opacity and colour, no blur, nothing moves),
+  starters are pills that appear together after it. `draw(stick, live)` no
+  longer replaces the transcript on every streamed chunk: `settle(from, to)`
+  keeps every node that already matches, appends only the new words of a
+  growing text run (animated while the message is pending) and replaces only
+  what changed, so finished text, a selection in it and the greeting animation
+  survive; the final redraw settles too. The panel slides on `--ease-drawer` /
+  `--t-drawer` and leaves over `CHAT_LEAVE_MS` before `chat-open` is removed.
+  Hovering or focusing a line-citation chip calls `onCite(id, lines)`; the open
+  note's `doc.glow(from, to)` toggles `.blk-glow` on the cited blocks (no
+  redraw, no scroll, no timer) and clears on leave, blur and close.
+  A citation to another note does nothing extra.
+
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
   Save as note, chat history (`chats.rs`, local naming), cost line
   (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).
-- Interview practice (2026-10-12): see the root CLAUDE.md and
-  `.superpowers/plans/2026-10-12-felix-interviews.md`; `interview.rs`,
-  `interview_tools.rs`, `web/interview.js`, `app/interviews.js`. Generated
-  code never runs, except the key's reference solution in the sandbox; async
-  updates never replace a focused editor.
-  Problems are ordered snapshots of their challenge and workspace (128 max,
-  within the existing 1 MB practice limit). Legacy attempts become reopenable
-  problems. `interview_challenge` appends; `interview_problem` reopens;
-  revision-checked Select and workspace saves also handle archived problems.
-  Practice order follows the latest real workspace change or nonempty session
-  chat activity. Reads and identical saves preserve timestamps and revisions;
-  opening an empty chat never moves a practice.
-  Problem deletion is revision-checked and removes only that problem's workspace,
-  attempts and hidden checks in one transaction. Felix uses interview_problem_delete
-  through Ask/Auto/Read and the same proposal/Undo controls. Recovery snapshots stay
-  server-side (20 total, Undo expires after 24 hours), are excluded from exports,
-  and appear in Storage → Deleted problem Undo; clearing a practice removes its
-  snapshots too. Undo restores the original position and selected problem, retains
-  later work on other problems, and never restores an in-flight key generation.
-  Key workers must still find the actual problem before claiming or finishing.
-  Submission freezes an attempt and keeps the editor for iteration. Problem
-  switching flushes drafts before selecting; model-created problems preserve
-  pending edits before switching. The global Felix button opens the active
-  practice conversation; Back saves then returns to the practice list.
-  Redraws after Felix answers (refreshInterview) keep every expanded
-  section open: the question, progress, submissions, result and checks are
-  drawn through `keepOpen`, which reopens `<details>` by `data-keep` (each
-  submission's id) or their summary text.
-  Opening a practice while Felix is open switches him to that practice's chat
-  (`chat.useInterview`, interview style, a toast names the practice); while
-  he is answering elsewhere it does not interrupt and says so.
-  All active practices use available width and adapt when Felix opens.
-  The code editor is tall by default (`--code-height`, shared by the text
-  and the line numbers: 480 px to 960 px, `100dvh - 320px`;
-  written answers 400 px). A browser test keeps buttons at least 8 px from
-  the text and sections around them on the main pages and practice tabs.
-  Coding wraps with aligned syntax and line numbers,
-  and adapts when Felix opens. Python deletion on blank indented lines uses
-  four-column stops and native Undo; there is no Indent code action.
-  Coding languages use a themed select, defaulting to Python. Vendored CodeMirror
-  editing commands drive indentation and paired brackets; the textarea applies
-  only the changed range and keeps page scroll, native Undo and IME input intact.
-  Rust apostrophes type normally so lifetimes and loop labels are never auto-closed.
-  Send flushes the draft and binds context to `interview_problem`, with the
-  problem number, title and tab retained on the user message in chat history.
-  Reading progress preserves that binding even if the user switches problems.
-  Whiteboards use a pannable/zoomable viewport over bounded ±1,000,000 coordinates
-  and work like a slide editor (2026-10-13, the user's request): white paper and
-  black ink in every theme (`INK`; snapshots draw their own white); icon tools
-  (`BOARD_TOOLS`: Select and move, Pen, Box, Arrow, Text; V P R A T) with Select
-  and Pan merged. Select hits a shape's whole area (`board-hit` transparent fills
-  and wide strokes), Shift adds or removes, dragging empty space draws a marquee
-  that picks shapes fully inside (`shapesWithin`), and a touch drag, Space or the
-  middle button pans. One selected box or drawing gets eight handles, an arrow its
-  two ends (`handlesFor`, `resizeShape`); labels only move. Double-click (detected
-  in pointerdown, since redraws reset the browser's click count) or Enter edits
-  a label's, box's or arrow's text in place (`.interview-board-editor`, Enter saves,
-  Escape cancels; an emptied label is deleted); double-click empty space or click
-  with Text to add a label. Box and arrow tools return to Select after placing a
-  shape (a plain click gives a default size); the pen stays. Keys: Delete,
-  ⌘/Ctrl A C X V D Z (⇧Z or Y redo), arrows nudge (Shift for more), Escape
-  deselects (and only then falls through to Back); handled keys stop at the board.
-  Reset affects only the current tab of the captured problem. Board Undo and Redo
-  keep up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay
-  saved. The saved shape kinds and limits did not change.
-  Past submissions carry a status label and matching outline
-  (`interviews.attemptStatus`: checks decide, then the quick review, then Felix's
-  scores; Passed, Failed · n/m, Partly, Awaiting review). The top bar is opaque
-  (no backdrop blur), which stopped it flickering over sticky and animating content.
-  The question card and the workspace share the width through a draggable
-  separator (`.interview-split`, from 900 px; `--split` on `.interview-solve`,
-  25-70%, default 45%, kept in `leo-interview-split`): drag, arrow keys (Shift
-  for 10%), Home or double-click to reset, End for the widest question.
-  Practice preferences ("What would you like to practise?") take up to
-  `MOST_WANTS` (8,000) characters.
-  Practice schedules were removed (2026-10-13, the user's call): no schedule
-  section, session editor, `interview_schedule` tool or proposal, `Interview.schedule`
-  or `Change::Schedule`; old rows keep loading (the field is ignored) and an old
-  schedule card in a saved chat says schedules are no longer part of leo. The
-  preferences form keeps the interview date and drops the weekly minutes field
-  (the stored value is sent back unchanged).
-  The problem card is tabbed like a judge site (`drawInterviewPanes`, the shared
-  `library-views` control, sticky under the header, arrow keys move): Question;
-  Test cases (coding with key tests: the visible examples and the last Run, which
-  switches here); Result (only for this page's latest submission of the open
-  problem, `Result · passed/total`; Submit switches here and scrolls the card
-  into view only when its top is off screen); Submissions (this problem's
-  attempts, then shared progress). Switching problems returns to Question.
-  Submission results (`paintInterviewResults`): a passed/failed summary, one
-  horizontally scrolling strip of case chips (`interviews.resultCases`: tests
-  as Case n, answers as Answer n, parts by name) acting as tabs, and one detail
-  panel: the input (hidden tests too, once submitted: `CheckResult.hidden`;
-  old attempts saved as "Hidden test" have none),
-  your output and expected output in bounded wrapping boxes, and "This check
-  looks wrong" for a failed case, which names the check to Felix. The selection
-  (`session.resultCase`, `interviews.pickCase`: first failure, else the first
-  case) survives redraws of the same submission and resets for another; choosing
-  a case repaints only the strip state and the panel, never the editor or page
-  scroll. The quick review shows its counts and summary and folds the
-  per-criterion feedback into `source-more`. Grading errors are kept per
-  submission.
-  Felix can reach every practice (2026-10-14, the user's call): `interview_list`
-  (every practice with its numbered problems), an optional `interview` on
-  `interview_progress`, `interview_attempt` and `interview_tests`, and
-  `interview_problem_edit` (a JSON merge of the changed fields onto a saved
-  problem; `interview::update_problem` checks the problem still matches what
-  was read, never touches the workspace or attempts; a
-  `Proposal::InterviewProblemEdit` card in Ask first, applied with Undo in
-  Auto, refused in Read only; the page redraws the question). New problems
-  carry their provenance only in `origin` and `sources`: the question and the
-  reply never say whether it is a real or official company question or where
-  it came from (also in `interviews.preparation`).
-  Changing the coding language in Preferences (2026-10-14, the user's call)
-  rewrites the open problem's starter too: POST `language` asks the quick
-  model (`interview_keys::translate_starter`, metered as `language:`) for the
-  same function name in the new language, `interview::relanguage` saves it
-  only if the problem is still what was read, and the code in the editor
-  becomes the new starter; the toast's Undo restores the old language,
-  starter and code exactly (`restore`, no AI). SQL problems never switch;
-  other saved problems keep their own language.
-  Topics (2026-10-15, the user's request): every problem carries 1-3
-  `topics` (any field: DFS, Dynamic programming; Random walks for quant), at
-  most `MOST_TOPICS`, distinct ignoring case. Felix is told to tag every new
-  problem and to reuse `topics_in_use` (in `<interview_material>`) instead of
-  near-duplicates; `interview_challenge` refuses a problem with no topics.
-  Older or mistagged problems are retagged together with
-  `interview_topics` (one `Proposal::InterviewTopics` card listing each
-  problem's old and new topics; `interview::set_topics` checks each problem's
-  topics are still what was read; Undo swaps them back; Auto applies, Read
-  only refuses). Every listed problem needs at least one topic, and the tool
-  result names the problems still without one so Felix finishes the job;
-  "Sort into topics with Felix" is in the menu while any problem has none. The practice
-  page has a filter button with a funnel icon before the problem chips that
-  opens a dropdown (the Settings `.picker` menu: All topics, each topic with
-  its count, No topic; arrow keys, Escape and an outside click close it;
-  `interviews.topicFilter`), remembered
-  per practice in `leo-interview-topic:<id>`; the question shows its topics.
-  Each topic row says how many of its problems are solved (`2/5 solved`).
-  The practice list shows type · company (or General) · position and
-  problems, submitted and solved, each problem counted once
-  (`interview::list` `tally`; `interview::passed` mirrors
-  `interviews.attemptStatus` passed, and node and Rust tests share cases).
-  Each track has a colour and icon (`TRACK_LOOK`, from the `--hue-*` tokens:
-  coding blue, systems teal, hardware cyan, design violet, marketing orange,
-  business amber, quant green, custom pink) on the track cards, the practice
-  rows (with a bar of solved over problems in that colour) and the practice
-  heading.
-  Hardware (2026-10-20, the user's request: diagrams and equations matter
-  most): criteria Fundamentals, Diagrams, Derivations, Trade-offs,
-  Communication. Felix puts the circuit, datapath, state machine or waveform
-  in the question as ```svg/```mermaid and writes equations in `$…$`; keys add
-  value asks with units and diagram criteria. The board has Circle (O, state
-  machines) and Line (L, wires) besides Box and Arrow (`BOARD_KINDS` in
-  `interview.js` and `interview.rs`). Felix reads the board as shapes with
-  `from`/`to` naming what each arrow or line joins (`interview::board_outline`,
-  also the quick review's `<board>`); review snapshots scale with the board
-  up to 2000 px wide (uploads cap there) so labels stay readable. A written
-  answer with maths gets a live Preview under it (`interviews.hasMath`) and is
-  rendered in its submission.
-  Problem pictures (2026-10-14, the user's request): the question is Markdown,
-  so a ```mermaid or ```svg block in it is drawn like in notes, and each
-  coding example may carry a `diagram` (same kind of block, at most
-  `MOST_DIAGRAM` 6,000 characters) shown under it. Felix is told to put a
-  picture the user asks for on the problem with `interview_problem_edit`
-  (and explain with it in the chat), to add one himself for inputs that are
-  hard to picture (trees, graphs, grids, intervals, systems), and never to
-  draw the approach or the answer.
-  `interview_code` reads the full bound draft. `interview_code_edit` suggests one
-  exact unique fragment per Accept/Decline card in Ask first; in Auto
-  (2026-10-14, the user's call) the proposal arrives with `auto: true` and the
-  page applies it at once through the same merge path, with Undo on the card.
-  Apply and contextual Undo change only that problem’s code, including archived
-  problems, and refuse stale/ambiguous fragments. Read only refuses suggestions;
-  the page flushes drafts and merges non-overlapping typing during application.
-- Felix activity records its position in the streamed response, stays between
-  the corresponding passages after reload, and is excluded from copied note
-  selections. Legacy activity without positions stays at the beginning.
+## Felix in the margin (`margin.rs`, `routes/margin.rs`, `web/margin.js`, `app/margin-notes.js`, 2026-11-04)
 
-## Interview instant feedback (2026-10-12, `interview_keys.rs`)
+Load margin preferences and reserve their space before positioning search matches
+or restoring reading, so the note's final line wrapping determines the scroll
+target. Check the page sequence after loading preferences.
 
-Submit used to wait 30-90 s for Felix. Now the thinking happens while the user
-works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
-
-- When `interview_challenge` saves a problem, `interview_keys::prepare` asks the
-  writing AI on a thread for a hidden answer key (`interview_keys` table in
-  leo.db, status preparing / ready / failed with its reason). A key is a mix of
-  `tests` (coding: `{args, expected, hidden, unordered}` for the starter's
-  `entry`; data only, never code), `asks` (value with tolerance or a ratio
-  `factor`, or choice), `sections` (parts a strong answer covers, matched by
-  words ignoring plurals), `criteria` (rubric with `good` and `misses`) and a
-  `reference` outline. Keys are read leniently (a string where a list was
-  asked) and validated; a failed key leaves Submit working with the review.
-- The page sees only `Key::public` (visible tests, ask labels and options,
-  section names) via GET `/api/interviews/{id}/key`, polled every 1.5 s while
-  preparing (with `progress`); hidden tests come from POST `hidden-tests` at
-  Submit, and once the problem has a submission `public(true)` shows every
-  test with its `hidden` flag (2026-10-14: hidden only until submitted).
-  References, answers and criteria never reach the page before grading.
-- Keys carry a JavaScript reference `solution` (never shown). While `verify`
-  is set the page shows no tests: POST `key/check` gives the solution, tests
-  and a `stamp`; the page runs it in the sandbox and POST `key/checked` drops
-  every test it disagrees with (`Key.dropped`), unless most fail or it errors,
-  then the key is kept and marked `doubtful`. A stale stamp changes nothing.
-- Felix sees the active problem's tests (all, with hidden flags), whether they
-  matched the reference, the last Run (POST `run` → `Key.last_run`) and the
-  latest submission's checks in `<test_cases>` (`interview_keys::tests_material`),
-  and has `interview_tests` (read) and `interview_test` (add, edit, delete one
-  test: a `Proposal::InterviewTest` card in Ask first, applied with Undo in
-  Auto, refused in Read only; at least one visible test always stays).
-- Submit: the page runs every test in the sandbox, PUT `submit` carries
-  `tests` reports, the server grades asks and sections instantly into
-  `Attempt.checks`. No AI runs on Submit (2026-10-19, the user's call): the
-  result offers **Review with Felix** (`review-result`; submissions keep
-  "Ask Felix to review", `review-attempt`), which runs POST `grade` (the quick
-  model, `Powers.quick`: the writing AI's cheapest model at low effort,
-  `ai::quick_config`) into `Attempt.grade`, then Felix's full review in the
-  chat, told the results (`interviews.reviewNote`). Check coverage
-  (POST `coverage`) says which criteria a draft covers, never judging them.
-- Running code: `/runner.html` + `/runner.js` (public, CSP `RUNNER_POLICY`:
-  sandbox allow-scripts, opaque origin, so requests carry no leo cookies) start
-  a fresh blob Worker per JavaScript or Python run, so an
-  endless loop is stopped by `terminate` without freezing the page (a
-  sandboxed frame can share the page's thread). Python is Pyodide 0.28.3,
-  fetched once on first use (`leo_services::pyodide`, SHA-256 pinned, about
-  12 MB) and served at `/pyodide/{name}` (allowlisted, CORS `*`, immutable).
-  TypeScript: the page loads `/typescript.js` (sucrase, vendored by
-  `scripts/runner-tools`) to strip types, then runs the result as JavaScript.
-  SQL (SQLite via sql.js, vendored, `/sql/{name}` with CORS `*`): key `entry`
-  is `sql`, each test's one argument is the setup SQL, expected is the rows as
-  arrays; the worker runs setup then the user's query on a fresh database per
-  test. C++ (2026-10-14): the writing machine fetches @yowasp/clang 22 once
-  (npm tarball, 27 MB, SHA-256 pinned, each unpacked file pinned too;
-  `leo_services::clang`, `/api/cpp`, `/clang/{name}` with CORS `*`; the
-  Python and C++ downloads share `routes/python.rs` `Kind`s). The page makes a
-  driver (`interviews.cppDriver`: reads the entry's signature, fills int,
-  floating, bool, char, string and nested vectors from the JSON args, calls
-  `Solution().entry` or the free function, prints `@@leo id <json>` per test,
-  user output goes to Printed output; pointers such as ListNode are refused
-  with a plain message). The page fetches the bundle (runner.js never calls
-  fetch; a test checks) and the runner starts it as a
-  classic worker (module workers do not start in the opaque-origin sandbox),
-  compiles `-O1 -std=c++20 -fno-exceptions`, and runs the program in a fresh
-  worker with a small WASI shim so an endless loop is stopped. Measured in
-  Chromium: first compile and run 2.2 s, then about 1.3 s.
-  Go (2026-10-14): the real Go 1.27.2 compiler and linker (`cmd/compile`,
-  `cmd/link` built for wasip1) plus 82 precompiled standard-library archives
-  (`scripts/go-runner`: `GO_VERSION`, `PACKAGES`, `build.sh`; 21 MB packed).
-  CI builds it, checks its `files.sha256` against `MANIFEST` (= 
-  `leo_services::gorunner::FILES_SHA256`; the `go-runner` CI job fails if a
-  build ever differs) and attaches `leo-go.tar.gz` to each release; leo fetches
-  its own version's asset (then latest), unpacks it and checks every file.
-  `/api/go`, `/goroot/{path}` (plain paths only, CORS `*`). The page loads the
-  toolchain once per visit (`interviewGoToolchain`, a progress bar) and
-  transfers it to the runner, which keeps it in a worker on the vendored WASI
-  shim (`/wasi-shim.js`, @bjorn3/browser_wasi_shim, in-memory files). The
-  driver (`interviews.goDriver`) adds `package main` and any used standard
-  imports on line 1 (errors keep the user's line numbers), supplies the
-  LeetCode ListNode/TreeNode types when only commented, and a `leo_driver.go`
-  that fills arguments with reflect and JSON (lists and level-order trees
-  from arrays), recovers panics per test and prints `@@leo <json>`. Programs
-  run in a fresh worker on the small shim, so loops are stopped. Measured in
-  Chromium: first run 2.2 s, then 0.8 s; compile errors 0.14 s. Yaegi was
-  tried first and dropped: it got `a, b = f(x), f(y)` with recursion wrong.
-  Java (2026-10-14): javac and TeaVM compiled to WebAssembly GC by
-  teavm-javac (`scripts/java-runner`: `COMMIT`, `JDK_VERSION`, leo's
-  `inner-classes.patch` so `Map.Entry` and other nested library types resolve,
-  `NOTICE` with the licences and source links; about 4.3 MB packed). Its builds
-  differ between machines (same JDK), so it is not pinned: every release
-  builds and attaches its own `leo-java.tar.gz`, and leo checks the files
-  against the `files.sha256` inside (`runtimes::JAVA.files_sha256` is None); `/api/java`, `/javaroot/{four names}`. The page loads it
-  once per visit; the runner turns TeaVM's ES-module loader into a classic
-  script (`teaRuntime`), compiles `LeoMain.java` (the user's classes with
-  `public` blanked and `package` removed, same lines, plus `interviews.javaDriver`'s
-  `LeoMain` with typed literals for ints, floats, chars, strings, arrays, lists,
-  ListNode and TreeNode from arrays, a JSON printer, and the LeetCode node
-  classes when only commented) and runs the program in a fresh worker. Needs
-  WebAssembly GC (current Chrome, Edge, Firefox, Safari). Measured in Chromium:
-  first run 1.4 s, then 0.8 s.
-  Rust (2026-10-14): Miri (the Rust interpreter) compiled to WebAssembly with
-  the parts of a mid-2024 standard library a plain program needs, taken
-  unchanged from rubri at a pinned commit (`scripts/rust-runner`: `COMMIT`,
-  `FILES` pins each file, `NOTICE`; 46 MB packed, 131 MB unpacked). CI
-  gathers and pins it (`runtimes::RUST`) and attaches `leo-rust.tar.gz`;
-  `/api/rust`, `/rustroot/{path}` (`.wasm`, `.rlib`, `files.sha256` for the
-  list). `interviews.rustDriver` keeps the user's code first (same lines),
-  adds `struct Solution;` and the LeetCode node types when missing, typed
-  literals (`vec!`, `String::from`, `leo_list`, `leo_tree`), a JSON trait,
-  and a `main` that marks each test with `@@leo-start` and starts at
-  `LEO_FROM`. This Miri cannot unwind, so a panic ends the run:
-  `interviews.rustRound` records it from stderr and the page runs again from
-  the next test. Measured in Chromium: first run 1.75 s; a compile error
-  0.25 s; three panicking tests 0.86 s.
-  Other languages get the quick and full reviews only.
-- Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
-  `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET
-  `/api/progress/{key}`). It counts streamed characters (keys stream through
-  `Powers.chat`) against the expected size, and with time it moves at an even
-  pace to 90% at the expected time, then slows towards 97% (never past) until
-  the job ends; it never curves early, so it does not crawl and then jump.
-  The expected time is the upper quarter of the last 12 finished runs of that
-  kind (the usage monitors' P90 idea; pace per character for sized jobs), kept
-  in leo.db `timings` so it survives restarts; a run that wrote nothing is
-  not learned. The view says about how long is left or "taking longer than
-  usual" (`slow`, past 1.25 x expected). The page glides between polls and
-  `finishMeter` fills the bar to 100% "done" before the result replaces it. The page draws
-  `meterBar` (percent, elapsed, about how long). Python's download reports
-  bytes on disk. Background panel, upload and recording bars creep within a
-  step using the average step time and show elapsed time; Felix's answer in
-  progress shows "Working · n s".
-- Measured with Claude Code (Opus 5.5 writing, Haiku quick): problem in 16-19 s,
-  key ready about 30 s later, Run 1.0 s, Submit results 0.1 s, quick review
-  8-9 s, coverage 4 s.
+- Storage: `margin_threads`, `margin_modes` and `margin_state` (prefs, the day's
+  read count, notes seen missing) in leo.db, never in note files or git. Threads
+  carry `quote`, `prefix`, `suffix`, `status` (open, resolved, dismissed), `source`
+  (read, ask, chat) and `messages`. At most `MOST_OPEN` (24) open threads per note,
+  held inside the INSERT and on reopening, and `MOST_CLOSED` (48) closed ones.
+  Replies update messages only, and only while the thread is open.
+- Deletes: a note in the trash keeps its threads, so a restore finds them. Deleting
+  from the trash removes them at once (`forget_notes`). The hourly `sweep_store` is
+  for what vanished another way: it waits `SWEEP_AFTER_DAYS` (7) after first seeing a
+  note missing, in case it was a partial sync or a rename, and never runs while no
+  notes loaded or a file is unreadable. Export adds `leo/margin.json` with Chats,
+  without trashed notes' threads unless Trash is chosen; Storage has one delete-all.
+- Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
+  without one, the global default applies only to notes leo made (a v4 id, so never a
+  headerless file) after it was set (`Prefs.since`), so turning it on never starts
+  reading old notes.
+- Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
+  sends changed blocks after a pause (4 s, slow 8 s). Silence is the normal answer:
+  `{}`, empty or unparsable output is success. The server refuses, whatever the page
+  does: a stale version (409), a note not in `along` or not edited in this engine
+  run (403, `Reads::edited` is set by the PATCH route, so browsing can never read),
+  a reply streaming (`Steering::any_open`), 5 minutes after a read note on that note,
+  90 s between reads of a note, overlapping reads and the daily cap (429 with `why`).
+  The cap is spent in one transaction after the read is claimed, so failures spend it
+  too, and a broken day row counts as spent. Blocks already read are dropped. A failed
+  read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
+  A refused read waits for the next edit. The model's quote must be in the note now,
+  or the note is dropped.
+- Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
+  WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
+  `web_search="disabled"`, and the chain is cut to its first provider, so a read fails
+  closed instead of falling back to a cloud AI. Replies and asks use
+  `Powers.toolless_chat` on the normal model. Note text sits between tags with a
+  random suffix and the prompts say it is never instructions; thread messages are
+  JSON records inside those tags, one per line, so stored text cannot close the block
+  or forge a turn. Model text is only ever set with `textContent`. Settings says text
+  stays here only for a loopback address and a model without `cloud` in its name
+  (`ai::reads_stay_here`).
+- Daily cap: 40 (20, 40, 80). Every read starts a fresh process (`claude -p`,
+  `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
+  most 8,000 characters in and 220 tokens out. 90 s between reads means 40 reads
+  take an hour of writing at least, and a day's worst case is about 90k input
+  tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
+  bounded when parsed.
+- A failed or missing AI stays silent in the note and leaves `margin::PROBLEM`
+  (fixed text, no provider detail) in Settings → Felix and Health until a read works.
+- Selection: Ask Felix (⌘⇧E) opens a draft in the margin, POST
+  `.../margin/threads` (no read-along needed), or Ask in chat. With Felix open, under
+  3 or over 600 characters, it goes to the chat as before. The server anchors on
+  prefix + quote + suffix exactly and never falls back to another occurrence. Replies
+  POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
+  messages sent), and never run twice at once for a thread.
+- Add to note uses `/insert` with one request id per thread (`/insert` dedupes on note
+  and request, whatever the base), runs once at a time and shows Undo before it closes
+  the thread. After a 409 it re-finds the passage, or says it went to the end and
+  skips the glow. Open in chat attaches the quote. `add_margin_note`'s Undo is refused
+  once the user has replied. `chat::gather_seeing` adds open threads of the open note
+  after the notes (`margin::context`, at most 3,000 characters and an eighth of the
+  note room); the block's fence is keyed per process and stable while its content is,
+  so prefix caches still work, and warm sessions get it only when it changes
+  (`Warm.margin`).
+- Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix of at
+  least 6 characters, or an edge of the note, then lost), `stack`, `sides`,
+  `arrangement`. Right margin needs 928 px of column, Both 1,192 px. The margin is
+  reserved up front on every note, in both modes, whatever its threads
+  (2026-11-04, the orchestrator's decision): `.note-columns[data-margin]` pads the
+  column, so the note is min(its note width, the room left) and sits left of centre,
+  and a first note cannot reflow text being typed. The layout is set in the same task
+  as the first paint; `leo-margin-layout` remembers the setting per browser for that
+  moment, the server keeps the truth. Marks only in Settings, Full width, too little
+  room or Felix open reserve nothing and centre the note. There, a mark above the end
+  of the passage (24 px to hit, 44 px on touch) opens the note inline, with
+  `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
+  in the panel.
+- The mode chip is in `.note-meta` from the first paint, disabled until the note's
+  mode arrives, so the row never grows. A note is a labelled article with one
+  `.margin-toggle` button (`aria-expanded`, `aria-controls`) over it.
+- Overlay: `.margin-layer` sits in `.note-columns`, outside `#doc`, redrawn on
+  ResizeObserver and edits. `doc.spanRects` measures rendered blocks and open
+  textareas without touching the caret. Elements are kept by thread id and the reply
+  box is never rebuilt. Felix's `think` face shows only while a read runs, after
+  200 ms so a refused read never flashes. Squiggle .46 s, tether .56 s, words
+  start with the box, 62 ms apart, at most 650 ms in all (`wordDelay`). Reduced Motion stills all of it. Never prints.
+- Tests: `src/tests/margin.rs` drives the real engine over TCP with fake powers.
+  `leo-test-server` takes `LEO_TEST_FAKE_AI` (the test binary only, never the app) so
+  one flow in flows.spec.js joins the page to the real routes.
 
 ## Uploads, originals, recording
 
@@ -819,6 +573,7 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   changing the saved history preference automatically. Phones use the existing viewer
   sheet above chat (PDF iframe, zoomable pictures, rendered text); an already open
   desktop pane becomes full width when the window narrows. Chat state is retained.
+
 - Recording (`record.rs`, `recording.js`): new microphone/screen/call captures
   run in Rust through the listener. `nativecall` is the native dual-track
   source; old browser/tab/call sources and journals remain readable for
@@ -827,16 +582,19 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   heartbeat lifetime. Housekeeper's `pending_recordings` supplies retained
   native sessions; recovery starts in Writing state and supports Finish available.
   Browser recovery still replays IndexedDB/journal audio through bounded channels.
+
 - Screenshots (the user's call): paste a PNG/JPEG/GIF/WebP into Your notes while
   recording instead of a browser screen picker. The existing snapshot endpoint
   timestamps and retains it, derives MIME from bytes and optionally reads its
   text through the writer. Late encoding/responses cannot attach to another
   recording; ordinary text paste stays normal.
+
 - PDF export (Share → PDF, or the browser's print): print CSS hides every
   fixed overlay (dock, tasks, source pane, toasts, chat, FABs…), zeroes the
   layout variables and the scrollbar gutter, and uses fixed `@page` margins
   (22/24/24 mm), so the PDF is the same on any screen; `beforeprint` also
   marks anything else `position: fixed` with `data-print-off`.
+
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
   top).
 
@@ -854,6 +612,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   leo.db with ETag / Last-Modified; `ics::read` expands repeats, EXDATE and
   moved instances, all-day items are dates. GET `/api/schedule?from&to&live`
   (≤43 days); the page refreshes every 2.5 min while visible.
+
 - Standalone tasks are files: `<notes>/.leo/tasks/<id>.json`
   (`tasks::tasks_dir`), one JSON line each, written atomically, so they go
   into the notes' git backup. `.gitattributes` merges them by union and the
@@ -861,10 +620,12 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   computers never conflicts. Deleting writes a tombstone line (`deleted`),
   never removes the file (no modify/delete conflicts). Rows from the old
   leo.db `tasks` table move into files once (`migrate`).
+
 - Note tasks: checkboxes under an Action items heading (or To do, Next steps,
   Deadlines) plus promoted ones (`note_tasks` in leo.db, located by text and
   neighbours; never the wrong box). A date change is written into the
   checkbox (409 with a preview when the old date cannot be found).
+
 - Repeating tasks (2026-10-12): `repeat` = weekdays 0 (Mon) … 6 (Sun), picked
   with M T W T F S S bubbles in New task and the task sheet; `date` is when it
   starts (today if unset); `done_on` keeps the days ticked (≤
@@ -879,6 +640,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   link carries the weekly rule only. Felix's `on` still means done only.
   `schedule.plan(tasks, events, today, {from, to})` expands occurrences; the
   Tasks panel shows the next open one; ICS and Google get a weekly RRULE.
+
 - Event sheet (2026-10-19): `schedule.eventDetails` splits the event
   context into place, organiser (a Google group or resource calendar ID reads
   "A shared calendar"), invited (chips) and description; `schedule.richText`
@@ -886,6 +648,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   italics, lists, paragraphs and https/mailto links (`noopener`), dropping
   scripts, styles, images, attributes and other tags, and links bare URLs in
   plain text.
+
 - Calendar page (2026-11-03, the user's call: a full screen like Notion
   Calendar; design in docs/superpowers/2026-11-03-calendar-page-design.md):
   Day, Week and Month (`leo-calendar-view`; D W M, J/K, T keys) in normal flow
@@ -917,38 +680,11 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   A save resolves the current task snapshot after a calendar refresh. Tests:
   `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
   API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
-- Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /
-  Coming up 7 days / No date), folds (`leo-tasks-folded`) to one round icon
-  with a count badge (`.tasks-pill`, red when something is overdue) that opens
-  the box again, hidden on the Calendar page and under 600 px. Folding clips
-  the box down into the icon's corner and opening grows it back out
-  (`toggleTasksWindow`, a `MOTION_MS` clip-path; none with Reduce Motion; a
-  second press cancels a running open).
-  On the library its height leaves the first row of notes clear
-  (`fitTasksWindow` sets `--tasks-room`, at least `TASKS_LEAST_ROOM`, on page
-  redraws and resizes). With less room than that it waits as its icon
-  (`tasksWin.cramped`; opening it then is not remembered; `tasksFolded` is
-  always true or false, since `classList.toggle` with undefined flips the
-  class: that left the open list drawn as a wide oval), and the library
-  pads its bottom by the dock's height (`--dock-room`) so the last notes can
-  scroll clear of it.
-  Active interview practices start with Tasks folded so its expanded rows
-  cannot block the workspace. Show still expands it; this local
-  practice choice leaves the remembered preference for other pages intact.
-  Completing a panel task shows its checked, struck-through row for 1.2 seconds
-  before a `MOTION_MS` collapse; Reduce Motion skips animation but keeps the
-  confirmation. A bounded occurrence snapshot survives polling until removal,
-  and Undo cancels removal without completing the next repeating occurrence.
+
 - Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
   `/api/tasks/import` (ids dedupe; a newer local copy is kept).
 
 ## Boards (`boards.rs`, `routes/boards.rs`, `app/boards.js`, 2026-11-02)
-
-Jira-style task boards (the user's call: their own rail icon after Calendar, several
-boards, untimed, standalone cards only). Cards have no dates, so they are not
-calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule;
-Felix reads and changes them with the board tools (see Felix above).
-JS and CSS use the `kanban` prefix: `board` already names the interview whiteboard.
 
 - Storage mirrors standalone tasks: `<notes>/.leo/boards/<b…>.json` (name, columns
   `{id, name}`, 1-12) and `<notes>/.leo/cards/<c…>.json` (board, column, `rank`,
@@ -957,10 +693,12 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   (`leo_core::sync`), newest `updated_at` wins, deletes are tombstones; a file
   counts only when its name is its id. One file per card, so two computers editing
   different cards both keep their edits. Limits: 100 boards, 5,000 cards.
+
 - Order is `rank` (f64). A move writes only the moved card (midpoint of its new
   neighbours, `boards::between`) unless the gap is gone, then `settle` renumbers that
   column. A card whose column was deleted elsewhere shows in the first column and
   is rewritten only when it moves. One mutex (`boards::writing`) serialises writes.
+
 - API: GET/POST `/api/boards` (list with `cards` counts; a new board has To do, In
   progress, Done), GET/PATCH/DELETE `/api/boards/{id}` (PATCH `name`, `columns`
   `[{id?, name}]` in order; removed columns' cards go to `move_to` or the first
@@ -970,9 +708,11 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   POST `/api/cards/{id}/move` `{board?, column?, after?}` (`after` missing = end,
   null = top, an id = just after it; another board keeps a same-named column, else
   the first). Export adds `leo/boards.json`.
+
 - New board uses the existing sheet and controls, with a labelled full-width name
   field and a small preview of the three starting columns; Enter and Create board
   submit the same request, and Cancel leaves the boards untouched.
+
 - Page: board tabs with counts (a card dropped on a tab moves to that board, with
   Undo), the name and column names edit in place (Enter saves, Escape reverts),
   columns are grey lanes of white cards (title, muted subheading, priority arrows,
@@ -988,6 +728,7 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   small + tile), cards are roomier, and each column takes a quiet colour from its name
   (`kanbanTone`: to do blue, in progress amber, done green, blocked red, others by
   place) shown as a dot, its count and a 3% tint. No help line under the board.
+
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
   placeholder moving through the lists; a copy follows the pointer; the board
@@ -997,6 +738,7 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   drop is swallowed; leaving the page mid-drag cancels. Columns drag by their name
   bar. Keyboard: Enter opens a card, Alt+arrows move it. After a move the board is
   fetched again so renumbered ranks are known. The Tasks panel hides on Boards.
+
 - Tests: `src/tests/boards.rs`, unit tests in `boards.rs`, `tests/browser/boards.spec.js`
   (fixture: real CSS and boards.js over an in-memory API; desktop and webkit) and
   flows.spec.js (real server: drag, reload, API contract).
@@ -1005,11 +747,15 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
 
 - Settings (`SettingsApi`, `leo_host::WebSettings`): one model picker
   per AI with prices and effort chips.
+
 - Theme (2026-10-14, the user's request): Settings → Appearance picks Match
-  this device, Light or Dark, kept per browser in `leo-theme`. Theme and
-  Felix choices are large `.choice-card`s (icons `device`, `sun`, `moon`;
-  Felix pictures with `felix-preview cute-look` / `demon-look`, which the
-  mood code skips and which look the same whatever mode is on). `/theme.js`
+  this device, Light or Dark, kept per browser in `leo-theme`. Theme, Felix and
+  Note width are segmented controls (icons `device`, `sun`, `moon`; Felix pictures
+  with `felix-preview cute-look` / `demon-look`, which the mood code skips and
+  which look the same whatever mode is on). Each has a row reset (`settingReset`,
+  a small icon button that shows only while the value differs from
+  `APPEARANCE_DEFAULTS`: Match device, Cute, Wide; `data-action="setting-reset"`,
+  named "Reset <setting> to default"). Add one only where the default is real. `/theme.js`
   loads in `<head>` (before any paint, no inline script under the CSP) and
   sets `html[data-theme]`; the dark colours apply under
   `prefers-color-scheme: dark` unless `data-theme="light"`, and always with
@@ -1017,6 +763,7 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   redraws on `leoTheme.onChange` (graph, map dots, Mermaid diagrams), never
   the media query directly. Print overrides with `:root:root` so a PDF is
   always light.
+
 - Storage (`storage.rs`, `storage_saved.rs` + the `Housekeeper`): every area leo keeps, with size,
   items and confirmed actions; signed-in browsers; how long trash and chats
   are kept (`/api/keep`); Export (zip of notes, optional uploads, chats,
@@ -1024,77 +771,8 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
 
 ## Testing
 
-- Browser suite: `tests/browser/flows.spec.js` (desktop and WebKit projects;
-  CI retries once, `github` reporter). Every test fails on a page error or a
-  programmer-error toast (`guard`). Recording is stubbed; the graph is seeded.
-  Coding editor coverage runs each language in its own test and practice id,
-  keeping the 30-second timeout per language and verifying saved text after reload.
-  Draft recovery uses an init-script fetch failure fake that survives reloads
-  and page teardown; Playwright routing can release requests during unload.
-  `visual.spec.js` screenshot baselines are local only (`pnpm visual`,
-  `pnpm visual:update` rewrites every image).
-  CI splits desktop tests across four machines with `fullyParallel`, keeping
-  one worker and an isolated server/data directory per shard. `pnpm test:shards`
-  checks balanced, complete, nonduplicated test selection; WebKit stays whole.
 - Per the user (2026-10-11): no local Cargo builds for website work and no
   full local runs; quick JS checks and one-test runs only, CI does the rest.
-- Real-model checks (Codex, Claude Code) are what the prompt wording rests on:
-  intent comes from the conversation, never keyword guesses; a change is only
-  claimed after its tool result.
-  The 2026-10-12 review used Claude Code through a real local server and a
-  throwaway home: relative dates, repeating tasks, per-day Undo, note/folder
-  actions and Ask/Auto/Read access passed 16 action/access turns. A live Study
-  plan, quiz and correct answer ended with its recap. Installed
-  Chrome checks covered 28 page/theme/viewport combinations with no overflow
-  or contrast findings, plus danger controls across both themes and sizes.
-  The interview follow-up used six signed-in Codex turns in a throwaway home:
-  workspace creation, preserved drafts, reopening, calendar-aware planning,
-  reviewed submissions and continued iteration passed. Native and text fakes
-  cover the same tools; installed Chrome checks cover problem switching,
-  recovery, wrapping, Python deletion/Undo and chronological activity in both
-  themes on desktop and phone. Grid/List alignment is measured against both
-  button centers; restoring the old CSS reproduces the three-pixel offset.
-
-Storage includes interview workspaces, attempts and schedules with Open practice,
-separate hidden check metadata, reading positions, note task settings and cached
-calendar events. Selected/bulk deletion is transactional; deleting a practice
-also deletes its checks while preserving notes, tasks and conversations. Check
-workers update only their claimed generation while the parent practice exists,
-so clearing or deleting data cannot be undone by a late worker. Calendar cache
-clearing waits for refresh and invalidates expansions without disconnecting feeds.
-Task sizes use actual files, including deletion markers; erasing markers is
-explicit because older backups may restore them. Database overhead/unused space
-is separate from payload sizes, with safe compaction; folder walks are bounded
-at 100,000 entries and 64 levels and omit symlinks. Storage lists 100 rows at a
-time, preserves open sections/selection/focus, and refreshes browser data only
-inside its own section so file pickers and export choices stay intact. It shows
-browser draft/preferences and IndexedDB recovery audio separately from the server.
-Browser cleanup affects only Leo keys or selected recordings, never other apps;
-deleting a practice forgets its local backups. Export's Chats and interview
-practices option includes saved practice data, never hidden keys or secrets.
-
-Interview Enter retains manual indentation in unfinished and blank lines while
-CodeMirror handles new scopes, continuations and leaving multiline delimiters;
-the final edit is still bounded at 32,000 characters. Attempts and reviews are
-filtered by the selected challenge ID and shown beneath that question. Overall
-practice progress uses all attempts; late reviews cannot appear under another
-problem, even when problem titles match.
-
-Website backup: page hide or moving the site to the background flushes note and
-interview drafts and sends one small authenticated JSON beacon per departure.
-The server coalesces requests, allows saves to settle, and pushes notes and task files
-outside the store lock, at most once every 20 seconds. Settings Off is respected;
-missing remotes and empty queues do nothing. Pushes are noninteractive, limited
-to 60 seconds, never pull/merge, and failures remain visible on the next visit.
-Chats and interview practices remain local; this does not change backup contents.
-
-Felix’s user-facing prose follows chat::REPLY_STYLE across all chat styles,
-interview key/reference writing and quick grading. Inspired by
-https://github.com/ayghri/i-have-adhd, it puts the answer first, teaches one
-manageable step, groups longer material and ends with a next action only when
-needed. Required derivations, assignment parts, evidence, JSON schemas, quiz
-markers and strict assessment remain complete; no diagnosis or fixed word cap.
-Recording/note synthesis and its gap-filling rules are unchanged.
 
 Task descriptions are optional plain text (4,000 characters), empty by default.
 New task and the task sheet reuse set-input textareas with an empty placeholder;
@@ -1108,12 +786,6 @@ the original id, description, repeat progress and note link with a fresh timesta
 so the restore wins over its deletion marker in a backup merge. Conversation history
 and its search results display titles only, with no response preview or tooltip.
 
-Runner workers share startWorker: each temporary script Blob URL is revoked on
-the first worker message/error, termination (including timeout), or constructor
-failure. Program workers, including Python, terminate after each run; compiler
-workers stay warm. Revoking the URL frees its Blob reference; repeated runs must
-retain no script URLs.
-
 ### Security and cleanup boundaries (2026-10-16)
 
 Sign-in files use unique synced 0600 temporary files and atomic replacement;
@@ -1122,25 +794,6 @@ repairs existing permissions. Session persistence failures refuse authentication
 Original attachments and standalone tasks check every component inside their data
 root, use nofollow regular-file reads and atomic writes, and refuse symbolic links.
 Legacy task migration removes only rows whose matching task was safely retained.
-
-The code runner serializes at most four page jobs, rejects overlapping iframe
-execution, validates bounded result schemas and cleans up startup listeners/timers
-on every exit. Python workers are fresh and terminated after every reply, including
-forged replies; compiler workers intentionally remain reusable. Browser workers
-provide interruption, not a hard RAM quota. Background recording waveform queues
-remain bounded even when the recording page is closed.
-
-Imports admit two active jobs and two body readers, cap uploads at 20 files/90 MB,
-expire incoming bodies after 30 seconds and retain at most 40 job summaries.
-Detached store checks retain their own admission permits through completion.
-Original bytes stage in private temporary files instead of a second full RAM copy.
-Exports bound traversal, input size and simultaneous builds/streams; owned temporary
-paths and admission permits are released when a stream ends or its client leaves.
-Graph/idle task guards
-start after fallible setup and abort on every server exit/cancellation. Shared
-worker states use RAII guards to prevent stuck meters/locks on panic; interview
-key preparation has eight permits and retries abandoned generations without
-allowing late workers to replace a newer generation.
 
 Database handles are cached up to 32 paths, migration markers up to 64; filesystem
 checks/open/close occur outside the database cache mutex. Live browser PCM queues
@@ -1158,57 +811,10 @@ Writing Settings offers Ollama, Codex and Claude Code. Removed AGY/Copilot
 choices and sign-in commands are unavailable; legacy saved profiles remain in
 Storage until explicitly cleared. Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
 
-Interview problem navigation shows the active title and opens a bounded searchable
-sheet instead of growing numbered chips. Search matches titles, topics and numbers;
-status filters reuse per-challenge attempts and count any passed submission as solved.
-Opening or filtering the chooser changes no workspace, order or timestamp. Search
-focus survives refreshes; closing returns to the current chooser button even if it
-was redrawn. Switching and explicit deletion flush drafts first. A problem removed
-by Felix never gets recreated by a late draft save; newer local work remains
-recoverable when Undo restores that problem.
-
-The interview topic picker measures the visible space outside the sticky header,
-flips above its button when needed and caps its own scrolling height. Its controls
-stack above question tabs; scrolling or resizing recomputes the available space.
-
-Interview editor access follows the saved practice conversation, independently of
-Chat, Study or Interview response style. A matching visible workspace is saved
-before sending in every style; another conversation never inherits that scope.
-The viewed problem ID is validated against the practice and refreshed in warm
-sessions. An explicitly empty find initializes only a still-empty editor; stale
-typing is refused and insertion supports the same independent cards and Undo.
-Both native and text replies recover once from an explicit false claim that the
-editor tools are unavailable, before any changing/interactive tool and while
-editing is allowed. Interview reads keep that single recovery available; retries
-reuse the latest read and share the original tool-call budget. A bounded 512-character prefix holds that refusal before display; normal
-text streams when the prefix fills or a tool runs. Already shown text is never
-replaced for this check. A repeated refusal keeps the code and shows an actionable
-retry message. Legitimate execution limitations and Read only are not retried.
-
-Practice recency follows real saved work and conversation changes. Selecting a saved problem persists its selection/revision without changing activity; filtering stays browser-local. Run advances parent activity atomically with its results without invalidating an editor revision. Background test preparation and verification do not count.
-
-Practice titles use the existing inline plaintext heading style: typing autosaves through the practice queue, Enter finishes, Escape abandons unsaved typing, and empty names restore the saved title. Saves preserve the caret and pending code; Retry reloads current preferences before renaming, refuses a changed remote workspace before advancing the local revision, and draft flushing includes pending titles.
-
 Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
 retain client elapsed milliseconds and a cancellation flag, including card-only
 turns, so future slow turns can be distinguished from canceled replies.
-
-Study sends an append-only model history that flattens completed quiz hints and
-answers without mutating earlier question cards; display/storage keep those cards.
-This permits Read-only warm reuse. Quiz documents share the 64k material budget
-(full documents remain readable by tools); ordinary chat/interview history budgets
-stay unchanged. Unchanged practice snapshots are omitted from warm follow-ups;
-changed code, tests, questions, notes and documents refresh their fingerprints.
-Permission changes invalidate reuse. Four foreground answers and bounded reply
-queues prevent unlimited workers or queued chunks; closed replies skip follow-up
-tools, retries and grading. Two identical failed calls end tool use with one final
-answer. Hidden Study grading remains available and its usage is included. Concurrent
-grades of one interview attempt share one worker; distinct attempts remain separate.
-Retained sessions count instructions, incoming material, tool results and replies
-toward the warm limit; API sessions measure serialized history and native CLIs track
-tool arguments and results. Oversized sessions are dropped promptly
-instead of remaining cached until another request or idle cleanup.
 
 `Running::stop` drains active requests and streams for at most five seconds,
 then aborts the server task; graph/idle tasks stop first, and warm-session
@@ -1230,17 +836,6 @@ The shared ADHD-inspired `REPLY_STYLE` is unchanged by prompt-size optimization.
 `open_note` exposes bounded `part` reads, reporting total parts and the original
 first line so smaller initial excerpts never make later note content inaccessible.
 Parts preserve every numbered Unicode character, including long single lines.
-
-Felix efficiency (2026-10-18): initial chat titles use the existing first-message
-and attached-note naming locally, without an AI request. Long-chat memory uses
-`Powers.housekeeping` (the writing provider's quick model), keeping note synthesis
-on the selected writing model. `read_cache::Reads` retains at most 16 successful
-large reads and 256 KB per conversation. Every read revalidates current saved data;
-only identical results become short references. Changes, Undo and errors never
-reuse stale content; `fresh: yes` requests the full result. Failed/fresh provider
-sessions clear these references. `interview_workspace` combines the requested
-problem's complete code, reasoning, board, progress and tests without selecting it;
-full frozen submissions still use `interview_attempt` before assessment.
 
 Study's next `quiz` or `end_session` call may carry the previous answer's structured
 `verdict`, used only on a marking turn. A missing text verdict can use that field
@@ -1269,7 +864,7 @@ Notes with Markdown headings have an outline (its disclosure is an icon and chev
 editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
 It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
 the user's call: notes sit in the middle), the note is centred between two 48 px
-gutters and the right one holds a tick per heading (`.outline-ticks`, longer for
+gutters and the left one holds a tick per heading (`.outline-ticks`, longer for
 higher levels, the current one in the accent). Hovering or focusing the rail
 magnifies nearby bars and previews the heading and a bounded plain-text excerpt
 (up to 24 lines / 800 UTF-16 units, escaped); clicking or Enter/Space jumps there.
@@ -1348,20 +943,56 @@ history only; fields, drafts, focus and caret survive. There is no Save button
 wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
-Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels
-in sentence case, no "Settings" title in the section list (the bar says it),
-no card title repeating the page title, flat cards (border, no shadow), labels
-on one line with controls hugging their content at the right edge; a card under
-500 px stacks segmented rows (container query), and switch rows stay inline on
-phones. Writing AI uses a pen icon, never a sparkle.
-Settings (2026-11-02, the user's call) is a sidebar beside the content: a
-rounded panel set apart from the explorer by a gap on every side (sticky under
-the bar, its own scroll), panel and section centred together at any width,
-every card 20 px from the next (a section's wrapper `<div id>` is
-`display: contents`, so its cards share that gap), grouped Leo / Your
-notes / Data / This app, each section with an icon and a page heading with a
-one-line description; under 760 px it becomes a sideways-scrolling chip strip
-that centres the current section. Routes stay `#/settings/<section>`; Storage
+Settings look (2026-11-02, the user's call, stageshow's craft rules; redone
+2026-11-04): group labels in sentence case, no "Settings" title in the section
+list (the bar says it), no card title repeating the page title, labels on one
+line with controls hugging their content at the right edge; a card under 500 px
+stacks segmented rows (container query), and switch rows stay inline on phones.
+`.set-card` is a tinted group (`--tint`, no border, no shadow, no rule between
+rows: space separates them; inputs, selects and plain buttons inside it fill
+with `--raised`). Inputs keep their border; nothing else in Settings' own layout
+has a 1px rule (the Trash list, Storage items, Calendar form and menus included).
+Selection is ink (segment and nav pills are `--raised`, switches `--text`);
+indigo stays for focus, links and the search pulse. Writing AI uses a pen icon,
+never a sparkle.
+Settings (2026-11-02, the user's call) is a sidebar beside the content. Since
+2026-11-04 the sidebar has no card: it sits directly on `--ground` and the
+section on `--page`, with no border between. From 1000 px the ground runs the
+full window height, up through the header too: `fitSettingsEdge` (run on each
+frame and on `resize`, which the explorer fold dispatches when it settles)
+measures the nav's right edge and the section's left edge as
+`--settings-c`/`--settings-lc` (offsets from half of `--side`, so the band
+follows the fold), `body.settings-edge` then widens `body::before`, moves
+`body::after`'s rounded corner to the edge, clears the bar and layout
+backgrounds and aligns the crumbs with the section. Below 1000 px the older
+`.settings-layout::before` band is used. Sticky under the bar
+with its own scroll; nav and section are centred together at any width (a
+four-column grid, the outer columns `1fr`); every card 20 px from the next (a
+section's wrapper `<div id>` is `display: contents`, so its cards share that gap);
+grouped Leo / Your notes / Data / This app, each section with an icon and a page
+heading with a one-line description; under 760 px the nav is a bar on `--ground`
+with the search above a sideways-scrolling chip strip that centres the current
+section (results replace the strip while searching).
+
+Settings search (2026-11-04, after T3 Code): `SETTINGS_INDEX` in
+`settings-navigation.js`, next to `SETTINGS_SECTIONS`, is plain data of
+`{section, label, keywords, id}`, one entry per setting a person can name. Its
+`id` is the `data-find` attribute on that row or card in the page markup;
+`settings-navigation.test.js` fails when an entry names a section that does not
+exist, a duplicate id, or an id no source draws. Add the entry and the
+`data-find` together. Filtering is local and case-insensitive (every typed word
+must appear in the label or keywords; a label that starts with the query comes
+first). The input is a combobox with `aria-activedescendant` over a listbox of
+rows (label, then the section as a second line); arrow keys move, Enter picks,
+Escape clears (and is swallowed while a query is typed), an empty result says
+so, and the query lives in `settingsFind` so redraws keep it. Choosing a result
+sets the route if needed and `seekSettingsTarget` waits (MutationObserver on
+`#app`, 2.5 s, then falls back to the page heading) until `[data-find]` exists
+inside that section's own element, so the placeholder-then-content double draw
+cannot lose it; then it waits for the arrival animation, scrolls the target to
+the centre, focuses it (`tabindex=-1`) and pulses it once: a 650 ms opacity pulse
+on `::after` in `--accent`; Reduced Motion skips the pulse and shows an outline
+until blur. Routes stay `#/settings/<section>`; Storage
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
@@ -1398,11 +1029,6 @@ Back returns to the previous note; only the explicit Storage route selects Stora
 lock. Explicit `/api/backup/setup` has a single-operation semaphore. Recording
 reserves `capture_activity` before creating a job; its lease prevents updater
 installation through the durable save, including browser-journal recovery.
-
-Tasks-panel fitting includes the entire interview track grid, using the same
-height reservation and automatic folding as the library so every start button
-remains clickable. Interview home reserves scroll room; practice panes keep
-their own fixed layout.
 
 Router completion and error handling check a render generation and the current
 hash. Late missing-note/offline failures cannot redirect, toast or overwrite a
@@ -1469,3 +1095,17 @@ Search scrolls the matched Range itself, including within very tall paragraphs.
 A resize with zero vertical movement never writes a synthetic end to a deadline.
 Quick Leo accepts a year directly after a comma and validates local minute-based
 ISO datetimes as one date/time before removing them from the title.
+
+## Retired interview practice (2026-11-05)
+
+Interview coding practice, its style, tools, workspaces and runtime downloads were
+removed by user decision. Chat and Study retain quiz and ask_user cards, marking,
+study sessions and review. Shared progress meters, meterBar, source-more, Mermaid,
+KaTeX, margin notes and board tools remain independent of the retired feature.
+
+Legacy interviews, interview_keys and interview_problem_undo tables and their rows
+remain in leo.db, unused and never purged or migrated away. Old interview-style
+chats open as Chat; their saved cards show a short retirement message. Old routes,
+remembered places and style fall back to the note workspace or Chat. Stale
+leo-interview-* localStorage keys stay untouched. Downloaded runtimes remain in
+Storage's Other downloaded model files with the existing symlink/path protections.

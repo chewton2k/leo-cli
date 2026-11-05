@@ -29,10 +29,9 @@ notes/    your notes as Markdown files, in their folders. Any Markdown
 uploads/  the files you uploaded, in a folder per note (named by the note's id,
           which is the id: line at the top of the note).
 chats/    your conversations with Felix, one JSON file each.
-interviews/ interview frameworks, workspaces, attempts and practice schedules,
-          included with chats.
 tasks.json the tasks you added on the Calendar page (Storage can restore
           them). Tasks from notes are in the notes themselves.
+margin.json Felix's margin notes and their replies, included with chats.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
           included with uploads. Audio recovery and calendar links
@@ -341,6 +340,32 @@ fn write_zip_with_limits<W: Write + Seek>(
             &mut packed,
         )?;
     }
+    #[derive(Serialize)]
+    struct MarginExport<'a> {
+        version: u8,
+        threads: &'a [crate::margin::Thread],
+    }
+    let trashed = leo_core::store::trashed_ids(notes_dir);
+    let threads: Vec<crate::margin::Thread> = if parts.chats {
+        crate::margin::every(chats_dir)
+            .into_iter()
+            .filter(|t| parts.trash || !trashed.contains(&t.note))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if !threads.is_empty() {
+        add_json(
+            &mut zip,
+            "leo/margin.json",
+            &MarginExport {
+                version: 1,
+                threads: &threads,
+            },
+            &mut budget,
+            &mut packed,
+        )?;
+    }
     if parts.trash {
         add_dir(
             &mut zip,
@@ -377,26 +402,6 @@ fn write_zip_with_limits<W: Write + Seek>(
         )?;
     }
     if parts.chats {
-        for summary in
-            crate::interview::list(chats_dir).map_err(|error| anyhow::anyhow!(error.message()))?
-        {
-            let Some(id) = summary["id"].as_str() else {
-                continue;
-            };
-            ensure!(
-                crate::chats::valid_id(id),
-                "A saved practice has an invalid id; remove it in Storage and try again"
-            );
-            let item = crate::interview::load(chats_dir, id)
-                .map_err(|error| anyhow::anyhow!(error.message()))?;
-            add_json(
-                &mut zip,
-                &format!("leo/interviews/{id}.json"),
-                &item,
-                &mut budget,
-                &mut packed,
-            )?;
-        }
         for id in chat_ids(chats_dir, &budget)? {
             let Some(chat) = crate::chats::load(chats_dir, &id) else {
                 continue;
@@ -528,8 +533,8 @@ mod tests {
     }
 
     #[test]
-    fn serialized_tasks_practices_chats_and_documents_share_the_export_budget() {
-        for kind in ["tasks", "practice", "chat", "document"] {
+    fn serialized_tasks_chats_and_documents_share_the_export_budget() {
+        for kind in ["tasks", "chat", "document"] {
             let home = tempfile::tempdir().unwrap();
             let notes = home.path().join("notes");
             let chats = home.path().join("chats");
@@ -539,11 +544,6 @@ mod tests {
                 "tasks" => {
                     let task = serde_json::from_value(serde_json::json!({"id":"texport-1234", "title":"Example task", "created_at":now, "updated_at":now})).unwrap();
                     crate::tasks::put(&chats, &task).unwrap();
-                }
-                "practice" => {
-                    let framework = serde_json::from_value(serde_json::json!({"title":"Interview practice","track":"coding","company":"","role":"Engineer","language":"Python","style":"coach","date":"","weekly_minutes":120,"skills":["Approach"],"wants":"Hints first"})).unwrap();
-                    crate::interview::configure(&chats, "interview-export-01", 0, framework)
-                        .unwrap();
                 }
                 _ => {
                     crate::chats::save(&chats, "chat-export-1234", serde_json::from_value(serde_json::json!({"mode":"chat", "messages":[{"role":"user", "text":"Example question"}]})).unwrap(), now).unwrap();
@@ -660,8 +660,11 @@ mod tests {
         .unwrap();
         crate::chat_files::add(&chats, "chat-1234", "w.pdf", "week 3", chrono::Utc::now()).unwrap();
 
-        let framework = serde_json::from_value(serde_json::json!({"title":"Interview practice","track":"coding","company":"","role":"Engineer","language":"Python","style":"coach","date":"","weekly_minutes":120,"skills":["Approach"],"wants":"Hints first"})).unwrap();
-        crate::interview::configure(&chats, "interview-export-01", 0, framework).unwrap();
+        let legacy = crate::db::for_chats(&chats);
+        legacy.with(|c| {
+            c.execute("INSERT INTO interviews VALUES ('old-practice', '2000-01-01T00:00:00Z', '{\"private\":true}')", [])?;
+            Ok(())
+        }).unwrap();
 
         let mut only_notes = std::io::Cursor::new(Vec::new());
         let packed = write_zip(&mut only_notes, &notes, &chats, Parts::default()).unwrap();
@@ -687,11 +690,21 @@ mod tests {
             "leo/trash/Old.md",
             "leo/uploads/abc/slides.pdf",
             "leo/chats/chat-1234.json",
-            "leo/interviews/interview-export-01.json",
         ] {
             assert!(listed.iter().any(|n| n == want), "{want} in {listed:?}");
         }
         assert!(!listed.iter().any(|n| n.contains(".git")), "{listed:?}");
+        assert!(!listed.iter().any(|n| n.starts_with("leo/interviews/")));
+        assert_eq!(
+            legacy
+                .with(|c| c.query_row(
+                    "SELECT data FROM interviews WHERE id = 'old-practice'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                ))
+                .unwrap(),
+            "{\"private\":true}"
+        );
         assert!(
             listed
                 .iter()

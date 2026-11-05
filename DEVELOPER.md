@@ -16,8 +16,8 @@ CI (`.github/workflows/ci.yml`) runs on main pushes and pull requests without
 duplicating branch pushes. `scripts/ci-base.cjs` selects the newest successful
 push ancestor or newer release tag; a failed or cancelled push never advances
 the baseline. Pull requests compare with their base. `scripts/ci-scope.sh`
-selects Rust, Node, browser and runner checks independently. Page-only changes
-run Node and both browser suites, without workspace tests or runner rebuilds;
+selects Rust, Node and browser checks independently. Page-only changes
+run Node and both browser suites, without workspace tests;
 docs only run formatting and planner regression tests. Both browser jobs use
 one test-server artifact, with separate servers and homes. Nightly, manual,
 merge queue and unknown-input runs test everything. `CI passed` aggregates the

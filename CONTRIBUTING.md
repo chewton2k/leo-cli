@@ -134,8 +134,7 @@ queue runs and the daily 09:23 UTC run select every check.
 | Core, services, host or web Rust | Workspace tests on macOS and Windows, clippy, Rust 1.88 check, Intel macOS build, both browser suites |
 | Desktop, CLI or Rust integration tests | The same Rust checks, without browser suites |
 | Installer or release helper scripts | Rust checks and installer validation, including PowerShell syntax on Windows |
-| A language runner's inputs | Its existing build validation, Rust checks and both browser suites |
-| Shared runtime catalog, dependency or CI configuration | All affected checks; dependencies and CI configuration select everything |
+| Dependency or CI configuration | All affected checks; dependencies and CI configuration select everything |
 
 Chromium runs in four shards and WebKit in one job. All five jobs download the
 same test-server artifact built once earlier in that run, and each installs only

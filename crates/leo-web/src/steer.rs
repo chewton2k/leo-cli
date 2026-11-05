@@ -30,6 +30,10 @@ impl Steering {
         }
     }
 
+    pub fn any_open(&self) -> bool {
+        self.0.lock().is_ok_and(|all| !all.is_empty())
+    }
+
     pub fn add(&self, id: &str, text: &str) -> Result<usize, &'static str> {
         let text = text.trim();
         if text.is_empty() {

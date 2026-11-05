@@ -1,5 +1,6 @@
 const LIBRARY_KEY = 'leo-library';
 const PREVIEWS_KEPT = 200;
+const PREVIEWS_NOW = 24;
 const LIBRARY_SORTS = [['updated', 'Last edited'], ['oldest', 'Oldest edit'], ['created', 'Newest made'], ['title', 'Title A–Z'], ['title-desc', 'Title Z–A']];
 const LIBRARY_SHOWS = [['all', 'All notes'], ['pinned', 'Pinned'], ['tasks', 'Open tasks'], ['week', 'Edited this week']];
 const library = { view: 'grid', sort: 'updated', show: 'all', previews: new Map(), observer: null, arrival: null };
@@ -73,6 +74,7 @@ function libraryTools() {
 
 function libraryClasses() {
   document.body.classList.toggle('on-library', state.view === 'folder');
+  if (state.view === 'folder') document.body.classList.remove('on-note');
 }
 
 function stopLibraryArrival() {
@@ -122,7 +124,9 @@ function watchPreviews() {
     el.innerHTML = `<div class="prose note-mini">${html || '<p class="hint">An empty page, ready for your notes.</p>'}</div>`;
     el.removeAttribute('data-pending');
   };
-  const pending = [...app.querySelectorAll('.note-thumb[data-pending]')];
+  const all = [...app.querySelectorAll('.note-thumb[data-pending]')];
+  all.slice(0, PREVIEWS_NOW).forEach(draw);
+  const pending = all.slice(PREVIEWS_NOW);
   if (typeof IntersectionObserver !== 'function') {
     pending.slice(0, PAGE).forEach(draw);
     return;

@@ -624,6 +624,23 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             ],
         });
     }
+    let (threads, bytes) = crate::margin::bytes(chats_dir);
+    if threads > 0 {
+        out.push(Area {
+            id: "margin".into(),
+            title: "Felix's margin notes".into(),
+            about: "What Felix wrote beside your notes, with the replies. Kept on this computer, never in the note files or your backup.".into(),
+            path: chats::db_of(chats_dir).path().display().to_string(),
+            bytes,
+            items: Vec::new(),
+            actions: vec![act(
+                "delete-all",
+                "Delete every margin note",
+                Some("Felix's margin notes and their replies go. Your notes stay as they are."),
+                false,
+            )],
+        });
+    }
     let tasks = crate::tasks::storage_entries(chats_dir);
     let task_bytes = size_of(&crate::tasks::tasks_dir(chats_dir));
     if !tasks.is_empty() || task_bytes > 0 {
@@ -790,6 +807,10 @@ pub fn act_on_more(
                 if gone == 1 { "" } else { "s" }
             ))
         }
+        ("margin", "delete-all") => Ok(plural_deleted(
+            crate::margin::clear(chats_dir),
+            "margin note",
+        )),
         ("tasks", "delete") => {
             let gone = request
                 .items

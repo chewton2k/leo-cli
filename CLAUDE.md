@@ -34,7 +34,7 @@ follow-up push. CI compares main with the newest verified ancestor (a successful
 CI push or a newer release), and pull requests with their base. Unknown inputs
 and nightly/manual runs test everything; failed and cancelled pushes never
 advance the baseline. `scripts/ci-scope.sh` selects independent Rust, browser,
-Node and runner checks; CONTRIBUTING.md describes the selection.
+Node checks; CONTRIBUTING.md describes the selection.
 
 For website changes, do not build leo or run local Cargo checks/tests; rely on
 CI for compiled and browser validation (the user's call, 2026-10-11). Lightweight
@@ -111,7 +111,7 @@ scan, or a loopback connect with a 300 ms timeout. Never a real request.
 `manual.rs` creates one note on first run: a one-screen quickstart for the app
 (Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
 real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (21); deleting the
+in a `.manual-installed` marker carrying `MANUAL_VERSION` (23); deleting the
 manual survives the next launch, and a version bump rewrites the user's note.
 Tests: under 60 lines, names Settings, Felix, Record and ⌘F, and names no
 terminal command.
@@ -236,6 +236,9 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips
   on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian), and leo's own markers (`manual`, `listen`) stay.
+- Felix in the margin (2026-11-04, the user's call): threads in `leo.db`, never
+  note files or git; read-along is off by default. Reads use `Powers.toolless`
+  (no tools at all). See crates/leo-web/CLAUDE.md.
 - Boards (2026-11-02, the user's call): Jira-style task boards on their own
   rail page (`#/boards`), several boards, untimed cards (title, subheading,
   description, priority) in custom columns, dragged between columns and boards.
@@ -261,21 +264,15 @@ the user asks for. Note workflows (folder defaults, note formats, vocabulary, sa
 actions, chat scope) were removed on 2026-10-10, the user's call: the "What do you
 want from the notes?" box replaces formats.
 
-Interview practice is Felix's third style and a sidebar/menu page (2026-10-12).
-Use shared configurable frameworks, independent of notes, with frozen attempts,
-provisional evidence-based feedback and typed/code/vector workspaces. Practice
-schedules were removed (2026-10-13, the user's call). Only the user's own code
-and the answer key's reference solution (to check the tests) run, in the
-browser's sandbox (never on the server); see "Instant feedback" in
-crates/leo-web/CLAUDE.md. Felix sees and can fix the test cases; hidden tests
-show once submitted; Auto applies Felix's code edits with Undo.
-Reuse current cards, sheets, controls and theme tokens; keep asynchronous updates
-from replacing a focused editor. See crates/leo-web/CLAUDE.md and
-.superpowers/plans/2026-10-12-felix-interviews.md for the implementation invariants.
+Interview coding practice was removed by the user's decision on 2026-11-05.
+Felix keeps Chat and Study, including quizzes, study sessions and review. Legacy
+interview database tables and rows stay unused; old interview-style chats open
+as Chat and retired cards show a short removal message. Downloaded runtimes stay
+visible and removable through Storage's symlink-safe downloaded-files cleanup.
 
 Storage scans use a read-only Store snapshot and blocking workers so filesystem
 walks and database compaction do not hold the notes lock. The Housekeeper lists
-both config and data folder settings, the application, Python runtime and other
+both config and data folder settings, the application and
 model downloads; cache removal refuses symlinks and active partial downloads.
 
 Website backup leaves the browser through an authenticated beacon; the web crate

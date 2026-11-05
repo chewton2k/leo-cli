@@ -30,6 +30,7 @@ function askAboutSelection() {
   hideAskFloat();
   if (!picked) return toast('Select some text in the note first.');
   if (!s.note.id) return toast('Felix can read this note once it has been saved.');
+  if (marginAsk(s, picked)) return;
   chat.attachSelection({ note: s.note.id, title: cleanTitle(s.title.textContent) || s.note.title || 'Untitled', ...picked });
 }
 

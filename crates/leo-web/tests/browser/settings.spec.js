@@ -90,10 +90,11 @@ test('Settings sections keep drafts and selections across redraws in both themes
       throw new Error(url);
     }
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
-    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else resetSetting(el);});
     ${read('theme.js')}
     ${read('app/refresh.js')}
     ${read('app/trash.js')}
+    const stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
     ${read('app/settings-navigation.js')}
     ${read('app/select-menu.js')}
     ${read('app/settings.js')}
@@ -123,9 +124,9 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.evaluate(()=>{window.__LEO_VISIBLE__=true;window.dispatchEvent(new Event('leo-visibility'));window.dispatchEvent(new Event('leo-visibility'));});
       expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads+1);
       await page.clock.resume();
-      await expect(page.locator('.settings-nav a')).toHaveCount(10);
+      await expect(page.locator('.settings-nav a')).toHaveCount(11);
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
-      await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
+      await expect(page.locator('.settings-nav a svg')).toHaveCount(11);
       await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();
       const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
       const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
@@ -135,7 +136,8 @@ test('Settings sections keep drafts and selections across redraws in both themes
       for(const width of [900,1600]) {
         await page.setViewportSize({width,height:850});
         const [start,end]=await page.evaluate(()=>{const main=document.querySelector('main').getBoundingClientRect();return [document.querySelector('.settings-nav').getBoundingClientRect().left-main.left,main.right-document.querySelector('.settings-section').getBoundingClientRect().right];});
-        expect(Math.abs(start-end)).toBeLessThan(2);
+        if(width<1000) expect(Math.abs(start-end)).toBeLessThan(2);
+        else expect(start,'beside the explorer the section list sits close to it').toBeLessThanOrEqual(80);
       }
       await page.setViewportSize({width:900,height:850});
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});
@@ -190,6 +192,20 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(push).toHaveAttribute('aria-expanded','false');
       const pillOn=async()=>page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top)+Math.abs(pill.height-on.height);});
       expect(await pillOn()).toBeLessThan(2);
+      await page.locator('#settings-search').fill('zzzz');
+      await expect(page.getByText('No settings match “zzzz”.')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#settings-search')).toHaveValue('');
+      await expect(page.getByRole('listbox',{name:'Settings search results'})).toHaveCount(0);
+      await page.locator('#settings-search').fill('custom words');
+      await expect(page.getByRole('option',{name:/Custom words/})).toHaveAttribute('aria-selected','true');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading',{level:1,name:'Dictation'})).toBeVisible();
+      await expect(page.locator('[data-find="dictation-words"]')).toBeFocused();
+      const found=await page.locator('[data-find="dictation-words"]').evaluate(el=>{const box=el.getBoundingClientRect();return Math.abs(box.top+box.height/2-innerHeight/2);});
+      expect(found).toBeLessThan(60);
+      await expect(page.locator('#settings-search')).toHaveValue('');
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
       await expect(page.getByRole('heading',{level:1,name:'Dictation'})).toBeVisible();
       expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
@@ -226,6 +242,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.evaluate(()=>window.audit.redraw());
       await expect(words).toBeFocused();
       expect(await words.evaluate(el=>[el.selectionStart,el.selectionEnd])).toEqual([2,7]);
+      await page.getByRole('link',{name:'General',exact:true}).click();
+      const themeReset=page.getByRole('button',{name:'Reset Theme to default'});
+      await expect(themeReset).toBeHidden();
+      await page.getByRole('button',{name:'Dark',exact:true}).click();
+      await expect(themeReset).toBeVisible();
+      await themeReset.click();
+      await expect(themeReset).toBeHidden();
+      await expect(page.getByRole('button',{name:'Match device',exact:true})).toHaveAttribute('aria-pressed','true');
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
       await page.waitForTimeout(400);
       expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);

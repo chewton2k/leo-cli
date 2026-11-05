@@ -6,6 +6,7 @@ const APP_JS: &str = concat!(
     "(function () {\n'use strict';\n",
     include_str!("../web/app/refresh.js"),
     include_str!("../web/app/core.js"),
+    include_str!("../web/app/motion.js"),
     include_str!("../web/app/browse.js"),
     include_str!("../web/app/trash.js"),
     include_str!("../web/app/settings-navigation.js"),
@@ -23,9 +24,9 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/math.js"),
     include_str!("../web/app/sources.js"),
     include_str!("../web/app/passages.js"),
+    include_str!("../web/app/margin-notes.js"),
     include_str!("../web/app/calendar.js"),
     include_str!("../web/app/boards.js"),
-    include_str!("../web/app/interviews.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
     "})();\n",
@@ -38,44 +39,9 @@ const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
 const SCHEDULE_JS: &str = include_str!("../web/schedule.js");
 const THEME_JS: &str = include_str!("../web/theme.js");
-const RUNNER_HTML: &str = include_str!("../web/runner.html");
-const RUNNER_JS: &str = include_str!("../web/runner.js");
-pub(crate) const RUNNER_POLICY: &str = "default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; \
-     worker-src blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
 const CHAT_JS: &str = include_str!("../web/chat.js");
 pub(crate) async fn pane_resize_js() -> Response {
     javascript(include_str!("../web/pane-resize.js"))
-}
-pub(crate) async fn interview_js() -> Response {
-    javascript(include_str!("../web/interview.js"))
-}
-pub(crate) async fn code_tools_js() -> Response {
-    javascript(include_str!("../web/vendor/code-tools.min.js"))
-}
-pub(crate) async fn typescript_js() -> Response {
-    javascript(include_str!("../web/vendor/typescript.min.js"))
-}
-pub(crate) async fn wasi_shim_js() -> Response {
-    javascript(include_str!("../web/vendor/wasi-shim.min.js"))
-}
-const SQL_JS: &str = include_str!("../web/vendor/sql/sql-wasm.js");
-const SQL_WASM: &[u8] = include_bytes!("../web/vendor/sql/sql-wasm.wasm");
-
-pub(crate) async fn sql_file(axum::extract::Path(name): axum::extract::Path<String>) -> Response {
-    let (kind, body): (&str, &'static [u8]) = match name.as_str() {
-        "sql-wasm.js" => ("text/javascript; charset=utf-8", SQL_JS.as_bytes()),
-        "sql-wasm.wasm" => ("application/wasm", SQL_WASM),
-        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
-    };
-    (
-        [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-        ],
-        body,
-    )
-        .into_response()
 }
 const AUDIO_QUEUE_JS: &str = include_str!("../web/audio-queue.js");
 pub(crate) async fn browser_storage_js() -> Response {
@@ -265,29 +231,6 @@ pub(crate) async fn doc_js() -> Response {
     javascript(DOC_JS)
 }
 
-pub(crate) async fn runner_html() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CONTENT_SECURITY_POLICY, RUNNER_POLICY),
-            (header::X_FRAME_OPTIONS, "SAMEORIGIN"),
-        ],
-        RUNNER_HTML,
-    )
-        .into_response()
-}
-
-pub(crate) async fn runner_js() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            (header::CONTENT_SECURITY_POLICY, RUNNER_POLICY),
-        ],
-        RUNNER_JS,
-    )
-        .into_response()
-}
-
 pub(crate) async fn schedule_js() -> Response {
     javascript(SCHEDULE_JS)
 }
@@ -314,6 +257,9 @@ pub(crate) async fn favicon() -> Response {
         .into_response()
 }
 
+pub(crate) async fn margin_js() -> Response {
+    javascript(include_str!("../web/margin.js"))
+}
 pub(crate) async fn chat_js() -> Response {
     javascript(CHAT_JS)
 }
@@ -347,21 +293,6 @@ mod tests {
             }
         }
         assert!(parts > 0);
-    }
-
-    #[test]
-    fn the_code_runner_is_sandboxed_and_reaches_only_leo_without_its_cookies() {
-        for part in [
-            "connect-src 'self'",
-            "sandbox allow-scripts",
-            "frame-ancestors 'self'",
-            "form-action 'none'",
-        ] {
-            assert!(RUNNER_POLICY.contains(part), "{part}");
-        }
-        assert!(!RUNNER_POLICY.contains("allow-same-origin"));
-        assert!(RUNNER_HTML.contains("src=\"/runner.js\""));
-        assert!(!RUNNER_JS.contains("fetch(") && !RUNNER_JS.contains("XMLHttpRequest"));
     }
 
     #[test]

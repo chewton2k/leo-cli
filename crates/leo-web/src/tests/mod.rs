@@ -6,7 +6,7 @@ mod combine;
 mod dictation;
 mod felix;
 mod housekeeping;
-mod interview_cost;
+mod margin;
 mod notes;
 mod passages;
 mod pictures;
@@ -14,6 +14,7 @@ mod recording;
 mod sources;
 mod speech;
 mod start;
+mod study_compat;
 mod study_context;
 mod tasks;
 mod trash;
@@ -60,6 +61,9 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
     store.save().unwrap();
     let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, None));
     let state = AppState {
+        toolless: None,
+        toolless_chat: None,
+        margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
@@ -75,16 +79,6 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         quick: None,
         housekeeping: None,
         usage: Default::default(),
-        python: None,
-        python_fetch: Default::default(),
-        cpp: None,
-        cpp_fetch: Default::default(),
-        go: None,
-        go_fetch: Default::default(),
-        java: None,
-        java_fetch: Default::default(),
-        rust: None,
-        rust_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         work: Default::default(),
@@ -149,8 +143,4 @@ fn wait_for(state: &AppState, id: &str) -> ImportJob {
 fn json_of(response: Response) -> serde_json::Value {
     let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
-}
-
-pub(crate) fn state_for_python() -> (AppState, tempfile::TempDir, Vec<String>) {
-    state_with(&[])
 }

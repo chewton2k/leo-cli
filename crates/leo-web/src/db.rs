@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 pub const FILE: &str = "leo.db";
 pub const BEFORE: &str = ".before-database";
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS dictations (
@@ -116,6 +116,27 @@ CREATE TABLE IF NOT EXISTS graph_meta (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS margin_threads (
+    id TEXT PRIMARY KEY,
+    note TEXT NOT NULL,
+    quote TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    suffix TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    messages TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS margin_threads_by_note ON margin_threads(note, status, created_at);
+CREATE TABLE IF NOT EXISTS margin_modes (
+    note TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS margin_state (
+    key TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS timings (
     kind TEXT PRIMARY KEY,
     data TEXT NOT NULL
@@ -142,13 +163,6 @@ impl Db {
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
         conn.execute_batch(SCHEMA)?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM interview_problem_undo WHERE updated < ?1",
-            [
-                (chrono::Utc::now() - chrono::Duration::hours(crate::interview_delete::UNDO_HOURS))
-                    .to_rfc3339(),
-            ],
-        )?;
         let has_description: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_tasks') WHERE name = 'description')",
             [],
@@ -270,6 +284,29 @@ pub fn put_aside(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opening_the_database_preserves_expired_retired_problem_recovery_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("leo.db");
+        let db = super::Db::open(&path).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO interview_problem_undo VALUES ('old-undo', 'old-practice', '2000-01-01T00:00:00Z', '{\"kept\":true}')", [])?;
+            Ok(())
+        }).unwrap();
+        drop(db);
+        let reopened = super::Db::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .with(|c| c.query_row(
+                    "SELECT data FROM interview_problem_undo WHERE id = 'old-undo'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                ))
+                .unwrap(),
+            "{\"kept\":true}"
+        );
+    }
+
     use super::*;
 
     #[test]

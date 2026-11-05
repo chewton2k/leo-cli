@@ -4,7 +4,6 @@
 //! about how it is displayed.
 
 pub mod ai;
-pub mod clang;
 pub mod config;
 pub mod doctor;
 pub mod figures;
@@ -13,8 +12,6 @@ pub mod import;
 pub mod listen;
 pub mod meaning;
 pub mod providers;
-pub mod pyodide;
-pub mod runtimes;
 pub mod session;
 pub mod speech;
 pub mod update;

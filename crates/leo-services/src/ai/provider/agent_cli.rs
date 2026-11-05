@@ -228,6 +228,7 @@ pub struct AgentCli {
     bin: String,
     model: Option<String>,
     effort: Option<String>,
+    no_tools: bool,
     quiet_limit: Duration,
     total_limit: Duration,
     spent: Mutex<Option<Spent>>,
@@ -253,6 +254,7 @@ impl AgentCli {
                 cfg.model.as_deref().unwrap_or(""),
                 cfg.effort.as_deref(),
             ),
+            no_tools: cfg.no_tools,
             quiet_limit: QUIET_LIMIT,
             total_limit: TOTAL_LIMIT,
             spent: Mutex::new(None),
@@ -276,14 +278,16 @@ impl AgentCli {
         let mut args: Vec<String> = Vec::new();
         let input = match self.agent {
             Agent::ClaudeCode => {
+                args.extend(["-p", "--safe-mode"].map(String::from));
+                if self.no_tools {
+                    args.extend(["--tools", ""].map(String::from));
+                } else {
+                    args.extend(
+                        ["--tools", "WebSearch", "--allowedTools", "WebSearch"].map(String::from),
+                    );
+                }
                 args.extend(
                     [
-                        "-p",
-                        "--safe-mode",
-                        "--tools",
-                        "WebSearch",
-                        "--allowedTools",
-                        "WebSearch",
                         "--no-session-persistence",
                         "--output-format",
                         "stream-json",
@@ -340,6 +344,9 @@ impl AgentCli {
                     .map(String::from),
                 );
                 args.extend(["-c".into(), "skills.include_instructions=false".into()]);
+                if self.no_tools {
+                    args.extend(["-c".into(), "web_search=\"disabled\"".into()]);
+                }
                 if let Some(model) = &self.model {
                     args.extend(["--model".to_string(), model.clone()]);
                 }
@@ -1400,6 +1407,34 @@ mod tests {
             model: model.map(str::to_string),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_toolless_agent_is_offered_nothing_at_all() {
+        let claude = AgentCli::new(
+            "claude_code".into(),
+            Agent::ClaudeCode,
+            &ProviderConfig {
+                no_tools: true,
+                ..Default::default()
+            },
+        );
+        let (args, _) = claude.arguments(&request(), &[], &[], &[]);
+        let at = args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(args[at + 1], "");
+        assert!(!args
+            .iter()
+            .any(|a| a == "WebSearch" || a == "--allowedTools"));
+        let codex = AgentCli::new(
+            "codex".into(),
+            Agent::Codex,
+            &ProviderConfig {
+                no_tools: true,
+                ..Default::default()
+            },
+        );
+        let (args, _) = codex.arguments(&request(), &[], &[], &[]);
+        assert!(args.iter().any(|a| a == "web_search=\"disabled\""));
     }
 
     #[test]
