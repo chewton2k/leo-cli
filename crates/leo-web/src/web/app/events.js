@@ -90,17 +90,20 @@ function reopenLastPlace() {
 }
 
 window.addEventListener('hashchange', async () => {
+  const request = ++navigationRequest;
   const leaving = state.session;
+  const mine = seq;
   const hash = location.hash;
+  const current = () => request === navigationRequest && mine === seq && state.session === leaving;
   if (leaving) {
     leaving.doc.stop();
     try { await flush(leaving); }
     catch (error) {
-      if (state.session === leaving) history.replaceState(history.state, '', leaving.note.id ? noteHash(leaving.note.id) : leaving.note.directory ? `#/new/${enc(leaving.note.directory)}` : '#/new');
-      fail(error);
+      if (!current() || location.hash !== hash) return;
+      showSaveFailure(leaving, error, saved => go(hash, { kept: saved }), current);
       return;
     }
-    if (location.hash !== hash || state.session !== leaving) return;
+    if (!current() || location.hash !== hash) return;
     leaving.doc.destroy();
     state.session = null;
   }

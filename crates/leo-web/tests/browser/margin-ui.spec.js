@@ -53,16 +53,18 @@ test('compact margin anchors stay outside the passage and open real persisted re
   const paragraph = await page.locator('#doc .blk').first().boundingBox();
   expect(anchor.x + anchor.width).toBeLessThanOrEqual(paragraph.x);
   const stroke = page.locator('.margin-ink .squiggle');
-  const dash = await stroke.evaluate(el => {
+  const dashes = await stroke.evaluateAll(lines => lines.map(el => {
     const length = el.getTotalLength();
     const units = el.hasAttribute('pathLength') ? el.pathLength.baseVal.value : length;
     return parseFloat(getComputedStyle(el).strokeDasharray) * length / units;
-  });
-  expect(dash).toBeLessThanOrEqual(2);
+  }));
+  expect(dashes.length).toBeGreaterThan(0);
+  for (const dash of dashes) expect(dash).toBeLessThanOrEqual(2);
   await mark.click();
   await expect(page.locator('.margin-note .margin-felix')).toContainText(thread.messages.at(-1).text);
   await expect(page.locator('.margin-reply textarea')).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  expect(await page.locator('.margin-ink .squiggle').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+  const animations = await stroke.evaluateAll(lines => lines.map(el => getComputedStyle(el).animationName));
+  for (const animation of animations) expect(animation).toBe('none');
 });

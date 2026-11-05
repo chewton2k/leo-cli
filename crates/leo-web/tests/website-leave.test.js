@@ -11,6 +11,7 @@ function environment({ draft = false } = {}) {
   const windows = {}, documents = {}, sent = [], saved = [], places = [];
   let rendered = 0;
   const context = {
+    navigationRequest: 0, seq: 0,
     window: { addEventListener: (name, fn) => { windows[name] = fn; } },
     document: { visibilityState: 'visible', activeElement: null, body: {}, addEventListener: (name, fn) => { documents[name] = fn; } },
     state: { view: 'workspace', session: null },

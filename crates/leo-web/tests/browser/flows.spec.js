@@ -337,9 +337,9 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
   await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-expanded', 'true');
   await expect(page).toHaveURL(/#\/settings$/);
-  await side.locator('[data-action="chat"]').click();
+  await expect(side.locator('[data-action="chat"]')).toHaveCount(0);
+  await page.locator('#chat-toggle').click();
   await expect(page.locator('#chat')).toBeVisible();
-  await expect(side.locator('[data-action="chat"]')).toHaveClass(/\bon\b/);
   await page.locator('[data-chat="close"]').click();
 
   await page.keyboard.press('ControlOrMeta+f');
@@ -1051,12 +1051,12 @@ test.describe('Felix', () => {
     await expect(chat.locator('.msg.leo').last()).toContainText(`About second question ${tag}`);
     await openSidebar();
     await second.locator('.chat-history-x').click();
-    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await expect(second.locator('.chat-history-x')).toHaveClass(/sure/);
     const list = await sidebar.locator('#chat-history-list').boundingBox();
     await page.mouse.click(list.x + list.width / 2, list.y + list.height - 6);
-    await expect(second.locator('.chat-history-x')).toHaveText('×');
+    await expect(second.locator('.chat-history-x')).not.toHaveClass(/sure/);
     await second.locator('.chat-history-x').click();
-    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await expect(second.locator('.chat-history-x')).toHaveClass(/sure/);
     await second.locator('.chat-history-x').click();
     await expect(second).toHaveCount(0);
     await expect(chat.locator('.msg')).toHaveCount(0);
@@ -1938,7 +1938,7 @@ test.describe('readability', () => {
       const history = page.locator('.chat-history');
       if (await history.isHidden()) await page.getByRole('button', { name: 'Your chats', exact: true }).click();
       await history.locator(`[data-chat="forget"][data-id="readable-${tag}"]`).click();
-      await expect(history.locator('.chat-history-x.sure')).toHaveText('Delete');
+      await expect(history.locator('.chat-history-x.sure')).toHaveAttribute('aria-label', /^Confirm delete/);
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
     });

@@ -45,9 +45,49 @@ test('context targets capture ids and folders without changing the current note'
   const vm = require('node:vm');
   const side = read('web/app/side.js');
   const source = side.slice(side.indexOf('function explorerTarget('), side.indexOf('\nfunction explorerMenu('));
-  const target = vm.runInNewContext(`${source} explorerTarget;`);
-  const el = (note, folder) => ({ closest: selector => selector === '.side-note-wrap' && note ? { querySelector: () => ({ dataset: note }) } : selector === '.side-folder' && folder ? { dataset: { dropDir: folder } } : null });
-  assert.deepEqual(JSON.parse(JSON.stringify(target(el({ id: 'note-a', from: 'Folder A' })))), { kind: 'note', id: 'note-a', dir: 'Folder A' });
-  assert.deepEqual(JSON.parse(JSON.stringify(target(el(null, 'Folder B')))), { kind: 'folder', dir: 'Folder B' });
-  assert.deepEqual(JSON.parse(JSON.stringify(target(el()))), { kind: 'root', dir: '' });
+  const target = vm.runInNewContext(`${source} explorerTarget;`, { creationDir: () => 'Scope' });
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const el = ({ note, folder, group, region } = {}) => ({ closest: selector => selector === '.side-note-wrap' && note ? { querySelector: () => ({ dataset: note }) } : selector === '.side-folder' && folder ? { dataset: { dropDir: folder } } : selector === '.side-group' && group ? {} : selector === '.side-note-status, .side-kids' && region !== undefined ? { dataset: { dropDir: region } } : null });
+  assert.deepEqual(plain(target(el({ note: { id: 'note-a', from: 'Folder A' } }))), { kind: 'note', id: 'note-a', dir: 'Folder A' });
+  assert.deepEqual(plain(target(el({ folder: 'Folder B' }))), { kind: 'folder', dir: 'Folder B' });
+  assert.deepEqual(plain(target(el())), { kind: 'root', dir: '' });
+  assert.deepEqual(plain(target(el({ group: true }))), { kind: 'root', dir: 'Scope' });
+  assert.deepEqual(plain(target(el({ region: 'Folder C/Child' }))), { kind: 'root', dir: 'Folder C/Child' });
+  assert.deepEqual(plain(target(el({ region: '' }))), { kind: 'root', dir: '' });
+});
+
+test('note titles are data: slashes are allowed, an empty name is not', () => {
+  const vm = require('node:vm');
+  const side = read('web/app/side.js');
+  const source = side.slice(side.indexOf('function validNoteName('), side.indexOf('\nasync function afterExplorerNote('));
+  const toasts = [];
+  const valid = vm.runInNewContext(`${source} validNoteName;`, { toast: (text) => toasts.push(text) });
+  for (const title of ['Q3/Q4 plan', 'a\\b', '../Notes', 'plain']) assert.equal(valid(title), true, title);
+  assert.equal(valid(''), false);
+  assert.deepEqual(toasts, ['Enter a note name.']);
+});
+
+test('move choices leave out where the note or folder already is', () => {
+  const vm = require('node:vm');
+  const side = read('web/app/side.js');
+  const source = side.slice(side.indexOf('async function explorerMoveSheet('), side.indexOf('\nfunction validNoteName('));
+  const shown = [];
+  const context = {
+    seq: 1,
+    api: async () => ['A', 'A/B', 'A/B/C', 'D'].map((name) => ({ name })),
+    parentOf: (path) => path.split('/').slice(0, -1).join('/'),
+    esc: (text) => text,
+    folderLabel: (dir) => dir.split('/').pop() || 'Top level',
+    ICON: { folder: '' },
+    focusOnClose() {},
+    sheet: (html) => { shown.push([...html.matchAll(/data-explorer-move="([^"]*)"/g)].map((m) => m[1])); return { addEventListener() {} }; },
+  };
+  const move = vm.runInNewContext(`${source} explorerMoveSheet;`, context);
+  return (async () => {
+    await move({ kind: 'note' }, { title: 'N', directory: 'A/B' });
+    await move({ kind: 'note' }, { title: 'N', directory: '' });
+    await move({ kind: 'folder', dir: 'A/B' }, null);
+    await move({ kind: 'folder', dir: 'D' }, null);
+    assert.deepEqual(shown, [['', 'A', 'A/B/C', 'D'], ['A', 'A/B', 'A/B/C', 'D'], ['', 'D'], ['A', 'A/B', 'A/B/C']]);
+  })();
 });

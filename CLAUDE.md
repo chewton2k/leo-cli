@@ -11,7 +11,7 @@ the compiler enforces it — do not add an upward dependency:
 | Crate | Holds | Depends on |
 |-------|-------|------------|
 | `crates/leo-core` | `notes`, `store` (+ undo), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `manual`, `action/` (`Line`/`Kind` output lines and front matter) | — |
-| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
+| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, theme data), `listen`, `health`, `providers` | core |
 | `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
 | `crates/leo-host` | `powers()` (the AI, speech, settings, storage and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
 | `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, services, host, web |
@@ -211,8 +211,8 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
 - Boards (2026-11-02, the user's call): Jira-style task boards on their own
   rail page (`#/boards`), several boards, untimed cards (title, subheading,
   description, priority) in custom columns, dragged between columns and boards.
-  Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` sync like tasks
-  (union merge, newest line wins); they are not calendar tasks. Felix has
+  Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` follow tasks (one
+  JSON line per save, newest line wins); they are not calendar tasks. Felix has
   board tools (list/open, add/update/move/delete cards, add/change/delete
   boards) under the usual Ask/Auto/Read and Undo. See crates/leo-web/CLAUDE.md.
 - Menu bar, study order, idle compaction and in-app drag and drop

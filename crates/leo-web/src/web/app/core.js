@@ -448,6 +448,7 @@ const SEARCH_HIGHLIGHT_NODES = 20000;
 let searchHighlightTimer;
 let searchPassage = null;
 let openingNote = null;
+let navigationRequest = 0;
 
 function clearSearchHighlight() {
   clearTimeout(searchHighlightTimer);
@@ -489,17 +490,34 @@ window.addEventListener('hashchange', () => {
   if (searchPassage && searchPassage.hash !== location.hash) searchPassage = null;
 });
 
-async function go(hash, { replace = false, search = null, note = null, isCurrent = null } = {}) {
+function showSaveFailure(s, error, retry, current) {
+  history.replaceState(history.state, '', s.note.id ? noteHash(s.note.id) : s.note.directory ? `#/new/${enc(s.note.directory)}` : '#/new');
+  if (!s.persisted || error instanceof Locked) return fail(error);
+  toast(error instanceof Offline ? "Can't reach leo. Your draft is kept in this browser." : error.message || 'Leo could not save this note. Your draft is kept in this browser.', {
+    bad: true,
+    action: 'Leave, draft kept',
+    run: () => { if (current() && s.persisted) return retry(s); },
+  });
+}
+
+async function go(hash, { replace = false, search = null, note = null, isCurrent = null, kept = null } = {}) {
+  const request = ++navigationRequest;
   const leaving = state.session;
   const mine = seq;
+  const current = () => request === navigationRequest && mine === seq && state.session === leaving && (!isCurrent || isCurrent());
   if (leaving) {
     leaving.doc.stop();
-    try { await flush(leaving); }
-    catch (error) { fail(error); return; }
-    if (mine !== seq || state.session !== leaving) return;
+    if (!(kept === leaving && leaving.persisted)) {
+      try { await flush(leaving); }
+      catch (error) {
+        if (current()) showSaveFailure(leaving, error, saved => go(hash, { replace, search, note, isCurrent, kept: saved }), current);
+        return;
+      }
+    }
+    if (!current()) return;
   }
-  if (isCurrent && !isCurrent()) return;
-  if (leaving && state.session === leaving) {
+  if (!current()) return;
+  if (leaving) {
     leaving.doc.destroy();
     state.session = null;
   }
@@ -729,6 +747,8 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     if (state.session && state.session.doc) state.session.doc.destroy();
     s = draft || saving.open(note);
     s.tags = [...s.edit.tags];
+    if (side.openedNote !== note.id) side.target = null;
+    side.openedNote = note.id;
     state = { view: 'note', dir: note.directory, session: s };
     chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
     document.title = `${note.title || 'New note'} · leo`;
@@ -736,7 +756,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
-    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Waits until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
+    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Waits until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
     <div class="note-meta"><span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>

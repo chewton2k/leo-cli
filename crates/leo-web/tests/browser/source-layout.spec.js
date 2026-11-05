@@ -145,12 +145,12 @@ test('note headings navigate without losing edits and adapt beside Felix in both
   const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
   const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
-  const show = core.slice(core.indexOf('function noteActions('), core.indexOf('async function newNote('));
+  const show = core.slice(core.indexOf('function noteActions('), core.indexOf('function newNote('));
   const body = '# Introduction to planetary environments\n\nFirst paragraph.\n\n' + 'Reading material.\n\n'.repeat(80) + '## **Sounds**\n\nCompare vowels.\n\n### Vowel examples\n\n' + 'Examples to compare.\n\n'.repeat(30) + '```md\n# Ignore code\n```\n\n## Sounds\n\nLast paragraph.';
   const fixture = `const md = window.leoMarkdown, leoDoc = window.leoDoc;
     const $ = (q, root = document) => root.querySelector(q), app = $('#app');
     const esc = md.escape, enc = encodeURIComponent;
-    let seq = 0, state = {}, saved = '', citedLines = null;
+    let seq = 0, state = {}, side = {}, saved = '', citedLines = null;
     const noteHash = id => '#/n/' + encodeURIComponent(id);
     ${core.slice(core.indexOf('const SEARCH_HIGHLIGHT_MS'), core.indexOf('async function go('))}
     const source = {}, chat = {setContext() {}};

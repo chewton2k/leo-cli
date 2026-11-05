@@ -89,6 +89,7 @@ function swipeToClose(panel) {
 function closeSheet(now = false) {
   const open = $('.scrim');
   const returnFocus = open && open.returnFocus;
+  const focusBack = typeof returnFocus === 'function' ? (now ? null : returnFocus) : () => returnFocus;
   const foldersReturn = open?.foldersReturn && !now;
   const tree = open?.querySelector('#folders-sheet .side-tree');
   if (tree) side.sheetScroll = tree.scrollTop;
@@ -116,8 +117,13 @@ function closeSheet(now = false) {
     state.keepPending = null;
     if (state.view === 'storage' && state.storage) drawStorage(state.storage);
   }
-  if (foldersReturn && !sideWide()) showFolders();
-  else if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+  if (foldersReturn && !sideWide()) {
+    showFolders();
+    if (typeof returnFocus === 'function') returnFocus()?.focus({ preventScroll: true });
+  } else {
+    const back = focusBack?.();
+    if (back?.isConnected) back.focus({ preventScroll: true });
+  }
 }
 
 const QUICK_PLACES = [
@@ -329,6 +335,7 @@ function menu() {
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
     <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span>${tasksDueBadge()}</button>
     <button class="list-row" data-action="boards">${ICON.board}<span class="grow">Boards</span></button>
+    <button class="list-row" data-action="usage">${svg('<path d="M4 19V9m8 10V5m8 14v-7"/>')}<span class="grow">Usage</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
     <button class="list-row" data-action="storage">${ICON.storage}<span class="grow">Storage</span></button>
@@ -355,6 +362,7 @@ function renameFolderSheet(from = state.dir) {
     <label class="field">${ICON.folder}<input id="folder-rename" data-from="${esc(from)}" value="${esc(folderLabel(from))}" maxlength="120" autocomplete="off" aria-label="Folder name" enterkeyhint="done"></label>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="folder-rename-save">Rename</button></div>`);
   const input = $('#folder-rename', box);
+  focusOnClose(box, { kind: 'folder', dir: from });
   input.focus();
   input.select();
   input.addEventListener('keydown', (event) => {
@@ -375,8 +383,10 @@ async function renameFolder() {
   try {
     if (state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) await ready();
     const moved = await api('/api/dirs/rename', { method: 'POST', body: { from, name } });
+    box.focusAt = { kind: 'folder', dir: moved.path };
     if (box.isConnected) closeSheet();
     await afterMove(from, moved.path);
+    refocusExplorer(box.focusAt);
     toast(`Renamed folder to “${name}”`, {
       action: 'Undo',
       run: () => api('/api/dirs/rename', { method: 'POST', body: { from: moved.path, name: folderLabel(from) } }).then(() => afterMove(moved.path, from)).catch(fail),
@@ -389,9 +399,10 @@ async function renameFolder() {
 
 function deleteFolderAsk(from = state.dir) {
   if (!from || typeof from !== 'string') return;
-  sheet(`<h3>Delete “${esc(folderLabel(from))}”?</h3>
+  const box = sheet(`<h3>Delete “${esc(folderLabel(from))}”?</h3>
     <p>This folder, its subfolders and all their notes move to the trash. Undo brings them back.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-delete-now" data-from="${esc(from)}">Move to trash</button></div>`);
+  focusOnClose(box, { kind: 'folder', dir: from });
 }
 
 async function deleteFolderNow(el) {
@@ -404,6 +415,7 @@ async function deleteFolderNow(el) {
   try {
     if (state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) await ready();
     const done = await api('/api/trash/move', { method: 'POST', body: { notes: [], dirs: [from] } });
+    box.focusAt = { kind: 'folder', dir: parentOf(from) };
     if (box.isConnected) closeSheet();
     if (mine === seq && state.view === 'note' && (state.dir === from || state.dir.startsWith(`${from}/`))) {
       state.session.doc.destroy();
@@ -431,7 +443,9 @@ async function createFolder() {
     await api('/api/dirs', { method: 'POST', body: { path } });
     revealFolder(path);
     await loadSideFolders();
+    const reopen = !sideWide() && !box.foldersReturn;
     if (box.isConnected) closeSheet();
+    if (reopen) showFolders();
   } catch (e) {
     if (e.status === 409) toast('That folder already exists. Choose another name.', { bad: true });
     else fail(e);
@@ -451,7 +465,7 @@ async function moveSheet() {
   return explorerMoveSheet({ kind: 'note', id: s.note.id, dir: s.note.directory }, s.note);
 }
 
-async function confirmDelete(note = null) {
+async function confirmDelete(note = null, at = null) {
   if (!note) {
     const s = await ready();
     if (!s) return back();
@@ -459,7 +473,8 @@ async function confirmDelete(note = null) {
   }
   const box = sheet(`<h3>Move “${esc(note.title)}” to the trash?</h3><p>You can restore it from Trash in Settings.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="delete-now" data-id="${esc(note.id)}">Move to trash</button></div>`);
-  box.returnFocus = document.activeElement;
+  if (at) focusOnClose(box, { ...at });
+  else box.returnFocus = document.activeElement;
 }
 
 async function deleteNow(el) {
@@ -469,6 +484,7 @@ async function deleteNow(el) {
   el.disabled = true;
   try {
     await api(`/api/notes/${enc(id)}`, { method: 'DELETE' });
+    if (box.focusAt) box.focusAt = { kind: 'folder', dir: box.focusAt.dir };
     if (box.isConnected) closeSheet();
     if (state.session?.note.id === id) {
       state.session.doc.destroy();

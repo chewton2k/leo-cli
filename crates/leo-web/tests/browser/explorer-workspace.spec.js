@@ -6,7 +6,7 @@ let counter = 0;
 const name = () => `Explorer ${Date.now()} ${counter++}`;
 const noteRow = (page, id, host = '#side') => page.locator(`${host} .side-note[data-id="${id}"]`);
 const folderRow = (page, dir, host = '#side') => page.locator(`${host} .side-row[data-action="open-folder"][data-dir="${dir}"]`);
-async function createNote(page, directory = '', title = name()) {
+async function createNote(page, directory = '', title = `! ${name()}`) {
   const response = await page.request.post('/api/notes', { data: { title, body: 'A saved note for the explorer.', directory } });
   expect(response.ok()).toBe(true);
   return response.json();
@@ -298,10 +298,10 @@ test('captured folder creation overrides another selection and note rename retai
   await page.locator('.sheet [data-action="close"]').click();
   await options(page, noteRow(page, note.id), 'Rename');
   const input = page.getByRole('textbox', { name: 'Note name' });
-  await input.fill('../Unsafe');
+  await input.fill('   ');
   await page.locator('#explorer-rename-save').click();
-  await expect(page.locator('.toast')).toContainText('single note name');
-  await expect(input).toHaveValue('../Unsafe');
+  await expect(page.locator('.toast')).toContainText('Enter a note name');
+  await expect(input).toHaveValue('   ');
   await input.fill(name());
   await page.route(`**/api/notes/${note.id}`, route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'That note changed elsewhere. Open it again before renaming.' }) }));
   await page.locator('#explorer-rename-save').click();

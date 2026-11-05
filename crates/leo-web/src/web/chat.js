@@ -733,7 +733,7 @@
     panel.setAttribute('aria-label', 'Ask Felix');
     panel.innerHTML = `
       <nav class="chat-history" id="chat-history" aria-label="Your chats">
-        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b><button class="chat-history-new" data-chat="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New chat</button></div>
+        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b></div>
         <div class="chat-history-find"><input id="chat-history-search" type="search" placeholder="Search your chats" autocomplete="off" aria-label="Search your chats"></div>
         <div class="chat-history-list" id="chat-history-list"></div>
       </nav>
@@ -1223,7 +1223,7 @@
     }
 
     function chatRow(c) {
-      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`;
+      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button></div>`;
     }
 
     let resumeSeq = 0;
@@ -1292,18 +1292,39 @@
       return true;
     }
 
+    function syncChatDelete() {
+      for (const button of panel.querySelectorAll('.chat-history-x')) {
+        const sure = state.doomed === button.dataset.id;
+        button.classList.toggle('sure', sure);
+        const title = (button.getAttribute('aria-label') || '').replace(/^(?:Confirm delete|Delete) /, '');
+        button.setAttribute('aria-label', `${sure ? 'Confirm delete' : 'Delete'} ${title}`);
+      }
+    }
+
     async function forget(id) {
+      const button = [...panel.querySelectorAll('.chat-history-x')].find((item) => item.dataset.id === id);
       if (state.doomed !== id) {
         state.doomed = id;
-        drawChats();
+        syncChatDelete();
+        button?.focus({ preventScroll: true });
         return;
+      }
+      if (button?.disabled) return;
+      const focused = document.activeElement === button;
+      if (button) button.disabled = true;
+      try {
+        const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+        if (!response.ok) throw new Error('delete failed');
+      } catch (e) {
+        notify('Leo could not delete that conversation. Try again.');
+        return;
+      } finally {
+        if (button?.isConnected) {
+          button.disabled = false;
+          if (focused && document.activeElement === document.body) button.focus({ preventScroll: true });
+        }
       }
       state.doomed = null;
-      try {
-        await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
-      } catch (e) {
-        return;
-      }
       state.chats = (state.chats || []).filter((c) => c.id !== id);
       if (id === state.id) begin();
       else drawChats();
@@ -1312,12 +1333,15 @@
     function spare(e) {
       if (!state.doomed || e.target.closest?.('.chat-history-x.sure')) return;
       state.doomed = null;
-      for (const x of panel.querySelectorAll('.chat-history-x.sure')) {
-        x.classList.remove('sure');
-        x.textContent = '×';
-        x.setAttribute('aria-label', x.getAttribute('aria-label').replace(/^Confirm delete/, 'Delete'));
-      }
+      syncChatDelete();
     }
+    panel.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !state.doomed) return;
+      e.preventDefault();
+      e.stopPropagation();
+      state.doomed = null;
+      syncChatDelete();
+    });
     document.addEventListener('pointerdown', spare, true);
     document.addEventListener('focusin', spare, true);
 

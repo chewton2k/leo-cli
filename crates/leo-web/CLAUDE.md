@@ -224,7 +224,7 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   (`side.revealed`, never saved); the tree scrolls near its
   edges; moved folders keep their open state (`moveOpenFolders`). A redraw can
   replace the dragged row, so `dragend` is also caught on the source element,
-  a pointer move with no button ends a drag, and drops check the drag's type. A folder row is highlighted when selected in the workspace; on a note page only the note's row is. The rail, explorer, tabs and
+  a pointer move with no button ends a drag, and drops check the drag's type. Opening another note clears the previous folder selection. Selecting a folder while a note stays open highlights that folder and scopes creation there until another note opens. The rail, explorer, tabs and
   segmented controls are not text-selectable.
   The sidebar head and page toolbar share `--bar-height`, including the safe-area
   inset, so their rows stay aligned with the explorer open or hidden (no rule
@@ -245,8 +245,7 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   unfolded, is dropped once). Opening a note or folder unfolds its parents for
   that visit only (`side.revealed`, rebuilt whenever the folder or open note
   changes), never into the saved set. Modelled on VS Code and
-  Obsidian (2026-11-03, the user's call): the Folders heading has Collapse all
-  (`collapseFolders`, saved closed); the open note's row is scrolled into the
+  Obsidian (2026-11-03, the user's call): the open note's row is scrolled into the
   explorer once when it first appears (`revealNoteRow`, the explorer only, never
   the page, skipped while the explorer is hidden, so later redraws keep the
   user's scroll); and a fresh launch reopens
@@ -423,6 +422,10 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   note's `doc.glow(from, to)` toggles `.blk-glow` on the cited blocks (no
   redraw, no scroll, no timer) and clears on leave, blur and close.
   A citation to another note does nothing extra.
+  The Chats heading has no New chat action; the main chat header keeps it. History
+  titles use 13 px type. Delete keeps its button mounted while X expands to Delete,
+  cancels on Escape or leaving the control, and keeps the chat on a failed request;
+  Reduced Motion snaps the width and label.
 
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
@@ -461,7 +464,9 @@ target. Check the page sequence after loading preferences.
   The cap is spent in one transaction after the read is claimed, so failures spend it
   too, and a broken day row counts as spent. Blocks already read are dropped. A failed
   read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
-  A refused read waits for the next edit. The model's quote must be in the note now,
+  A refused read waits for the next edit; a stale-version refusal resets the page's
+  retry delay to the normal typing pause, while provider cooldowns stay bounded.
+  No comment this time clears after four seconds or the next edit. The model's quote must be in the note now,
   or the note is dropped.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
@@ -505,8 +510,9 @@ target. Check the page sequence after loading preferences.
   and a first note cannot reflow text being typed. The layout is set in the same task
   as the first paint; `leo-margin-layout` remembers the setting per browser for that
   moment, the server keeps the truth. Marks only in Settings, Full width, too little
-  room or Felix open reserve nothing and centre the note. There, a mark above the end
-  of the passage (24 px to hit, 44 px on touch) opens the note inline, with
+  room or Felix open centre the note with a left gutter reserved before the first
+  comment arrives. A mark centered vertically on the passage (24 px to hit,
+  44 px on touch) opens the note inline, with
   `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
   in the panel.
 - The reading-mode menu and status sit above the title. Saving a mode keeps the
@@ -515,6 +521,13 @@ target. Check the page sequence after loading preferences.
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
   mascot on the text. Straight dotted underlines reveal in about 500 ms; there is
   no default tether. Reduced Motion stills the reveal and word arrivals.
+- Arrival keeps the dotted stroke pattern fixed and clips each line left to right
+  over a shared 500 ms budget. Open, hover and keyboard focus use a solid accent
+  underline and wash. The comment has no mascot; compact layouts reserve the full
+  24 px (44 px touch) anchor gutter before the first comment arrives.
+  The mode menu reverses its current animation on interrupted toggles, closes on
+  Tab or focus leaving it, and snaps under Reduced Motion. Settings describes the
+  selection → Ask Felix / shortcut → question → Send activation sequence.
 - Overlay: `.margin-layer` sits outside `#doc`. Rendered block measurements and
   keyed thread elements preserve the caret and reply field. Read completion
   checks both session and request identity, so an old request cannot clear newer
@@ -675,10 +688,9 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
 - Storage mirrors standalone tasks: `<notes>/.leo/boards/<b…>.json` (name, columns
   `{id, name}`, 1-12) and `<notes>/.leo/cards/<c…>.json` (board, column, `rank`,
   title, subheading, description ≤8,000, priority `""|low|medium|high`). One JSON
-  line per save, atomic, nofollow reads, union-merged in `.gitattributes`
-  (`leo_core::sync`), newest `updated_at` wins, deletes are tombstones; a file
-  counts only when its name is its id. One file per card, so two computers editing
-  different cards both keep their edits. Limits: 100 boards, 5,000 cards.
+  line per save, atomic, nofollow reads, newest `updated_at` wins, deletes are
+  tombstones; a file counts only when its name is its id. Each card has its own
+  file. Limits: 100 boards, 5,000 cards.
 
 - Order is `rank` (f64). A move writes only the moved card (midpoint of its new
   neighbours, `boards::between`) unless the gap is gone, then `settle` renumbers that
@@ -1102,3 +1114,19 @@ state through operation sheets, and returns focus to More on dismissal. Crossing
 to desktop closes it and focuses the rail toggle without changing its saved fold.
 
 Reading-position anchors skip blank editor blocks and zero-width placeholders, so restoring a long note cannot match an earlier empty paragraph.
+
+Explorer revisions: opening a different note clears the prior folder creation
+scope; selecting a folder afterwards deliberately sets the creation destination.
+Explicit chips and breadcrumbs reveal Folders on compact windows or unfold the
+desktop explorer; passive reveals never open a sheet. Loaded metadata stays
+visible during refresh, including empty folders, while generation and entry
+guards reject stale reads. The rail omits Felix and the explorer has no Collapse
+all control. Heading context uses creation scope, blank tree context uses root,
+and nested status rows use their containing folder. Explorer sheets restore
+focus to a surviving row or heading action. No-op move destinations are omitted;
+slashes are valid title data but remain forbidden in folder names.
+
+Navigation serializes the departing save against the latest destination. A failed
+save retains the editor and address. Only a draft successfully persisted in this
+browser offers an explicit Leave, draft kept action, which rechecks session and
+persistence at activation; an in-memory-only draft cannot bypass the save.
