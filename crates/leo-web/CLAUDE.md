@@ -168,8 +168,8 @@ reader, seer, meaning, web, room, speech).
   Felix's words use `--voice` (a system serif stack, no font files) and nothing
   else does; surfaces separate by tone (`--ground` rail and explorer, `--page`
   content, `--raised` popovers and opened surfaces, `--tint` group fill) and
-  space rather than rules, which stay on inputs, tables and code. Tapping Felix is the one
-  playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
+  space rather than rules, which stay on inputs, tables and code.
+  Tapping Felix is the one playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
   (2.8 s; taps during it are ignored). Demon Felix (2026-10-14, the user's
