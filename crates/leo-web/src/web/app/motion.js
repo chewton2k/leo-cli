@@ -194,10 +194,6 @@ function settleNow(kind, find) {
   }
 }
 
-function settleDone() {
-  handoff.pending = null;
-}
-
 const PILL_MS = 220;
 
 function pillKey(pill) {
