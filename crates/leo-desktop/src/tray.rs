@@ -162,13 +162,9 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
         let writing =
             leo_services::web_settings::writing_status(round.is_multiple_of(WRITING_EVERY));
         let _ = status.writing.set_text(format!("Writing: {}", writing.0));
-        let _ = status.limits.set_text(match &writing.1 {
-            Some(limits) => format!("Plan use: {limits}"),
-            None if writing.0 == "No writing AI chosen" => {
-                "Plan use: choose a writing AI in Settings".into()
-            }
-            None => "Plan use: shown after the first answer".into(),
-        });
+        let _ = status
+            .limits
+            .set_text(plan_use(&writing.0, writing.1.as_deref()));
         let used = app.try_state::<crate::Engine>().and_then(|engine| {
             engine
                 .0
@@ -181,5 +177,41 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
         }
         round = round.wrapping_add(1);
         std::thread::sleep(REFRESH);
+    }
+}
+
+fn plan_use(writing: &str, limits: Option<&str>) -> String {
+    match limits {
+        Some(limits) => format!("Plan use: {limits}"),
+        None if writing == "No writing AI chosen" => {
+            "Plan use: choose a writing AI in Settings".into()
+        }
+        None if writing.starts_with("Codex") => {
+            "Plan use: unavailable; open Codex to refresh its limits".into()
+        }
+        None if writing.starts_with("Claude Code") => {
+            "Plan use: Claude Code reports limits with an answer".into()
+        }
+        None => "Plan use: this provider has not reported limits".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn limits_explain_the_selected_provider_and_preserve_reported_use() {
+        for (provider, expected) in [
+            ("No writing AI chosen", "choose a writing AI"),
+            ("Codex · model", "open Codex"),
+            ("Claude Code · model", "Claude Code reports limits"),
+            ("OpenAI · model", "this provider has not reported limits"),
+            ("Ollama · model", "this provider has not reported limits"),
+        ] {
+            assert!(super::plan_use(provider, None).contains(expected));
+            assert_eq!(
+                super::plan_use(provider, Some("5h 20%")),
+                "Plan use: 5h 20%"
+            );
+        }
     }
 }

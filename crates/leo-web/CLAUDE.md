@@ -1408,3 +1408,9 @@ Application controls and draggable note/folder rows suppress text selection;
 prose and editable fields remain selectable. The page admits native drag starts
 only from its explicit note/folder sources, preventing accidental link, image and
 selection drags while keeping file drops and pointer-driven board/resize actions.
+
+Page toolbars share the same 760 px maximum width across notes, library, recording
+and Settings. Every Settings section uses the same Settings / section breadcrumb;
+Storage and Trash keep their routes and controllers inside that frame. Storage
+category cards remove outer Settings padding so only their compact summary sets
+the closed height.

@@ -212,6 +212,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.getByRole('link',{name:'Storage',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
       await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
+      await expect(page.locator('#crumbs [aria-current="page"]')).toHaveText('Storage');
       const storageBar = await page.locator('.store-bar').elementHandle();
       await storageBar.evaluate(el=>{window.storageListeners=0;const add=el.addEventListener;el.addEventListener=function(...args){window.storageListeners++;return add.apply(this,args);};});
       await page.evaluate(()=>{audit.storage();audit.storage();});
@@ -220,6 +221,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.getByRole('link',{name:'Trash',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
       await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
+      await expect(page.locator('#crumbs [aria-current="page"]')).toHaveText('Trash');
       expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await page.setViewportSize({width:620,height:850});
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -402,4 +404,31 @@ test('setup groups permissions with live checkmarks, then offers speech models a
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(await page.evaluate(()=>window.errors)).toEqual(['Setup could not be saved. Try again.']);
   } finally {await context.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('page toolbars share geometry and storage categories stay compact', async ({ page }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  await page.setContent('<header class="bar"><div class="bar-row"><button class="icon-btn">‹</button><nav class="crumbs">Settings / Storage</nav><button class="icon-btn">…</button></div></header><main class="settings-section"><div class="settings" id="areas"></div></main>');
+  await page.addStyleTag({ content: css });
+  await page.addScriptTag({ content: `let state={}; const app=document.querySelector('main'), esc=String, enc=encodeURIComponent, ICON={chevron:'<svg></svg>'}; ${fs.readFileSync(path.join(web, 'app/storage.js'), 'utf8')} document.querySelector('#areas').innerHTML=storageAreas([{id:'notes',title:'Notes',size:'378 KB',about:'Notes on disk',path:'/notes',items:[],actions:[]},{id:'trash',title:'Trash',size:'2.2 KB',about:'Deleted notes',path:'/trash',items:[{id:'one',name:'One',size:'2.2 KB'}],actions:[]}],new Set());` });
+  await expect(page.locator('.store-area > summary')).toHaveCount(2);
+  for (const width of [2000, 1200, 390]) {
+    await page.setViewportSize({ width, height: 850 });
+    let baseline;
+    for (const classes of ['', 'on-settings', 'on-library', 'on-note']) {
+      await page.locator('body').evaluate((body, value) => { body.className = value; }, classes);
+      const box = await page.locator('.bar-row').boundingBox();
+      if (!baseline) baseline = box;
+      expect(box).toEqual(baseline);
+      expect(box.width).toBeLessThanOrEqual(760);
+    }
+    for (const summary of await page.locator('.store-area > summary').all()) {
+      const box = await summary.boundingBox();
+      const card = await summary.locator('..').boundingBox();
+      expect(card.height - box.height).toBeLessThanOrEqual(2);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeLessThanOrEqual(72);
+    }
+  }
 });

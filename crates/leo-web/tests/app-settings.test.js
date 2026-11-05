@@ -87,6 +87,9 @@ test('Updates renders ready, busy and release notes safely with independent defa
   const { value } = context();
   const html = value.updatesCard({ version: '1.2.3', platform: 'macos', unsigned: true, preferences: { automatic_updates: true, install_on_quit: true }, updates: { state: 'ready', version: '2.0.0', busy: true, notes: '<script>bad()</script>' }, paths: { notes: '/notes', models: '/models' } });
   assert.ok(html.includes('Restart to update'));
+  assert.ok(html.includes('at startup and every hour'));
+  assert.ok(html.includes('same installed app'));
+  assert.ok(html.includes('Updates wait for recording and dictation to finish.'));
   assert.ok(html.includes('Finish recording or dictation'));
   assert.ok(html.includes('checked'));
   assert.equal((html.match(/role="switch"/g) || []).length, 2);

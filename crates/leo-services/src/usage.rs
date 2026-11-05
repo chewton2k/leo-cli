@@ -255,6 +255,117 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
     None
 }
 
+fn cached_codex(home: &Path, now: DateTime<Utc>) -> Option<Usage> {
+    use std::io::{Read, Seek, SeekFrom};
+    const DAYS: i64 = 7;
+    const MOST_FILES: usize = 512;
+    const RECENT_FILES: usize = 8;
+    const TAIL_BYTES: u64 = 256 * 1024;
+    if !home.is_absolute() || !std::fs::symlink_metadata(home).ok()?.is_dir() {
+        return None;
+    }
+    let mut files = Vec::new();
+    let mut remaining = MOST_FILES;
+    for day in 0..DAYS {
+        let date = now - chrono::Duration::days(day);
+        let relative = PathBuf::from(date.format("sessions/%Y/%m/%d").to_string());
+        let Ok(folder) = leo_core::paths::contained_path(home, &relative) else {
+            continue;
+        };
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            continue;
+        };
+        for entry in entries.take(remaining).flatten() {
+            remaining = remaining.saturating_sub(1);
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
+                continue;
+            }
+            let Ok(meta) = entry.path().symlink_metadata() else {
+                continue;
+            };
+            if meta.is_file() {
+                if let Ok(modified) = meta.modified() {
+                    files.push((modified, entry.path()));
+                }
+            }
+        }
+        if remaining == 0 {
+            break;
+        }
+    }
+    files.sort_unstable_by_key(|file| std::cmp::Reverse(file.0));
+    let mut newest: Option<Usage> = None;
+    for (_, path) in files.into_iter().take(RECENT_FILES) {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let Ok(mut file) = options.open(path) else {
+            continue;
+        };
+        let Ok(meta) = file.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if meta.nlink() != 1 {
+                continue;
+            }
+        }
+        if file
+            .seek(SeekFrom::Start(meta.len().saturating_sub(TAIL_BYTES)))
+            .is_err()
+        {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        if file.take(TAIL_BYTES).read_to_end(&mut bytes).is_err() {
+            continue;
+        }
+        for line in bytes.split(|byte| *byte == b'\n').rev() {
+            let Ok(event) = serde_json::from_slice::<Value>(line) else {
+                continue;
+            };
+            if event["type"] != "event_msg" || event["payload"]["type"] != "token_count" {
+                continue;
+            }
+            let Some(seen_at) = event["timestamp"]
+                .as_str()
+                .and_then(|stamp| DateTime::parse_from_rfc3339(stamp).ok())
+                .map(|stamp| stamp.with_timezone(&Utc))
+            else {
+                continue;
+            };
+            if seen_at > now || seen_at < now - chrono::Duration::days(DAYS) {
+                continue;
+            }
+            let limits = &event["payload"]["rate_limits"];
+            let convert = |slot: &str| serde_json::json!({"usedPercent":limits[slot]["used_percent"],"windowDurationMins":limits[slot]["window_minutes"],"resetsAt":limits[slot]["resets_at"]});
+            if let Some(usage) = from_codex(
+                &serde_json::json!({"rateLimits":{"primary":convert("primary"),"secondary":convert("secondary")}}),
+                seen_at,
+            ) {
+                if newest
+                    .as_ref()
+                    .is_none_or(|old| old.seen_at < usage.seen_at)
+                {
+                    newest = Some(usage);
+                }
+            }
+        }
+    }
+    newest
+}
+
 pub fn refresh_codex(cfg: &crate::config::Config) {
     let Some(pc) = cfg.provider("codex") else {
         return;
@@ -263,8 +374,21 @@ pub fn refresh_codex(cfg: &crate::config::Config) {
     let Some(program) = crate::ai::provider::agent_cli::locate(bin) else {
         return;
     };
-    if let Some(usage) = ask_codex(&program) {
-        save("codex", usage);
+    let home = std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")));
+    let usage = ask_codex(&program).or_else(|| {
+        home.as_deref()
+            .and_then(|home| cached_codex(home, Utc::now()))
+    });
+    if let Some(usage) = usage {
+        if load()
+            .get("codex")
+            .is_none_or(|old| old.seen_at < usage.seen_at)
+        {
+            save("codex", usage);
+        }
     }
 }
 
@@ -274,6 +398,79 @@ mod tests {
 
     fn at(secs: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(secs, 0).unwrap()
+    }
+
+    #[test]
+    fn cached_codex_limits_keep_the_event_time_and_skip_invalid_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = at(1_800_000_000);
+        let folder = dir.path().join(now.format("sessions/%Y/%m/%d").to_string());
+        std::fs::create_dir_all(&folder).unwrap();
+        let event = serde_json::json!({"timestamp":now.to_rfc3339(),"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":12,"window_minutes":300,"resets_at":1_800_001_000},"secondary":{"used_percent":41,"window_minutes":10080}}}});
+        let file = folder.join("rollout-example.jsonl");
+        std::fs::write(
+            &file,
+            format!(
+                "{}\n{}\n{}\n",
+                serde_json::json!({"type":"response_item","payload":{"text":"private"}}),
+                event,
+                "{broken"
+            ),
+        )
+        .unwrap();
+        let usage = cached_codex(dir.path(), now).unwrap();
+        assert_eq!(usage.seen_at, now);
+        assert_eq!(label(&usage, now), "5h: 12%, 7d: 41%");
+        assert!(cached_codex(dir.path(), now + chrono::Duration::days(8)).is_none());
+        let mut later = event.clone();
+        later["timestamp"] = serde_json::json!((now + chrono::Duration::seconds(1)).to_rfc3339());
+        later["payload"]["rate_limits"]["primary"]["used_percent"] = serde_json::json!(23);
+        std::fs::write(&file, format!("{}\n{}\n{}\n", later, event, later)).unwrap();
+        assert_eq!(
+            cached_codex(dir.path(), now)
+                .unwrap()
+                .five_hour
+                .unwrap()
+                .used,
+            0.12
+        );
+        assert_eq!(
+            cached_codex(dir.path(), now + chrono::Duration::seconds(1))
+                .unwrap()
+                .five_hour
+                .unwrap()
+                .used,
+            0.23
+        );
+        std::fs::write(&file, format!("{}\n{}\n", "x".repeat(300 * 1024), event)).unwrap();
+        assert_eq!(cached_codex(dir.path(), now).unwrap().seen_at, now);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_codex_limits_reject_symlinked_folders_and_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let now = at(1_800_000_000);
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("sessions")).unwrap();
+        assert!(cached_codex(dir.path(), now).is_none());
+        std::fs::remove_file(dir.path().join("sessions")).unwrap();
+        let folder = dir.path().join(now.format("sessions/%Y/%m/%d").to_string());
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(outside.path().join("private"), "{}").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("private"),
+            folder.join("rollout-linked.jsonl"),
+        )
+        .unwrap();
+        assert!(cached_codex(dir.path(), now).is_none());
+        std::fs::remove_file(folder.join("rollout-linked.jsonl")).unwrap();
+        std::fs::hard_link(
+            outside.path().join("private"),
+            folder.join("rollout-linked.jsonl"),
+        )
+        .unwrap();
+        assert!(cached_codex(dir.path(), now).is_none());
     }
 
     #[test]

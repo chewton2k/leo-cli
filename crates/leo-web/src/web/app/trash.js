@@ -3,7 +3,7 @@ async function showTrash() {
   const before = state.view === 'trash' ? state : null;
   state = { view: 'trash', dir: '', selecting: before ? before.selecting : false, picked: new Set() };
   chrome({ showBack: true });
-  $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Trash</button>';
+  $('#crumbs').innerHTML = settingsCrumbs('trash');
   document.title = 'Trash · leo';
   if (!before) refreshPanel(app, settingsFrame('trash', skeleton(3)));
   const [items, keep] = await Promise.all([api('/api/trash'), api('/api/keep').catch(() => null)]);

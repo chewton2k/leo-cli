@@ -14,7 +14,7 @@ async function showSettings(section) {
   state = { view: 'settings', dir: '', section };
   scheduleAppStatus(appPollGeneration);
   chrome({ showBack: true });
-  $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
+  $('#crumbs').innerHTML = settingsCrumbs(section);
   document.title = 'Settings · leo';
   refreshPanel(app, settingsFrame(section, skeleton(3)));
   const [page, calendar, speech, dictation] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null)]);

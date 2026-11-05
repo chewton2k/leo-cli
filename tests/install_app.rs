@@ -105,6 +105,26 @@ fn installs_a_bundle_and_live_link_with_quoted_path_exactly_once() {
     );
 }
 #[test]
+fn updating_replaces_the_bundle_and_cleans_only_the_previous_installation() {
+    let dir = fixture();
+    assert!(install(dir.path(), None, true).status.success());
+    let applications = dir.path().join("Applications with spaces");
+    let app = applications.join("Leo.app");
+    std::fs::write(app.join("obsolete-file"), "old version").unwrap();
+    let unrelated = applications.join("Other.app");
+    std::fs::create_dir(&unrelated).unwrap();
+    std::fs::write(unrelated.join("keep"), "unrelated").unwrap();
+    assert!(install(dir.path(), None, true).status.success());
+    assert!(!app.join("obsolete-file").exists());
+    assert!(app.join("Contents/MacOS/leo-app").is_file());
+    assert_eq!(
+        std::fs::read_to_string(unrelated.join("keep")).unwrap(),
+        "unrelated"
+    );
+    assert_eq!(std::fs::read_dir(&applications).unwrap().count(), 2);
+}
+
+#[test]
 fn missing_shell_and_skip_path_do_not_break_installation() {
     let dir = fixture();
     let out = install(dir.path(), None, false);

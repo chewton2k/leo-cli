@@ -163,6 +163,8 @@ pub fn run() {
                 .traffic_light_position(tauri::LogicalPosition::new(18.0, 31.0))
                 .initialization_script("window.__LEO_APP__ = 'mac';");
             let window = builder.build()?;
+            #[cfg(target_os = "macos")]
+            active_space(&window)?;
             let handle = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -241,6 +243,44 @@ fn back_up(app: &AppHandle) {
     if let Ok(held) = app.state::<Engine>().0.lock() {
         if let Some(running) = held.as_ref() {
             running.back_up();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn active_space(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    use objc2_app_kit::NSWindow;
+    let native = window.ns_window()?;
+    let native = unsafe { &*native.cast::<NSWindow>() };
+    native.setCollectionBehavior(space_behavior(native.collectionBehavior()));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn space_behavior(
+    current: objc2_app_kit::NSWindowCollectionBehavior,
+) -> objc2_app_kit::NSWindowCollectionBehavior {
+    use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
+    (current & !Behavior::CanJoinAllSpaces) | Behavior::MoveToActiveSpace
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod space_tests {
+    use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
+
+    #[test]
+    fn opening_moves_to_the_active_desktop_without_pinning_every_desktop() {
+        for current in [
+            Behavior::Default,
+            Behavior::CanJoinAllSpaces | Behavior::Managed,
+        ] {
+            let result = super::space_behavior(current);
+            assert!(result.contains(Behavior::MoveToActiveSpace));
+            assert!(!result.contains(Behavior::CanJoinAllSpaces));
+            assert_eq!(
+                result.contains(Behavior::Managed),
+                current.contains(Behavior::Managed)
+            );
         }
     }
 }

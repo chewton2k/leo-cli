@@ -188,3 +188,10 @@ while the core installation lease is held. Explicit update restarts leave a
 private atomic one-use `update-foreground` marker, consumed only after the
 single-instance check, so `--hidden` from login cannot hide the updated app.
 Failed installation removes the marker and releases the opening restriction.
+
+The main window uses MoveToActiveSpace, clearing CanJoinAllSpaces while retaining
+other collection flags: opening from the tray, Dock or a second launch brings
+Leo to the current desktop instead of switching back to its original desktop.
+Automatic updater checks run at release startup and after an hour without an
+updater command. Installation replaces the running bundle; the staged previous
+bundle is removed, and unrelated application copies are never deleted.
