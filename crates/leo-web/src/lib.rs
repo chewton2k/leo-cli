@@ -927,6 +927,7 @@ fn router(state: AppState) -> Router {
         .route("/saving.js", get(saving_js))
         .route("/graph.js", get(graph_js))
         .route("/schedule.js", get(routes::assets::schedule_js))
+        .route("/margin.js", get(routes::assets::margin_js))
         .route("/theme.js", get(routes::assets::theme_js))
         .route("/chat.js", get(chat_js))
         .route("/pane-resize.js", get(routes::assets::pane_resize_js))

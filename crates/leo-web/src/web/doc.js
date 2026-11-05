@@ -1388,6 +1388,34 @@
         setTimeout(() => hits.forEach((el) => el.classList.remove('blk-cited')), CITED_FOR);
         return true;
       },
+      spanRects(from, to) {
+        if (editing && !editing.selectionText) {
+          const base = lineStart(editing.start) + editing.prefix.length;
+          const { area } = editing;
+          if (from >= base && from <= base + area.value.length) {
+            const a = caretBox(area, from - base);
+            const b = caretBox(area, Math.min(to, base + area.value.length) - base);
+            const tall = parseFloat(getComputedStyle(area).lineHeight) || 24;
+            const box = area.getBoundingClientRect();
+            if (a.y === b.y) return [{ left: a.x, right: b.x, top: a.y - tall, bottom: a.y }];
+            return [{ left: a.x, right: box.right, top: a.y - tall, bottom: a.y }, { left: box.left, right: b.x, top: b.y - tall, bottom: b.y }];
+          }
+        }
+        const a = pointFor(from);
+        const b = pointFor(to);
+        const range = document.createRange();
+        try {
+          range.setStart(a.node, a.offset);
+          range.setEnd(b.node, b.offset);
+        } catch (e) {
+          return [];
+        }
+        return [...range.getClientRects()].filter((box) => box.width > 0).slice(0, 8).map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
+      },
+      blockAt(at) {
+        const index = blockAtLine(lineOf(at));
+        return index < 0 ? null : container.querySelector(`.blk[data-i="${index}"]`);
+      },
       editStart: () => editLine(0, 'start'),
       editEnd: () => editLine(lines.length - 1, 'end'),
     };

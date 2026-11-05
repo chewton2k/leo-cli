@@ -4388,6 +4388,7 @@ test.describe('passages', () => {
     const ask = page.locator('.ask-float');
     await expect(ask).toBeVisible();
     await ask.click();
+    await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Ask in chat' }).click();
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
     await expect(chat.locator('.chat-passage')).toContainText('keeps the minimum');
@@ -4400,6 +4401,84 @@ test.describe('passages', () => {
     await expect(chat.locator('.msg.user .msg-passage')).toContainText('Heaps · line 3');
     await expect(chat.locator('.chat-passage')).toHaveCount(0);
     expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('Intro line\n\nA binary heap keeps the minimum at the root.\n\nLast line');
+  });
+
+  test('Felix reads along only after an edit, speaks in the margin, and his answer lands in the note', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const start = 'Save the password in the users table.';
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: start } })).json();
+    const reads = [];
+    const said = (from, text) => ({ from, text, at: '2026-11-04T10:00:00Z' });
+    const thread = { id: 'stub-thread', note: note.id, quote: 'just checks if it matches', prefix: 'Then login ', suffix: ', I think', status: 'open', source: 'read', messages: [said('felix', 'In plain text? If this table leaks, every account goes.')], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
+    await page.route('**/margin/read', async (route) => {
+      reads.push(route.request().postDataJSON());
+      await route.fulfill({ json: { note: thread } });
+    });
+    await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
+    await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    await page.locator('#margin-mode').click();
+    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'right');
+    expect((await page.locator('article.note').boundingBox()).width).toBeLessThanOrEqual(761);
+    await page.reload();
+    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await page.waitForTimeout(4500);
+    expect(reads, 'opening a note must not read it').toEqual([]);
+
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea.line-edit');
+    await area.press('End');
+    await area.pressSequentially('\n\nThen login just checks if it matches, I think');
+    await expect(page.locator('.margin-note')).toBeVisible({ timeout: 9000 });
+    expect(reads).toHaveLength(1);
+    expect(reads[0].blocks).toEqual(['Then login just checks if it matches, I think']);
+    await expect(area).toBeFocused();
+    await expect(page.locator('.margin-ink .squiggle')).toHaveCount(1);
+    await expect(page.locator('.margin-ink .tether')).toHaveCount(1);
+    await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?');
+
+    await page.locator('.margin-note').click();
+    const reply = page.locator('.margin-reply textarea');
+    await expect(reply).toBeFocused();
+    await reply.fill('So hash it?');
+    await reply.press('Enter');
+    await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
+    await page.locator('.margin-note').getByRole('button', { name: 'Add to note' }).click();
+    await expect(page.locator('.toast')).toContainText('Added to note');
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toContain('Yes. Argon2id, then verify at login.');
+    await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).not.toContain('Argon2id');
+  });
+
+  test('selected words get their answer in the margin without read-along', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps margin', body: 'A binary heap keeps the minimum at the root.' } })).json();
+    let asked = null;
+    await page.route('**/margin/threads', async (route) => {
+      asked = route.request().postDataJSON();
+      await route.fulfill({ json: { id: 'stub-ask', note: note.id, quote: asked.quote, prefix: asked.prefix, suffix: asked.suffix, status: 'open', source: 'ask', messages: [{ from: 'you', text: asked.question, at: '2026-11-04T10:00:00Z' }, { from: 'felix', text: 'The heap property.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' } });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea.line-edit');
+    await area.evaluate((a) => {
+      const at = a.value.indexOf('keeps the minimum');
+      a.focus();
+      a.setSelectionRange(at, at + 'keeps the minimum'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+    await page.keyboard.press('ControlOrMeta+Shift+e');
+    const input = page.locator('.margin-note[data-id="draft"] textarea');
+    await expect(input).toBeFocused();
+    await input.fill('Why?');
+    await input.press('Enter');
+    await expect(page.locator('.margin-note .margin-felix')).toContainText('The heap property.');
+    expect(asked.quote).toBe('keeps the minimum');
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'marks');
+    await expect(page.locator('.margin-mark')).toHaveCount(1);
   });
 
   test('the selection shortcut explains when nothing is selected without a bottom Ask button', async ({ page }) => {

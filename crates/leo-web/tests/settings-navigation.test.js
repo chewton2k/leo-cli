@@ -22,7 +22,7 @@ test('all grouped Settings routes resolve, with Storage and Trash under Data', (
   assert.ok(html.includes('<h1>Storage</h1>'));
   assert.ok(html.includes('<span class="settings-nav-pill" aria-hidden="true"></span>'));
   assert.ok(html.includes('class="settings-section arrive"'));
-  assert.equal((html.match(/class="settings-link/g) || []).length, 10);
+  assert.equal((html.match(/class="settings-link/g) || []).length, 11);
   assert.equal((html.match(/<svg>/g) || []).length, 8, 'the search icon and every section without a shared icon draw their own');
   assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections">'));
   assert.ok(html.includes('id="settings-search" type="text" role="combobox" aria-label="Search settings"'));
@@ -52,7 +52,7 @@ test('every Settings section names its current page in the same breadcrumb', () 
   }
 });
 
-const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'storage.js', 'trash.js'].map(name => fs.readFileSync(path.join(__dirname, '../src/web/app', name), 'utf8')).join('\n');
+const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'storage.js', 'trash.js', 'margin-notes.js'].map(name => fs.readFileSync(path.join(__dirname, '../src/web/app', name), 'utf8')).join('\n');
 test('every searchable setting names a real section and a target the page draws', () => {
   const h = helpers();
   const index = vm.runInContext('SETTINGS_INDEX', h);

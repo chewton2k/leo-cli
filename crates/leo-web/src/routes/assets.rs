@@ -25,6 +25,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/math.js"),
     include_str!("../web/app/sources.js"),
     include_str!("../web/app/passages.js"),
+    include_str!("../web/app/margin-notes.js"),
     include_str!("../web/app/calendar.js"),
     include_str!("../web/app/boards.js"),
     include_str!("../web/app/interviews.js"),
@@ -321,6 +322,9 @@ pub(crate) async fn favicon() -> Response {
         .into_response()
 }
 
+pub(crate) async fn margin_js() -> Response {
+    javascript(include_str!("../web/margin.js"))
+}
 pub(crate) async fn chat_js() -> Response {
     javascript(CHAT_JS)
 }

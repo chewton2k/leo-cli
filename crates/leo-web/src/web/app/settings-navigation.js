@@ -5,6 +5,7 @@ const SETTINGS_SECTIONS = [
     ['dictation', 'Dictation', 'keyboard', 'Speak into any app with a shortcut. Speech stays on this computer.'],
     ['models', 'Speech models', 'wave', 'The local model that turns speech into text.'],
     ['writing', 'Writing AI', 'pen', 'The AI that writes your notes and powers Felix.'],
+    ['felix', 'Felix', 'chat', 'How Felix reads along beside your notes.'],
   ] },
   { group: 'Your notes', items: [
     ['calendar', 'Calendar', 'calendar', 'Name recordings after the class or meeting you are in.'],
@@ -45,6 +46,10 @@ const SETTINGS_INDEX = [
   { section: 'writing', id: 'writing-key', label: 'API key', keywords: 'secret token credential password' },
   { section: 'writing', id: 'writing-test', label: 'Test the AI', keywords: 'check connection working try' },
   { section: 'writing', id: 'writing-activity', label: 'Felix activity', keywords: 'usage tokens cache requests tools calls timing' },
+  { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
+  { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
+  { section: 'felix', id: 'felix-pace', label: 'Reading pace', keywords: 'felix margin regular slow pause wait' },
+  { section: 'felix', id: 'felix-cap', label: 'Reads a day', keywords: 'felix margin daily cap limit usage today' },
   { section: 'calendar', id: 'calendar-connect', label: 'Connect a calendar', keywords: 'google ical ics outlook apple link secret address meetings classes' },
   { section: 'calendar', id: 'calendar-next', label: 'Next up', keywords: 'upcoming event check now refresh' },
   { section: 'backup', id: 'backup-github', label: 'GitHub backup', keywords: 'repository repo copy private notes sync gh' },

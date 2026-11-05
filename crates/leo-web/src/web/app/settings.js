@@ -17,8 +17,9 @@ async function showSettings(section) {
   $('#crumbs').innerHTML = settingsCrumbs(section);
   document.title = 'Settings · leo';
   refreshPanel(app, settingsFrame(section, skeleton(3)));
-  const [page, calendar, speech, dictation] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null)]);
+  const [page, calendar, speech, dictation, margin] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null), section === 'felix' ? api('/api/margin').catch(() => null) : null]);
   if (mine !== seq) return;
+  state.margin = margin;
   state.calendar = calendar;
   state.speech = speech;
   state.dictation = dictation;
@@ -328,6 +329,7 @@ function drawSettings(page) {
   else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the Leo app to set up dictation.</section>'}</div>`;
   else if (section === 'models') content = `<div id="speech-library">${speechCards(state.speech)}</div>`;
   else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
+  else if (section === 'felix') content = felixSettingsCards(state.margin, page);
   else if (section === 'calendar') content = calendarCard(state.calendar);
   else if (section === 'backup') content = backupCard(page.backup);
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;

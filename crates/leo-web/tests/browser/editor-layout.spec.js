@@ -557,7 +557,7 @@ test('a selection dragged out of the edited line keeps going across rendered lin
   }, { body });
 });
 
-test('the outline sits at the right edge as heading ticks, keeping the note centred, and opens its full outline on demand', async ({ browser }) => {
+test('the outline sits at the left edge as heading ticks, keeping the note centred, and opens its full outline on demand', async ({ browser }) => {
   const body = ['# One', 'Text', '## Two', 'More', '# Three'].join('\n');
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
@@ -570,7 +570,7 @@ test('the outline sits at the right edge as heading ticks, keeping the note cent
     const main = await page.locator('.note-columns').boundingBox();
     expect(Math.abs((note.x - main.x) - (main.x + main.width - note.x - note.width))).toBeLessThanOrEqual(2);
     const ticks = await outline.locator('.outline-ticks').boundingBox();
-    expect(ticks.x).toBeGreaterThanOrEqual(note.x + note.width - 1);
+    expect(ticks.x + ticks.width).toBeLessThanOrEqual(note.x + 1);
     const nav = page.locator('.note-outline nav');
     expect(await nav.evaluate((el) => getComputedStyle(el).opacity)).toBe('0');
     await outline.locator('summary').click();

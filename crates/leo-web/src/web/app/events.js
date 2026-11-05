@@ -125,6 +125,7 @@ window.addEventListener('hashchange', () => {
     flush(leaving).catch(fail);
     leaving.doc.destroy();
   }
+  marginLeave();
   route();
 });
 

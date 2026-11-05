@@ -184,7 +184,7 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     await expect(page.locator('.note-outline details')).not.toHaveAttribute('open', '');
     const rail = await page.locator('.note-outline').evaluate(el => {
       const ticks = el.querySelector('.outline-ticks').getBoundingClientRect(), note = document.querySelector('.note').getBoundingClientRect(), columns = document.querySelector('.note-columns').getBoundingClientRect();
-      return {ticks:ticks.left - note.right, centre:(note.left - columns.left) - (columns.right - note.right), count:el.querySelectorAll('.outline-ticks span').length};
+      return {ticks:note.left - ticks.right, centre:(note.left - columns.left) - (columns.right - note.right), count:el.querySelectorAll('.outline-ticks span').length};
     });
     expect(rail.ticks).toBeGreaterThanOrEqual(0);
     expect(Math.abs(rail.centre)).toBeLessThanOrEqual(2);

@@ -205,25 +205,92 @@ body.on-note main { max-width: none; margin-inline: 0; }
 @container note (min-width: 900px) {
   .note-columns { grid-template-rows: auto; padding-inline: 48px; min-height: calc(100dvh - var(--bar-height) - 16px); }
   .note-columns > .note { grid-area: 1 / 1; }
-  .note-outline { top: var(--outline-center, 50dvh); justify-self: end; width: 48px; margin-right: -48px; display: flex; flex-direction: column; }
+  .note-outline { top: var(--outline-center, 50dvh); justify-self: start; width: 48px; margin-left: -48px; display: flex; flex-direction: column; }
   .note-outline .source-more { order: 1; }
-  .note-outline .source-more > summary { width: 36px; justify-content: flex-end; padding: 8px 0; }
+  .note-outline .source-more > summary { width: 36px; justify-content: flex-start; padding: 8px 0 8px 12px; }
   .note-outline .source-more > summary > svg { display: none; }
-  .note-outline .outline-ticks { display: flex; flex-direction: column; width: 100%; height: min(calc(var(--outline-count) * 12px), calc(100dvh - var(--outline-top, 76px) - 160px)); min-height: 12px; padding: 0 12px 0 0; border: 0; background: transparent; cursor: pointer; }
+  .note-outline .outline-ticks { display: flex; flex-direction: column; width: 100%; height: min(calc(var(--outline-count) * 12px), calc(100dvh - var(--outline-top, 76px) - 160px)); min-height: 12px; padding: 0 0 0 12px; border: 0; background: transparent; cursor: pointer; }
   .note-outline .outline-ticks:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-  .note-outline .outline-ticks span { position: relative; flex: 1; min-height: 0; display: block; width: 100%; transition: transform 150ms ease; transform-origin: right center; }
-  .note-outline .outline-ticks span::after { content: ''; position: absolute; right: 0; top: calc(50% - 1px); width: 8px; height: 2px; border-radius: 1px; background: var(--faint); }
+  .note-outline .outline-ticks span { position: relative; flex: 1; min-height: 0; display: block; width: 100%; transition: transform 150ms ease; transform-origin: left center; }
+  .note-outline .outline-ticks span::after { content: ''; position: absolute; left: 0; top: calc(50% - 1px); width: 8px; height: 2px; border-radius: 1px; background: var(--faint); }
   .note-outline .outline-ticks span[data-level="1"]::after { width: 18px; }
   .note-outline .outline-ticks span[data-level="2"]::after { width: 12px; }
   .note-outline .outline-ticks span.on::after { background: var(--accent); }
   .note-outline .outline-ticks span[data-distance="0"] { transform: scale(1.6, 2); }
   .note-outline .outline-ticks span[data-distance="1"] { transform: scale(1.3, 1.5); }
   .note-outline .outline-ticks span[data-distance="2"] { transform: scale(1.1, 1.2); }
-  .note-outline .outline-preview { display: block; position: absolute; right: 48px; width: 280px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); pointer-events: none; font-size: 13px; line-height: 1.5; color: var(--text); }
+  .note-outline .outline-preview { display: block; position: absolute; left: 48px; width: 280px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); pointer-events: none; font-size: 13px; line-height: 1.5; color: var(--text); }
   .outline-preview strong { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
   .outline-preview > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; margin-top: 4px; color: var(--muted); }
-  .note-outline nav { position: absolute; top: 0; right: 40px; width: 280px; max-height: calc(100dvh - var(--outline-center, var(--outline-top, 76px)) - 12px); padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); opacity: 0; pointer-events: none; }
+  .note-outline nav { position: absolute; top: 0; left: 40px; width: 280px; max-height: calc(100dvh - var(--outline-center, var(--outline-top, 76px)) - 12px); padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); opacity: 0; pointer-events: none; }
   .note-outline .source-more[open] nav { opacity: 1; pointer-events: auto; }
+}
+:root { --margin-w: 240px; --margin-gap: 24px; --ink-settling: color-mix(in srgb, var(--faint) 60%, #a58a62); }
+.note-columns { position: relative; }
+@container note (min-width: 900px) {
+  .note-columns[data-margin="right"] { padding-right: calc(var(--margin-w) + var(--margin-gap) + 16px); }
+  .note-columns[data-margin="both"] { padding-inline: calc(var(--margin-w) + var(--margin-gap) + 48px) calc(var(--margin-w) + var(--margin-gap) + 16px); }
+  .note-columns[data-margin="both"] .note-outline { margin-left: calc(-1 * (var(--margin-w) + var(--margin-gap) + 48px)); }
+  .note-columns:is([data-margin="right"], [data-margin="both"]) > .note { max-width: min(var(--note-width), 760px); }
+}
+.margin-layer { position: absolute; inset: 0; pointer-events: none; z-index: 8; }
+.margin-layer > * { pointer-events: auto; }
+.margin-ink { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none !important; }
+.margin-ink path { fill: none; stroke: var(--faint); stroke-width: 1.1; stroke-linecap: round; }
+.margin-ink .tether { stroke-width: 1; opacity: .7; }
+.margin-ink path.arriving { stroke-dasharray: 1; animation: margin-draw .46s cubic-bezier(.3, .7, .3, 1) both; }
+.margin-ink .tether.arriving { animation-duration: .56s; animation-delay: .52s; }
+@keyframes margin-draw { from { stroke-dashoffset: 1; opacity: 0; } 8% { opacity: 1; } to { stroke-dashoffset: 0; } }
+.margin-said-aloud { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.margin-note { position: absolute; left: 0; top: 0; width: var(--margin-w); color: var(--text); cursor: pointer; border-radius: 10px; }
+.margin-note[hidden] { display: none; }
+.margin-note:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.margin-note.arriving { animation: fade .3s ease-out both; }
+.margin-surface { position: absolute; inset: -10px -12px; background: var(--raised); border-radius: 14px; box-shadow: var(--shadow); opacity: 0; transform: scale(.985); pointer-events: none; transition: opacity .18s ease-out, transform .22s cubic-bezier(.22, 1, .36, 1); }
+.margin-note[data-open] { cursor: auto; z-index: 2; }
+.margin-note[data-open] .margin-surface { opacity: 1; transform: none; }
+.margin-head { position: relative; height: 18px; margin-bottom: 5px; display: flex; align-items: center; }
+.margin-said { position: relative; display: grid; gap: 7px; }
+.margin-said p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.margin-felix { font-family: var(--voice); font-size: 15px; line-height: 1.46; color: var(--text); }
+.margin-you { font-size: 13.5px; line-height: 1.45; color: var(--muted); }
+.ink-word { display: inline-block; white-space: pre; animation: ink-in .64s ease both; }
+@keyframes ink-in { from { opacity: 0; color: var(--ink-settling); } 45% { opacity: 1; color: var(--ink-settling); } to { opacity: 1; color: var(--text); } }
+.margin-more { position: relative; }
+.margin-more[hidden] { display: none; }
+.margin-reply { margin-top: 9px; }
+.margin-reply textarea { display: block; width: 100%; margin: 0; padding: 0; border: 0; outline: 0; resize: none; background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; }
+.margin-reply textarea::placeholder { color: var(--faint); }
+.margin-problem { margin: 7px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.margin-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding-top: 10px; }
+.margin-add { font-size: 12.5px; font-weight: 550; line-height: 1.3; padding: 6px 11px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--text); }
+.margin-add:hover { background: var(--field-hi, var(--surface-2)); }
+.margin-add:focus-visible, .margin-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.margin-note[data-inline] .margin-surface { inset: -8px -12px; }
+.margin-mark { position: absolute; left: 0; top: 0; width: 16px; height: 14px; padding: 0; border: 0; border-radius: 4px; background: none; display: grid; place-items: center; cursor: pointer; }
+.margin-mark .felix { width: 16px; height: auto; }
+.margin-reading { position: absolute; left: 0; top: 0; pointer-events: none; }
+.blk.margin-room { margin-bottom: var(--margin-room, 0px); }
+.margin-mode { border: 0; background: none; color: var(--muted); font-size: 12.5px; padding: 2px 6px; border-radius: 999px; cursor: pointer; }
+.margin-mode:hover { background: var(--surface-2); color: var(--text); }
+.margin-mode[aria-pressed="true"] { color: var(--text); }
+.chat-lost { padding: 2px 16px 8px; font-size: 13px; color: var(--muted); }
+.chat-lost[hidden] { display: none; }
+.chat-lost > summary { cursor: pointer; padding: 6px 0; }
+.chat-lost-row { padding: 6px 0; }
+.chat-lost-row q { display: block; color: var(--text); overflow-wrap: anywhere; }
+.chat-lost-row p { margin: 3px 0 4px; font-family: var(--voice); font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+.choice-diagram .d-page { fill: var(--raised); }
+.choice-diagram .d-felix { stroke: var(--faint); stroke-width: 2; stroke-linecap: round; fill: none; }
+.choice-diagram .d-text { stroke: var(--line); stroke-width: 2; stroke-linecap: round; fill: none; }
+.choice-diagram .d-mark { fill: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .margin-ink path.arriving, .margin-ink .tether.arriving, .margin-note.arriving, .ink-word { animation: none; }
+  .margin-surface { transition: none; }
+}
+@media (forced-colors: active) {
+  .margin-ink path { stroke: CanvasText; }
+  .margin-surface { background: Canvas; border: 1px solid CanvasText; }
 }
 .section-title { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 4px 8px; }
 
@@ -666,12 +733,14 @@ label.trash-row { cursor: pointer; }
   html { scrollbar-gutter: auto !important; }
   body { --side: 0px !important; --right: 0px !important; --top: 0px !important; --bottom: 0px !important; }
   html, body { background: #fff; color: #1c1c1a; padding: 0 !important; margin: 0; font-size: 11pt; line-height: 1.55; }
-  .note-outline, .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .pane-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, .map, .interview-split, [data-print-off] { display: none !important; }
+  .margin-layer, .margin-mode, .note-outline, .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .pane-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, .map, .interview-split, [data-print-off] { display: none !important; }
   body.files-over main::after { display: none !important; }
   .interview-panes, .store-all { position: static !important; }
   main, body.on-note main { max-width: none !important; width: auto !important; padding: 0 !important; margin: 0 !important; }
   .note-head h1, #title { margin: 0 0 10pt; padding-bottom: 6pt; font-size: 22pt; line-height: 1.2; }
-  .note-columns { display: block !important; }
+  .note-columns { display: block !important; padding: 0 !important; }
+  .note-columns > .note { max-width: none !important; }
+  .blk.margin-room { margin-bottom: 0 !important; }
   .doc .blk { margin-left: 0 !important; }
   .doc .blk h1 { font-size: 18pt; margin: 16pt 0 6pt; }
   .doc .blk h2 { font-size: 15pt; margin: 14pt 0 5pt; }
@@ -2622,6 +2691,7 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 <script src="/doc.js"></script>
 <script src="/saving.js"></script>
 <script src="/graph.js"></script>
+<script src="/margin.js"></script>
 <script src="/schedule.js"></script>
 <script src="/pane-resize.js"></script>
 <script src="/chat.js"></script>

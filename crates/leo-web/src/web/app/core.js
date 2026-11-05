@@ -106,12 +106,16 @@ const chat = felix.create({
     if (open && !saving.unsaved()) showNote(note.id);
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
-  onToggle: () => { drawSide(); pageBarLater(); },
+  onToggle: () => { drawSide(); pageBarLater(); marginRedraw(); },
   onCodeEdit: action => applyInterviewCodeSuggestion(action),
   onOrganized: (proposal) => {
     if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
     if (proposal.kind === 'interview_test') { refreshInterviewTests(proposal.interview, proposal.challenge).catch(fail); return; }
     if (['interview_problem_edit', 'interview_topics', 'delete_interview_problem', 'restore_interview_problem'].includes(proposal.kind)) { refreshInterview(proposal.interview).catch(fail); return; }
+    if (MARGIN_KINDS.includes(proposal.kind)) {
+      if (state.view === 'note' && state.session && state.session.note.id === proposal.note) marginLoad(state.session).catch(fail);
+      return;
+    }
     if (BOARD_KINDS.includes(proposal.kind)) {
       if (state.view === 'boards') showBoards((kanban.board && kanban.board.id) || '').catch(fail);
       return;
@@ -882,7 +886,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     s.title = $('#title');
     drawOriginals(note);
     hideAskFloat();
-    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => { changed(s); marginEdited(s); }, placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
     if (citedLines && citedLines.id === note.id) showCitedLines();
     else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
       clearTimeout(reading.timer);
@@ -897,6 +901,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   if (mine !== seq || !s) return;
   if (!moved) arriveOnPage(app.querySelector('article.note'));
   drawRelated(note.id, mine);
+  marginMount(s, mine).catch(fail);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
     flush(s).catch(fail);
