@@ -64,6 +64,9 @@ a test, or leave it unset to see the user's own data.
 - `window.print` calls `print_page` on macOS; Windows retains its original
   native function, since Tauri's print implementation calls back into JS.
   Calling the bridge on Windows would recurse instead of opening the dialog.
+  Custom commands have explicit permissions: only `main` at the loopback engine
+  may print, and only the bundled `dictation` popup may call `dictation_popup`.
+  Tauri treats loopback pages as remote origins and refuses ungranted commands.
 - Capability `default`: remote `http://127.0.0.1:*`/`localhost:*`, core
   defaults, window dragging and double-click maximize.
 
