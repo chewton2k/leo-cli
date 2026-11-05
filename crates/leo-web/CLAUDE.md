@@ -165,11 +165,58 @@ reader, seer, meaning, web, room, speech).
   starts on input. (2) Follows a click: 140 to 240 ms (`MOTION_MS` 180),
   transform/clip/height/opacity only. `<details>` slide their height
   (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out
-  (`CHAT_LEAVE_MS`); sheets and toasts ease out (`LEAVE_MS`). Folder navigation
-  has one short arrival on the content. Notes fade in place so text never moves
-  during an immediate selection; confirmed note/folder removals leave over 180 ms
-  only after the delete succeeds, and delayed deletes never navigate a newer
-  page. (3) Felix arriving on his own: 300 to 650 ms, never blocks input, never
+  (`CHAT_LEAVE_MS`); sheets and toasts ease out (`LEAVE_MS`). Confirmed
+  note/folder removals leave over 180 ms only after the delete succeeds, and
+  delayed deletes never navigate a newer page. Phase 4 (2026-11-04), all in
+  `app/motion.js` (pure rules, node-tested in `tests/motion.test.js`):
+  *Page changes*: `swap(key, draw, {stale, from, to})` wraps the folder and
+  note draws in `document.startViewTransition` (root crossfade 140 ms, CSS
+  `::view-transition-*` in `index.html`; the rail/explorer and Felix are named
+  `leo-side`/`leo-chat` only while `html.vt` is set, shown live with no old
+  image, and pointer events pass through the snapshot). It is called only
+  after the page's data arrived, so a slow page keeps the old page live and
+  never holds a transition; the callback draws once and bails if `stale()`
+  (`seq` moved). Skipped, drawing at once (`transitionSkip`): no API, Reduced
+  Motion, a sheet open, the same page (`drawn.key`, so refreshes, saves and
+  pins), the first draw. The note title morphs between its explorer row or
+  library card (`morphTitle`, only if on screen; the clicked row first) and
+  the page heading through `view-transition-name: note-title` (old image
+  hidden, new image grows or shrinks; `#title` is `fit-content` only while
+  `html.vt`). `route()` defers the scroll-to-top into the draw
+  (`drawn.top`/`scrollToTop`) so the old snapshot keeps its place, and the
+  `on-library`/`on-note` body classes change inside the draw, not before, so
+  the old page never reflows under its own snapshot. The first 24 previews
+  draw synchronously (`PREVIEWS_NOW`) so a snapshot or a moved card is never
+  empty. Reading position still restores after the draw. WebKit: the API
+  exists from Safari 18 (macOS 15) and Playwright's WebKit (Safari 26.6) runs
+  it; on older macOS there is no `startViewTransition`, so pages draw at once
+  as before and the title does not morph. *Explorer*: one `.side-pill`
+  (`--raised`) sits inside the selected folder or note row (so it rides
+  `slideHeight` and redraws); when a different row becomes selected
+  `pillGlide` slides it from the old place (220 ms, `--ease-soft`-like
+  curve), under the row text (`.side-tree` isolates it). Hidden under 1000 px.
+  *List moves*: `flipList(root, selector, keyOf, change)` measures only when a
+  list changed (`drawFolder` compares `folderKeys`, `drawSide` compares
+  `side.sig`; `twisted` expansions are skipped since they slide their own
+  height), skips Reduced Motion, fewer than two rows and more than
+  `FLIP_ROWS` (200), and animates each moved row 150 ms ease-out with travel
+  capped at `FLIP_TRAVEL` (40 px); new rows do not animate. Used for library
+  cards and folders (sort, pin, move, delete; `dismissContent` also closes the
+  gap this way), explorer rows and Quick Leo results (`QUICK_FLIP_MS` 120, only
+  rows whose `JSON.stringify(row)` is unchanged; Enter is never delayed).
+  *Tasks*: note checkboxes are drawn (`appearance: none`, an SVG mask wiped in
+  over 160 ms with `clip-path`, `::after`); the done strike is a gradient that
+  grows left to right over 180 ms under the task's own text; both are CSS on
+  the live `label.task`, so the checkbox path still redraws nothing (while a
+  line is open its textarea keeps `text-decoration`; Calendar and Quick Leo
+  checkboxes are redrawn by their pages, so they keep the native control).
+  *Toast*: an Undo toast shows a 3 px `.toast-time` bar shrinking over exactly
+  its timeout (6 s); the toast timer does not pause on hover, so the bar does
+  not either. *Drag*: board and calendar ghosts lift (`lift`: `scale: 1.02`
+  and the shadow over 140 ms; the tilt was dropped) and the dropped element
+  settles over 180 ms (`settleLater` at drop, `settleNow` from the draw that
+  replaces it, so the animation continues on the new node with the time
+  already spent). Banned and still absent: hover lifts, bounce, staggers. (3) Felix arriving on his own: 300 to 650 ms, never blocks input, never
   moves text the user is working in. Still banned: hover lifts, idle loops, list
   entrance staggers, blur, pointer effects. Reduced Motion turns off tiers 2 and
   3 (`stillMotion`). Never animate something a redraw can replace mid-animation.
@@ -1454,9 +1501,16 @@ Selection is ink (segment and nav pills are `--raised`, switches `--text`);
 indigo stays for focus, links and the search pulse. Writing AI uses a pen icon,
 never a sparkle.
 Settings (2026-11-02, the user's call) is a sidebar beside the content. Since
-2026-11-04 the sidebar has no card: it sits directly on `--ground` (a band
-drawn by `.settings-layout::before`, from the window's left edge to just past the
-nav) and the section on `--page`, with no border between. Sticky under the bar
+2026-11-04 the sidebar has no card: it sits directly on `--ground` and the
+section on `--page`, with no border between. From 1000 px the ground runs the
+full window height, up through the header too: `fitSettingsEdge` (run on each
+frame and on `resize`, which the explorer fold dispatches when it settles)
+measures the nav's right edge and the section's left edge as
+`--settings-c`/`--settings-lc` (offsets from half of `--side`, so the band
+follows the fold), `body.settings-edge` then widens `body::before`, moves
+`body::after`'s rounded corner to the edge, clears the bar and layout
+backgrounds and aligns the crumbs with the section. Below 1000 px the older
+`.settings-layout::before` band is used. Sticky under the bar
 with its own scroll; nav and section are centred together at any width (a
 four-column grid, the outer columns `1fr`); every card 20 px from the next (a
 section's wrapper `<div id>` is `display: contents`, so its cards share that gap);
