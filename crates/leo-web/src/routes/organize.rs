@@ -1487,9 +1487,6 @@ pub(crate) async fn act(
                         .ok_or(StatusCode::NOT_FOUND)?;
                     let place = crate::margin::placed(&found.body, &saying.0, &[])
                         .ok_or(StatusCode::CONFLICT)?;
-                    if crate::margin::open_on(&chats, &id).len() >= crate::margin::MOST_OPEN {
-                        return Err(StatusCode::TOO_MANY_REQUESTS);
-                    }
                     let thread = crate::margin::new_thread(
                         &id,
                         "chat",
@@ -1500,7 +1497,7 @@ pub(crate) async fn act(
                     if crate::margin::put(&chats, &thread) {
                         Ok(thread.id)
                     } else {
-                        Err(StatusCode::INTERNAL_SERVER_ERROR)
+                        Err(StatusCode::TOO_MANY_REQUESTS)
                     }
                 })
                 .await
@@ -1533,12 +1530,25 @@ pub(crate) async fn act(
             ..
         } => {
             let chats = state.chats.clone();
-            let gone = id.clone();
-            let removed = tokio::task::spawn_blocking(move || crate::margin::remove(&chats, &gone))
-                .await
-                .unwrap_or(false);
-            if !removed {
-                return Err("that margin note is not there any more".to_string());
+            let (held, gone) = (note.clone(), id.clone());
+            let removed = tokio::task::spawn_blocking(move || {
+                let thread = crate::margin::one(&chats, &held, &gone)?;
+                if thread.messages.iter().any(|m| m.from != "felix") {
+                    return Some(false);
+                }
+                Some(crate::margin::remove(&chats, &gone))
+            })
+            .await
+            .unwrap_or(None);
+            match removed {
+                Some(true) => {}
+                Some(false) => {
+                    return Err(
+                        "you have replied to that margin note, so it stays; dismiss it instead"
+                            .to_string(),
+                    )
+                }
+                None => return Err("that margin note is not there any more".to_string()),
             }
             Ok((
                 serde_json::Value::Null,

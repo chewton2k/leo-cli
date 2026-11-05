@@ -54,7 +54,7 @@ pub(crate) struct PrefsBody {
 
 struct ReadFacts {
     along: bool,
-    over_cap: bool,
+    cap: u32,
     spoke_soon: bool,
     full: bool,
 }
@@ -76,6 +76,11 @@ fn said(code: StatusCode, why: &str, error: &str) -> Response {
 
 fn silent() -> Response {
     Json(serde_json::json!({ "note": null })).into_response()
+}
+
+fn failed(state: &AppState) -> Response {
+    state.margin.set_problem(Some(margin::PROBLEM.into()));
+    Json(serde_json::json!({ "note": null, "failed": true })).into_response()
 }
 
 async fn open_note(state: &AppState, id: &str) -> Result<Open, Box<Response>> {
@@ -156,7 +161,7 @@ fn settings_view(state: &AppState) -> serde_json::Value {
         "pace": prefs.pace,
         "cap": prefs.cap,
         "caps": margin::DAILY_CAPS,
-        "today": margin::reads_today(&state.chats),
+        "today": margin::reads_today(&state.chats, prefs.cap),
         "problem": state.margin.problem(),
     })
 }
@@ -271,7 +276,7 @@ pub(crate) async fn read(
         let held = chats.clone();
         let facts = blocking(move || ReadFacts {
             along: margin::mode_of(&held, &id, created) == "along",
-            over_cap: margin::reads_today(&held) >= margin::prefs(&held).cap,
+            cap: margin::prefs(&held).cap,
             spoke_soon: margin::last_read_note(&held, &id).is_some_and(|at| {
                 Utc::now() - at < chrono::Duration::minutes(margin::NOTE_GAP_MINUTES)
             }),
@@ -304,13 +309,6 @@ pub(crate) async fn read(
             "Felix is answering you.",
         );
     }
-    if facts.over_cap {
-        return said(
-            StatusCode::TOO_MANY_REQUESTS,
-            "daily",
-            "Felix has read enough for today.",
-        );
-    }
     if facts.spoke_soon {
         return said(
             StatusCode::TOO_MANY_REQUESTS,
@@ -322,8 +320,7 @@ pub(crate) async fn read(
         return silent();
     }
     let Some(writer) = state.toolless.clone() else {
-        state.margin.set_problem(Some(margin::PROBLEM.into()));
-        return silent();
+        return failed(&state);
     };
     let reading = match state.margin.begin(&id) {
         Ok(reading) => reading,
@@ -347,8 +344,17 @@ pub(crate) async fn read(
         return silent();
     }
     let counted = chats.clone();
-    if let Err(refused) = blocking(move || margin::count_read(&counted)).await {
-        return *refused;
+    let cap = facts.cap;
+    if !matches!(
+        blocking(move || margin::spend_read(&counted, cap)).await,
+        Ok(true)
+    ) {
+        state.margin.forget_blocks(&id, &blocks);
+        return said(
+            StatusCode::TOO_MANY_REQUESTS,
+            "daily",
+            "Felix has read enough for today.",
+        );
     }
     let user = margin::read_prompt(&note.title, &blocks);
     let answer = tokio::time::timeout(
@@ -362,8 +368,8 @@ pub(crate) async fn read(
     let reply = match answer {
         Ok(Ok(Ok(reply))) => reply,
         _ => {
-            state.margin.set_problem(Some(margin::PROBLEM.into()));
-            return silent();
+            state.margin.forget_blocks(&id, &blocks);
+            return failed(&state);
         }
     };
     state.margin.set_problem(None);
@@ -463,6 +469,13 @@ pub(crate) async fn ask(
     if question.is_empty() {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    if body.quote.trim().chars().count() < margin::LEAST_QUOTE {
+        return said(
+            StatusCode::BAD_REQUEST,
+            "short",
+            "Select a few more words, then ask.",
+        );
+    }
     let note = match open_note(&state, &id).await {
         Ok(note) => note,
         Err(refused) => return *refused,
@@ -470,8 +483,8 @@ pub(crate) async fn ask(
     if note.version != body.version {
         return StatusCode::CONFLICT.into_response();
     }
-    let exact = format!("{}{}{}", body.prefix, body.quote, body.suffix);
-    let Some(place) = margin::placed(&note.body, &body.quote, &[exact]) else {
+    let Some(place) = margin::placed_exact(&note.body, &body.prefix, &body.quote, &body.suffix)
+    else {
         return said(
             StatusCode::CONFLICT,
             "lost",
@@ -497,7 +510,17 @@ pub(crate) async fn ask(
         Err(refused) => return *refused,
     };
     thread.messages = vec![margin::you_say(&question), margin::felix_says(&text)];
-    saved_thread(&state, thread).await
+    let chats = state.chats.clone();
+    let saved = thread.clone();
+    match blocking(move || margin::put(&chats, &saved)).await {
+        Ok(true) => Json(thread).into_response(),
+        Ok(false) => said(
+            StatusCode::CONFLICT,
+            "full",
+            "This note has many open margin notes. Resolve one, then ask again.",
+        ),
+        Err(refused) => *refused,
+    }
 }
 
 pub(crate) async fn reply(
@@ -551,15 +574,15 @@ pub(crate) async fn reply(
     found.messages.push(margin::you_say(&text));
     found.messages.push(margin::felix_says(&answer));
     found.updated_at = Utc::now();
-    saved_thread(&state, found).await
-}
-
-async fn saved_thread(state: &AppState, thread: Thread) -> Response {
     let chats = state.chats.clone();
-    let saved = thread.clone();
-    match blocking(move || margin::put(&chats, &saved)).await {
-        Ok(true) => Json(thread).into_response(),
-        Ok(false) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let saved = found.clone();
+    match blocking(move || margin::save_messages(&chats, &saved)).await {
+        Ok(true) => Json(found).into_response(),
+        Ok(false) => said(
+            StatusCode::CONFLICT,
+            "closed",
+            "This note was closed while Felix answered.",
+        ),
         Err(refused) => *refused,
     }
 }
@@ -576,16 +599,15 @@ pub(crate) async fn set_status(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let chats = state.chats.clone();
-    let done = blocking(move || {
-        let mut found = margin::one(&chats, &id, &thread)?;
-        found.status = body.status;
-        found.updated_at = Utc::now();
-        margin::put(&chats, &found).then_some(found)
-    })
-    .await;
+    let done = blocking(move || margin::set_status(&chats, &id, &thread, &body.status)).await;
     match done {
-        Ok(Some(found)) => Json(found).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(margin::Status::Done(found)) => Json(found).into_response(),
+        Ok(margin::Status::Missing) => StatusCode::NOT_FOUND.into_response(),
+        Ok(margin::Status::Full) => said(
+            StatusCode::CONFLICT,
+            "full",
+            "This note has many open margin notes. Resolve one first.",
+        ),
         Err(refused) => *refused,
     }
 }

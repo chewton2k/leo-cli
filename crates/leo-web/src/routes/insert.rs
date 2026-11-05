@@ -78,7 +78,7 @@ pub(crate) async fn insert_into_note(
     let request = body
         .request
         .filter(|r| !r.is_empty() && r.len() <= MOST_REQUEST);
-    let key = format!("{id}\u{0}{}", body.base);
+    let key = id.clone();
     if let Some(found) = request.as_deref().and_then(|r| remembered(&key, r)) {
         return Json(found).into_response();
     }

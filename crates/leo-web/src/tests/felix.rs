@@ -301,6 +301,39 @@ fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String
 }
 
 #[test]
+fn auto_applies_a_margin_note_through_the_real_path_and_undo_takes_it_off() {
+    let (mut state, _dir, ids) = state_with(&[("Passage note", "")]);
+    let _ = run(update_note(
+        State(state.clone()),
+        Path(ids[0].clone()),
+        Json(
+            serde_json::from_value(serde_json::json!({ "body": "checks if it matches" })).unwrap(),
+        ),
+    ));
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"add_margin_note\", \"note\": \"Passage note\", \"quote\": \"if it matches\", \"text\": \"Hash it first.\"}</tool>",
+        "Done.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "leave a margin note", Some("auto"));
+    let card = lines
+        .iter()
+        .find_map(|l| l.get("proposal"))
+        .expect("a card");
+    assert_eq!(card["state"], "applied");
+    assert_eq!(card["kind"], "add_margin_note");
+    let threads = crate::margin::open_on(&state.chats, &ids[0]);
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].source, "chat");
+    let undone = json_of(run(crate::routes::organize::act_route(
+        State(state.clone()),
+        Json(serde_json::from_value(card["undo"].clone()).unwrap()),
+    )));
+    assert_eq!(undone["state"], "applied");
+    assert!(crate::margin::open_on(&state.chats, &ids[0]).is_empty());
+}
+
+#[test]
 fn gathered_notes_respect_the_provider_budget_in_every_chat_style() {
     for mode in ["chat", "study", "interview"] {
         let (mut state, _dir, ids) = state_with(&[("Queues", "")]);

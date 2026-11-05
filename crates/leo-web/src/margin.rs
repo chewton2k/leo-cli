@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -17,6 +17,8 @@ pub const MOST_REPLY: usize = 1_500;
 pub const MOST_ASK: usize = 1_000;
 pub const MOST_MESSAGES: usize = 24;
 pub const MOST_OPEN: usize = 24;
+pub const MOST_CLOSED: usize = 48;
+pub const SWEEP_AFTER_DAYS: i64 = 7;
 pub const MOST_BLOCKS: usize = 6;
 pub const MOST_BLOCK_CHARS: usize = 4_000;
 pub const MOST_READ_CHARS: usize = 8_000;
@@ -190,14 +192,33 @@ pub fn every(chats: &Path) -> Vec<Thread> {
         .unwrap_or_default()
 }
 
+fn prune_closed(c: &rusqlite::Connection, note: &str) -> rusqlite::Result<usize> {
+    c.execute(
+        "DELETE FROM margin_threads WHERE note = ?1 AND status != 'open' AND id NOT IN (
+            SELECT id FROM margin_threads WHERE note = ?1 AND status != 'open'
+            ORDER BY updated_at DESC LIMIT ?2)",
+        params![note, MOST_CLOSED as i64],
+    )
+}
+
+fn open_count(c: &rusqlite::Connection, note: &str) -> rusqlite::Result<usize> {
+    c.query_row(
+        "SELECT count(*) FROM margin_threads WHERE note = ?1 AND status = 'open'",
+        [note],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n as usize)
+}
+
 pub fn put(chats: &Path, thread: &Thread) -> bool {
     let messages = serde_json::to_string(&thread.messages).unwrap_or_else(|_| "[]".into());
     db_of(chats)
         .with(|c| {
-            c.execute(
-                "INSERT INTO margin_threads (id, note, quote, prefix, suffix, status, source, messages, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                 ON CONFLICT(id) DO UPDATE SET status = excluded.status, messages = excluded.messages, updated_at = excluded.updated_at",
+            let added = c.execute(
+                "INSERT OR IGNORE INTO margin_threads (id, note, quote, prefix, suffix, status, source, messages, created_at, updated_at)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+                 WHERE ?6 != 'open'
+                    OR (SELECT count(*) FROM margin_threads WHERE note = ?2 AND status = 'open') < ?11",
                 params![
                     thread.id,
                     thread.note,
@@ -209,10 +230,73 @@ pub fn put(chats: &Path, thread: &Thread) -> bool {
                     messages,
                     thread.created_at.to_rfc3339(),
                     thread.updated_at.to_rfc3339(),
+                    MOST_OPEN as i64,
                 ],
+            )?;
+            prune_closed(c, &thread.note)?;
+            Ok(added)
+        })
+        .is_ok_and(|added| added > 0)
+}
+
+pub fn save_messages(chats: &Path, thread: &Thread) -> bool {
+    let messages = serde_json::to_string(&thread.messages).unwrap_or_else(|_| "[]".into());
+    db_of(chats)
+        .with(|c| {
+            c.execute(
+                "UPDATE margin_threads SET messages = ?1, updated_at = ?2 WHERE id = ?3 AND status = 'open'",
+                params![messages, thread.updated_at.to_rfc3339(), thread.id],
             )
         })
-        .is_ok()
+        .is_ok_and(|changed| changed > 0)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Status {
+    Done(Box<Thread>),
+    Missing,
+    Full,
+}
+
+pub fn set_status(chats: &Path, note: &str, id: &str, status: &str) -> Status {
+    let done = db_of(chats).with(|c| {
+        let tx = c.transaction()?;
+        let was: Option<String> = tx
+            .query_row(
+                "SELECT status FROM margin_threads WHERE id = ?1 AND note = ?2",
+                [id, note],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(was) = was else {
+            return Ok(Status::Missing);
+        };
+        if status == "open" && was != "open" && open_count(&tx, note)? >= MOST_OPEN {
+            return Ok(Status::Full);
+        }
+        tx.execute(
+            "UPDATE margin_threads SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            params![status, Utc::now().to_rfc3339(), id],
+        )?;
+        prune_closed(&tx, note)?;
+        let thread = tx.query_row(
+            &format!("SELECT {COLUMNS} FROM margin_threads WHERE id = ?1"),
+            [id],
+            thread_of,
+        );
+        match thread {
+            Ok(thread) => {
+                tx.commit()?;
+                Ok(Status::Done(Box::new(thread)))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                tx.commit()?;
+                Ok(Status::Missing)
+            }
+            Err(error) => Err(error),
+        }
+    });
+    done.unwrap_or(Status::Missing)
 }
 
 pub fn remove(chats: &Path, id: &str) -> bool {
@@ -294,13 +378,45 @@ fn today() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
-pub fn reads_today(chats: &Path) -> u32 {
-    let day: Option<(String, u32)> = state_of(chats, "day");
-    day.filter(|(on, _)| *on == today()).map_or(0, |(_, n)| n)
+fn day_row(c: &rusqlite::Connection) -> rusqlite::Result<Option<String>> {
+    c.query_row("SELECT data FROM margin_state WHERE key = 'day'", [], |r| {
+        r.get(0)
+    })
+    .optional()
 }
 
-pub fn count_read(chats: &Path) -> bool {
-    set_state(chats, "day", &(today(), reads_today(chats) + 1))
+fn used_of(row: Option<String>, cap: u32) -> u32 {
+    let Some(text) = row else {
+        return 0;
+    };
+    match serde_json::from_str::<(String, u32)>(&text) {
+        Ok((day, used)) if day == today() => used,
+        Ok(_) => 0,
+        Err(_) => cap,
+    }
+}
+
+pub fn reads_today(chats: &Path, cap: u32) -> u32 {
+    db_of(chats)
+        .with(|c| Ok(used_of(day_row(c)?, cap)))
+        .unwrap_or(cap)
+}
+
+pub fn spend_read(chats: &Path, cap: u32) -> bool {
+    db_of(chats)
+        .with(|c| {
+            let tx = c.transaction()?;
+            let used = used_of(day_row(&tx)?, cap);
+            let spent = used < cap;
+            let data = serde_json::json!([today(), if spent { used + 1 } else { used }]);
+            tx.execute(
+                "INSERT INTO margin_state (key, data) VALUES ('day', ?1) ON CONFLICT(key) DO UPDATE SET data = excluded.data",
+                [data.to_string()],
+            )?;
+            tx.commit()?;
+            Ok(spent)
+        })
+        .unwrap_or(false)
 }
 
 pub fn mode_of(chats: &Path, note: &str, created: DateTime<Utc>) -> String {
@@ -319,7 +435,8 @@ pub fn mode_of(chats: &Path, note: &str, created: DateTime<Utc>) -> String {
         return mode;
     }
     let prefs = prefs(chats);
-    if prefs.since.is_some_and(|since| created >= since) {
+    let made_by_leo = uuid::Uuid::parse_str(note).is_ok_and(|id| id.get_version_num() == 4);
+    if made_by_leo && prefs.since.is_some_and(|since| created >= since) {
         prefs.default_mode
     } else {
         "ask".into()
@@ -341,18 +458,13 @@ pub fn valid_mode(mode: &str) -> bool {
     matches!(mode, "ask" | "along")
 }
 
-pub fn sweep(chats: &Path, kept: &HashSet<String>) -> usize {
-    let held: BTreeSet<String> = db_of(chats)
-        .with(|c| {
-            let mut query =
-                c.prepare("SELECT note FROM margin_threads UNION SELECT note FROM margin_modes")?;
-            let rows = query.query_map([], |r| r.get(0))?;
-            rows.collect()
-        })
-        .unwrap_or_default();
-    let gone: Vec<&String> = held.iter().filter(|note| !kept.contains(*note)).collect();
+pub fn sweep_due(last: Option<Instant>) -> bool {
+    last.is_none_or(|at| at.elapsed() >= SWEEP_EVERY)
+}
+
+pub fn forget_notes(chats: &Path, notes: &[String]) -> usize {
     let mut removed = 0;
-    for note in gone {
+    for note in notes {
         removed += db_of(chats)
             .with(|c| {
                 let threads = c.execute("DELETE FROM margin_threads WHERE note = ?1", [note])?;
@@ -362,6 +474,30 @@ pub fn sweep(chats: &Path, kept: &HashSet<String>) -> usize {
             .unwrap_or(0);
     }
     removed
+}
+
+pub fn sweep(chats: &Path, kept: &HashSet<String>, now: DateTime<Utc>) -> usize {
+    let held: BTreeSet<String> = db_of(chats)
+        .with(|c| {
+            let mut query =
+                c.prepare("SELECT note FROM margin_threads UNION SELECT note FROM margin_modes")?;
+            let rows = query.query_map([], |r| r.get(0))?;
+            rows.collect()
+        })
+        .unwrap_or_default();
+    let mut missing: BTreeMap<String, DateTime<Utc>> =
+        state_of(chats, "missing").unwrap_or_default();
+    missing.retain(|note, _| held.contains(note) && !kept.contains(note));
+    let mut gone = Vec::new();
+    for note in held.iter().filter(|note| !kept.contains(*note)) {
+        let since = *missing.entry(note.clone()).or_insert(now);
+        if now - since >= chrono::Duration::days(SWEEP_AFTER_DAYS) {
+            gone.push(note.clone());
+        }
+    }
+    missing.retain(|note, _| !gone.contains(note));
+    set_state(chats, "missing", &missing);
+    forget_notes(chats, &gone)
 }
 
 pub fn sweep_store(chats: &Path, store: &leo_core::store::Store) -> usize {
@@ -374,7 +510,7 @@ pub fn sweep_store(chats: &Path, store: &leo_core::store::Store) -> usize {
         .map(|n| n.id.clone())
         .chain(store.trashed().into_iter().map(|t| t.id))
         .collect();
-    sweep(chats, &kept)
+    sweep(chats, &kept, Utc::now())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -397,9 +533,20 @@ fn context_around(body: &str, at: usize, length: usize) -> Option<Place> {
     })
 }
 
+fn quotable(quote: &str) -> bool {
+    (LEAST_QUOTE..=MOST_QUOTE).contains(&quote.chars().count()) && !quote.trim().is_empty()
+}
+
+pub fn placed_exact(body: &str, prefix: &str, quote: &str, suffix: &str) -> Option<Place> {
+    if !quotable(quote) {
+        return None;
+    }
+    let at = body.find(&format!("{prefix}{quote}{suffix}"))? + prefix.len();
+    context_around(body, at, quote.len())
+}
+
 pub fn placed(body: &str, quote: &str, within: &[String]) -> Option<Place> {
-    let size = quote.chars().count();
-    if !(LEAST_QUOTE..=MOST_QUOTE).contains(&size) || quote.trim().is_empty() {
+    if !quotable(quote) {
         return None;
     }
     let at = within
@@ -639,6 +786,15 @@ impl Reads {
         fresh
     }
 
+    pub fn forget_blocks(&self, note: &str, blocks: &[String]) {
+        if let Ok(mut inner) = self.0.lock() {
+            if let Some(seen) = inner.seen.get_mut(note) {
+                let dropped: Vec<u64> = blocks.iter().map(|b| hash_of(b)).collect();
+                seen.retain(|hash| !dropped.contains(hash));
+            }
+        }
+    }
+
     pub fn replying(self: &Arc<Self>, thread: &str) -> Option<Replying> {
         let mut inner = self.0.lock().ok()?;
         inner
@@ -704,6 +860,138 @@ mod tests {
         );
     }
 
+    fn chats_here() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        (dir, chats)
+    }
+
+    fn open_thread(note: &str) -> Thread {
+        new_thread(
+            note,
+            "ask",
+            Place {
+                prefix: String::new(),
+                suffix: String::new(),
+            },
+            "words",
+            vec![felix_says("Hm.")],
+        )
+    }
+
+    #[test]
+    fn the_cap_counts_once_per_read_and_a_broken_day_row_spends_it() {
+        let (_dir, chats) = chats_here();
+        assert_eq!(reads_today(&chats, 2), 0);
+        assert!(spend_read(&chats, 2));
+        assert!(spend_read(&chats, 2));
+        assert!(!spend_read(&chats, 2));
+        assert_eq!(reads_today(&chats, 2), 2);
+        set_state(&chats, "day", &"not a day");
+        assert_eq!(reads_today(&chats, 2), 2);
+        assert!(!spend_read(&chats, 2), "unreadable never counts as zero");
+        set_state(&chats, "day", &("1999-01-01", 40));
+        assert_eq!(reads_today(&chats, 2), 0);
+        assert!(spend_read(&chats, 2));
+    }
+
+    #[test]
+    fn a_reply_cannot_reopen_a_closed_thread() {
+        let (_dir, chats) = chats_here();
+        let mut thread = open_thread("n");
+        assert!(put(&chats, &thread));
+        assert!(matches!(
+            set_status(&chats, "n", &thread.id, "resolved"),
+            Status::Done(_)
+        ));
+        thread.messages.push(you_say("late"));
+        assert!(!save_messages(&chats, &thread));
+        let stored = one(&chats, "n", &thread.id).unwrap();
+        assert_eq!(
+            (stored.status.as_str(), stored.messages.len()),
+            ("resolved", 1)
+        );
+    }
+
+    #[test]
+    fn open_and_closed_threads_are_both_bounded() {
+        let (_dir, chats) = chats_here();
+        let threads: Vec<Thread> = (0..MOST_OPEN).map(|_| open_thread("n")).collect();
+        for thread in &threads {
+            assert!(put(&chats, thread));
+        }
+        assert!(!put(&chats, &open_thread("n")), "the limit holds at insert");
+        assert!(put(&chats, &open_thread("other")));
+        assert!(matches!(
+            set_status(&chats, "n", &threads[0].id, "dismissed"),
+            Status::Done(_)
+        ));
+        assert!(put(&chats, &open_thread("n")));
+        assert_eq!(
+            set_status(&chats, "n", &threads[0].id, "open"),
+            Status::Full
+        );
+        assert_eq!(set_status(&chats, "n", "nope", "open"), Status::Missing);
+        for _ in 0..MOST_CLOSED + 5 {
+            let thread = open_thread("closing");
+            put(&chats, &thread);
+            set_status(&chats, "closing", &thread.id, "resolved");
+        }
+        assert_eq!(
+            every(&chats).iter().filter(|t| t.note == "closing").count(),
+            MOST_CLOSED
+        );
+    }
+
+    #[test]
+    fn a_missing_note_waits_before_its_threads_go_and_coming_back_clears_the_wait() {
+        let (_dir, chats) = chats_here();
+        put(&chats, &open_thread("n"));
+        let start = Utc::now();
+        let days = |n| start + chrono::Duration::days(n);
+        let none = HashSet::new();
+        assert_eq!(sweep(&chats, &none, start), 0);
+        assert_eq!(sweep(&chats, &none, days(SWEEP_AFTER_DAYS - 1)), 0);
+        let back = HashSet::from(["n".to_string()]);
+        assert_eq!(sweep(&chats, &back, days(SWEEP_AFTER_DAYS)), 0);
+        assert_eq!(sweep(&chats, &none, days(SWEEP_AFTER_DAYS + 1)), 0);
+        assert_eq!(sweep(&chats, &none, days(2 * SWEEP_AFTER_DAYS)), 0);
+        assert_eq!(sweep(&chats, &none, days(2 * SWEEP_AFTER_DAYS + 1)), 1);
+        assert!(every(&chats).is_empty());
+    }
+
+    #[test]
+    fn only_a_note_leo_made_follows_a_new_default() {
+        let (_dir, chats) = chats_here();
+        set_prefs(
+            &chats,
+            &Prefs {
+                default_mode: "along".into(),
+                since: Some(Utc::now() - chrono::Duration::days(1)),
+                ..Default::default()
+            },
+        );
+        let made = uuid::Uuid::new_v4().to_string();
+        let headerless = "0190a5b0-1234-8abc-8abc-1234567890ab";
+        assert_eq!(mode_of(&chats, &made, Utc::now()), "along");
+        assert_eq!(mode_of(&chats, headerless, Utc::now()), "ask");
+    }
+
+    #[test]
+    fn the_first_sweep_runs_at_once_then_hourly() {
+        assert!(sweep_due(None));
+        assert!(!sweep_due(Some(Instant::now())));
+    }
+
+    #[test]
+    fn a_selection_keeps_its_own_occurrence() {
+        let body = "aa same aa same aa";
+        let place = placed_exact(body, "aa same aa ", "same", " aa").unwrap();
+        assert_eq!(place.prefix, "aa same aa ");
+        assert_eq!(placed_exact(body, "nope ", "same", ""), None);
+        assert_eq!(placed_exact(body, "", "aa", ""), None);
+    }
+
     #[test]
     fn nothing_overlaps_and_the_same_note_waits_its_turn() {
         let reads = Arc::new(Reads::default());
@@ -719,6 +1007,8 @@ mod tests {
         let reads = Reads::default();
         assert_eq!(reads.unseen("a", vec!["one".into()]).len(), 1);
         assert!(reads.unseen("a", vec![" one ".into()]).is_empty());
+        reads.forget_blocks("a", &["one".into()]);
+        assert_eq!(reads.unseen("a", vec!["one".into()]).len(), 1);
         for n in 0..SEEN_BLOCKS + 8 {
             reads.unseen("a", vec![format!("block {n}")]);
         }

@@ -373,6 +373,13 @@ fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
         .collect()
 }
 
+pub fn trashed_ids(notes_dir: &Path) -> HashSet<String> {
+    trash_entries(notes_dir)
+        .into_iter()
+        .map(|(_, note, _)| note.id)
+        .collect()
+}
+
 fn tidy_trash(notes_dir: &Path, live: &HashSet<&str>) {
     let cutoff = crate::keep::load(notes_dir)
         .trash_days

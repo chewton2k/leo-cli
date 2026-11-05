@@ -340,11 +340,11 @@ async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
     let mut read_at = None;
     let mut graphed_at = None;
-    let mut swept_at = std::time::Instant::now() - margin::SWEEP_EVERY;
+    let mut swept_at = None;
     loop {
         tick.tick().await;
-        if swept_at.elapsed() >= margin::SWEEP_EVERY {
-            swept_at = std::time::Instant::now();
+        if margin::sweep_due(swept_at) {
+            swept_at = Some(std::time::Instant::now());
             let chats = state.chats.clone();
             let _ = state
                 .read_store(move |store| Ok(margin::sweep_store(&chats, store)))

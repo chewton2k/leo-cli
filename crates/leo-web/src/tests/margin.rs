@@ -641,7 +641,7 @@ async fn a_thread_takes_replies_within_its_limits() {
     );
     let mut full = margin::one(&engine.chats(), &id, &thread).unwrap();
     full.messages = vec![margin::you_say("x"); margin::MOST_MESSAGES];
-    margin::put(&engine.chats(), &full);
+    margin::save_messages(&engine.chats(), &full);
     let (status, why) = engine
         .post(&path, serde_json::json!({ "text": "Hi" }))
         .await;
@@ -723,6 +723,12 @@ async fn asking_about_selected_words_needs_no_read_along_and_the_words_must_be_t
     assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
     let long = "x".repeat(margin::MOST_QUOTE + 1);
     assert_eq!(engine.post(&path, ask(&long, "", &version)).await.0, 413);
+    let (status, why) = engine
+        .post(&path, ask("same words", "not beside it ", &version))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
+    let (status, why) = engine.post(&path, ask("sa", "", &version)).await;
+    assert_eq!((status, why["why"].as_str()), (400, Some("short")));
     engine.stop().await;
 }
 
@@ -759,6 +765,151 @@ async fn threads_follow_their_note_through_the_trash() {
     assert_eq!(status, 200);
     assert!(margin::one(&engine.chats(), &id, &thread).is_none());
     assert_eq!(margin::open_on(&engine.chats(), &keep).len(), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn deleting_the_last_note_for_good_takes_its_threads_at_once() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Only one", PASSAGE).await;
+    let thread = thread_on(&engine, &id).await;
+    engine
+        .send_as(&engine.cookie, "DELETE", &format!("/api/notes/{id}"), None)
+        .await;
+    assert!(margin::one(&engine.chats(), &id, &thread).is_some());
+    let (status, _) = engine
+        .post(
+            "/api/trash/delete",
+            serde_json::json!({ "ids": [id.clone()] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert!(margin::every(&engine.chats()).is_empty());
+    engine.stop().await;
+}
+
+#[test]
+fn an_unreadable_file_stops_the_sweep() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes = dir.path().join("notes");
+    let mut store = Store::load_from(&notes).unwrap();
+    store.create_note("Kept", "", vec![], "").unwrap();
+    store.save().unwrap();
+    std::fs::write(
+        notes.join("Broken.md"),
+        "---\ntitle: [unclosed\n---\nbody\n",
+    )
+    .unwrap();
+    let store = Store::load_from(&notes).unwrap();
+    assert!(!store.unreadable.is_empty());
+    let chats = crate::chats::dir_for(&store.notes_dir);
+    margin::put(
+        &chats,
+        &margin::new_thread(
+            "elsewhere",
+            "read",
+            margin::Place {
+                prefix: String::new(),
+                suffix: String::new(),
+            },
+            "words",
+            Vec::new(),
+        ),
+    );
+    let start = chrono::Utc::now();
+    assert_eq!(margin::sweep_store(&chats, &store), 0);
+    let held = margin::every(&chats);
+    assert_eq!(held.len(), 1);
+    let kept = std::collections::HashSet::new();
+    margin::sweep(&chats, &kept, start);
+    assert_eq!(
+        margin::sweep(&chats, &kept, start + chrono::Duration::days(8)),
+        1,
+        "without the guard the same thread would go"
+    );
+}
+
+#[tokio::test]
+async fn bad_thread_ids_are_refused_before_anything_runs() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Ids", PASSAGE).await;
+    let reply = format!("/api/notes/{id}/margin/threads/a%20b/reply");
+    let status = format!("/api/notes/{id}/margin/threads/a%20b");
+    assert_eq!(
+        engine
+            .post(&reply, serde_json::json!({ "text": "Hi" }))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        engine
+            .post(&status, serde_json::json!({ "status": "open" }))
+            .await
+            .0,
+        400
+    );
+    engine.stop().await;
+}
+
+struct Healthy;
+
+impl crate::app_settings::AppApi for Healthy {
+    fn view(&self) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({}))
+    }
+    fn change(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({}))
+    }
+    fn health(&self, _: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({ "sections": [] }))
+    }
+}
+
+#[tokio::test]
+async fn health_shows_a_failed_read_through_its_route() {
+    let writer: Writer = Arc::new(|_, _, _| anyhow::bail!("down"));
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        app_settings: Some(Arc::new(Healthy)),
+        ..Default::default()
+    })
+    .await;
+    let (_, view) = engine.get("/api/health").await;
+    assert_eq!(view["sections"].as_array().unwrap().len(), 0);
+    let (id, version) = engine.note("Broken", PASSAGE).await;
+    let (_, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!(read["failed"], true, "the page keeps its baseline");
+    let (_, view) = engine.get("/api/health").await;
+    assert_eq!(view["sections"][0]["title"], "Felix");
+    assert_eq!(view["sections"][0]["checks"][0]["detail"], margin::PROBLEM);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn the_same_request_adds_once_even_when_its_base_has_moved() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, version) = engine.note("Twice", PASSAGE).await;
+    let path = format!("/api/notes/{id}/insert");
+    let first = serde_json::json!({ "text": "Added.", "base": version, "request": "press-one" });
+    let (status, done) = engine.post(&path, first).await;
+    assert_eq!(status, 200);
+    let moved = done["note"]["version"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let moved = if moved.is_empty() {
+        done["version"].as_str().unwrap().to_string()
+    } else {
+        moved
+    };
+    let again = serde_json::json!({ "text": "Added.", "base": moved, "request": "press-one" });
+    assert_eq!(engine.post(&path, again).await.0, 200);
+    let body = engine.get(&format!("/api/notes/{id}")).await.1["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(body.matches("Added.").count(), 1, "{body}");
     engine.stop().await;
 }
 
@@ -836,6 +987,15 @@ fn the_tool_follows_each_access_mode_and_offers_undo() {
             assert_eq!(shown["undo"]["kind"], "remove_margin_note");
 
             let undo: tools::Proposal = serde_json::from_value(shown["undo"].clone()).unwrap();
+            let mut replied = threads[0].clone();
+            replied.messages.push(margin::you_say("Good point."));
+            margin::save_messages(&state.chats, &replied);
+            let refused = crate::routes::organize::act_now(&state, &undo).unwrap_err();
+            assert!(refused.contains("dismiss"), "{refused}");
+            assert_eq!(margin::open_on(&state.chats, &ids[0]).len(), 1);
+            let mut quiet = replied;
+            quiet.messages.pop();
+            margin::save_messages(&state.chats, &quiet);
             let undone = crate::routes::organize::act_now(&state, &undo).unwrap();
             assert!(margin::open_on(&state.chats, &ids[0]).is_empty());
             assert_eq!(undone["undo"]["kind"], "add_margin_note");
@@ -892,6 +1052,46 @@ fn gathering_includes_open_threads_after_the_notes_within_the_budget() {
 }
 
 #[test]
+fn a_thread_on_a_trashed_note_exports_only_with_the_trash() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let id = store
+        .create_note("Gone", "words here", vec![], "")
+        .unwrap()
+        .id
+        .clone();
+    store.save().unwrap();
+    store.delete_notes(&[id.clone()]);
+    store.save().unwrap();
+    let chats = crate::chats::dir_for(&store.notes_dir);
+    margin::put(
+        &chats,
+        &margin::new_thread(
+            &id,
+            "read",
+            margin::placed("words here", "words", &[]).unwrap(),
+            "words",
+            Vec::new(),
+        ),
+    );
+    let packed = |trash: bool| {
+        let parts = crate::export::Parts {
+            chats: true,
+            trash,
+            ..Default::default()
+        };
+        let mut zip = std::io::Cursor::new(Vec::new());
+        crate::export::write_zip(&mut zip, &store.notes_dir, &chats, parts).unwrap();
+        zip.set_position(0);
+        let mut archive = zip::ZipArchive::new(zip).unwrap();
+        let found = archive.by_name("leo/margin.json").is_ok();
+        found
+    };
+    assert!(!packed(false));
+    assert!(packed(true));
+}
+
+#[test]
 fn exports_and_storage_cover_margin_threads() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
@@ -909,6 +1109,18 @@ fn exports_and_storage_cover_margin_threads() {
     margin::put(&chats, &thread);
     let mut zip = std::io::Cursor::new(Vec::new());
     crate::export::write_zip(&mut zip, &store.notes_dir, &chats, Default::default()).unwrap();
+    zip.set_position(0);
+    let mut archive = zip::ZipArchive::new(zip).unwrap();
+    assert!(
+        archive.by_name("leo/margin.json").is_err(),
+        "chats were not chosen"
+    );
+    let with_chats = crate::export::Parts {
+        chats: true,
+        ..Default::default()
+    };
+    let mut zip = std::io::Cursor::new(Vec::new());
+    crate::export::write_zip(&mut zip, &store.notes_dir, &chats, with_chats).unwrap();
     zip.set_position(0);
     let mut archive = zip::ZipArchive::new(zip).unwrap();
     assert!(archive.by_name("leo/margin.json").is_ok());
