@@ -1841,7 +1841,7 @@
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
             : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'delete_card' || p.kind === 'delete_board' ? 'Delete' : p.kind === 'restore_note' || p.kind === 'restore_folder' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${typeof p.description === 'string' && (p.kind === 'update_task' || p.description) ? `<div class="proposal-why">${escape(p.description || 'Clear description')}</div>` : ''}${acts}</div>`;
+        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${typeof p.description === 'string' && (p.kind === 'update_task' || p.description) ? `<div class="proposal-why">${escape(p.description || 'Clear description')}</div>` : ''}${p.kind === 'add_margin_note' ? `<div class="proposal-why">“${escape(p.quote)}”: ${escape(p.text)}</div>` : ''}${acts}</div>`;
       }
       const done = p.state === 'applied'
         ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button><button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`

@@ -23,7 +23,7 @@ function environment({ beacon = true, draft = false } = {}) {
     api: async () => context.backup,
     backup: { state: 'idle', at: 0, message: '' },
     toast: (message) => notices.push(message),
-    route: () => {}, render: async () => {}, fail: () => {},
+    route: () => {}, render: async () => {}, fail: () => {}, marginLeave: () => {},
     Blob,
   };
   vm.createContext(context);

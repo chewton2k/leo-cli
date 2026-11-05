@@ -505,6 +505,9 @@ pub(crate) async fn reply(
     Path((id, thread)): Path<(String, String)>,
     Json(body): Json<ReplyBody>,
 ) -> Response {
+    if !margin::valid_note(&thread) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let text = body.text.trim().to_string();
     if text.chars().count() > margin::MOST_ASK {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();

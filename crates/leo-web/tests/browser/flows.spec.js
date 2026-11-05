@@ -4412,6 +4412,7 @@ test.describe('passages', () => {
     const thread = { id: 'stub-thread', note: note.id, quote: 'just checks if it matches', prefix: 'Then login ', suffix: ', I think', status: 'open', source: 'read', messages: [said('felix', 'In plain text? If this table leaks, every account goes.')], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
     await page.route('**/margin/read', async (route) => {
       reads.push(route.request().postDataJSON());
+      await new Promise((done) => setTimeout(done, 700));
       await route.fulfill({ json: { note: thread } });
     });
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
@@ -4431,7 +4432,9 @@ test.describe('passages', () => {
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
     await area.pressSequentially('\n\nThen login just checks if it matches, I think');
+    await expect(page.locator('.margin-reading .felix.think')).toBeVisible({ timeout: 9000 });
     await expect(page.locator('.margin-note')).toBeVisible({ timeout: 9000 });
+    await expect(page.locator('.margin-reading')).toHaveCount(0);
     expect(reads).toHaveLength(1);
     expect(reads[0].blocks).toEqual(['Then login just checks if it matches, I think']);
     await expect(area).toBeFocused();

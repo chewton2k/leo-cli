@@ -123,7 +123,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.evaluate(()=>{window.__LEO_VISIBLE__=true;window.dispatchEvent(new Event('leo-visibility'));window.dispatchEvent(new Event('leo-visibility'));});
       expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads+1);
       await page.clock.resume();
-      await expect(page.locator('.settings-nav a')).toHaveCount(10);
+      await expect(page.locator('.settings-nav a')).toHaveCount(11);
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
       await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();

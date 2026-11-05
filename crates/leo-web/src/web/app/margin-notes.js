@@ -48,7 +48,7 @@ async function marginMount(s, mine) {
   Object.assign(marginPage, { s, layer, svg: layer.firstChild, baseline: marginKit.blocksOf(s.doc.source()), nextRead: 0 });
   layer.addEventListener('click', marginClick);
   layer.addEventListener('keydown', marginKey);
-  layer.addEventListener('submit', marginSubmit);
+  layer.addEventListener('submit', (e) => marginSubmit(e).catch(fail));
   if (window.ResizeObserver) {
     marginPage.observer = new ResizeObserver(() => marginRedraw());
     marginPage.observer.observe(columns);
@@ -82,7 +82,7 @@ function marginControl() {
     button.type = 'button';
     button.id = 'margin-mode';
     button.className = 'chip margin-mode';
-    button.addEventListener('click', marginToggleMode);
+    button.addEventListener('click', () => marginToggleMode().catch(fail));
     meta.appendChild(button);
   }
   const along = marginPage.mode === 'along';
@@ -529,7 +529,7 @@ function marginEdited(s) {
   clearTimeout(marginPage.timer);
   if (marginPage.mode !== 'along') return;
   const pause = READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular;
-  marginPage.timer = setTimeout(() => marginRead(s), Math.max(pause, marginPage.nextRead - Date.now()));
+  marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(pause, marginPage.nextRead - Date.now()));
 }
 
 function marginShowReading(s, blocks) {
@@ -582,7 +582,7 @@ async function marginRead(s) {
     marginPage.readFace?.remove();
     marginPage.readFace = null;
     if (s === marginPage.s && marginPage.mode === 'along' && marginKit.changedBlocks(marginPage.baseline, s.doc.source()).length) {
-      marginPage.timer = setTimeout(() => marginRead(s), Math.max(READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular, marginPage.nextRead - Date.now()));
+      marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular, marginPage.nextRead - Date.now()));
     }
   }
 }

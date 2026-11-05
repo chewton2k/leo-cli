@@ -3,7 +3,7 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, storage housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, web, room, speech).
+reader, seer, meaning, web, room, speech, toolless).
 
 ## Layout
 
@@ -19,7 +19,7 @@ reader, seer, meaning, web, room, speech).
 - Pure helpers are separate files served on their own and node-tested from
   `tests/markdown.rs` `run_node_tests`: `markdown.js`, `editing.js`,
   `graph.js`, `schedule.js`, `interview.js`, `saving.js`, `audio-queue.js`,
-  `recording.js` (tests in `tests/*.test.js`).
+  `recording.js`, `margin.js` (tests in `tests/*.test.js`).
 - Everything leo-web computes or keeps besides notes and uploads lives in one
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
@@ -124,7 +124,8 @@ reader, seer, meaning, web, room, speech).
   radios, so arrow keys are the browser's own; a hidden `field` carries the value and
   fires `change`; one ring (`--text`, ink) glides between cards at `--t-follow` on
   `--ease-soft`, and `keepSegmented`/`restoreSettingsFields` keep it where it was
-  across redraws. No setting uses it yet (Felix's arrives with the margin).
+  across redraws. Settings → Felix uses it for New notes start and Where notes
+  appear.
   Longer or open-ended lists stay `<select>`, which inside Settings
   `select-menu.js` draws as a custom listbox (2026-11-02, the user's call: no
   system menus). The `<select>` stays underneath, invisible and unclickable, as
@@ -560,7 +561,9 @@ reader, seer, meaning, web, room, speech).
   there is only one. They validate against the
   store, become `Proposal` cards, run through POST `/api/felix/act` (reusing
   the normal routes) and return the inverse card as `undo`. The page redraws
-  an open board after one applies (`BOARD_KINDS`). The text manual stays under
+  an open board after one applies (`BOARD_KINDS`). add_margin_note (`quote` must
+  be in the note; Undo is `remove_margin_note`) redraws the open note's margin
+  (`MARGIN_KINDS`); it never changes the note. The text manual stays under
   14,500 bytes. `MOST_PROPOSALS` counts every change tool.
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
@@ -774,6 +777,66 @@ reader, seer, meaning, web, room, speech).
 - Felix activity records its position in the streamed response, stays between
   the corresponding passages after reload, and is excluded from copied note
   selections. Legacy activity without positions stays at the beginning.
+
+## Felix in the margin (`margin.rs`, `routes/margin.rs`, `web/margin.js`, `app/margin-notes.js`, 2026-11-04)
+
+- Storage: `margin_threads`, `margin_modes` and `margin_state` (prefs and the
+  day's read count) in leo.db, never in note files or git. Threads carry `quote`,
+  `prefix`, `suffix`, `status` (open, resolved, dismissed), `source` (read, ask,
+  chat) and `messages`. A deleted note keeps its threads while it is in the trash;
+  `margin::sweep_store` drops them once the note is gone for good (after a trash
+  delete and hourly), never while no notes loaded or a file is unreadable. Export
+  adds `leo/margin.json`; Storage has one delete-all action.
+- Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
+  without one, the global default applies only to notes made after it was set
+  (`Prefs.since`), so turning it on never starts reading old notes.
+- Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
+  sends changed blocks after a pause (4 s, slow 8 s). Silence is the normal answer:
+  `{}`, empty or unparsable output is success. The server refuses, whatever the page
+  does: a stale version (409), a note not in `along` or not edited in this engine
+  run (403, `Reads::edited` is set by the PATCH route, so browsing can never read),
+  a reply streaming (`Steering::any_open`), the daily cap, 5 minutes after a read
+  note on that note, 90 s between reads of a note, and overlapping reads (429 with
+  `why`). Blocks already read are dropped. The count rises before the call, so
+  failures spend the cap too. The model's quote must be in the note now, or the note
+  is dropped.
+- Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
+  WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
+  `web_search="disabled"`. Note text sits between tags with a per-read random
+  suffix and the prompt says it is never instructions. Model text is only ever set
+  with `textContent`.
+- Daily cap: 40 (20, 40, 80). Every read starts a fresh process (`claude -p`,
+  `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
+  most 8,000 characters in and 220 tokens out. 90 s between reads means 40 reads
+  take an hour of writing at least, and a day's worst case is about 90k input
+  tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
+  bounded when parsed.
+- A failed or missing AI stays silent in the note and leaves `margin::PROBLEM`
+  (fixed text, no provider detail) in Settings → Felix and Health until a read works.
+- Selection: Ask Felix (⌘⇧E) opens a draft in the margin, POST
+  `.../margin/threads` (no read-along needed), or Ask in chat. With Felix open, or
+  over 600 characters, it goes to the chat as before. Replies POST
+  `.../threads/{id}/reply` through `Powers.chat`, bounded (`MOST_REPLY`,
+  `MOST_MESSAGES`), and never run twice at once for a thread.
+- Add to note uses `/insert` with a request id and retries once at the end of the
+  note on 409; Undo PATCHes the body back and reopens the thread. Open in chat
+  attaches the quote. `chat::gather_seeing` adds open threads of the open note after
+  the notes (`margin::context`, at most 3,000 characters and an eighth of the note
+  room); warm sessions get them again only when they change (`Warm.margin`).
+- Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix, then
+  lost), `stack`, `sides`, `arrangement`. Right margin needs 928 px of column,
+  Both 1,192 px. While a note has threads or reads along, `.note-columns[data-margin]`
+  narrows the column to at most 760 px for that view (never `leo-note-width`), so a
+  first note cannot reflow text being typed. Full width, too little room or Felix
+  open give Marks only: a small mark above the end of the passage opens the note
+  inline, with `.margin-room` holding the space under its block. A lost anchor goes
+  to `#chat-lost` in the panel.
+- Overlay: `.margin-layer` sits in `.note-columns`, outside `#doc`, redrawn on
+  ResizeObserver and edits. `doc.spanRects` measures rendered blocks and open
+  textareas without touching the caret. Elements are kept by thread id and the reply
+  box is never rebuilt. Felix's `think` face shows only while a read runs, after
+  200 ms so a refused read never flashes. Timing follows the mockup: squiggle
+  .46 s, tether .56 s, words 62 ms apart. Reduced Motion stills all of it. Never prints.
 
 ## Interview instant feedback (2026-10-12, `interview_keys.rs`)
 
@@ -1409,7 +1472,7 @@ Notes with Markdown headings have an outline (its disclosure is an icon and chev
 editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
 It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
 the user's call: notes sit in the middle), the note is centred between two 48 px
-gutters and the right one holds a tick per heading (`.outline-ticks`, longer for
+gutters and the left one holds a tick per heading (`.outline-ticks`, longer for
 higher levels, the current one in the accent). Hovering or focusing the rail
 magnifies nearby bars and previews the heading and a bounded plain-text excerpt
 (up to 24 lines / 800 UTF-16 units, escaped); clicking or Enter/Space jumps there.
