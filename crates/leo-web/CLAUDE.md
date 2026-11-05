@@ -150,14 +150,25 @@ reader, seer, meaning, web, room, speech).
   only their own summary, so opening a parent never rotates a child's icon.
   Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
   the menu and returns focus to its button without closing the conversation.
-- Motion (reworked 2026-10-10, the user found the first pass tacky): only what
-  follows a click, quick (`MOTION_MS` 180), transform/clip/height/opacity only. No
-  idle animation or hover lifts. `<details>` slide their height
-  (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
-  ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
-  content. Notes fade in place so text never moves during an immediate selection; confirmed note/folder removals leave
-  over 180 ms only after the delete succeeds, and delayed deletes never navigate
-  a newer page. Reduced Motion turns all of it off. Tapping Felix is the one
+- Motion (three tiers, 2026-11-04, the user's call; the first pass was found
+  tacky on 2026-10-10, so the bans stay). Tokens live in `index.html`
+  `:root`: `--ease-soft`, `--ease-drawer`, `--ease-arrive`, `--t-press` (100 ms),
+  `--t-follow` (180 ms), `--t-drawer` (240 ms). (1) Press feedback: under 120 ms,
+  starts on input. (2) Follows a click: 140 to 240 ms (`MOTION_MS` 180),
+  transform/clip/height/opacity only. `<details>` slide their height
+  (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out
+  (`CHAT_LEAVE_MS`); sheets and toasts ease out (`LEAVE_MS`). Folder navigation
+  has one short arrival on the content. Notes fade in place so text never moves
+  during an immediate selection; confirmed note/folder removals leave over 180 ms
+  only after the delete succeeds, and delayed deletes never navigate a newer
+  page. (3) Felix arriving on his own: 300 to 650 ms, never blocks input, never
+  moves text the user is working in. Still banned: hover lifts, idle loops, list
+  entrance staggers, blur, pointer effects. Reduced Motion turns off tiers 2 and
+  3 (`stillMotion`). Never animate something a redraw can replace mid-animation.
+  Felix's words use `--voice` (a system serif stack, no font files) and nothing
+  else does; surfaces separate by tone (`--ground` rail and explorer, `--page`
+  content, `--raised` popovers and opened surfaces, `--tint` group fill) and
+  space rather than rules, which stay on inputs, tables and code. Tapping Felix is the one
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
