@@ -222,7 +222,7 @@ pub fn run() {
     });
 }
 
-const PRINT: &str = "(() => { const nativePrint = window.print.bind(window); window.print = () => window.__LEO_APP__ === 'mac' ? window.__TAURI_INTERNALS__.invoke('print_page') : nativePrint(); })();";
+const PRINT: &str = "(() => { const nativePrint = window.print.bind(window); window.print = () => window.__LEO_APP__ === 'mac' ? new Promise(done => setTimeout(done)).then(() => window.__TAURI_INTERNALS__.invoke('print_page')) : nativePrint(); })();";
 
 #[tauri::command]
 fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {

@@ -4,6 +4,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+test('native commands have explicit permissions scoped to their own window and origin', () => {
+  const desktop = path.resolve(__dirname, '../../leo-desktop');
+  const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
+  const files = folder => fs.existsSync(folder) ? fs.readdirSync(folder).filter(name => name.endsWith('.json')).map(name => read(path.join(folder, name))) : [];
+  const permissions = files(path.join(desktop, 'permissions')).flatMap(file => file.permission || []);
+  const capabilities = files(path.join(desktop, 'capabilities'));
+  for (const [command, window, remote] of [['print_page', 'main', true], ['dictation_popup', 'dictation', false]]) {
+    const grants = permissions.filter(permission => permission.commands?.allow?.includes(command));
+    assert.equal(grants.length, 1, `${command} needs an explicit permission`);
+    assert.deepEqual(grants[0].commands.allow, [command]);
+    const callers = capabilities.filter(capability => capability.permissions.includes(grants[0].identifier));
+    assert.equal(callers.length, 1, `${command} needs one scoped capability`);
+    assert.deepEqual(callers[0].windows, [window]);
+    assert.deepEqual(callers[0].webviews || [], []);
+    assert.equal(callers[0].local !== false, !remote);
+    assert.deepEqual(callers[0].remote?.urls || [], remote ? ['http://127.0.0.1:*', 'http://localhost:*'] : []);
+  }
+});
+
 test('desktop printing keeps the Windows native print function and bridges only macOS', async () => {
   const desktop = path.resolve(__dirname, '../../leo-desktop/src');
   const rust = fs.readFileSync(path.join(desktop, 'lib.rs'), 'utf8');
@@ -12,8 +31,10 @@ test('desktop printing keeps the Windows native print function and bridges only 
     let native = 0, bridge = 0;
     const original = () => { native++; };
     const window = { __LEO_APP__: platform, print: original, __TAURI_INTERNALS__: { invoke: async command => { assert.equal(command, 'print_page'); bridge++; } } };
-    vm.runInNewContext(script, { window });
-    await window.print();
+    vm.runInNewContext(script, { window, Promise, setTimeout });
+    const printed = window.print();
+    assert.equal(bridge, 0, 'the note title reaches the page before the native print job reads it');
+    await printed;
     assert.equal(native, platform === 'windows' ? 1 : 0);
     assert.equal(bridge, platform === 'mac' ? 1 : 0);
   }

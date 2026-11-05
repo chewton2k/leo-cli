@@ -1,0 +1,14 @@
+{
+  "permission": [
+    {
+      "identifier": "allow-print-page",
+      "description": "Open the system print dialog for the note.",
+      "commands": { "allow": ["print_page"] }
+    },
+    {
+      "identifier": "allow-dictation-popup",
+      "description": "Read or cancel dictation from its bundled popup.",
+      "commands": { "allow": ["dictation_popup"] }
+    }
+  ]
+}
