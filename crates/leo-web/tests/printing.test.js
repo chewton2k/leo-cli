@@ -31,8 +31,10 @@ test('desktop printing keeps the Windows native print function and bridges only 
     let native = 0, bridge = 0;
     const original = () => { native++; };
     const window = { __LEO_APP__: platform, print: original, __TAURI_INTERNALS__: { invoke: async command => { assert.equal(command, 'print_page'); bridge++; } } };
-    vm.runInNewContext(script, { window });
-    await window.print();
+    vm.runInNewContext(script, { window, Promise, setTimeout });
+    const printed = window.print();
+    assert.equal(bridge, 0, 'the note title reaches the page before the native print job reads it');
+    await printed;
     assert.equal(native, platform === 'windows' ? 1 : 0);
     assert.equal(bridge, platform === 'mac' ? 1 : 0);
   }
