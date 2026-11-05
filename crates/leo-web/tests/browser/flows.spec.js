@@ -27,6 +27,11 @@ const test = base.test.extend({
 const fs = require('node:fs');
 const path = require('node:path');
 
+async function chooseMode(chat, mode) {
+  await chat.locator('#chat-mode-btn').click();
+  await chat.locator(`.chat-mode[data-mode="${mode}"]`).click();
+}
+
 test.beforeEach(async ({ page }) => {
   const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
   await page.goto(`/?token=${token}`);
@@ -877,6 +882,74 @@ test.describe('knowledge graph', () => {
 });
 
 test.describe('Felix', () => {
+  test('the head menu reaches every style and stops reading the note, all by keyboard', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: 'Save the password.\n\nThen compare it.' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
+    await expect(chat.locator('#chat-history')).toBeHidden();
+    const button = chat.locator('#chat-mode-btn');
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('ArrowDown');
+    await expect(chat.locator('.chat-mode').first()).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(chat.locator('[data-chat="drop"]')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(chat.locator('#chat-mode-menu')).toBeHidden();
+    await expect(button).toBeFocused();
+    await expect(chat).toBeVisible();
+    await chooseMode(chat, 'interview');
+    await expect(button).toHaveText('Interview');
+    await expect(chat.locator('.chat-mode.on')).toHaveText('Interview');
+    await button.click();
+    await chat.locator('[data-chat="drop"]').click();
+    await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
+    await expect(button).toBeFocused();
+  });
+
+  test('a growing reply keeps its finished words, and a citation lights its passage in the open note', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Lit', body: 'First line.\n\nSecond line.\n\nThird line.' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await page.evaluate(() => {
+      const box = document.createElement('div');
+      box.id = 'settle';
+      box.innerHTML = '<div class="msg leo pending"><div class="prose"><p>Hello there</p></div></div>';
+      document.body.append(box);
+    });
+    await page.evaluate(() => {
+      const next = (html) => { const t = document.createElement('div'); t.innerHTML = html; return t; };
+      const box = document.querySelector('#settle');
+      window.__first = box.querySelector('p').firstChild;
+      leoChat.settle(box, next('<div class="msg leo pending"><div class="prose"><p>Hello there my friend</p></div></div>'), false);
+      window.__again = box.querySelector('p').textContent;
+    });
+    expect(await page.evaluate(() => ({ kept: document.querySelector('#settle p').firstChild === window.__first, text: window.__again, words: document.querySelectorAll('#settle .word').length }))).toEqual({ kept: true, text: 'Hello there my friend', words: 2 });
+    await page.evaluate(() => {
+      const t = document.createElement('div');
+      t.innerHTML = '<div class="msg leo"><div class="prose"><p>Hello there my friend</p></div></div>';
+      leoChat.settle(document.querySelector('#settle'), t, false);
+    });
+    expect(await page.evaluate(() => document.querySelector('#settle p').textContent)).toBe('Hello there my friend');
+    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [{ n: 1, id: note.id, title: 'Lit', folder: '', why: 'open' }] }, { t: 'It says so [n1 L3-3].' }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' }));
+    await chat.locator('.starter').first().click();
+    const chip = chat.locator('.cite[data-line]').first();
+    await expect(chip).toBeVisible();
+    await chip.hover();
+    await expect(page.locator('.blk-glow')).toHaveCount(1);
+    await expect(page.locator('.blk-glow')).toContainText('Second line');
+    await page.mouse.move(5, 5);
+    await expect(page.locator('.blk-glow')).toHaveCount(0);
+    await chip.focus();
+    await expect(page.locator('.blk-glow')).toHaveCount(1);
+    await chat.locator('#chat-input').focus();
+    await expect(page.locator('.blk-glow')).toHaveCount(0);
+  });
+
   test('quizzes from the open note, cites it, and dances on a right answer', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps', body: 'A binary heap keeps the minimum at the root.' } })).json();
     const asked = [];
@@ -894,7 +967,7 @@ test.describe('Felix', () => {
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
     await expect(chat.locator('.chat-context')).toContainText('Heaps');
-    await chat.locator('[data-mode="study"]').click();
+    await chooseMode(chat, 'study');
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
     await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
@@ -910,7 +983,7 @@ test.describe('Felix', () => {
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
     await expect(chat).not.toHaveClass(/chat-leaving/);
     if (!(await chat.isVisible())) await page.locator('#chat-toggle').click();
-    await chat.locator('[data-mode="chat"]').click();
+    await chooseMode(chat, 'chat');
     await expect(chat.locator('.msg'), 'switching style keeps the conversation').toHaveCount(4);
     await expect(chat.locator('.chat-switch')).toHaveText('Switched to Chat; the conversation carries on');
     await chat.locator('#chat-input').fill('now explain why');
@@ -1043,7 +1116,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chat.locator('[data-mode="study"]').click();
+    await chooseMode(chat, 'study');
     await chat.locator('.starter', { hasText: 'Start a study session on this note' }).click();
     await expect(chat.locator('.chat-ask')).toContainText('Which note should the session cover?');
     expect(asked.length).toBe(0);
@@ -1063,7 +1136,7 @@ test.describe('Felix', () => {
     expect(asked[1].messages[0].text).toBe(`Make me a 3-day review plan for algos-${tag}`);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
-    await chat.locator('[data-mode="chat"]').click();
+    await chooseMode(chat, 'chat');
     await chat.locator('.starter', { hasText: 'Explain this simply' }).click();
     await expect(chat.locator('.chat-ask')).toContainText('Which note should I explain?');
     await chat.locator('[data-chat="ask-cancel"]').click();
@@ -1952,6 +2025,7 @@ test.describe('readability', () => {
       for (const el of document.querySelectorAll(`${within} *`)) {
         if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
         if (el.closest('[disabled], [aria-disabled="true"], .skeleton, canvas, svg, option, select, [hidden]')) continue;
+        if (el.matches('.word, .starter') && el.getAnimations().length) continue;
         const style = getComputedStyle(el);
         const box = el.getBoundingClientRect();
         if (style.visibility !== 'visible' || box.width < 1 || box.height < 1 || style.display === 'none') continue;
@@ -3430,7 +3504,7 @@ test.describe('past chats', () => {
     await search.fill('');
     await expect(chat.locator('.chat-history-title').first()).toHaveText(`Heaps ${tag}`);
     await chat.locator('.chat-history-item', { hasText: `Shortest paths ${tag}` }).click();
-    await chat.locator('[data-mode="study"]').click();
+    await chooseMode(chat, 'study');
     await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).filter((c) => c.id.endsWith(tag)).map((c) => c.id)).toEqual([`chat-heap-${tag}`, `chat-dij-${tag}`]);
   });
 });
@@ -4387,7 +4461,7 @@ test.describe('study sessions', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chat.locator('[data-mode="study"]').click();
+    await chooseMode(chat, 'study');
     await chat.locator('#chat-input').fill('quiz me on heaps');
     await chat.locator('#chat-input').press('Enter');
     const progress = chat.locator('#study-progress');

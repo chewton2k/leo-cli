@@ -84,6 +84,10 @@ const chat = felix.create({
     if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();
     else go(noteHash(id));
   },
+  onCite: (id, lines) => {
+    const open = state.view === 'note' ? state.session : null;
+    if (open && open.doc) open.doc.glow(...(id && lines && open.note.id === id ? [lines.from, lines.to] : []));
+  },
   onOriginal: (note, name, at) => showPassage(note, name, at).catch(fail),
   prepare: async (file) => {
     const ready = await shrink(file);

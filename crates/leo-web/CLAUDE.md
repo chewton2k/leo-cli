@@ -148,8 +148,9 @@ reader, seer, meaning, web, room, speech).
   native options and keyboard behavior; forced colors restores the OS arrow.
   Icon buttons share centered flex alignment. Disclosure selectors affect
   only their own summary, so opening a parent never rotates a child's icon.
-  Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
-  the menu and returns focus to its button without closing the conversation.
+  Felix menus (style, access, attach) reuse `ICON`; Arrow keys move between
+  items and Escape closes the menu and returns focus to its button without
+  closing the conversation.
 - Motion (three tiers, 2026-11-04, the user's call; the first pass was found
   tacky on 2026-10-10, so the bans stay). Tokens live in `index.html`
   `:root`: `--ease-soft`, `--ease-drawer`, `--ease-arrive`, `--t-press` (100 ms),
@@ -474,6 +475,34 @@ reader, seer, meaning, web, room, speech).
   14,500 bytes. `MOST_PROPOSALS` counts every change tool.
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
+- Panel look (2026-11-04, the user's call; plan phase 1): the panel sits one
+  tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
+  the composer, user bubbles, pills, popups and the Chats column) with no
+  left border, header rule, footer rule or column rule; a soft shadow shows
+  only where it overlays the note (under 1200 px). The Chats column is closed
+  until opened (`leo-chat-sidebar` still remembers an explicit choice;
+  `leo-chat-history-width` and the grip are unchanged). The header holds the
+  history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
+  “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
+  attribute says the connected notes are read too), a style button
+  (`#chat-mode-btn`, a `.chat-popup` menu with the Chat, Study and Interview
+  `menuitemradio`s and, while a note is attached, `Stop reading this note`,
+  which is what the old context bar's × did; Arrow keys, Home/End, Escape back
+  to the button) and New/Close. Felix's words (greeting, answers) use
+  `--voice`; the user's messages stay sans in a `--field` bubble. The greeting
+  and starters arrive once per chat and style (`data-hello` key): words fade
+  in (`.word`, `word-in` .5 s opacity and colour, no blur, nothing moves),
+  starters are pills that appear together after it. `draw(stick, live)` no
+  longer replaces the transcript on every streamed chunk: `settle(from, to)`
+  keeps every node that already matches, appends only the new words of a
+  growing text run (animated while the message is pending) and replaces only
+  what changed, so finished text, a selection in it and the greeting animation
+  survive; the final redraw settles too. The panel slides on `--ease-drawer` /
+  `--t-drawer` and leaves over `CHAT_LEAVE_MS` before `chat-open` is removed.
+  Hovering or focusing a line-citation chip calls `onCite(id, lines)`; the open
+  note's `doc.glow(from, to)` toggles `.blk-glow` on the cited blocks (no
+  redraw, no scroll, no timer) and clears on leave, blur and close.
+  A citation to another note does nothing extra.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),

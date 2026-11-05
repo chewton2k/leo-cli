@@ -646,6 +646,13 @@
       return at;
     }
 
+    function hitsOf(from, to) {
+      return [...container.querySelectorAll('.blk')].filter((el) => {
+        const block = blocks[Number(el.dataset.i)];
+        return block && block.start < to && block.end >= from;
+      });
+    }
+
     function lineOf(at) {
       let start = 0;
       for (let k = 0; k < lines.length; k++) {
@@ -1367,11 +1374,13 @@
         if (editing) return lineOf(lineStart(editing.start) + editing.prefix.length + editing.area.selectionEnd);
         return kept.text === lines.join('\n') ? kept.caret : null;
       },
+      glow(from, to) {
+        for (const el of container.querySelectorAll('.blk-glow')) el.classList.remove('blk-glow');
+        if (!from) return;
+        for (const el of hitsOf(from, to)) el.classList.add('blk-glow');
+      },
       highlight(from, to) {
-        const hits = [...container.querySelectorAll('.blk')].filter((el) => {
-          const block = blocks[Number(el.dataset.i)];
-          return block && block.start < to && block.end >= from;
-        });
+        const hits = hitsOf(from, to);
         if (!hits.length) return false;
         for (const el of container.querySelectorAll('.blk-cited')) el.classList.remove('blk-cited');
         for (const el of hits) el.classList.add('blk-cited');

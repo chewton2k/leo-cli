@@ -613,6 +613,8 @@ test('Chats divider resizes independently, keeps drafts and restores its width',
     await page.goto(url);
     await openFixtureChat(page);
     const grip=page.getByRole('separator',{name:'Chats list width',exact:true}), history=page.locator('.chat-history');
+    await expect(history).toBeHidden();
+    await page.locator('.chat-history-toggle').click();
     await expect(grip).toBeVisible();
     await page.locator('#chat-input').fill('Keep this draft 文字');
     const start=Math.round((await history.boundingBox()).width), total=(await page.locator('.chat').boundingBox()).width;

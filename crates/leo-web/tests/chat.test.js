@@ -512,7 +512,7 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
   const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const modeName ='));
   const state = { id, mode, access, interview: { id: 'practice', challenge: 'problem-two', number: 2, title: 'Graphs <review>', tab: 'Code' }, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
   const requests = [], prepared = [], notices = [];
-  const contextBox = { innerHTML: '' };
+  const contextBox = { textContent: '', title: '', hidden: false };
   const input = { value: 'Put the solution in my code area.' };
   const noop = () => {};
   const context = vm.createContext({
@@ -643,8 +643,8 @@ test('the active practice context and draft save survive every chat style and ac
     for (const access of ['ask', 'auto', 'read']) {
       const fixture = chatSendFixture(mode, 'practice', access);
       fixture.drawContext();
-      assert.match(fixture.contextBox.innerHTML, /Problem 2/);
-      assert.match(fixture.contextBox.innerHTML, /Graphs &lt;review&gt;/);
+      assert.match(fixture.contextBox.textContent, /Problem 2/);
+      assert.match(fixture.contextBox.textContent, /Graphs <review>/);
       await fixture.send(fixture.input.value);
       assert.equal(fixture.prepared.length, 1, `${mode}: saves before sending`);
       assert.equal(fixture.prepared[0].challenge, 'problem-two');
@@ -672,7 +672,7 @@ test('the active practice context and draft save survive every chat style and ac
 test('a different conversation stays independent of the open practice', async () => {
   const fixture = chatSendFixture('chat', 'other-chat');
   fixture.drawContext();
-  assert.doesNotMatch(fixture.contextBox.innerHTML, /Problem 2/);
+  assert.doesNotMatch(fixture.contextBox.textContent, /Problem 2/);
   await fixture.send(fixture.input.value);
   assert.equal(fixture.prepared.length, 0);
   assert.equal(fixture.requests[0].chat, 'other-chat');
