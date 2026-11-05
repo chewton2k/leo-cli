@@ -4625,7 +4625,8 @@ test.describe('passages', () => {
     await page.goto('/#/settings/felix');
     const newNotes = page.locator('[data-find="felix-new-notes"]');
     await expect(newNotes.locator('.choice-pick.on')).toContainText('When you ask');
-    await expect(newNotes).toContainText('without a press each time');
+    await expect(newNotes).toContainText('the note’s title and the text you change');
+    await expect(newNotes).toContainText('It runs on this computer');
     await page.locator('[data-find="felix-cap"] .segment', { hasText: '20' }).click();
     await expect(page.locator('#margin-today')).toContainText('of 20 used today');
     await page.locator('[data-find="felix-cap"] .segment', { hasText: '40' }).click();
