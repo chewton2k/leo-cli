@@ -14,6 +14,8 @@
   const LEAST_BLOCK_CHARS = 20;
   const NEAR = 120;
   const AROUND = 48;
+  const WORD_MS = 62;
+  const STAGGER_MS = 650;
 
   function occurrences(source, text) {
     const hits = [];
@@ -118,10 +120,13 @@
   const ROOM_RIGHT = TICK_GUTTER + LEAST_COLUMN + MARGIN_GAP + MARGIN_WIDTH + END_GUTTER;
   const ROOM_BOTH = ROOM_RIGHT + MARGIN_WIDTH + MARGIN_GAP;
 
-  function arrangement({ width, setting = 'right', noteWidth = 'wide', panel = false, threads = 0, along = false }) {
-    if (!threads && !along) return 'none';
+  function arrangement({ width, setting = 'right', noteWidth = 'wide', panel = false }) {
     if (setting === 'marks' || noteWidth === 'full' || panel || width < ROOM_RIGHT) return 'marks';
     return setting === 'both' && width >= ROOM_BOTH ? 'both' : 'right';
+  }
+
+  function wordDelay(index, count) {
+    return index * Math.min(WORD_MS, count > 1 ? STAGGER_MS / (count - 1) : 0);
   }
 
   function blocksOf(source) {
@@ -163,7 +168,7 @@
     return `M${from.x.toFixed(1)} ${from.y.toFixed(1)}${lead} C${middle.toFixed(1)} ${(from.y + 2).toFixed(1)} ${(middle - 4).toFixed(1)} ${to.y.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
   }
 
-  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, arrangement, blocksOf, changedBlocks, wave, tether };
+  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, arrangement, wordDelay, blocksOf, changedBlocks, wave, tether };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMargin = api;
 })(typeof window !== 'undefined' ? window : globalThis);

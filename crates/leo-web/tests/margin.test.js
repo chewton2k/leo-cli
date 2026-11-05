@@ -110,26 +110,32 @@ test('both margins: a crowded right side spills left', () => {
   assert.deepEqual(on, { a: 'right', b: 'left', c: 'right', d: 'right' });
 });
 
-test('layout: nothing is reserved without threads or read-along', () => {
-  assert.equal(M.arrangement({ width: 1600 }), 'none');
-});
-
-test('layout: threads or read-along take the right margin when it fits', () => {
-  assert.equal(M.arrangement({ width: 1076, threads: 1 }), 'right');
-  assert.equal(M.arrangement({ width: 1076, along: true }), 'right');
-  assert.equal(M.arrangement({ width: M.ROOM_RIGHT, threads: 1 }), 'right');
-  assert.equal(M.arrangement({ width: M.ROOM_RIGHT - 1, threads: 1 }), 'marks');
+test('layout: the margin is reserved up front, with or without threads', () => {
+  assert.equal(M.arrangement({ width: 1076 }), 'right');
+  assert.equal(M.arrangement({ width: M.ROOM_RIGHT }), 'right');
+  assert.equal(M.arrangement({ width: M.ROOM_RIGHT - 1 }), 'marks');
+  assert.equal(M.arrangement.length, 1);
+  assert.equal(M.arrangement({ width: 1076, threads: 0, along: false }), M.arrangement({ width: 1076, threads: 3, along: true }));
 });
 
 test('layout: both margins only with room for both', () => {
-  assert.equal(M.arrangement({ width: 1400, threads: 1, setting: 'both' }), 'both');
-  assert.equal(M.arrangement({ width: 1076, threads: 1, setting: 'both' }), 'right');
+  assert.equal(M.arrangement({ width: M.ROOM_BOTH, setting: 'both' }), 'both');
+  assert.equal(M.arrangement({ width: M.ROOM_BOTH - 1, setting: 'both' }), 'right');
 });
 
 test('layout: marks only by choice, full width or with Felix open', () => {
-  assert.equal(M.arrangement({ width: 1600, threads: 1, setting: 'marks' }), 'marks');
-  assert.equal(M.arrangement({ width: 1600, threads: 1, noteWidth: 'full' }), 'marks');
-  assert.equal(M.arrangement({ width: 1600, threads: 1, panel: true }), 'marks');
+  assert.equal(M.arrangement({ width: 1600, setting: 'marks' }), 'marks');
+  assert.equal(M.arrangement({ width: 1600, noteWidth: 'full' }), 'marks');
+  assert.equal(M.arrangement({ width: 1600, panel: true }), 'marks');
+});
+
+test('words: arrive at the usual pace and never take longer than the cap', () => {
+  assert.equal(M.wordDelay(0, 1), 0);
+  assert.equal(M.wordDelay(3, 5), 186);
+  for (const count of [21, 60, 500]) {
+    assert.equal(M.wordDelay(0, count), 0);
+    assert.ok(Math.abs(M.wordDelay(count - 1, count) - 650) < 1, `${count} words`);
+  }
 });
 
 test('changed blocks: only new or edited blocks, each counted once', () => {

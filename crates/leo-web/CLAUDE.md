@@ -843,18 +843,26 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   (`Warm.margin`).
 - Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix of at
   least 6 characters, or an edge of the note, then lost), `stack`, `sides`,
-  `arrangement`. Right margin needs 928 px of column, Both 1,192 px. While a note has
-  threads or reads along, `.note-columns[data-margin]` narrows the column to at most
-  760 px for that view (never `leo-note-width`), so a first note cannot reflow text
-  being typed. Full width, too little room or Felix open give Marks only: a small mark
-  above the end of the passage opens the note inline, with `.margin-room` holding the
-  space under its block. A lost anchor goes to `#chat-lost` in the panel.
+  `arrangement`. Right margin needs 928 px of column, Both 1,192 px. The margin is
+  reserved up front on every note, in both modes, whatever its threads
+  (2026-11-04, the orchestrator's decision): `.note-columns[data-margin]` pads the
+  column, so the note is min(its note width, the room left) and sits left of centre,
+  and a first note cannot reflow text being typed. The layout is set in the same task
+  as the first paint; `leo-margin-layout` remembers the setting per browser for that
+  moment, the server keeps the truth. Marks only in Settings, Full width, too little
+  room or Felix open reserve nothing and centre the note. There, a mark above the end
+  of the passage (24 px to hit, 44 px on touch) opens the note inline, with
+  `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
+  in the panel.
+- The mode chip is in `.note-meta` from the first paint, disabled until the note's
+  mode arrives, so the row never grows. A note is a labelled article with one
+  `.margin-toggle` button (`aria-expanded`, `aria-controls`) over it.
 - Overlay: `.margin-layer` sits in `.note-columns`, outside `#doc`, redrawn on
   ResizeObserver and edits. `doc.spanRects` measures rendered blocks and open
   textareas without touching the caret. Elements are kept by thread id and the reply
   box is never rebuilt. Felix's `think` face shows only while a read runs, after
-  200 ms so a refused read never flashes. Timing follows the mockup: squiggle
-  .46 s, tether .56 s, words 62 ms apart. Reduced Motion stills all of it. Never prints.
+  200 ms so a refused read never flashes. Squiggle .46 s, tether .56 s, words
+  start with the box, 62 ms apart, at most 650 ms in all (`wordDelay`). Reduced Motion stills all of it. Never prints.
 - Tests: `src/tests/margin.rs` drives the real engine over TCP with fake powers.
   `leo-test-server` takes `LEO_TEST_FAKE_AI` (the test binary only, never the app) so
   one flow in flows.spec.js joins the page to the real routes.

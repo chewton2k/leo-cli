@@ -4458,7 +4458,7 @@ test.describe('passages', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: start } })).json();
     const reads = [];
     const said = (from, text) => ({ from, text, at: '2026-11-04T10:00:00Z' });
-    const thread = { id: 'stub-thread', note: note.id, quote: 'just checks if it matches', prefix: 'Then login ', suffix: ', I think', status: 'open', source: 'read', messages: [said('felix', 'In plain text? If this table leaks, every account goes.')], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
+    const thread = { id: 'stub-thread', note: note.id, quote: 'just checks if it matches', prefix: 'Then login ', suffix: ', I think', status: 'open', source: 'read', messages: [said('felix', `In plain text? If this table leaks, every account goes. ${'Hash it first. '.repeat(20)}`)], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
     await page.route('**/margin/read', async (route) => {
       reads.push(route.request().postDataJSON());
       await new Promise((done) => setTimeout(done, 700));
@@ -4471,7 +4471,6 @@ test.describe('passages', () => {
     await page.locator('#margin-mode').click();
     await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
     await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'right');
-    expect((await page.locator('article.note').boundingBox()).width).toBeLessThanOrEqual(761);
     await page.reload();
     await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
     await page.waitForTimeout(4500);
@@ -4490,10 +4489,26 @@ test.describe('passages', () => {
     await expect(page.locator('.margin-ink .squiggle')).toHaveCount(1);
     await expect(page.locator('.margin-ink .tether')).toHaveCount(1);
     await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?');
+    const delays = await page.locator('.ink-word').evaluateAll((words) => words.map((word) => parseFloat(word.style.animationDelay)));
+    expect(delays.length).toBeGreaterThan(40);
+    expect(delays[0]).toBe(0);
+    expect(Math.max(...delays)).toBeLessThanOrEqual(651);
+    await expect(page.locator('.ink-word')).toHaveCount(delays.length);
 
+    const toggle = page.locator('.margin-note .margin-toggle');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.margin-note')).not.toHaveAttribute('tabindex', '0');
+    await page.waitForTimeout(1500);
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toBeFocused();
     await page.locator('.margin-note').click();
     const reply = page.locator('.margin-reply textarea');
     await expect(reply).toBeFocused();
+    expect(await reply.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
     await reply.fill('So hash it?');
     await reply.press('Enter');
     await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
@@ -4608,6 +4623,99 @@ test.describe('passages', () => {
     await page.keyboard.press('ControlOrMeta+Shift+e');
     await expect(page.locator('#chat .chat-passage')).toContainText('ox');
     await expect(page.locator('.margin-note')).toHaveCount(0);
+  });
+
+  test('the note column stays put through a draft, a thread and a dismissal, and Marks only centres it', async ({ page }) => {
+    await page.setViewportSize({ width: 1700, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Steady column', body: 'A binary heap keeps the minimum at the root.' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#margin-mode')).toBeEnabled();
+    const box = async () => (await page.locator('article.note').boundingBox());
+    const first = await box();
+    expect(first.width).toBeCloseTo(980, -1);
+    const columns = await page.locator('.note-columns').boundingBox();
+    expect(first.x - columns.x).toBeLessThan(columns.x + columns.width - first.x - first.width - 100);
+    await page.locator('#doc .blk').first().click();
+    await page.locator('#doc textarea.line-edit').evaluate((a) => {
+      const at = a.value.indexOf('keeps the minimum');
+      a.focus();
+      a.setSelectionRange(at, at + 'keeps the minimum'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+    await page.keyboard.press('ControlOrMeta+Shift+e');
+    await expect(page.locator('.margin-note[data-id="draft"] textarea')).toBeFocused();
+    expect(await box()).toEqual(first);
+    await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.locator('.margin-note')).toHaveCount(0);
+    expect(await box()).toEqual(first);
+
+    await page.setViewportSize({ width: 1360, height: 900 });
+    await expect.poll(async () => (await box()).width).toBeLessThan(800);
+
+    await page.setViewportSize({ width: 1700, height: 900 });
+    await page.addInitScript(() => {
+      window.__layouts = [];
+      new MutationObserver(() => {
+        const columns = document.querySelector('.note-columns');
+        if (columns && window.__layouts.at(-1) !== columns.dataset.margin) window.__layouts.push(columns.dataset.margin);
+      }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-margin'] });
+    });
+    await page.goto('/#/settings/felix');
+    await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Marks only' }).click();
+    await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).layout).toBe('marks');
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#margin-mode')).toBeEnabled();
+    await page.reload();
+    await expect(page.locator('#margin-mode')).toBeEnabled();
+    expect(await page.evaluate(() => window.__layouts)).toEqual(['marks']);
+    const centred = await box();
+    const room = await page.locator('.note-columns').boundingBox();
+    expect(Math.abs((centred.x - room.x) - (room.x + room.width - centred.x - centred.width))).toBeLessThanOrEqual(2);
+    await page.request.post('/api/margin', { data: { layout: 'right' } });
+    await page.evaluate(() => localStorage.removeItem('leo-margin-layout'));
+  });
+
+  test('the Felix chip is in the row from the first paint, so the note never jumps', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Phone row', body: 'A line of text.' } })).json();
+    let release;
+    const held = new Promise((done) => { release = done; });
+    await page.route(`**/api/notes/${note.id}/margin`, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.goto(`/#/n/${note.id}`);
+    const chip = page.locator('#margin-mode');
+    await expect(chip).toBeVisible();
+    await expect(chip).toBeDisabled();
+    const before = await page.locator('#doc').boundingBox();
+    release();
+    await expect(chip).toBeEnabled();
+    expect(await page.locator('#doc').boundingBox()).toEqual(before);
+  });
+
+  test('the margin mark is easy to hit with a mouse and a finger, and keeps its edges in forced colors', async ({ browser, page }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Marks', body: 'First.\n\nThe quoted words stay here.' } })).json();
+    await page.request.post(`/api/notes/${note.id}/margin/threads`, { data: { version: note.version, quote: 'quoted words', question: 'Why?' } });
+    await page.goto(`/#/n/${note.id}`);
+    const mark = page.locator('.margin-mark');
+    await expect(mark).toBeVisible();
+    const mouse = await mark.boundingBox();
+    expect(Math.min(mouse.width, mouse.height)).toBeGreaterThanOrEqual(24);
+    expect((await mark.locator('svg').boundingBox()).width).toBeLessThanOrEqual(14);
+    await page.emulateMedia({ forcedColors: 'active' });
+    expect(await page.locator('.margin-ink .squiggle').evaluate((el) => getComputedStyle(el).stroke)).not.toBe('none');
+    await page.emulateMedia({ forcedColors: 'none' });
+    const baseURL = new URL(page.url()).origin;
+    const touch = await browser.newContext({ baseURL, hasTouch: true, isMobile: true, viewport: { width: 390, height: 800 } });
+    const phone = await touch.newPage();
+    await phone.goto(`/?token=${token}`);
+    await phone.goto(`/#/n/${note.id}`);
+    const finger = await phone.locator('.margin-mark').boundingBox();
+    expect(Math.min(finger.width, finger.height)).toBeGreaterThanOrEqual(44);
+    await touch.close();
   });
 
   test('a lost margin note moves to the Felix panel and Settings starts with read-along off', async ({ page }) => {

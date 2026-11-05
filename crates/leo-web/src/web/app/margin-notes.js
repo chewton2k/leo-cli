@@ -2,8 +2,8 @@ const MARGIN_KINDS = ['add_margin_note', 'remove_margin_note'];
 const READ_PAUSE = { regular: 4000, slow: 8000 };
 const READ_RETRY_MS = 90000;
 const READ_FACE_AFTER_MS = 200;
-const WORD_MS = 62;
-const INK_DELAY_MS = 1140;
+const MARGIN_SETTLE_MS = 1400;
+const MARGIN_LAYOUT_KEY = 'leo-margin-layout';
 const GLOW_MS = 2200;
 const MOST_ASKED = 600;
 const marginKit = window.leoMargin;
@@ -11,10 +11,29 @@ const LEAST_ASKED = 3;
 const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), open: null, draft: null, arriving: new Set(), timer: 0, reading: false, readFace: null, faceTimer: 0, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
+function marginRemembered() {
+  try {
+    return localStorage.getItem(MARGIN_LAYOUT_KEY);
+  } catch (e) {
+    return null;
+  }
+}
+
+function marginRemember(prefs) {
+  marginPrefs = prefs;
+  try {
+    localStorage.setItem(MARGIN_LAYOUT_KEY, prefs.layout);
+  } catch (e) {}
+}
+
+function marginLayout(columns) {
+  return marginKit.arrangement({ width: columns.clientWidth, setting: marginPrefs?.layout || marginRemembered() || 'right', noteWidth: window.leoTheme.noteWidth(), panel: chat.isOpen() });
+}
+
 async function marginLoadPrefs() {
   if (marginPrefs) return marginPrefs;
   try {
-    marginPrefs = await api('/api/margin');
+    marginRemember(await api('/api/margin'));
   } catch (e) {
     return { layout: 'right', pace: 'regular' };
   }
@@ -30,7 +49,7 @@ function marginLeave() {
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
   chat.setLost([]);
-  Object.assign(marginPage, { s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, draft: null, reading: false, readFace: null, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, draft: null, reading: false, readFace: null, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -46,6 +65,7 @@ async function marginMount(s, mine) {
   layer.setAttribute('aria-label', 'Felix’s margin notes');
   layer.innerHTML = '<svg class="margin-ink" aria-hidden="true"></svg><div class="margin-said-aloud" aria-live="polite"></div>';
   columns.appendChild(layer);
+  columns.dataset.margin = marginLayout(columns);
   Object.assign(marginPage, { s, layer, svg: layer.firstChild, baseline: marginKit.blocksOf(s.doc.source()), nextRead: 0 });
   layer.addEventListener('click', marginClick);
   layer.addEventListener('keydown', marginKey);
@@ -75,21 +95,18 @@ async function marginLoad(s, current = () => true) {
 
 function marginControl() {
   const s = marginPage.s;
-  const meta = $('.note-meta');
-  if (!s || !meta || !s.note.id) return;
-  let button = $('#margin-mode', meta);
-  if (!button) {
-    button = document.createElement('button');
-    button.type = 'button';
-    button.id = 'margin-mode';
-    button.className = 'chip margin-mode';
+  const button = $('#margin-mode');
+  if (!s || !button || !s.note.id) return;
+  if (!button.dataset.ready) {
+    button.dataset.ready = '1';
     button.addEventListener('click', () => marginToggleMode().catch(fail));
-    meta.appendChild(button);
   }
   const along = marginPage.mode === 'along';
+  button.disabled = false;
   button.textContent = along ? 'Felix reads along' : 'Felix: when you ask';
   button.setAttribute('aria-pressed', String(along));
   button.title = along ? 'Felix reads what you change after a pause. The text goes to your writing AI.' : 'Felix reads this note only when you ask him.';
+  marginPage.loaded = true;
 }
 
 async function marginToggleMode() {
@@ -120,33 +137,35 @@ function marginFace(thinking = false) {
   return felix.felix(26, `felix-preview margin-face${thinking ? ' think' : ''}`);
 }
 
-function inkWords(box, text, delay) {
+function inkWords(box, text) {
   box.textContent = '';
   if (stillMotion()) {
     box.textContent = text;
     return;
   }
-  text.split(/(\s+)/).forEach((word, i) => {
-    if (!word.trim()) {
-      box.append(word);
-      return;
+  const parts = text.split(/(\s+)/);
+  const count = parts.filter((part) => part.trim()).length;
+  let at = 0;
+  for (const part of parts) {
+    if (!part.trim()) {
+      box.append(part);
+      continue;
     }
     const span = document.createElement('span');
     span.className = 'ink-word';
-    span.style.animationDelay = `${delay + (i / 2) * WORD_MS}ms`;
-    span.textContent = word;
+    span.style.animationDelay = `${marginKit.wordDelay(at++, count)}ms`;
+    span.textContent = part;
     box.append(span);
-  });
+  }
 }
 
 function marginElement(t) {
   const el = document.createElement('article');
+  const more = `margin-more-${t.id}`;
   el.className = 'margin-note';
   el.dataset.id = t.id;
-  el.tabIndex = 0;
-  el.setAttribute('role', 'note');
   el.setAttribute('aria-label', `Felix, about “${t.quote.slice(0, 80)}”`);
-  el.innerHTML = `<span class="margin-surface" aria-hidden="true"></span><div class="margin-head">${marginFace()}</div><div class="margin-said"></div><div class="margin-more" hidden>
+  el.innerHTML = `<span class="margin-surface" aria-hidden="true"></span><button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}"></button><div class="margin-head">${marginFace()}</div><div class="margin-said"></div><div class="margin-more" id="${esc(more)}" hidden>
     <form class="margin-reply"><textarea rows="1" maxlength="1000" aria-label="Reply to Felix" placeholder="Reply"></textarea></form>
     <p class="margin-problem" role="status" hidden></p>
     <div class="margin-acts"><button type="button" class="margin-add" data-margin-act="add">Add to note</button><button type="button" class="msg-act" data-margin-act="chat">Open in chat</button><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button></div></div>`;
@@ -165,7 +184,7 @@ function marginFill(el, t, arriving) {
     if (!open) {
       const line = document.createElement('p');
       line.className = 'margin-felix';
-      if (arriving) inkWords(line, marginNow(t), INK_DELAY_MS);
+      if (arriving) inkWords(line, marginNow(t));
       else line.textContent = marginNow(t);
       said.append(line);
     } else {
@@ -180,6 +199,9 @@ function marginFill(el, t, arriving) {
   const draft = t.id === 'draft';
   $('.margin-more', el).hidden = !open;
   el.toggleAttribute('data-open', open);
+  const toggle = $('.margin-toggle', el);
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.setAttribute('aria-label', `${open ? 'Close' : 'Open'} Felix’s note on “${t.quote.slice(0, 80)}”`);
   $('.margin-add', el).hidden = draft || !marginNow(t);
   $('[data-margin-act="chat"]', el).textContent = draft ? 'Ask in chat' : 'Open in chat';
   $('[data-margin-act="resolve"]', el).hidden = draft;
@@ -242,7 +264,7 @@ function marginDraw() {
     else if (t.id !== 'draft') lost.push(t);
   }
   chat.setLost(lost);
-  const layout = marginKit.arrangement({ width: columns.clientWidth, setting: marginPrefs?.layout || 'right', noteWidth: window.leoTheme.noteWidth(), panel: chat.isOpen(), threads: placed.length, along: marginPage.mode === 'along' });
+  const layout = marginLayout(columns);
   if (columns.dataset.margin !== layout) columns.dataset.margin = layout;
   const keep = new Set(placed.map(({ t }) => t.id));
   for (const id of [...marginPage.els.keys(), ...marginPage.marks.keys()]) if (!keep.has(id)) marginDropThread(id);
@@ -273,7 +295,7 @@ function marginDraw() {
         marginPage.paths.get(`${id}:tether`)?.classList.remove('arriving');
         marginPage.els.get(id)?.classList.remove('arriving');
       }
-    }, INK_DELAY_MS + 900);
+    }, MARGIN_SETTLE_MS);
   } else marginPage.arriving.clear();
 }
 
@@ -307,7 +329,8 @@ function marginPlaceAsMarks(boxes, page, origin) {
   for (const { t, at, rects, el } of boxes) {
     const end = rects[rects.length - 1];
     const mark = marginMark(t);
-    mark.style.transform = `translate(${Math.min(end.right - 1, page.right - origin.left - 12)}px, ${end.top - 7}px)`;
+    const glyphX = Math.min(end.right + 5, page.right - origin.left - 6);
+    mark.style.transform = `translate(${glyphX - mark.offsetWidth / 2}px, ${end.top - 2 - mark.offsetHeight / 2}px)`;
     marginPage.paths.get(`${t.id}:tether`)?.remove();
     marginPage.paths.delete(`${t.id}:tether`);
     if (!el) continue;
@@ -343,7 +366,7 @@ function marginClose() {
   marginPage.open = null;
   if (id === 'draft') marginPage.draft = null;
   marginDraw();
-  (marginPage.marks.get(id) || marginPage.els.get(id))?.focus();
+  (marginPage.marks.get(id) || $('.margin-toggle', marginPage.els.get(id)))?.focus();
 }
 
 function marginClick(e) {
@@ -361,6 +384,7 @@ function marginClick(e) {
     return;
   }
   if (marginPage.open !== id) marginOpen(id, true);
+  else if (e.target.closest('.margin-toggle')) marginClose();
 }
 
 function marginKey(e) {
@@ -368,9 +392,6 @@ function marginKey(e) {
     e.preventDefault();
     e.stopPropagation();
     marginClose();
-  } else if (e.key === 'Enter' && e.target.classList.contains('margin-note') && marginPage.open !== e.target.dataset.id) {
-    e.preventDefault();
-    marginOpen(e.target.dataset.id, true);
   } else if (e.key === 'Enter' && !e.shiftKey && e.target.matches('.margin-reply textarea')) {
     e.preventDefault();
     e.target.form.requestSubmit();
@@ -425,7 +446,7 @@ async function marginSubmit(e) {
     marginDraw();
     const fresh = marginPage.els.get(done.id);
     const replies = fresh && [...fresh.querySelectorAll('.margin-felix')];
-    if (replies?.length) inkWords(replies[replies.length - 1], marginNow(done), 0);
+    if (replies?.length) inkWords(replies[replies.length - 1], marginNow(done));
     $('textarea', fresh)?.focus();
   } catch (error) {
     if (error instanceof Locked) throw error;
@@ -541,7 +562,7 @@ function marginAsk(s, picked) {
 function marginEdited(s) {
   if (s !== marginPage.s) return;
   marginRedraw();
-  if (s.note.id && !$('#margin-mode')) marginLoad(s).catch(() => {});
+  if (s.note.id && !marginPage.loaded) marginLoad(s).catch(() => {});
   clearTimeout(marginPage.timer);
   if (marginPage.mode !== 'along') return;
   const pause = READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular;
@@ -645,7 +666,7 @@ document.addEventListener('change', async (e) => {
   const value = key === 'cap' ? Number(field.value) : field.value;
   try {
     const view = await api('/api/margin', { method: 'POST', body: { [key]: value } });
-    marginPrefs = view;
+    marginRemember(view);
     if (state.view === 'settings') state.margin = view;
     const today = $('#margin-today');
     if (today) today.textContent = `${view.today} of ${view.cap} used today. Each read starts your writing AI once.`;
