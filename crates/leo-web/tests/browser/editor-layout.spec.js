@@ -14,6 +14,7 @@ async function editorFixture(browser, run, { remember = false, body = null, touc
   const fixture = `window.doc = leoDoc.mount(document.querySelector('#doc'), {
     source: new URLSearchParams(location.search).get('body') ?? ${JSON.stringify(source)}, onChange() {}, outline: document.querySelector('.note-outline')
   });
+  const syncSegmented = () => {}, syncAppearanceResets = () => {};
   ${pickWidth}
   window.audit = { pick: width => pickWidth({dataset:{width}}), anchor: () => JSON.parse(localStorage.getItem('fixture-reading') || 'null') };
   ${remember ? `const $ = selector => document.querySelector(selector), enc = encodeURIComponent;

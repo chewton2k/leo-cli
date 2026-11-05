@@ -149,7 +149,7 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
   });
 });
 
-test('sidebar and page header dividers align across desktop layouts', async ({ browser }) => {
+test('sidebar and page header rows align across desktop layouts', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page=await context.newPage();
     await page.goto(url);
