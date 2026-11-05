@@ -138,6 +138,7 @@ pub(crate) async fn delete_from_trash(
     State(state): State<AppState>,
     Json(choice): Json<TrashChoice>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let chats = state.chats.clone();
     state
         .with_store(move |store| {
             let gone = if choice.all {
@@ -146,6 +147,7 @@ pub(crate) async fn delete_from_trash(
                 store.delete_from_trash(&choice.ids)
             }
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            crate::margin::sweep_store(&chats, store);
             Ok(Json(serde_json::json!({ "deleted": gone })))
         })
         .await

@@ -440,6 +440,7 @@ pub fn gather_with(
         room,
         None,
         &[],
+        "",
     )
 }
 
@@ -454,8 +455,9 @@ pub fn gather_seeing(
     room: usize,
     captions: Option<&crate::captions::Captions>,
     close: &[(String, f32)],
+    margin: &str,
 ) -> (Vec<SourceRef>, String) {
-    let room = room.min(GATHER_ROOM);
+    let room = room.min(GATHER_ROOM).saturating_sub(margin.chars().count());
     let mut picked: Vec<Picked> = Vec::new();
     let mut have = BTreeSet::new();
     for id in attached.iter().take(MOST_ATTACHED) {
@@ -649,6 +651,7 @@ pub fn gather_seeing(
             why: p.why.clone(),
         });
     }
+    text.push_str(margin);
     (sources, text)
 }
 
@@ -1614,6 +1617,7 @@ mod tests {
                 room,
                 None,
                 &close,
+                "",
             );
             assert_eq!(sources[0].id, ids[2]);
             assert_eq!(sources[1].id, ids[0]);

@@ -125,6 +125,7 @@ pub fn organizes(name: &str) -> bool {
             | "restore_folder"
             | "pin_note"
             | "delete_folder"
+            | "add_margin_note"
     ) || crate::board_tools::changes(name)
 }
 
@@ -148,7 +149,7 @@ pub const FRESH: Param = Param {
     about: "yes to repeat the full result if an earlier result is no longer available; otherwise unchanged reads return a short reference",
 };
 
-pub const SPECS: [Spec; 30] = [
+pub const SPECS: [Spec; 31] = [
     Spec {
         name: "search_notes",
         purpose: "Find notes by keywords, abbreviations or graph concepts.",
@@ -308,7 +309,7 @@ pub const SPECS: [Spec; 30] = [
                 about: "Weekly weekdays, e.g. mon, wed, fri; date becomes start day",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "add_task", "title": "Submit lab report", "date": "2026-10-16", "time": "23:59", "type": "assignment"}</tool>"#,
     },
     Spec {
@@ -351,7 +352,7 @@ pub const SPECS: [Spec; 30] = [
                 about: "Repeating occurrence date YYYY-MM-DD for done; default today",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "update_task", "task": "t3f2a…", "done": "yes"}</tool>"#,
     },
     Spec {
@@ -376,7 +377,7 @@ pub const SPECS: [Spec; 30] = [
                 about: "Folder path, e.g. fall 2026/cs130; empty means root",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "move_note", "note": "n2", "folder": "fall 2026/cs130"}</tool>"#,
     },
     Spec {
@@ -387,7 +388,7 @@ pub const SPECS: [Spec; 30] = [
             required: true,
             about: "New folder path",
         }],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "make_folder", "folder": "fall 2026/cs130"}</tool>"#,
     },
     Spec {
@@ -405,14 +406,14 @@ pub const SPECS: [Spec; 30] = [
                 about: "Destination folder; empty means root",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "move_folder", "folder": "cs130", "into": "older classes"}</tool>"#,
     },
     Spec {
         name: "delete_note",
         purpose: "Trash only the requested note; it remains restorable.",
         params: &[NOTE],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "delete_note", "note": "n4"}</tool>"#,
     },
     Spec {
@@ -426,7 +427,7 @@ pub const SPECS: [Spec; 30] = [
                 about: "the new title",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "rename_note", "note": "n2", "title": "Lecture 5: Dijkstra"}</tool>"#,
     },
     Spec {
@@ -444,7 +445,7 @@ pub const SPECS: [Spec; 30] = [
                 about: "New basename, without slashes",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "rename_folder", "folder": "older classes/s26", "new_name": "Spring 2026"}</tool>"#,
     },
     Spec {
@@ -458,8 +459,27 @@ pub const SPECS: [Spec; 30] = [
                 about: "yes to pin (the default) or no to unpin",
             },
         ],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "pin_note", "note": "n1", "pinned": "yes"}</tool>"#,
+    },
+    Spec {
+        name: "add_margin_note",
+        purpose: "Leave a short remark beside a passage. Does not change the note.",
+        params: &[
+            NOTE,
+            Param {
+                name: "quote",
+                required: true,
+                about: "Words copied exactly from the note",
+            },
+            Param {
+                name: "text",
+                required: true,
+                about: "At most two short plain sentences",
+            },
+        ],
+        returns: "Suggested or done, as access allows.",
+        example: r#"<tool>{"name": "add_margin_note", "note": "n1", "quote": "checks if it matches", "text": "In plain text? Hash it first."}</tool>"#,
     },
     Spec {
         name: "list_trash",
@@ -476,7 +496,7 @@ pub const SPECS: [Spec; 30] = [
             required: true,
             about: "Trashed note ID from list_trash or exact title",
         }],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "restore_note", "note": "Graph traversals"}</tool>"#,
     },
     Spec {
@@ -487,7 +507,7 @@ pub const SPECS: [Spec; 30] = [
             required: true,
             about: "The folder path its notes came from, as list_trash shows it",
         }],
-        returns: "Suggested or done, as the user's access setting allows.",
+        returns: "Suggested or done, as access allows.",
         example: r#"<tool>{"name": "restore_folder", "folder": "older classes/s26"}</tool>"#,
     },
     Spec {
@@ -1624,6 +1644,21 @@ pub enum Proposal {
         title: String,
         body: String,
         folder: String,
+    },
+    AddMarginNote {
+        summary: String,
+        note: String,
+        title: String,
+        quote: String,
+        text: String,
+    },
+    RemoveMarginNote {
+        summary: String,
+        note: String,
+        title: String,
+        id: String,
+        quote: String,
+        text: String,
     },
     AddTask {
         summary: String,
@@ -3167,7 +3202,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "erase_everything", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, delete_task, move_note, make_folder, move_folder, delete_note, rename_note, rename_folder, pin_note, list_trash, restore_note, restore_folder, delete_folder, search_chats, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note, list_boards, open_board, add_card"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, delete_task, move_note, make_folder, move_folder, delete_note, rename_note, rename_folder, pin_note, add_margin_note, list_trash, restore_note, restore_folder, delete_folder, search_chats, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note, list_boards, open_board, add_card"
         ));
         assert_eq!(
             check(&Call {

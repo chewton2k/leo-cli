@@ -23,6 +23,7 @@ async fn call(
     api: Option<Arc<dyn AppApi>>,
     change: Option<Value>,
     notes: Option<PathBuf>,
+    margin: Option<String>,
 ) -> Response {
     let Some(api) = api else {
         return error(
@@ -32,7 +33,14 @@ async fn call(
     };
     match tokio::task::spawn_blocking(move || {
         if let Some(notes) = notes {
-            api.health(&notes)
+            let mut view = api.health(&notes)?;
+            if let (Some(line), Some(sections)) = (margin, view["sections"].as_array_mut()) {
+                sections.push(json!({
+                    "title": "Felix",
+                    "checks": [{ "name": "Reading along", "state": "warn", "detail": line, "fix": "Open Felix in Settings to change how he reads.", "section": "felix" }],
+                }));
+            }
+            Ok(view)
         } else {
             if let Some(change) = change {
                 api.change(change)?;
@@ -51,7 +59,7 @@ async fn call(
     }
 }
 pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    call(state.app_settings, None, None).await
+    call(state.app_settings, None, None, None).await
 }
 pub(crate) async fn change(
     State(state): State<AppState>,
@@ -63,14 +71,20 @@ pub(crate) async fn change(
             "This app setting could not be read. Choose an option in Settings.",
         );
     };
-    call(state.app_settings, Some(value), None).await
+    call(state.app_settings, Some(value), None, None).await
 }
 pub(crate) async fn health(State(state): State<AppState>) -> Response {
     let notes = match state.with_store(|s| Ok(s.notes_dir.clone())).await {
         Ok(notes) => notes,
         Err(status) => return status.into_response(),
     };
-    call(state.app_settings, None, Some(notes)).await
+    call(
+        state.app_settings,
+        None,
+        Some(notes),
+        state.margin.problem(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -93,13 +107,14 @@ mod tests {
     async fn app_changes_and_health_are_json_and_validate_actions() {
         let api = Some(std::sync::Arc::new(Fake) as std::sync::Arc<dyn AppApi>);
         assert_eq!(
-            call(api.clone(), None, None).await.status(),
+            call(api.clone(), None, None, None).await.status(),
             axum::http::StatusCode::OK
         );
         assert_eq!(
             call(
                 api.clone(),
                 Some(serde_json::json!({"action":"check_updates"})),
+                None,
                 None
             )
             .await
@@ -110,6 +125,7 @@ mod tests {
             call(
                 api.clone(),
                 Some(serde_json::json!({"action":"invalid"})),
+                None,
                 None
             )
             .await
@@ -117,7 +133,7 @@ mod tests {
             axum::http::StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            call(api, None, Some(std::path::PathBuf::from("unused")))
+            call(api, None, Some(std::path::PathBuf::from("unused")), None)
                 .await
                 .status(),
             axum::http::StatusCode::OK

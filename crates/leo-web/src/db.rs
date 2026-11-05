@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 pub const FILE: &str = "leo.db";
 pub const BEFORE: &str = ".before-database";
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS dictations (
@@ -113,6 +113,27 @@ CREATE TABLE IF NOT EXISTS reading (
 );
 CREATE INDEX IF NOT EXISTS reading_by_time ON reading(at);
 CREATE TABLE IF NOT EXISTS graph_meta (
+    key TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS margin_threads (
+    id TEXT PRIMARY KEY,
+    note TEXT NOT NULL,
+    quote TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    suffix TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    messages TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS margin_threads_by_note ON margin_threads(note, status, created_at);
+CREATE TABLE IF NOT EXISTS margin_modes (
+    note TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS margin_state (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );

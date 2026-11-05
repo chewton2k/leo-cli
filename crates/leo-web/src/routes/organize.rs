@@ -145,6 +145,7 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "rename_note" => "Tried to rename a note",
         "rename_folder" => "Tried to rename a folder",
         "pin_note" => "Tried to pin a note",
+        "add_margin_note" => "Tried to add a margin note",
         "restore_note" => "Tried to bring a note back",
         "delete_folder" => "Tried to delete a folder",
         "restore_folder" => "Tried to bring a folder back",
@@ -193,6 +194,7 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "rename_note" => rename_note(state, desk, call),
         "rename_folder" => rename_folder(state, call),
         "pin_note" => pin_note(state, desk, call),
+        "add_margin_note" => add_margin_note(state, desk, call),
         "restore_note" => restore_note(state, call),
         "delete_folder" => delete_folder(state, call),
         "restore_folder" => restore_folder(state, call),
@@ -233,6 +235,8 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::RenameNote { summary, .. }
         | Proposal::RenameFolder { summary, .. }
         | Proposal::PinNote { summary, .. }
+        | Proposal::AddMarginNote { summary, .. }
+        | Proposal::RemoveMarginNote { summary, .. }
         | Proposal::DeleteFolder { summary, .. }
         | Proposal::InterviewCodeEdit { summary, .. }
         | Proposal::InterviewTest { summary, .. }
@@ -303,6 +307,42 @@ fn rename_folder(state: &AppState, call: &Call) -> Result<Proposal, String> {
         })
     })
     .map_err(|_| format!("there is no folder \"{from}\""))
+}
+
+fn add_margin_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<Proposal, String> {
+    let quote = call.text("quote");
+    let text = call.text("text").trim().to_string();
+    if text.is_empty() || text.chars().count() > crate::margin::MOST_TEXT {
+        return Err(format!(
+            "a margin note holds at most {} characters",
+            crate::margin::MOST_TEXT
+        ));
+    }
+    let wanted = call.text("note");
+    let quoted = quote.clone();
+    let note = store_now(state, move |store| {
+        let note = desk
+            .note_for(store, &wanted)
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        if crate::margin::placed(&note.body, &quoted, &[]).is_none() {
+            return Err(StatusCode::CONFLICT);
+        }
+        Ok((note.id.clone(), note.title.clone()))
+    })
+    .map_err(|code| {
+        if code == StatusCode::CONFLICT {
+            "quote must be words copied exactly from the note, 3 to 600 characters".to_string()
+        } else {
+            "leo could not find that note; use its id like n3 or its exact title".to_string()
+        }
+    })?;
+    Ok(Proposal::AddMarginNote {
+        summary: format!("Add a margin note to “{}”", note.1),
+        note: note.0,
+        title: note.1,
+        quote,
+        text,
+    })
 }
 
 fn pin_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<Proposal, String> {
@@ -1425,6 +1465,89 @@ pub(crate) async fn act(
                     note: note.clone(),
                     from: title.clone(),
                     title: from.clone(),
+                },
+            ))
+        }
+        Proposal::AddMarginNote {
+            note,
+            title,
+            quote,
+            text,
+            ..
+        } => {
+            let id = note.clone();
+            let chats = state.chats.clone();
+            let saying = (quote.clone(), text.clone());
+            let id = state
+                .with_store(move |store| {
+                    let found = store
+                        .notes
+                        .iter()
+                        .find(|n| n.id == id)
+                        .ok_or(StatusCode::NOT_FOUND)?;
+                    let place = crate::margin::placed(&found.body, &saying.0, &[])
+                        .ok_or(StatusCode::CONFLICT)?;
+                    if crate::margin::open_on(&chats, &id).len() >= crate::margin::MOST_OPEN {
+                        return Err(StatusCode::TOO_MANY_REQUESTS);
+                    }
+                    let thread = crate::margin::new_thread(
+                        &id,
+                        "chat",
+                        place,
+                        &saying.0,
+                        vec![crate::margin::felix_says(&saying.1)],
+                    );
+                    if crate::margin::put(&chats, &thread) {
+                        Ok(thread.id)
+                    } else {
+                        Err(StatusCode::INTERNAL_SERVER_ERROR)
+                    }
+                })
+                .await
+                .map_err(|code| match code {
+                    StatusCode::CONFLICT => "those words are not in the note any more".to_string(),
+                    StatusCode::NOT_FOUND => "the note is not there any more".to_string(),
+                    StatusCode::TOO_MANY_REQUESTS => {
+                        "this note has too many open margin notes".to_string()
+                    }
+                    _ => "leo could not save it".to_string(),
+                })?;
+            Ok((
+                serde_json::json!({ "thread": id }),
+                Proposal::RemoveMarginNote {
+                    summary: format!("Take the margin note off “{title}”"),
+                    note: note.clone(),
+                    title: title.clone(),
+                    id,
+                    quote: quote.clone(),
+                    text: text.clone(),
+                },
+            ))
+        }
+        Proposal::RemoveMarginNote {
+            note,
+            title,
+            id,
+            quote,
+            text,
+            ..
+        } => {
+            let chats = state.chats.clone();
+            let gone = id.clone();
+            let removed = tokio::task::spawn_blocking(move || crate::margin::remove(&chats, &gone))
+                .await
+                .unwrap_or(false);
+            if !removed {
+                return Err("that margin note is not there any more".to_string());
+            }
+            Ok((
+                serde_json::Value::Null,
+                Proposal::AddMarginNote {
+                    summary: format!("Add the margin note back to “{title}”"),
+                    note: note.clone(),
+                    title: title.clone(),
+                    quote: quote.clone(),
+                    text: text.clone(),
                 },
             ))
         }

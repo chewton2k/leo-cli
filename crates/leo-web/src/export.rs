@@ -33,6 +33,7 @@ interviews/ interview frameworks, workspaces, attempts and practice schedules,
           included with chats.
 tasks.json the tasks you added on the Calendar page (Storage can restore
           them). Tasks from notes are in the notes themselves.
+margin.json Felix's margin notes and their replies.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
           included with uploads. Audio recovery and calendar links
@@ -336,6 +337,24 @@ fn write_zip_with_limits<W: Write + Seek>(
                 version: 1,
                 boards: &boards,
                 cards: &cards,
+            },
+            &mut budget,
+            &mut packed,
+        )?;
+    }
+    #[derive(Serialize)]
+    struct MarginExport<'a> {
+        version: u8,
+        threads: &'a [crate::margin::Thread],
+    }
+    let threads = crate::margin::every(chats_dir);
+    if !threads.is_empty() {
+        add_json(
+            &mut zip,
+            "leo/margin.json",
+            &MarginExport {
+                version: 1,
+                threads: &threads,
             },
             &mut budget,
             &mut packed,

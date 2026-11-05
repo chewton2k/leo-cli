@@ -23,6 +23,7 @@ mod interview;
 mod interview_delete;
 mod interview_keys;
 mod interview_tools;
+pub mod margin;
 mod originals;
 mod progress;
 mod read_cache;
@@ -187,6 +188,7 @@ pub struct Runtime {
 pub struct Powers {
     pub writer: Option<Writer>,
     pub quick: Option<Writer>,
+    pub toolless: Option<Writer>,
     pub housekeeping: Option<Writer>,
     pub usage: Arc<usage::Usage>,
     pub python: Option<Runtime>,
@@ -221,6 +223,8 @@ struct AppState {
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
     quick: Option<Writer>,
+    toolless: Option<Writer>,
+    margin: Arc<margin::Reads>,
     housekeeping: Option<Writer>,
     usage: Arc<usage::Usage>,
     python: Option<Runtime>,
@@ -334,8 +338,16 @@ async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
     let mut read_at = None;
     let mut graphed_at = None;
+    let mut swept_at = std::time::Instant::now() - margin::SWEEP_EVERY;
     loop {
         tick.tick().await;
+        if swept_at.elapsed() >= margin::SWEEP_EVERY {
+            swept_at = std::time::Instant::now();
+            let chats = state.chats.clone();
+            let _ = state
+                .read_store(move |store| Ok(margin::sweep_store(&chats, store)))
+                .await;
+        }
         if !state.visible.load(std::sync::atomic::Ordering::Acquire)
             || state.capture_activity.busy()
         {
@@ -642,6 +654,7 @@ pub(crate) async fn start_in(
     let converse = powers.converse;
     let seer = powers.seer;
     let meaning = powers.meaning;
+    let toolless = powers.toolless;
     let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
     let (listener, port) = bind(options.port).await?;
     let gate = Arc::new(sessions::Gate::new(
@@ -649,6 +662,8 @@ pub(crate) async fn start_in(
         sessions::Sessions::load(&places.sessions)?,
     ));
     let state = AppState {
+        toolless,
+        margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
@@ -822,6 +837,33 @@ fn router(state: AppState) -> Router {
         .route(
             "/api/notes/{id}/insert",
             post(routes::insert::insert_into_note),
+        )
+        .route(
+            "/api/notes/{id}/margin",
+            get(routes::margin::note_margin).post(routes::margin::set_note_mode),
+        )
+        .route(
+            "/api/notes/{id}/margin/read",
+            post(routes::margin::read)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
+            "/api/notes/{id}/margin/threads",
+            post(routes::margin::ask)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
+            "/api/notes/{id}/margin/threads/{thread}",
+            post(routes::margin::set_status),
+        )
+        .route(
+            "/api/notes/{id}/margin/threads/{thread}/reply",
+            post(routes::margin::reply)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
+            "/api/margin",
+            get(routes::margin::settings).post(routes::margin::change_settings),
         )
         .route(
             "/api/notes/{id}/related",
