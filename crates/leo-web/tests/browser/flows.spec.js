@@ -2806,7 +2806,8 @@ test.describe('the kinds of bugs that reached people before', () => {
 
     const title = page.locator('#title');
     await title.click();
-    await page.keyboard.press('End');
+    await title.press('ControlOrMeta+A');
+    await title.press('ArrowRight');
     await typeWithPauses(page, title, ' A', 'B');
     await expect(title).toHaveText(`Typing target ${tag} AB`);
 
@@ -5419,12 +5420,16 @@ test('Usage opens from the rail with remaining limits inside a stable dialog', a
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('note search temporarily highlights the match without changing the note', async ({ page }) => {
+for (const [width, layout] of [[800, 'right'], [1280, 'right'], [1800, 'right'], [1280, 'marks'], [1800, 'both']]) test(`note search temporarily highlights the match without changing the note at ${width}px with ${layout} margins`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.route('**/api/margin', route => route.fulfill({ json: { layout, pace: 'regular' } }));
+  await page.evaluate(() => localStorage.removeItem('leo-margin-layout'));
   const note = await (await page.request.post('/api/notes', { data: { title: 'Search highlight fixture', body: 'A long paragraph of reading material. '.repeat(2000) + 'needlepassage', directory: '' } })).json();
   try {
     await page.goto('/#/search/needlepassage');
     await page.locator(`.card[data-id="${note.id}"]`).click();
     await expect(page.locator('#doc')).toContainText('needlepassage');
+    if (layout !== 'right') await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', layout);
     await expect.poll(() => page.evaluate(() => CSS.highlights.get('leo-search')?.size || 0)).toBeGreaterThan(0);
     const visible = await page.evaluate(() => {
       const range = CSS.highlights.get('leo-search').values().next().value;

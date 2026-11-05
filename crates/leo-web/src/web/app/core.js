@@ -881,6 +881,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   clearSearchHighlight();
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
+  await marginLoadPrefs();
   if (mine !== seq) return;
   let s;
   swap(`n:${note.id || 'new'}`, () => {
@@ -907,6 +908,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     drawOriginals(note);
     hideAskFloat();
     s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => { changed(s); marginEdited(s); }, placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+    marginMount(s, mine).catch(fail);
     if (citedLines && citedLines.id === note.id) showCitedLines();
     else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
       clearTimeout(reading.timer);
@@ -919,7 +921,6 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   });
   arriveOnPage(app.querySelector('article.note'));
   drawRelated(note.id, mine);
-  marginMount(s, mine).catch(fail);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
     flush(s).catch(fail);

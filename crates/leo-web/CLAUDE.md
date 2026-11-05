@@ -444,6 +444,10 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).
 ## Felix in the margin (`margin.rs`, `routes/margin.rs`, `web/margin.js`, `app/margin-notes.js`, 2026-11-04)
 
+Load margin preferences and reserve their space before positioning search matches
+or restoring reading, so the note's final line wrapping determines the scroll
+target. Check the page sequence after loading preferences.
+
 - Storage: `margin_threads`, `margin_modes` and `margin_state` (prefs, the day's
   read count, notes seen missing) in leo.db, never in note files or git. Threads
   carry `quote`, `prefix`, `suffix`, `status` (open, resolved, dismissed), `source`
