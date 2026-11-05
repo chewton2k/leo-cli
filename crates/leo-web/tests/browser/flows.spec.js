@@ -253,7 +253,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await expect(side).toBeVisible();
   await expect(page.locator('#menu')).toBeHidden();
   await expect(side.locator('.side-rail [data-action="home"]'), 'notes are opened from the explorer, not a rail button').toHaveCount(0);
-  for (const [action, url] of [['map', /#\/map$/], ['settings', /#\/settings$/]]) {
+  for (const [action, url] of [['settings', /#\/settings$/]]) {
     await side.locator(`[data-action="${action}"]`).click();
     await expect(page).toHaveURL(url);
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
@@ -722,7 +722,17 @@ test('search finds a note named after a command', async ({ page }) => {
 });
 
 
-test.describe('knowledge graph', () => {
+test.describe('note connections', () => {
+  test('graph navigation and endpoints are removed', async ({ page }) => {
+    await page.goto('/#/map');
+    await expect(page.locator('#map-canvas')).toHaveCount(0);
+    await expect(page.locator('[data-action="map"], [data-action="note-map"]')).toHaveCount(0);
+    for (const url of ['/graph.js', '/api/graph', '/api/graph/status']) {
+      expect((await page.request.get(url)).status()).toBe(404);
+    }
+    expect((await page.request.post('/api/graph/build')).status()).toBe(404);
+  });
+
   async function seed(page) {
     const made = {};
     for (const [title, body, directory] of [
@@ -760,120 +770,11 @@ test.describe('knowledge graph', () => {
     await page.goto('/#/search/breadth');
     const card = page.locator(`.card[data-id="${made['Graph traversals'].id}"]`);
     await expect(card).toBeVisible();
-    await expect(card.locator('.card-why')).toHaveText('Through the idea “breadth-first search” in the knowledge graph');
+    await expect(card.locator('.card-why')).toHaveText('Through the idea “breadth-first search”');
     await page.goto('/#/search/binary%20heaps%20priority');
     await expect(page.locator(`.card[data-id="${made.Heaps.id}"]`)).toBeVisible();
   });
 
-  test('Tidy up lays the graph out again and says so', async ({ page }) => {
-    await seed(page);
-    await page.goto('/#/map');
-    await expect(page.locator('#map-canvas')).toBeVisible();
-    await page.locator('[data-action="map-tidy"]').click();
-    await expect(page.locator('.toast')).toContainText('Tidied up');
-    await expect(page.locator('#map-canvas')).toBeVisible();
-  });
-
-  test('a note opens on the map with its connections and why', async ({ page }) => {
-    const made = await seed(page);
-    await page.goto(`/#/n/${made.Scheduling.id}`);
-    await page.locator('[data-action="note-map"]').click();
-    await expect(page).toHaveURL(new RegExp(`#/map/${made.Scheduling.id}$`));
-    await expect(page.locator('#map-canvas')).toBeVisible();
-    const panel = page.locator('#map-panel');
-    await expect(panel.locator('h3')).toHaveText('Scheduling');
-    await expect(panel).toContainText('Round robin runs the next process from a queue');
-    await expect(panel.locator('h4').first()).toContainText('Across classes');
-    const row = panel.locator('.map-row', { hasText: 'Graph traversals' });
-    await expect(row).toContainText('Same method');
-    await expect(row).toContainText('Both take the next piece of work from a queue');
-    await row.click();
-    await expect(panel.locator('h3')).toHaveText('Graph traversals');
-    await expect(panel.locator('.map-row', { hasText: 'Heaps' })).toContainText('Builds on');
-    await expect(panel.locator('.map-row', { hasText: 'Scheduling' }).first()).toContainText('Same method');
-    await panel.locator('[data-action="map-focus"]').click();
-    await expect(page.locator('[data-action="map-unfocus"]')).toBeVisible();
-    await page.locator('[data-action="map-unfocus"]').click();
-    await panel.locator('[data-action="map-clear"]').click();
-    await expect(panel.locator('h3')).toHaveText('Strongest connections');
-    await expect(panel.locator('.map-row').first()).toContainText('Both take the next piece of work from a queue');
-    await page.locator('#map-find').fill('heap');
-    await page.locator('#map-found .map-row').first().click();
-    await expect(panel.locator('h3')).toHaveText('Heaps');
-    await expect(panel.locator('.map-row', { hasText: 'Graph traversals' })).toContainText('Built on by');
-    await panel.locator('[data-action="open-note"]').click();
-    await expect(page.locator('#title')).toHaveText('Heaps');
-  });
-
-  test('with Felix open, the map and its details stay beside him', async ({ page }) => {
-    test.skip(test.info().project.name !== 'desktop', 'Felix covers the page on phones');
-    await page.setViewportSize({ width: 1440, height: 900 });
-    const made = await seed(page);
-    await page.goto(`/#/map/${made.Scheduling.id}`);
-    const panel = page.locator('#map-panel');
-    await expect(panel.locator('h3')).toHaveText('Scheduling');
-    await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat')).toBeVisible();
-    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
-    const chat = await page.locator('#chat').boundingBox();
-    const side = await page.locator('#side').boundingBox();
-    const map = await page.locator('#map').boundingBox();
-    const details = await panel.boundingBox();
-    const tools = await page.locator('.map-tools').boundingBox();
-    expect(map.x).toBeGreaterThanOrEqual(side.x + side.width - 1);
-    expect(map.x + map.width).toBeLessThanOrEqual(chat.x + 1);
-    expect(details.x + details.width).toBeLessThanOrEqual(chat.x);
-    expect(details.width).toBeGreaterThan(220);
-    expect(tools.x + tools.width).toBeLessThanOrEqual(details.x);
-    await expect(panel.locator('h3')).toBeInViewport();
-    await page.locator('[data-chat="close"]').click();
-    await expect.poll(async () => (await page.locator('#map').boundingBox()).width).toBeGreaterThan(map.width + 300);
-  });
-
-  test('the toggles show connections across classes and shared ideas', async ({ page }) => {
-    await seed(page);
-    await page.goto('/#/map');
-    const across = page.locator('[data-action="map-across"]');
-    await expect(across).toContainText('Across classes');
-    await across.click();
-    await expect(across).toHaveAttribute('aria-pressed', 'true');
-    const ideas = page.locator('[data-action="map-ideas"]');
-    await ideas.click();
-    await expect(ideas).toHaveAttribute('aria-pressed', 'true');
-    await page.locator('#map-find').fill('queue');
-    await page.locator('#map-found .map-row', { hasText: 'queue' }).first().click();
-    await expect(page.locator('#map-panel h3')).toHaveText('queue');
-    await expect(page.locator('#map-panel')).toContainText('In 2 notes across 2 classes');
-  });
-
-  test('rebuilding from scratch asks first, then starts a fresh build', async ({ page }) => {
-    await seed(page);
-    const builds = [];
-    await page.route('**/api/graph/build*', (route) => {
-      builds.push(new URL(route.request().url()).search);
-      return route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 3, message: null, notes: 3, read: 0, stale: 3, requests: 3, rebuild_requests: 3, built_at: null } });
-    });
-    await page.goto('/#/map');
-    await page.locator('[data-action="map-rebuild"]').click();
-    await expect(page.locator('.sheet')).toContainText('Rebuild the knowledge graph from scratch?');
-    await page.locator('[data-action="close"]').click();
-    expect(builds).toEqual([]);
-    await page.locator('[data-action="map-rebuild"]').click();
-    await page.locator('[data-action="map-rebuild-now"]').click();
-    await expect.poll(() => builds).toEqual(['?fresh=1']);
-    await expect(page.locator('#map-status')).toContainText('Connecting 0/3');
-  });
-
-  test('connecting notes without an AI says how to choose one', async ({ page }) => {
-    await seed(page);
-    await page.route('**/api/graph/build', (route) => route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 2, message: null, notes: 3, read: 0, stale: 3, requests: 2, built_at: null } }));
-    await page.route('**/api/graph/status', (route) => route.fulfill({ json: { state: 'failed', done: 0, total: 2, message: 'no AI for writing is chosen — type :settings in leo and pick one under writing', notes: 3, read: 0, stale: 3, requests: 2, built_at: null } }));
-    await page.goto('/#/map');
-    await page.locator('#map-status [data-action="map-build"]').click();
-    const confirm = page.locator('[data-action="map-build-now"]');
-    if (await confirm.isVisible()) await confirm.click();
-    await expect(page.locator('.toast.bad')).toContainText(':settings');
-  });
 });
 
 test.describe('Felix', () => {
@@ -2021,7 +1922,7 @@ test.describe('readability', () => {
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['calendar', '#/calendar'], ['map', '#/map']]) {
+      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['calendar', '#/calendar']]) {
         await page.goto(`/${hash}`);
         await look(name);
       }
@@ -2859,7 +2760,6 @@ test.describe('the kinds of bugs that reached people before', () => {
       ['#/settings', '**/api/settings'],
       ['#/trash', '**/api/trash'],
       ['#/settings/storage', '**/api/storage'],
-      ['#/map', '**/api/graph'],
       ['#/search/slow', '**/api/search?*'],
       [`#/f/slow-${kind()}`, '**/api/dirs?*'],
       [`#/n/${note.id}`, `**/api/notes/${note.id}`],
@@ -3033,7 +2933,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     await call('POST', '/api/dirs/move', { from: `contract-moved-${tag}`, into: `contract-${tag}` });
     await call('POST', `/api/notes/${made.id}/suggestion`, { find: 'new', replace: 'newer' });
     await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', mode: 'chat', messages: [{ role: 'user', text: 'hi' }] });
-    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/speech', '/api/graph/status', '/api/record']) {
+    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/speech', '/api/record']) {
       await call('GET', url);
     }
     const trashed = json(await call('POST', '/api/trash/move', { notes: [made.id], dirs: [] }));

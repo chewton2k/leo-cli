@@ -65,7 +65,7 @@ test('Quick Leo reads a reminder, a question or a note from one line', () => {
 test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   const now = new Date(2026, 9, 19, 10, 0);
   const notes = [{ id: 'a', title: 'Graph algorithms' }, { id: 'b', title: 'Heaps' }, { id: 'c', title: 'Weekly plan' }];
-  const places = [{ name: 'Calendar', hash: '#/calendar' }, { name: 'Settings', hash: '#/settings' }, { name: 'Interview practice', hash: '#/interviews' }, { name: 'Knowledge graph', hash: '#/map' }];
+  const places = [{ name: 'Calendar', hash: '#/calendar' }, { name: 'Settings', hash: '#/settings' }, { name: 'Interview practice', hash: '#/interviews' }];
   const top = (text, found = notes) => S.quickRank(text, { notes: found, places }, now)[0];
   assert.deepEqual(top('email Bob tomorrow at 3pm'), { kind: 'task', title: 'email Bob', date: '2026-10-20', time: '15:00' });
   assert.deepEqual(top('What is a heap?'), { kind: 'ask', text: 'What is a heap?' });
@@ -73,7 +73,6 @@ test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   assert.deepEqual(top('graph alg'), { kind: 'open', id: 'a', title: 'Graph algorithms' });
   assert.deepEqual(top('cal', []), { kind: 'place', name: 'Calendar', hash: '#/calendar' });
   assert.deepEqual(top('graph', [{ id: 'a', title: 'Graph algorithms' }]), { kind: 'open', id: 'a', title: 'Graph algorithms' }, 'a note named like that beats a page whose later word matches');
-  assert.deepEqual(top('graph', []), { kind: 'place', name: 'Knowledge graph', hash: '#/map' });
   assert.deepEqual(top('interview', []), { kind: 'place', name: 'Interview practice', hash: '#/interviews' });
   assert.deepEqual(top('note: idea for the essay'), { kind: 'note', title: 'idea for the essay' });
   assert.equal(top('dijkstra versus bellman ford for negative edges', []).kind, 'ask');

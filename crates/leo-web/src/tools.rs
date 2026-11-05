@@ -2509,9 +2509,7 @@ impl Desk {
                         Some(crate::search::Why::Idea(idea)) => {
                             format!(" (through the idea \"{idea}\")")
                         }
-                        Some(crate::search::Why::Summary) => {
-                            " (through its summary in the knowledge graph)".into()
-                        }
+                        Some(crate::search::Why::Summary) => " (through its summary)".into(),
                         Some(crate::search::Why::Meaning) => {
                             " (close in meaning, not in words)".into()
                         }
@@ -2615,7 +2613,7 @@ impl Desk {
                     Ok(note) => note,
                     Err(why) => return fail(&format!("Looked for “{}”", clip(&wanted, 60)), why),
                 };
-                let step = format!("Followed the knowledge graph from “{}”", note.title);
+                let step = format!("Followed connections from “{}”", note.title);
                 let links: Vec<(&Note, String, String)> = connected(store, cache, &note.id)
                     .into_iter()
                     .filter(|(other, _, _)| studied(other))
@@ -2624,10 +2622,7 @@ impl Desk {
                 if links.is_empty() {
                     return Done {
                         step,
-                        result: format!(
-                            "\"{}\" has no connections in the knowledge graph yet.",
-                            note.title
-                        ),
+                        result: format!("\"{}\" has no connections yet.", note.title),
                         proposal: None,
                         found: Vec::new(),
                     };

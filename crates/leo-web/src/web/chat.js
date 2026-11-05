@@ -1612,7 +1612,7 @@
       return `<div class="chat-hello">
         ${felix(96, 'idle big')}
         <h3>Hi, I'm Felix!</h3>
-        <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it in your knowledge graph.</p>
+        <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it.</p>
         ${reviewCard()}
         <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}

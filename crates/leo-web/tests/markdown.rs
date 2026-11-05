@@ -13,11 +13,6 @@ fn the_editor_helpers_pass_their_tests() {
 }
 
 #[test]
-fn the_map_of_ideas_passes_its_tests() {
-    run_node_tests("graph.test.js");
-}
-
-#[test]
 fn the_chat_with_felix_passes_its_tests() {
     run_node_tests("chat.test.js");
     run_node_tests("interview.test.js");
@@ -71,4 +66,9 @@ fn run_node_tests(file: &str) {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(out.status.success(), "{said}");
+}
+
+#[test]
+fn navigation_passes_its_tests() {
+    run_node_tests("navigation.test.js");
 }
