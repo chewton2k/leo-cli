@@ -588,7 +588,7 @@ async fn thread_on(engine: &Engine, id: &str) -> String {
 async fn a_thread_takes_replies_within_its_limits() {
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let engine = Engine::with(Powers {
-        chat: Some(talking("Yes. Argon2id.", Arc::clone(&prompts))),
+        toolless_chat: Some(talking("Yes. Argon2id.", Arc::clone(&prompts))),
         ..Default::default()
     })
     .await;
@@ -703,7 +703,7 @@ async fn dismissing_and_resolving_take_a_thread_off_the_page_and_undo_brings_it_
 async fn asking_about_selected_words_needs_no_read_along_and_the_words_must_be_there() {
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let engine = Engine::with(Powers {
-        chat: Some(talking("Because it is.", prompts)),
+        toolless_chat: Some(talking("Because it is.", prompts)),
         ..Default::default()
     })
     .await;

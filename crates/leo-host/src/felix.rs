@@ -3,6 +3,22 @@ use std::sync::Arc;
 use leo_services::ai::session::{Session, Systems, ToolDef, Turn};
 use leo_services::ai::spend::Answered;
 
+#[derive(Debug, PartialEq)]
+enum Route {
+    Toolless,
+    Quick,
+    Full,
+}
+
+fn route_of(purpose: leo_web::usage::Purpose) -> Route {
+    use leo_web::usage::Purpose;
+    match purpose {
+        Purpose::MarginRead => Route::Toolless,
+        Purpose::Summary | Purpose::QuickReview => Route::Quick,
+        _ => Route::Full,
+    }
+}
+
 pub fn writer(
     usage: Arc<leo_web::usage::Usage>,
     purpose: leo_web::usage::Purpose,
@@ -13,15 +29,10 @@ pub fn writer(
             system: system.into(),
             user: user.into(),
         };
-        let result = if purpose == leo_web::usage::Purpose::MarginRead {
-            leo_services::ai::toolless_outcome(prompt, most)
-        } else if matches!(
-            purpose,
-            leo_web::usage::Purpose::Summary | leo_web::usage::Purpose::QuickReview
-        ) {
-            leo_services::ai::quick_outcome(prompt, most)
-        } else {
-            leo_services::ai::chat_outcome(prompt, most)
+        let result = match route_of(purpose) {
+            Route::Toolless => leo_services::ai::toolless_outcome(prompt, most),
+            Route::Quick => leo_services::ai::quick_outcome(prompt, most),
+            Route::Full => leo_services::ai::chat_outcome(prompt, most),
         };
         let spent = result
             .as_ref()
@@ -141,4 +152,19 @@ pub fn meaning() -> leo_web::Meaning {
         });
     }
     std::sync::Arc::new(|texts: &[String], query: bool| leo_services::meaning::embed(texts, query))
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use leo_web::usage::Purpose;
+
+    #[test]
+    fn only_a_margin_read_takes_the_toolless_path() {
+        assert_eq!(route_of(Purpose::MarginRead), Route::Toolless);
+        assert_eq!(route_of(Purpose::QuickReview), Route::Quick);
+        assert_eq!(route_of(Purpose::Summary), Route::Quick);
+        assert_eq!(route_of(Purpose::OtherWriting), Route::Full);
+        assert_eq!(route_of(Purpose::Answer), Route::Full);
+    }
 }

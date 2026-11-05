@@ -607,9 +607,9 @@ function felixSettingsCards(view, page) {
   if (!view) return '<section class="set-card"><p class="hint">Felix’s settings are not available right now.</p></section>';
   const provider = page.tasks.find((task) => task.task === 'writing')?.provider || '';
   const name = page.tasks.find((task) => task.task === 'writing')?.choices?.find((choice) => choice.id === provider)?.label || 'your writing AI';
-  const where = provider === 'ollama'
-    ? 'Reads along sends the text you change to Ollama after each pause. Ollama runs on this computer, so it stays here.'
-    : `Reads along sends the text you change to ${esc(name)} after each pause, without a press each time. When you ask sends nothing until you ask.`;
+  const where = page.reads_stay_here
+    ? `Reads along sends the note’s title and the text you change to ${esc(name)} after each pause. It runs on this computer, so they stay here.`
+    : `Reads along sends the note’s title and the text you change to ${esc(name)} after each pause, without a press each time. When you ask sends nothing until you ask.`;
   return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['ask', 'When you ask', 'Felix stays quiet until you ask him.'], ['along', 'Reads along', 'He reads what changed after a pause and speaks only when it matters.']] })}<p class="hint">Applies to notes made from now on. Each note has its own switch under its title.</p></section>
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card"><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['regular', 'Regular'], ['slow', 'Slow']] })}</div>

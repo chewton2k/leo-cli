@@ -23,6 +23,7 @@ impl leo_web::SettingsApi for WebSettings {
             Some(notes_dir),
         );
         page["plans"] = serde_json::json!(leo_services::web_settings::coding_plans(&cfg, &usage));
+        page["reads_stay_here"] = serde_json::json!(leo_services::ai::reads_stay_here(&cfg));
         page
     }
 

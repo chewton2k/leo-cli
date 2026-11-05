@@ -397,7 +397,7 @@ async fn answered(
     thread: &Thread,
     question: &str,
 ) -> Result<String, Box<Response>> {
-    let Some(streamer) = state.chat.clone() else {
+    let Some(streamer) = state.toolless_chat.clone() else {
         return Err(Box::new(said(
             StatusCode::SERVICE_UNAVAILABLE,
             "no-ai",

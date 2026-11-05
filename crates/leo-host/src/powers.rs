@@ -25,6 +25,27 @@ pub fn powers() -> leo_web::Powers {
             })
         },
     );
+    let toolless_chat: leo_web::Streamer = std::sync::Arc::new(
+        |system: &str,
+         user: &str,
+         most: u32,
+         piece: &mut dyn FnMut(&str),
+         restart: &mut dyn FnMut()| {
+            let (text, answered) = leo_services::ai::toolless_streaming(
+                leo_services::ai::chat::Prompt {
+                    system: system.to_string(),
+                    user: user.to_string(),
+                },
+                most,
+                piece,
+                restart,
+            )?;
+            Ok(leo_web::Reply {
+                text,
+                spent: answered.map(crate::felix::spent_of),
+            })
+        },
+    );
     leo_web::Powers {
         python: Some(leo_web::Runtime {
             dir: leo_services::pyodide::dir(),
@@ -78,6 +99,7 @@ pub fn powers() -> leo_web::Powers {
         )),
         usage,
         chat: Some(streamer),
+        toolless_chat: Some(toolless_chat),
         dictation: None,
         app_settings: None,
         settings: Some(std::sync::Arc::new(crate::settings::WebSettings)),
