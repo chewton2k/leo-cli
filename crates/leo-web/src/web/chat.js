@@ -290,7 +290,7 @@
 
   function usageRows(rows) {
     if (!Array.isArray(rows)) return [];
-    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick interview reviews and preparation' };
+    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick interview reviews and preparation', margin_read: 'Reading along' };
     const count = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0;
     const number = (value) => count(value).toLocaleString('en-US');
     return rows.slice(0, 7).filter((row) => row && Object.hasOwn(names, row.purpose)).map((row) => {

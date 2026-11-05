@@ -293,11 +293,11 @@ function marginPlaceInMargin(boxes, layout, page, origin) {
     el.classList.toggle('arriving', marginPage.arriving.has(t.id));
     marginPage.marks.get(t.id)?.remove();
     marginPage.marks.delete(t.id);
-    const last = rects[0];
-    const from = on === 'right' ? { x: Math.min(last.right + 5, right + 4), y: last.bottom - 3 } : { x: last.left - 5, y: last.bottom - 3 };
+    const line = on === 'right' ? rects[rects.length - 1] : rects[0];
+    const from = { x: on === 'right' ? line.right : line.left, y: line.bottom + 1 };
     const to = on === 'right' ? { x: x - 7, y: tops[t.id] + 12 } : { x: x + marginKit.MARGIN_WIDTH + 7, y: tops[t.id] + 12 };
     const tether = marginPath(t.id, 'tether');
-    tether.setAttribute('d', marginKit.tether(from, to));
+    tether.setAttribute('d', marginKit.tether(from, to, on === 'right' ? Math.max(from.x, right + 2) : Math.min(from.x, left - 2)));
     tether.classList.toggle('arriving', marginPage.arriving.has(t.id));
   }
 }
@@ -306,7 +306,7 @@ function marginPlaceAsMarks(boxes, page, origin) {
   for (const { t, at, rects, el } of boxes) {
     const end = rects[rects.length - 1];
     const mark = marginMark(t);
-    mark.style.transform = `translate(${Math.min(end.right + 4, page.right - origin.left - 18)}px, ${end.top + 2}px)`;
+    mark.style.transform = `translate(${Math.min(end.right - 1, page.right - origin.left - 12)}px, ${end.top - 7}px)`;
     marginPage.paths.get(`${t.id}:tether`)?.remove();
     marginPage.paths.delete(`${t.id}:tether`);
     if (!el) continue;
@@ -321,8 +321,7 @@ function marginPlaceAsMarks(boxes, page, origin) {
     block.style.setProperty('--margin-room', `${room}px`);
     block.classList.add('margin-room');
     marginPage.roomy = block;
-    const bottom = block.getBoundingClientRect().bottom - origin.top - room;
-    el.style.transform = `translate(${page.left - origin.left}px, ${bottom + 14}px)`;
+    el.style.transform = `translate(${page.left - origin.left}px, ${block.getBoundingClientRect().bottom - origin.top + 14}px)`;
   }
 }
 
@@ -614,7 +613,7 @@ function felixSettingsCards(view, page) {
   return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['ask', 'When you ask', 'Felix stays quiet until you ask him.'], ['along', 'Reads along', 'He reads what changed after a pause and speaks only when it matters.']] })}<p class="hint">Applies to notes made from now on. Each note has its own switch under its title.</p></section>
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card"><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['regular', 'Regular'], ['slow', 'Slow']] })}</div>
-    <div class="set-row column" data-find="felix-cap"><div class="set-line"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: view.cap, choices: (view.caps || []).map((cap) => [String(cap), String(cap)]) })}</div><span class="hint" id="margin-today">${view.today} of ${view.cap} used today. Each read starts your writing AI once.</span>${view.problem ? `<span class="set-note warn">${esc(view.problem)}</span>` : ''}</div></section>`;
+    <div class="set-row column" data-find="felix-cap"><div class="set-line"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: String(view.cap), choices: (view.caps || []).map((cap) => [String(cap), String(cap)]) })}</div><span class="hint" id="margin-today">${view.today} of ${view.cap} used today. Each read starts your writing AI once.</span>${view.problem ? `<span class="set-note warn">${esc(view.problem)}</span>` : ''}</div></section>`;
 }
 
 document.addEventListener('change', async (e) => {

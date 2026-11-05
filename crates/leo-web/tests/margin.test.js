@@ -138,6 +138,7 @@ test('drawing: a wave spans its width and a tether joins its ends', () => {
   assert.ok(M.wave(10, 100, 20).startsWith('M10.0 20.0 q'));
   const line = M.tether({ x: 10, y: 20 }, { x: 110, y: 40 });
   assert.ok(line.startsWith('M10.0 20.0 C') && line.endsWith('110.0 40.0'));
+  assert.ok(M.tether({ x: 10, y: 20 }, { x: 110, y: 40 }, 80).startsWith('M10.0 20.0 L80.0 20.0 C'), 'a tether clears the rest of the line');
 });
 
 for (const [name, fn] of cases) {

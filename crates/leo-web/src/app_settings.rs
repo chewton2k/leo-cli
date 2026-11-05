@@ -104,6 +104,27 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn a_margin_problem_shows_one_line_in_health() {
+        let api = Some(std::sync::Arc::new(Fake) as std::sync::Arc<dyn AppApi>);
+        let response = call(
+            api,
+            None,
+            Some(PathBuf::from("unused")),
+            Some("Felix could not read.".into()),
+        )
+        .await;
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let view: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(view["sections"][0]["title"], "Felix");
+        assert_eq!(
+            view["sections"][0]["checks"][0]["detail"],
+            "Felix could not read."
+        );
+    }
+
+    #[tokio::test]
     async fn app_changes_and_health_are_json_and_validate_actions() {
         let api = Some(std::sync::Arc::new(Fake) as std::sync::Arc<dyn AppApi>);
         assert_eq!(

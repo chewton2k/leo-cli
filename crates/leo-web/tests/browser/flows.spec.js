@@ -4452,7 +4452,34 @@ test.describe('passages', () => {
     await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).not.toContain('Argon2id');
   });
 
+  test('a lost margin note moves to the Felix panel and Settings starts with read-along off', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Lost place', body: 'Nothing like it here.' } })).json();
+    const lost = { id: 'stub-lost', note: note.id, quote: 'words that went away', prefix: 'nothing near ', suffix: ' nothing after', status: 'open', source: 'read', messages: [{ from: 'felix', text: 'This passage has gone.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
+    await page.route(`**/api/notes/${note.id}/margin`, (route) => route.fulfill({ json: { mode: 'ask', threads: [lost] } }));
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#margin-mode')).toBeVisible();
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('#chat-lost')).toBeVisible();
+    await expect(page.locator('#chat-lost summary')).toHaveText('A margin note lost its place');
+    await expect(page.locator('.margin-note')).toHaveCount(0);
+
+    await page.goto('/#/settings/felix');
+    const newNotes = page.locator('[data-find="felix-new-notes"]');
+    await expect(newNotes.locator('.choice-pick.on')).toContainText('When you ask');
+    await expect(newNotes).toContainText('without a press each time');
+    await page.locator('[data-find="felix-cap"] .segment', { hasText: '20' }).click();
+    await expect(page.locator('#margin-today')).toContainText('of 20 used today');
+    await page.locator('[data-find="felix-cap"] .segment', { hasText: '40' }).click();
+    await expect(page.locator('#margin-today')).toContainText('of 40 used today');
+    await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Marks only' }).click();
+    await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).layout).toBe('marks');
+    await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Right margin' }).click();
+    await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).layout).toBe('right');
+  });
+
   test('selected words get their answer in the margin without read-along', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 1600, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps margin', body: 'A binary heap keeps the minimum at the root.' } })).json();
     let asked = null;
@@ -4476,6 +4503,7 @@ test.describe('passages', () => {
     await input.press('Enter');
     await expect(page.locator('.margin-note .margin-felix')).toContainText('The heap property.');
     expect(asked.quote).toBe('keeps the minimum');
+    await expect(page.locator('.ink-word, .margin-ink path.arriving')).toHaveCount(0);
     await page.locator('#chat-toggle').click();
     await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'marks');
     await expect(page.locator('.margin-mark')).toHaveCount(1);
@@ -4484,6 +4512,7 @@ test.describe('passages', () => {
   test('the selection shortcut explains when nothing is selected without a bottom Ask button', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Toolbar ask', body: 'Only line here' } })).json();
     await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc .blk').first()).toBeVisible();
     await expect(page.locator('nav.actions [data-action="ask-selection"]')).toHaveCount(0);
     await page.keyboard.press('ControlOrMeta+Shift+e');
     await expect(page.locator('.toast')).toContainText('Select some text in the note first');

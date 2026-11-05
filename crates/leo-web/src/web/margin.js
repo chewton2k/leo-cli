@@ -150,9 +150,10 @@
     return path;
   }
 
-  function tether(from, to) {
-    const middle = (from.x + to.x) / 2;
-    return `M${from.x.toFixed(1)} ${from.y.toFixed(1)} C${middle.toFixed(1)} ${(from.y + 2).toFixed(1)} ${(middle - 4).toFixed(1)} ${to.y.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
+  function tether(from, to, clear = from.x) {
+    const middle = (clear + to.x) / 2;
+    const lead = clear === from.x ? '' : ` L${clear.toFixed(1)} ${from.y.toFixed(1)}`;
+    return `M${from.x.toFixed(1)} ${from.y.toFixed(1)}${lead} C${middle.toFixed(1)} ${(from.y + 2).toFixed(1)} ${(middle - 4).toFixed(1)} ${to.y.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
   }
 
   const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, arrangement, blocksOf, changedBlocks, wave, tether };
