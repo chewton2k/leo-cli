@@ -60,6 +60,8 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
       if((m=url.match(/^\\/api\\/cards\\/([^/]+)$/))){const card=db.cards.find(c=>c.id===m[1]);if(method==='DELETE'){db.cards=db.cards.filter(c=>c!==card);return {...card,rank:0};}Object.assign(card,body);return {...card,rank:0};}
       throw new Error('No fake for '+method+' '+url);
     }
+    const EASE_OUT='ease-out';
+    ${read('app/motion.js')}
     ${read('app/boards.js')}
     const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});

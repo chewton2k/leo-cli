@@ -639,7 +639,7 @@ label.trash-row { cursor: pointer; }
 .toast button, .toast-gone button { border: 0; background: none; color: var(--accent); font-weight: 700; padding: 0; filter: brightness(1.3); }
 .toast.bad, .toast-gone.bad { background: var(--danger); color: var(--accent-text); }
 .toast, .toast-gone { overflow: hidden; }
-.toast-time { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: currentColor; opacity: .4; transform-origin: left center; animation: toast-time linear forwards; }
+.toast-time { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: currentColor; opacity: .55; transform-origin: left center; animation: toast-time linear forwards; }
 .toast-gone .toast-time { display: none; }
 @keyframes toast-time { to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) { .toast-time { display: none; } }

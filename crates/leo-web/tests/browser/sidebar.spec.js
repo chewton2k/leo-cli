@@ -46,6 +46,8 @@ async function sidebarFixture(browser, run) {
       return result;
     }
     ${read('app/refresh.js')}
+    const EASE_OUT='ease-out';
+    ${read('app/motion.js')}
     ${read('app/side.js')}
     ${drag}
     const folderClick=${open};
