@@ -22,7 +22,7 @@ function keepCard() {
   if (!keep) return '';
   const select = (field, choices) =>
     `<span class="select-control"><select data-keep="${field}">${choices.map((c) => `<option value="${keepValue(c.days)}"${keepValue(c.days) === keepValue(keep[field]) ? ' selected' : ''}>${esc(c.label === 'forever' ? 'Forever' : c.label)}</option>`).join('')}</select>${ICON.chevron}</span>`;
-  return `<section class="set-card store-keep">
+  return `<section class="set-card store-keep" data-find="storage-keep">
       <header><h3>How long leo keeps things</h3></header>
       <label class="set-row"><span class="set-label">Trash</span>${select('trash_days', keep.trash_choices)}</label>
       <label class="set-row"><span class="set-label">Chats with Felix</span>${select('chat_days', keep.chat_choices)}</label>
@@ -74,7 +74,7 @@ function drawStorage(page) {
   const legend = page.areas.map((a, i) => `<span class="store-key" data-area="${esc(a.id)}"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
   const areas = storageAreas(page.areas, open);
   refreshPanel(app, settingsFrame('storage', `<div class="settings storage">
-    <section class="set-card store-total">
+    <section class="set-card store-total" data-find="storage-areas">
       <div class="store-big">${esc(page.total_label)}</div>
       <p class="hint">What Leo keeps on the computer running this server, including the application, downloads and saved data. Browser copies are shown separately below. Sizes are estimates for very large or inaccessible folders.</p>
       <div class="store-bar" aria-hidden="true">${bar}</div>
@@ -84,18 +84,18 @@ function drawStorage(page) {
     ${areas}
     <div id="browser-storage">${browserStorageCard()}</div>
     ${keepCard()}
-    <section class="set-card store-export">
+    <section class="set-card store-export" data-find="storage-export">
       <header><h3>Export everything</h3></header>
-      <p class="hint">A zip of your notes, standalone tasks and the selected data below. Interview practices include frameworks, code, answers, whiteboards, submitted attempts, reviews and schedules. Settings, private calendar links, automatic answer keys and API keys are never included.</p>
+      <p class="hint">A zip of your notes, standalone tasks and the selected data below. Settings, private calendar links, automatic answer keys and API keys are never included.</p>
       <div class="store-export-parts">
         <label class="set-row"><span class="grow">Notes</span>${settingsSwitch('disabled', true)}</label>
         <label class="set-row"><span class="grow">Uploaded files</span>${settingsSwitch('data-export="uploads"', true)}</label>
-        <label class="set-row"><span class="grow">Chats and interview practices</span>${settingsSwitch('data-export="chats"', true)}</label>
+        <label class="set-row"><span class="grow">Chats</span>${settingsSwitch('data-export="chats"', true)}</label>
         <label class="set-row"><span class="grow">Trash</span>${settingsSwitch('data-export="trash"', false)}</label>
       </div>
       <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
     </section>
-    <section class="set-card store-restore">
+    <section class="set-card store-restore" data-find="storage-restore">
       <header><h3>Restore tasks</h3></header>
       <p class="hint">Bring back tasks from an export: pick the <b>tasks.json</b> inside the zip. Tasks you already have are kept when they are newer.</p>
       <label class="btn plain sm">Choose tasks.json<input type="file" id="tasks-restore" accept=".json,application/json" hidden></label>
@@ -113,10 +113,8 @@ function drawStorage(page) {
 const STORE_PAGE_ITEMS = 100;
 
 function storageItemOpen(area, item) {
-  const practice = ['interviews', 'interview-checks'].includes(area.id) ? item.id : item.practice;
   const note = ['reading', 'note-task-data'].includes(area.id) ? item.id : item.note;
   if (['chats', 'memory', 'chat-docs'].includes(area.id)) return `<button class="btn sm plain" data-action="storage-open-chat" data-id="${esc(item.id)}">Open chat</button>`;
-  if (practice) return `<a class="btn sm plain" href="#/interviews/${enc(practice)}">Open practice</a>`;
   if (note) return `<a class="btn sm plain" href="${noteHash(note)}">Open note</a>`;
   return '';
 }
@@ -169,7 +167,7 @@ async function loadBrowserStorage(mine = seq) {
   const areas = [], errors = [];
   try {
     const items = L.list(window.localStorage);
-    if (items.length) areas.push({ id:'browser-local',title:'Draft backups and browser preferences',about:'Unsaved note and interview drafts, a cached Felix conversation, and preferences in this browser. Open a note or practice to recover work before discarding its backup.',path:'This browser only',items,bytes:items.reduce((n,i)=>n+i.bytes,0),actions:[{id:'delete',label:'Discard selected',selected:true,confirm:'The selected browser copies are removed. Unsaved drafts may no longer be recoverable. Saved notes, practices and chats on the Leo server stay.'}] });
+    if (items.length) areas.push({ id:'browser-local',title:'Draft backups and browser preferences',about:'Unsaved note drafts, a cached Felix conversation, and preferences in this browser. Open a note to recover work before discarding its backup.',path:'This browser only',items,bytes:items.reduce((n,i)=>n+i.bytes,0),actions:[{id:'delete',label:'Discard selected',selected:true,confirm:'The selected browser copies are removed. Unsaved drafts may no longer be recoverable. Saved notes and chats on the Leo server stay.'}] });
   } catch (_) { errors.push('This browser does not allow Leo to inspect its draft backups and preferences.'); }
   try {
     const audio = await browserAudioStorage?.summaries() || [];
@@ -338,14 +336,8 @@ async function storageGo() {
     await loadBrowserStorage(mine);
     return toast('Discarded selected recovery audio from this browser.');
   }
-  if (request.area === 'interviews' && chat.isBusy()) return toast('Finish or stop Felix’s reply before deleting interview practices.', {bad:true});
-  const practiceIds = request.area === 'interviews' ? request.action === 'all' ? state.storage.areas.find(a=>a.id==='interviews').items.map(i=>i.id) : request.items : [];
   const done = await api('/api/storage', { method: 'POST', body: request });
   let browserWarning = '';
-  if (practiceIds.length) {
-    try { window.leoBrowserStorage.forgetPractices(window.localStorage, practiceIds); }
-    catch (_) { browserWarning = ' A draft backup could not be removed from this browser. Discard it under This browser.'; }
-  }
   if (mine !== seq || state.view !== 'storage') return;
   drawStorage(done.storage);
   loadBrowserStorage(mine).catch(() => {});

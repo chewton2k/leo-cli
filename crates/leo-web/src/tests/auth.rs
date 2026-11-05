@@ -141,3 +141,54 @@ async fn dictation_controls_and_history_require_the_app_session() {
     assert!(reply.starts_with("HTTP/1.1 401"), "{reply}");
     running.stop().await;
 }
+
+#[tokio::test]
+async fn retired_practice_routes_are_gone_while_shared_routes_stay_available() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let host = format!("127.0.0.1:{port}");
+    let signed_in = ask(port, "/?token=0123456789abcdef0123456789abcdef", &host).await;
+    let cookie = signed_in
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("set-cookie: ")
+                .or_else(|| line.strip_prefix("Set-Cookie: "))
+        })
+        .and_then(|value| value.split(';').next())
+        .unwrap();
+    for path in [
+        "/interview.js",
+        "/runner.html",
+        "/runner.js",
+        "/code-tools.js",
+        "/typescript.js",
+        "/wasi-shim.js",
+        "/api/interviews",
+        "/api/interviews/legacy/key",
+        "/api/interviews/legacy/coverage",
+        "/api/python",
+        "/api/cpp",
+        "/api/go",
+        "/api/java",
+        "/api/rust",
+        "/pyodide/engine.wasm",
+        "/sql/sql-wasm.wasm",
+        "/clang/engine.wasm",
+        "/goroot/pkg",
+        "/javaroot/compiler.wasm",
+        "/rustroot/lib",
+    ] {
+        let reply = ask_with(port, path, &host, cookie).await;
+        assert!(reply.starts_with("HTTP/1.1 404"), "{path}: {reply}");
+    }
+    for path in [
+        "/api/progress/combine:note-1",
+        "/api/review",
+        "/api/boards",
+        "/api/margin",
+    ] {
+        let reply = ask_with(port, path, &host, cookie).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
+    }
+    running.stop().await;
+}

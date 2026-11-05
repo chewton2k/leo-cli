@@ -35,9 +35,6 @@ jobs:
       systems: ${{ steps.scope.outputs.systems }}
       node: ${{ steps.scope.outputs.node }}
       installers: ${{ steps.scope.outputs.installers }}
-      go_runner: ${{ steps.scope.outputs.go_runner }}
-      java_runner: ${{ steps.scope.outputs.java_runner }}
-      rust_runner: ${{ steps.scope.outputs.rust_runner }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -291,60 +288,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
-  go-runner:
-    name: Go runner builds to its pinned files
-    needs: changes
-    if: needs.changes.outputs.go_runner == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 15
-    concurrency:
-      group: ci-go-runner-${{ github.ref }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v5
-      - id: go
-        run: echo "version=$(sed 's/^go//' scripts/go-runner/GO_VERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ steps.go.outputs.version }}
-          cache: false
-      - run: sh scripts/go-runner/build.sh "$RUNNER_TEMP/go-runner"
-
-  java-runner:
-    name: Java runner builds
-    needs: changes
-    if: needs.changes.outputs.java_runner == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 15
-    concurrency:
-      group: ci-java-runner-${{ github.ref }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v5
-      - id: jdk
-        run: echo "version=$(cat scripts/java-runner/JDK_VERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: ${{ steps.jdk.outputs.version }}
-      - run: sh scripts/java-runner/build.sh "$RUNNER_TEMP/java-runner"
-
-  rust-runner:
-    name: Rust runner gathers its pinned files
-    needs: changes
-    if: needs.changes.outputs.rust_runner == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 10
-    concurrency:
-      group: ci-rust-runner-${{ github.ref }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v5
-      - run: sh scripts/rust-runner/build.sh "$RUNNER_TEMP/rust-runner"
-
   ci:
     name: CI passed
-    needs: [changes, format, node, test, browser-server, browser, lint, msrv, targets, go-runner, java-runner, rust-runner]
+    needs: [changes, format, node, test, browser-server, browser, lint, msrv, targets]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

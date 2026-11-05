@@ -45,6 +45,8 @@ pub struct ProviderConfig {
     pub path: Option<String>,
     #[serde(default)]
     pub reasoning: Option<bool>,
+    #[serde(skip)]
+    pub no_tools: bool,
     #[serde(default)]
     pub effort: Option<String>,
     #[serde(default)]

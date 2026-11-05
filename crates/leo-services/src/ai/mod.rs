@@ -164,6 +164,84 @@ pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Cha
     chat::complete(&quick_config(&cfg), &store, prompt, max_tokens)
 }
 
+pub fn toolless_outcome(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    chat::complete(&toolless_config(&cfg), &store, prompt, max_tokens)
+}
+
+pub fn toolless_streaming(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+) -> Result<(String, Option<spend::Answered>)> {
+    let (cfg, store) = context();
+    let outcome = chat::complete_streaming(
+        &without_tools(cfg.clone(), &cfg),
+        &store,
+        prompt,
+        max_tokens,
+        on_fragment,
+        on_restart,
+    )?;
+    let answered = outcome
+        .spent
+        .map(|spent| spend::answered(&cfg, &outcome.provider, spent));
+    Ok((outcome.value, answered))
+}
+
+fn without_tools(mut chosen: Config, cfg: &Config) -> Config {
+    for name in &cfg.chat.chain {
+        let provider = chosen
+            .provider(name)
+            .cloned()
+            .or_else(|| Config::built_in_provider(name));
+        if let Some(mut provider) = provider {
+            provider.no_tools = true;
+            chosen.providers.insert(name.clone(), provider);
+        }
+    }
+    chosen
+}
+
+fn toolless_config(cfg: &Config) -> Config {
+    let mut quick = without_tools(quick_config(cfg), cfg);
+    quick.chat.chain.truncate(1);
+    quick
+}
+
+fn loopback(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let host = match host.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next().unwrap_or(""),
+        None => host.split(':').next().unwrap_or(""),
+    };
+    let host = host.to_ascii_lowercase();
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+pub fn reads_stay_here(cfg: &Config) -> bool {
+    let quick = toolless_config(cfg);
+    let Some(provider) = quick.chat.chain.first().and_then(|n| quick.provider(n)) else {
+        return false;
+    };
+    let cloud = provider
+        .model
+        .as_deref()
+        .is_some_and(|model| model.to_ascii_lowercase().contains("cloud"));
+    provider.kind == Some(crate::config::provider::ProviderKind::Openai)
+        && provider.base_url.as_deref().is_some_and(loopback)
+        && !cloud
+}
+
 pub fn dictation_outcome(
     prompt: chat::Prompt,
     max_tokens: u32,
@@ -355,6 +433,60 @@ pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::provider::{ProviderConfig, ProviderKind};
+
+    fn chained(first: &str) -> crate::config::Config {
+        let mut cfg = crate::config::Config::default();
+        cfg.chat.chain = vec![
+            first.to_string(),
+            "claude_code".to_string(),
+            "codex".to_string(),
+        ];
+        cfg
+    }
+
+    #[test]
+    fn a_read_never_reaches_a_second_provider_and_has_no_tools() {
+        let quick = super::toolless_config(&chained("ollama"));
+        assert_eq!(quick.chat.chain, ["ollama"]);
+        assert!(quick.provider("ollama").unwrap().no_tools);
+        let full = super::without_tools(chained("codex").clone(), &chained("codex"));
+        assert_eq!(full.chat.chain.len(), 3);
+        for name in &full.chat.chain {
+            assert!(full.provider(name).unwrap().no_tools, "{name}");
+        }
+        let quick = super::toolless_config(&chained("claude_code"));
+        assert!(quick.provider("claude_code").unwrap().no_tools);
+        assert!(quick.provider("claude_code").unwrap().model.is_some());
+    }
+
+    #[test]
+    fn only_a_loopback_ollama_with_a_local_model_keeps_text_here() {
+        let with = |url: &str, model: &str| {
+            let mut cfg = chained("ollama");
+            cfg.providers.insert(
+                "ollama".into(),
+                ProviderConfig {
+                    kind: Some(ProviderKind::Openai),
+                    base_url: Some(url.into()),
+                    model: Some(model.into()),
+                    ..Default::default()
+                },
+            );
+            super::reads_stay_here(&cfg)
+        };
+        assert!(with("http://127.0.0.1:11434/v1", "llama3.2"));
+        assert!(with("http://localhost:11434/v1", "llama3.2"));
+        assert!(with("http://[::1]:11434/v1", "llama3.2"));
+        assert!(!with("http://127.0.0.1:11434/v1", "gpt-oss:120b-cloud"));
+        assert!(!with("http://ollama.example.com/v1", "llama3.2"));
+        assert!(!with("http://127.0.0.1.evil.example/v1", "llama3.2"));
+        assert!(!with("http://localhost.evil.example/v1", "llama3.2"));
+        assert!(!with("http://evil.example/127.0.0.1", "llama3.2"));
+        assert!(!with("http://0.0.0.0:11434/v1", "llama3.2"));
+        assert!(!super::reads_stay_here(&chained("claude_code")));
+    }
+
     use super::*;
 
     #[test]

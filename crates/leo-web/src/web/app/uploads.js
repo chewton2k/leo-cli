@@ -120,7 +120,7 @@ async function uploadSheet(files, into, { add = false } = {}) {
     <label class="source-keep" id="upload-together-row" hidden><input type="checkbox" id="upload-together"> Make one note from all of them</label>
     <label class="field">${ICON.folder}<span class="select-control"><select id="upload-dir" aria-label="Folder">${options}</select>${ICON.chevron}</span></label>
     <label class="field">${ICON.note}<input id="upload-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
-    <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" placeholder="What do you want from it? (optional) e.g. the interview problem, then the code, explained step by step"></textarea></label>
+    <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" placeholder="What do you want from it? (optional) e.g. the main ideas, explained step by step"></textarea></label>
     <p class="hint upload-hint">You can also paste a picture here. Photos stay in the note, and pictures and diagrams in slides and documents are kept beside the text. Reading photos and scans needs an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
   $('#upload-together').addEventListener('change', drawPicked);

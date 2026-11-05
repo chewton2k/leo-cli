@@ -25,48 +25,36 @@ pub fn powers() -> leo_web::Powers {
             })
         },
     );
+    let toolless_chat: leo_web::Streamer = std::sync::Arc::new(
+        |system: &str,
+         user: &str,
+         most: u32,
+         piece: &mut dyn FnMut(&str),
+         restart: &mut dyn FnMut()| {
+            let (text, answered) = leo_services::ai::toolless_streaming(
+                leo_services::ai::chat::Prompt {
+                    system: system.to_string(),
+                    user: user.to_string(),
+                },
+                most,
+                piece,
+                restart,
+            )?;
+            Ok(leo_web::Reply {
+                text,
+                spent: answered.map(crate::felix::spent_of),
+            })
+        },
+    );
     leo_web::Powers {
-        python: Some(leo_web::Runtime {
-            dir: leo_services::pyodide::dir(),
-            ready: std::sync::Arc::new(leo_services::pyodide::ready),
-            fetch: std::sync::Arc::new(|| leo_services::pyodide::fetch().map(|_| ())),
-        }),
-        cpp: Some(leo_web::Runtime {
-            dir: leo_services::clang::dir(),
-            ready: std::sync::Arc::new(leo_services::clang::ready),
-            fetch: std::sync::Arc::new(|| leo_services::clang::fetch().map(|_| ())),
-        }),
-        go: Some(leo_web::Runtime {
-            dir: leo_services::runtimes::dir(&leo_services::runtimes::GO),
-            ready: std::sync::Arc::new(|| {
-                leo_services::runtimes::ready(&leo_services::runtimes::GO)
-            }),
-            fetch: std::sync::Arc::new(|| {
-                leo_services::runtimes::fetch(&leo_services::runtimes::GO).map(|_| ())
-            }),
-        }),
-        rust: Some(leo_web::Runtime {
-            dir: leo_services::runtimes::dir(&leo_services::runtimes::RUST),
-            ready: std::sync::Arc::new(|| {
-                leo_services::runtimes::ready(&leo_services::runtimes::RUST)
-            }),
-            fetch: std::sync::Arc::new(|| {
-                leo_services::runtimes::fetch(&leo_services::runtimes::RUST).map(|_| ())
-            }),
-        }),
-        java: Some(leo_web::Runtime {
-            dir: leo_services::runtimes::dir(&leo_services::runtimes::JAVA),
-            ready: std::sync::Arc::new(|| {
-                leo_services::runtimes::ready(&leo_services::runtimes::JAVA)
-            }),
-            fetch: std::sync::Arc::new(|| {
-                leo_services::runtimes::fetch(&leo_services::runtimes::JAVA).map(|_| ())
-            }),
-        }),
         writer: Some(writer),
         quick: Some(crate::felix::writer(
             std::sync::Arc::clone(&usage),
             leo_web::usage::Purpose::QuickReview,
+        )),
+        toolless: Some(crate::felix::writer(
+            std::sync::Arc::clone(&usage),
+            leo_web::usage::Purpose::MarginRead,
         )),
         housekeeping: Some(crate::felix::writer(
             std::sync::Arc::clone(&usage),
@@ -74,6 +62,7 @@ pub fn powers() -> leo_web::Powers {
         )),
         usage,
         chat: Some(streamer),
+        toolless_chat: Some(toolless_chat),
         dictation: None,
         app_settings: None,
         settings: Some(std::sync::Arc::new(crate::settings::WebSettings)),

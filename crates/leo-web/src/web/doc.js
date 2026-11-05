@@ -646,6 +646,13 @@
       return at;
     }
 
+    function hitsOf(from, to) {
+      return [...container.querySelectorAll('.blk')].filter((el) => {
+        const block = blocks[Number(el.dataset.i)];
+        return block && block.start < to && block.end >= from;
+      });
+    }
+
     function lineOf(at) {
       let start = 0;
       for (let k = 0; k < lines.length; k++) {
@@ -1367,17 +1374,47 @@
         if (editing) return lineOf(lineStart(editing.start) + editing.prefix.length + editing.area.selectionEnd);
         return kept.text === lines.join('\n') ? kept.caret : null;
       },
+      glow(from, to) {
+        for (const el of container.querySelectorAll('.blk-glow')) el.classList.remove('blk-glow');
+        if (!from) return;
+        for (const el of hitsOf(from, to)) el.classList.add('blk-glow');
+      },
       highlight(from, to) {
-        const hits = [...container.querySelectorAll('.blk')].filter((el) => {
-          const block = blocks[Number(el.dataset.i)];
-          return block && block.start < to && block.end >= from;
-        });
+        const hits = hitsOf(from, to);
         if (!hits.length) return false;
         for (const el of container.querySelectorAll('.blk-cited')) el.classList.remove('blk-cited');
         for (const el of hits) el.classList.add('blk-cited');
         hits[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
         setTimeout(() => hits.forEach((el) => el.classList.remove('blk-cited')), CITED_FOR);
         return true;
+      },
+      spanRects(from, to) {
+        if (editing && !editing.selectionText) {
+          const base = lineStart(editing.start) + editing.prefix.length;
+          const { area } = editing;
+          if (from >= base && from <= base + area.value.length) {
+            const a = caretBox(area, from - base);
+            const b = caretBox(area, Math.min(to, base + area.value.length) - base);
+            const tall = parseFloat(getComputedStyle(area).lineHeight) || 24;
+            const box = area.getBoundingClientRect();
+            if (a.y === b.y) return [{ left: a.x, right: b.x, top: a.y - tall, bottom: a.y }];
+            return [{ left: a.x, right: box.right, top: a.y - tall, bottom: a.y }, { left: box.left, right: b.x, top: b.y - tall, bottom: b.y }];
+          }
+        }
+        const a = pointFor(from);
+        const b = pointFor(to);
+        const range = document.createRange();
+        try {
+          range.setStart(a.node, a.offset);
+          range.setEnd(b.node, b.offset);
+        } catch (e) {
+          return [];
+        }
+        return [...range.getClientRects()].filter((box) => box.width > 0).slice(0, 8).map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
+      },
+      blockAt(at) {
+        const index = blockAtLine(lineOf(at));
+        return index < 0 ? null : container.querySelector(`.blk[data-i="${index}"]`);
       },
       editStart: () => editLine(0, 'start'),
       editEnd: () => editLine(lines.length - 1, 'end'),

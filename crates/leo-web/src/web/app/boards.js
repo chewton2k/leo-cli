@@ -177,6 +177,8 @@ function drawKanban() {
   for (const open of composers) {
     if (board.columns.some((c) => c.id === open.column)) kanbanComposer(open.column, open);
   }
+  settleNow('kanban-card', (id) => app.querySelector(`.kanban-card[data-card="${CSS.escape(id)}"]`));
+  settleNow('kanban-col', (id) => app.querySelector(`.kanban-col[data-col="${CSS.escape(id)}"]`));
   const again = focus && app.querySelector(focus);
   if (again) {
     if (typing) {
@@ -689,6 +691,7 @@ function kanbanLift() {
   if (d.kind === 'col') ghost.style.height = `${Math.min(rect.height, innerHeight * 0.7)}px`;
   document.body.appendChild(ghost);
   d.ghost = ghost;
+  lift(ghost);
   d.from = { parent: d.item.parentElement, next: d.item.nextElementSibling };
   d.item.classList.add('kanban-placeholder');
   document.body.classList.add('kanban-dragging');
@@ -700,7 +703,7 @@ function kanbanLift() {
 function kanbanFollow() {
   const d = kanban.drag;
   if (!d || !d.live) return;
-  d.ghost.style.transform = `translate(${d.x - d.dx}px, ${d.y - d.dy}px)${d.kind === 'card' && !stillMotion() ? ' rotate(2deg)' : ''}`;
+  d.ghost.style.transform = `translate(${d.x - d.dx}px, ${d.y - d.dy}px)`;
   const under = document.elementFromPoint(d.x, d.y);
   for (const tab of document.querySelectorAll('.kanban-tab.drop-on')) tab.classList.remove('drop-on');
   d.tab = null;
@@ -761,6 +764,7 @@ function kanbanEnd() {
   cancelAnimationFrame(d.frame);
   document.removeEventListener('touchmove', kanbanHoldStill);
   if (!d.live) return null;
+  d.settled = liftedRect(d.ghost);
   d.ghost?.remove();
   d.item.classList.remove('kanban-placeholder');
   document.body.classList.remove('kanban-dragging');
@@ -779,6 +783,8 @@ function kanbanCancel() {
 async function kanbanDrop() {
   const d = kanbanEnd();
   if (!d || !kanban.board) return;
+  settleLater(`kanban-${d.kind}`, d.id, d.settled);
+  settleNow(`kanban-${d.kind}`, () => d.item);
   if (d.kind === 'col') {
     const order = [...app.querySelectorAll('.kanban-col')].map((c) => c.dataset.col);
     if (order.join('\n') === kanban.board.columns.map((c) => c.id).join('\n')) return;

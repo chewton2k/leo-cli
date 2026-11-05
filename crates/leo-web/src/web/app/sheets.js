@@ -106,8 +106,6 @@ const QUICK_PLACES = [
   { name: 'Notes', hash: '#/', icon: 'note' },
   { name: 'Calendar', hash: '#/calendar', icon: 'calendar' },
   { name: 'Boards', hash: '#/boards', icon: 'board' },
-  { name: 'Interview practice', hash: '#/interviews', icon: 'chat' },
-  { name: 'Knowledge graph', hash: '#/map', icon: 'map' },
   { name: 'Record', hash: '#/record', icon: 'mic' },
   { name: 'Trash', hash: '#/trash', icon: 'trash' },
   { name: 'Storage', hash: '#/settings/storage', icon: 'storage' },
@@ -204,16 +202,21 @@ function drawQuick() {
   if (picked >= 0) quick.at = picked;
   quick.at = Math.min(quick.at, Math.max(0, quick.rows.length - 1));
   if (!quick.rows.length) {
+    quick.keys = [];
     box.innerHTML = '';
     inQuick('#quick-input')?.removeAttribute('aria-activedescendant');
     drawQuickDue();
     return;
   }
-  box.innerHTML = quick.rows.map((row, i) => {
-    const look = quickLook(row);
-    const on = i === quick.at;
-    return `<button type="button" class="quick-row${on ? ' on' : ''}" id="quick-row-${i}" role="option" aria-selected="${on}" data-action="quick-run" data-at="${i}" tabindex="-1"><span class="quick-icon">${look.icon}</span><span class="quick-label">${esc(look.label)}</span><span class="quick-hint">${esc(look.hint)}</span>${on ? '<kbd>↵</kbd>' : ''}</button>`;
-  }).join('');
+  const keys = quick.rows.map((row) => JSON.stringify(row));
+  flipList(box, '.quick-row', (el) => (quick.keys || [])[Number(el.dataset.at)], () => {
+    quick.keys = keys;
+    box.innerHTML = quick.rows.map((row, i) => {
+      const look = quickLook(row);
+      const on = i === quick.at;
+      return `<button type="button" class="quick-row${on ? ' on' : ''}" id="quick-row-${i}" role="option" aria-selected="${on}" data-action="quick-run" data-at="${i}" tabindex="-1"><span class="quick-icon">${look.icon}</span><span class="quick-label">${esc(look.label)}</span><span class="quick-hint">${esc(look.hint)}</span>${on ? '<kbd>↵</kbd>' : ''}</button>`;
+    }).join('');
+  }, { ms: QUICK_FLIP_MS });
   inQuick('#quick-input')?.setAttribute('aria-activedescendant', `quick-row-${quick.at}`);
 }
 
@@ -305,10 +308,8 @@ function menu() {
     <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
-    <button class="list-row" data-action="interviews">${ICON.chat}<span class="grow">Interview practice</span></button>
     <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span>${tasksDueBadge()}</button>
     <button class="list-row" data-action="boards">${ICON.board}<span class="grow">Boards</span></button>
-    <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
     <button class="list-row" data-action="storage">${ICON.storage}<span class="grow">Storage</span></button>

@@ -138,14 +138,28 @@ pub(crate) async fn delete_from_trash(
     State(state): State<AppState>,
     Json(choice): Json<TrashChoice>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let chats = state.chats.clone();
     state
         .with_store(move |store| {
+            let wanted: Vec<String> = if choice.all {
+                store.trashed().into_iter().map(|t| t.id).collect()
+            } else {
+                choice.ids.clone()
+            };
             let gone = if choice.all {
                 store.empty_trash()
             } else {
                 store.delete_from_trash(&choice.ids)
             }
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let left = store.trashed();
+            let forgotten: Vec<String> = wanted
+                .into_iter()
+                .filter(|id| {
+                    !left.iter().any(|t| &t.id == id) && !store.notes.iter().any(|n| &n.id == id)
+                })
+                .collect();
+            crate::margin::forget_notes(&chats, &forgotten);
             Ok(Json(serde_json::json!({ "deleted": gone })))
         })
         .await

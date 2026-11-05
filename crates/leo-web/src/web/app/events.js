@@ -51,13 +51,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved() || Boolean(interviewPage && interviewHere(interviewPage) && (interviewPage.generation !== interviewPage.saved || interviewPage.name != null));
+const unsaved = () => saving.unsaved();
 let websiteLeaveSent = false;
 let websiteBackupShown = 0;
 
 function saveWebsiteWork() {
   saving.retry().catch(() => {});
-  if (interviewPage && interviewHere(interviewPage)) saveInterviewWorkspace(interviewPage).catch(() => {});
 }
 
 function leaveWebsite() {
@@ -101,7 +100,7 @@ window.addEventListener('beforeunload', (e) => {
 // hashchange (a new note getting its id, a deleted note's page closing). A
 // note that turns out to be gone resets it to the library.
 const LAST_PLACE_KEY = 'leo-last-place';
-const LAST_PLACES = /^#\/(n|f|boards|calendar|map|interviews)(\/|$)/;
+const LAST_PLACES = /^#\/(n|f|boards|calendar)(\/|$)/;
 function rememberPlace() {
   try {
     const here = location.hash || '#/';
@@ -114,6 +113,7 @@ function reopenLastPlace() {
     sessionStorage.setItem('leo-launched', '1');
     if (location.hash && location.hash !== '#/') return;
     const last = localStorage.getItem(LAST_PLACE_KEY);
+    if (/^#\/interviews(?:\/|$)/.test(last || '')) localStorage.setItem(LAST_PLACE_KEY, '#/');
     if (last && LAST_PLACES.test(last)) history.replaceState(history.state, '', last);
   } catch (e) {}
 }
@@ -125,6 +125,7 @@ window.addEventListener('hashchange', () => {
     flush(leaving).catch(fail);
     leaving.doc.destroy();
   }
+  marginLeave();
   route();
 });
 
@@ -152,9 +153,14 @@ window.addEventListener(
   { passive: true }
 );
 
+window.addEventListener('resize', () => {
+  if (document.body.classList.contains('on-settings')) fitSettingsEdge();
+});
+
 async function route() {
   closeSheet();
-  window.scrollTo(0, 0);
+  drawn.top = /^#\/(?:f|n|new)(?:\/|$)|^#?\/?$/.test(location.hash);
+  if (!drawn.top) window.scrollTo(0, 0);
   await render();
 }
 
@@ -256,23 +262,26 @@ let renderGeneration = 0;
 async function render() {
   const generation = ++renderGeneration;
   hideAskFloat();
-  interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
   // Plain groups: tests/wording.rs flags a colon right before "settings" (an old command).
   document.body.classList.toggle('on-settings', /^#\/(settings|trash)(\/|$)/.test(location.hash));
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   document.body.classList.toggle('on-boards', /^#\/boards(?:\/|$)/.test(location.hash));
-  document.body.classList.toggle('on-interviews', /^#\/interviews(?:\/|$)/.test(location.hash));
+  if (/^#\/interviews(?:\/|$)/.test(location.hash)) {
+    history.replaceState(history.state, '', '#/');
+    try { localStorage.setItem(LAST_PLACE_KEY, '#/'); } catch (e) {}
+  }
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
   stopLibraryArrival();
-  document.body.classList.toggle('on-library', !kind || kind === 'f');
-  document.body.classList.toggle('on-note', kind === 'n' || kind === 'new');
+  if (kind && !/^(?:f|n|new)$/.test(kind)) {
+    document.body.classList.toggle('on-library', false);
+    document.body.classList.toggle('on-note', false);
+  }
   if (library.observer) library.observer.disconnect();
   if (kind !== 'search') closeSearch();
-  if (kind !== 'map') leaveMap();
   if (kind !== 'n') chat.setContext(null);
   if (kind !== 'record') recorder.leave();
   if (kind !== 'boards') leaveBoards();
@@ -284,10 +293,8 @@ async function render() {
     else if (kind === 'new') await newNote(arg);
     else if (kind === 'search') await showSearch(arg);
     else if (kind === 'trash') await showTrash();
-    else if (kind === 'map') await showMap(arg);
     else if (kind === 'calendar') await showCalendar();
     else if (kind === 'boards') await showBoards(arg);
-    else if (kind === 'interviews') await showInterviews(arg);
     else if (kind === 'settings') await showSettings(arg);
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');

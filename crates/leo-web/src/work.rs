@@ -1,22 +1,19 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::Arc;
 
 const MOST_FOREGROUND: usize = 4;
-const MOST_GRADES: usize = 8;
 const MOST_FAILURES: usize = 12;
 const SAME_FAILURES: u8 = 2;
 
 pub(crate) struct Work {
     foreground: Arc<tokio::sync::Semaphore>,
-    grades: Mutex<BTreeMap<String, Weak<GradeSignal>>>,
 }
 
 impl Default for Work {
     fn default() -> Self {
         Self {
             foreground: Arc::new(tokio::sync::Semaphore::new(MOST_FOREGROUND)),
-            grades: Default::default(),
         }
     }
 }
@@ -24,52 +21,6 @@ impl Default for Work {
 impl Work {
     pub(crate) fn foreground(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
         Arc::clone(&self.foreground).try_acquire_owned().ok()
-    }
-
-    pub(crate) fn grade(&self, key: String) -> Option<GradeJob> {
-        let mut grades = self.grades.lock().ok()?;
-        grades.retain(|_, job| job.strong_count() > 0);
-        if let Some(signal) = grades.get(&key).and_then(Weak::upgrade) {
-            return Some(GradeJob {
-                signal,
-                leader: false,
-            });
-        }
-        if grades.len() >= MOST_GRADES {
-            return None;
-        }
-        let signal = Arc::new(GradeSignal {
-            finished: tokio::sync::watch::channel(false).0,
-        });
-        grades.insert(key, Arc::downgrade(&signal));
-        Some(GradeJob {
-            signal,
-            leader: true,
-        })
-    }
-}
-
-struct GradeSignal {
-    finished: tokio::sync::watch::Sender<bool>,
-}
-
-pub(crate) struct GradeJob {
-    signal: Arc<GradeSignal>,
-    pub(crate) leader: bool,
-}
-
-impl GradeJob {
-    pub(crate) async fn wait(&self) {
-        let mut finished = self.signal.finished.subscribe();
-        let _ = finished.wait_for(|done| *done).await;
-    }
-}
-
-impl Drop for GradeJob {
-    fn drop(&mut self) {
-        if self.leader {
-            self.signal.finished.send_replace(true);
-        }
     }
 }
 
@@ -122,23 +73,5 @@ mod tests {
         assert!(work.foreground().is_none());
         drop(held);
         assert!(work.foreground().is_some());
-    }
-
-    #[test]
-    fn grade_admission_shares_only_the_same_key_and_releases_slots() {
-        let work = Work::default();
-        let first = work.grade("practice:attempt".into()).unwrap();
-        assert!(Arc::ptr_eq(
-            &first.signal,
-            &work.grade("practice:attempt".into()).unwrap().signal
-        ));
-        let mut held = vec![first];
-        for i in 1..MOST_GRADES {
-            held.push(work.grade(i.to_string()).unwrap());
-        }
-        assert!(work.grade("full".into()).is_none());
-        assert!(!Arc::ptr_eq(&held[0].signal, &held[1].signal));
-        drop(held);
-        assert!(work.grade("released".into()).is_some());
     }
 }

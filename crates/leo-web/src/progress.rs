@@ -16,33 +16,13 @@ pub struct Kind {
     pub secs: f64,
 }
 
-pub const KEY: Kind = Kind {
-    name: "key",
-    chars: 6_000.0,
-    secs: 45.0,
-};
-pub const GRADE: Kind = Kind {
-    name: "grade",
-    chars: 1_500.0,
-    secs: 10.0,
-};
 pub const COMBINE: Kind = Kind {
     name: "combine",
     chars: 6_000.0,
     secs: 60.0,
 };
-pub const LANGUAGE: Kind = Kind {
-    name: "language",
-    chars: 600.0,
-    secs: 6.0,
-};
-pub const COVERAGE: Kind = Kind {
-    name: "coverage",
-    chars: 500.0,
-    secs: 5.0,
-};
 
-const KINDS: [Kind; 5] = [KEY, GRADE, COMBINE, COVERAGE, LANGUAGE];
+const KINDS: [Kind; 1] = [COMBINE];
 const KEPT_RUNS: usize = 12;
 const ON_PACE: f64 = 0.9;
 const SLOW_AFTER: f64 = 1.25;
@@ -174,10 +154,6 @@ impl Board {
         }
     }
 
-    pub fn start(self: &Arc<Self>, key: String, kind: Kind) -> Option<Ticket> {
-        self.start_sized(key, kind, None)
-    }
-
     pub fn start_sized(
         self: &Arc<Self>,
         key: String,
@@ -246,14 +222,7 @@ impl Board {
 pub fn valid_key(key: &str) -> bool {
     key.len() <= 200
         && key.split_once(':').is_some_and(|(kind, rest)| {
-            [
-                KEY.name,
-                GRADE.name,
-                COVERAGE.name,
-                COMBINE.name,
-                LANGUAGE.name,
-            ]
-            .contains(&kind)
+            kind == COMBINE.name
                 && !rest.is_empty()
                 && rest
                     .chars()
@@ -288,24 +257,27 @@ mod tests {
     #[test]
     fn a_meter_keeps_an_even_pace_to_the_usual_time_then_slows_and_never_finishes_by_itself() {
         let board = Arc::new(Board::default());
-        let ticket = board.start("key:practice-1:problem-1".into(), KEY).unwrap();
+        let ticket = board
+            .start_sized("combine:note-1".into(), COMBINE, None)
+            .unwrap();
         assert!(
             board
-                .start("key:practice-1:problem-1".into(), KEY)
+                .start_sized("combine:note-1".into(), COMBINE, None)
                 .is_none(),
             "one meter per job"
         );
         let m = &ticket.meter;
         assert!(m.fraction_at(0.0) < 0.01);
-        let quarter = m.fraction_at(KEY.secs / 4.0);
-        let half = m.fraction_at(KEY.secs / 2.0);
+        let quarter = m.fraction_at(COMBINE.secs / 4.0);
+        let half = m.fraction_at(COMBINE.secs / 2.0);
         assert!(
             (half - 2.0 * quarter).abs() < 0.01,
             "an even pace, not a curve that stalls early"
         );
-        assert!((m.fraction_at(KEY.secs) - ON_PACE).abs() < 0.01);
+        assert!((m.fraction_at(COMBINE.secs) - ON_PACE).abs() < 0.01);
         assert!(
-            m.fraction_at(KEY.secs * 3.0) > ON_PACE && m.fraction_at(KEY.secs * 50.0) <= MOST_SHOWN
+            m.fraction_at(COMBINE.secs * 3.0) > ON_PACE
+                && m.fraction_at(COMBINE.secs * 50.0) <= MOST_SHOWN
         );
         m.add(&"x".repeat(3_000));
         assert!(
@@ -316,18 +288,20 @@ mod tests {
         assert_eq!(m.fraction_at(0.0), MOST_SHOWN);
         m.restart();
         assert!(m.fraction_at(0.0) < 0.01);
-        let view = board.view("key:practice-1:problem-1").unwrap();
+        let view = board.view("combine:note-1").unwrap();
         assert_eq!(
             (view["expected"].as_u64(), view["slow"].as_bool()),
-            (Some(45), Some(false))
+            (Some(60), Some(false))
         );
         drop(ticket);
-        assert!(board.view("key:practice-1:problem-1").is_none());
-        let failed = board.start("key:practice-1:problem-1".into(), KEY).unwrap();
+        assert!(board.view("combine:note-1").is_none());
+        let failed = board
+            .start_sized("combine:note-1".into(), COMBINE, None)
+            .unwrap();
         drop(failed);
         assert_eq!(
-            board.estimate(KEY, None),
-            (KEY.chars, KEY.secs),
+            board.estimate(COMBINE, None),
+            (COMBINE.chars, COMBINE.secs),
             "a job that wrote nothing teaches nothing"
         );
     }
@@ -339,44 +313,45 @@ mod tests {
         std::fs::create_dir_all(&chats).unwrap();
         let board = Board::kept_in(&chats);
         for secs in [10.0, 12.0, 11.0, 30.0] {
-            board.record(GRADE, secs, 800.0);
+            board.record(COMBINE, secs, 800.0);
         }
-        let (chars, secs) = board.estimate(GRADE, None);
+        let (chars, secs) = board.estimate(COMBINE, None);
         assert_eq!(
             (chars, secs),
             (800.0, 30.0),
             "the upper quarter of recent runs, so the end is rarely a jump"
         );
         for _ in 0..KEPT_RUNS {
-            board.record(GRADE, 12.0, 800.0);
+            board.record(COMBINE, 12.0, 800.0);
         }
-        assert_eq!(board.estimate(GRADE, None).1, 12.0, "old runs fall away");
+        assert_eq!(board.estimate(COMBINE, None).1, 12.0, "old runs fall away");
         let again = Board::kept_in(&chats);
-        assert_eq!(again.estimate(GRADE, None).1, 12.0);
-        assert_eq!(again.estimate(KEY, None), (KEY.chars, KEY.secs));
+        assert_eq!(again.estimate(COMBINE, None).1, 12.0);
     }
 
     #[test]
     fn a_metered_writer_counts_streamed_text_and_progress_keys_are_checked() {
         let board = Arc::new(Board::default());
-        let ticket = board.start("grade:attempt-1".into(), GRADE).unwrap();
-        let plain: Writer = Arc::new(|_: &str, _: &str, _| Ok("y".repeat(750)));
+        let ticket = board
+            .start_sized("combine:note-2".into(), COMBINE, None)
+            .unwrap();
+        let plain: Writer = Arc::new(|_: &str, _: &str, _| Ok("y".repeat(3_000)));
         let streamer: Streamer = Arc::new(|_: &str, _: &str, _, piece, _| {
-            piece(&"z".repeat(750));
-            Ok("z".repeat(750).into())
+            piece(&"z".repeat(3_000));
+            Ok("z".repeat(3_000).into())
         });
         let streamed = metered(
             Arc::clone(&plain),
             Some(streamer),
             Arc::clone(&ticket.meter),
         );
-        assert_eq!(streamed("s", "u", 10).unwrap().len(), 750);
+        assert_eq!(streamed("s", "u", 10).unwrap().len(), 3_000);
         assert!((ticket.meter.fraction_at(0.0) - 0.5).abs() < 0.05);
         let without = metered(plain, None, Arc::clone(&ticket.meter));
         without("s", "u", 10).unwrap();
         assert!(ticket.meter.fraction_at(0.0) > 0.9);
-        assert!(valid_key("language:practice-1:problem-1"));
-        assert!(valid_key("coverage:practice-1:problem-1"));
+        assert!(!valid_key("language:practice-1:problem-1"));
+        assert!(!valid_key("coverage:practice-1:problem-1"));
         assert!(!valid_key("other:x") && !valid_key("key:") && !valid_key("key:a/b"));
     }
 

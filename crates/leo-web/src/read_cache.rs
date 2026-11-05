@@ -9,16 +9,8 @@ pub struct Reads(VecDeque<(String, String)>);
 
 impl Reads {
     pub fn compact(&mut self, name: &str, key: &str, result: &str) -> Option<String> {
-        if !matches!(
-            name,
-            "open_note"
-                | "read_document"
-                | "interview_code"
-                | "interview_progress"
-                | "interview_tests"
-                | "interview_attempt"
-                | "interview_workspace"
-        ) || !(LEAST_BYTES..=MOST_BYTES / 2).contains(&result.len())
+        if !matches!(name, "open_note" | "read_document")
+            || !(LEAST_BYTES..=MOST_BYTES / 2).contains(&result.len())
             || result.starts_with("That did not work:")
         {
             return None;
@@ -58,15 +50,7 @@ mod tests {
         let mut cache = Reads::default();
         let a = "答え".repeat(200);
         let b = "code".repeat(200);
-        for name in [
-            "open_note",
-            "read_document",
-            "interview_code",
-            "interview_progress",
-            "interview_tests",
-            "interview_attempt",
-            "interview_workspace",
-        ] {
+        for name in ["open_note", "read_document"] {
             assert!(cache.compact(name, "first", &a).is_none());
             assert!(cache
                 .compact(name, "first", &a)

@@ -145,6 +145,7 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "rename_note" => "Tried to rename a note",
         "rename_folder" => "Tried to rename a folder",
         "pin_note" => "Tried to pin a note",
+        "add_margin_note" => "Tried to add a margin note",
         "restore_note" => "Tried to bring a note back",
         "delete_folder" => "Tried to delete a folder",
         "restore_folder" => "Tried to bring a folder back",
@@ -193,6 +194,7 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "rename_note" => rename_note(state, desk, call),
         "rename_folder" => rename_folder(state, call),
         "pin_note" => pin_note(state, desk, call),
+        "add_margin_note" => add_margin_note(state, desk, call),
         "restore_note" => restore_note(state, call),
         "delete_folder" => delete_folder(state, call),
         "restore_folder" => restore_folder(state, call),
@@ -233,13 +235,9 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::RenameNote { summary, .. }
         | Proposal::RenameFolder { summary, .. }
         | Proposal::PinNote { summary, .. }
+        | Proposal::AddMarginNote { summary, .. }
+        | Proposal::RemoveMarginNote { summary, .. }
         | Proposal::DeleteFolder { summary, .. }
-        | Proposal::InterviewCodeEdit { summary, .. }
-        | Proposal::InterviewTest { summary, .. }
-        | Proposal::InterviewProblemEdit { summary, .. }
-        | Proposal::DeleteInterviewProblem { summary, .. }
-        | Proposal::RestoreInterviewProblem { summary, .. }
-        | Proposal::InterviewTopics { summary, .. }
         | Proposal::AddCard { summary, .. }
         | Proposal::UpdateCard { summary, .. }
         | Proposal::MoveCard { summary, .. }
@@ -303,6 +301,42 @@ fn rename_folder(state: &AppState, call: &Call) -> Result<Proposal, String> {
         })
     })
     .map_err(|_| format!("there is no folder \"{from}\""))
+}
+
+fn add_margin_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<Proposal, String> {
+    let quote = call.text("quote");
+    let text = call.text("text").trim().to_string();
+    if text.is_empty() || text.chars().count() > crate::margin::MOST_TEXT {
+        return Err(format!(
+            "a margin note holds at most {} characters",
+            crate::margin::MOST_TEXT
+        ));
+    }
+    let wanted = call.text("note");
+    let quoted = quote.clone();
+    let note = store_now(state, move |store| {
+        let note = desk
+            .note_for(store, &wanted)
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        if crate::margin::placed(&note.body, &quoted, &[]).is_none() {
+            return Err(StatusCode::CONFLICT);
+        }
+        Ok((note.id.clone(), note.title.clone()))
+    })
+    .map_err(|code| {
+        if code == StatusCode::CONFLICT {
+            "quote must be words copied exactly from the note, 3 to 600 characters".to_string()
+        } else {
+            "leo could not find that note; use its id like n3 or its exact title".to_string()
+        }
+    })?;
+    Ok(Proposal::AddMarginNote {
+        summary: format!("Add a margin note to “{}”", note.1),
+        note: note.0,
+        title: note.1,
+        quote,
+        text,
+    })
 }
 
 fn pin_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<Proposal, String> {
@@ -961,167 +995,6 @@ pub(crate) async fn act(
     use crate::boards;
     use crate::routes::{boards as board_routes, notes, tasks as task_routes, trash};
     match p {
-        Proposal::InterviewCodeEdit { .. } => {
-            let path = state.chats.clone();
-            let proposal = p.clone();
-            let (item, undo) =
-                tokio::task::spawn_blocking(move || crate::code_edits::apply(&path, &proposal))
-                    .await
-                    .map_err(|_| "Leo could not apply the code change. Try again.".to_string())?
-                    .map_err(|e| e.message())?;
-            Ok((serde_json::json!({"revision":item.revision}), undo))
-        }
-        Proposal::DeleteInterviewProblem {
-            title,
-            summary,
-            interview,
-            challenge,
-            revision,
-        } => {
-            let path = state.chats.clone();
-            let (id, problem, revision) = (interview.clone(), challenge.clone(), *revision);
-            let (item, token) = tokio::task::spawn_blocking(move || {
-                crate::interview_delete::delete(&path, &id, revision, &problem)
-            })
-            .await
-            .map_err(|_| "Leo could not delete the problem. Try again.".to_string())?
-            .map_err(|e| e.message())?;
-            let undo = Proposal::RestoreInterviewProblem {
-                title: title.clone(),
-                summary: format!("Undo: {summary}"),
-                interview: interview.clone(),
-                token,
-            };
-            Ok((
-                serde_json::json!({"interview": interview, "revision": item.revision, "item": item}),
-                undo,
-            ))
-        }
-        Proposal::RestoreInterviewProblem {
-            title,
-            summary,
-            interview,
-            token,
-        } => {
-            let path = state.chats.clone();
-            let (id, saved) = (interview.clone(), token.clone());
-            let (item, challenge) = tokio::task::spawn_blocking(move || {
-                crate::interview_delete::restore(&path, &id, &saved)
-            })
-            .await
-            .map_err(|_| "Leo could not restore the problem. Try again.".to_string())?
-            .map_err(|e| e.message())?;
-            let undo = Proposal::DeleteInterviewProblem {
-                title: title.clone(),
-                summary: format!("Undo: {summary}"),
-                interview: interview.clone(),
-                challenge,
-                revision: item.revision,
-            };
-            Ok((
-                serde_json::json!({"interview": interview, "revision": item.revision, "item": item}),
-                undo,
-            ))
-        }
-        Proposal::InterviewProblemEdit {
-            title,
-            summary,
-            interview,
-            challenge,
-            before,
-            after,
-        } => {
-            let path = state.chats.clone();
-            let (id, next, previous) = (interview.clone(), (**after).clone(), (**before).clone());
-            tokio::task::spawn_blocking(move || {
-                crate::interview::update_problem(&path, &id, next, &previous)
-            })
-            .await
-            .map_err(|_| "Leo could not change the problem. Try again.".to_string())?
-            .map_err(|e| match e {
-                crate::interview::Error::Conflict => {
-                    "This problem changed since it was read. Read it again and make a new change."
-                        .to_string()
-                }
-                other => other.message(),
-            })?;
-            let undo = Proposal::InterviewProblemEdit {
-                title: title.clone(),
-                summary: format!("Undo: {summary}"),
-                interview: interview.clone(),
-                challenge: challenge.clone(),
-                before: after.clone(),
-                after: before.clone(),
-            };
-            Ok((serde_json::json!({}), undo))
-        }
-        Proposal::InterviewTopics {
-            title,
-            summary,
-            interview,
-            changes,
-        } => {
-            let path = state.chats.clone();
-            let (id, wanted) = (interview.clone(), changes.clone());
-            tokio::task::spawn_blocking(move || crate::interview::set_topics(&path, &id, &wanted))
-                .await
-                .map_err(|_| "Leo could not change the topics. Try again.".to_string())?
-                .map_err(|e| match e {
-                    crate::interview::Error::Conflict => {
-                        "A problem's topics changed since they were read. Read them again and make a new change."
-                            .to_string()
-                    }
-                    other => other.message(),
-                })?;
-            let undo = Proposal::InterviewTopics {
-                title: title.clone(),
-                summary: format!("Undo: {summary}"),
-                interview: interview.clone(),
-                changes: changes
-                    .iter()
-                    .map(|c| crate::interview::TopicChange {
-                        before: c.after.clone(),
-                        after: c.before.clone(),
-                        ..c.clone()
-                    })
-                    .collect(),
-            };
-            Ok((serde_json::json!({}), undo))
-        }
-        Proposal::InterviewTest {
-            title,
-            summary,
-            interview,
-            challenge,
-            action,
-            test,
-            ..
-        } => {
-            let path = state.chats.clone();
-            let (id, problem) = (interview.clone(), challenge.clone());
-            let change = crate::interview_keys::TestChange {
-                action: action.clone(),
-                test: test.clone(),
-            };
-            let back = tokio::task::spawn_blocking(move || {
-                crate::interview_keys::change_test(&path, &id, &problem, &change)
-            })
-            .await
-            .map_err(|_| "Leo could not change the test case. Try again.".to_string())??;
-            let undo = Proposal::InterviewTest {
-                title: title.clone(),
-                summary: format!("Undo: {summary}"),
-                interview: interview.clone(),
-                challenge: challenge.clone(),
-                before: (back.action == "edit").then(|| test.clone()),
-                action: back.action,
-                test: back.test,
-            };
-            Ok((
-                serde_json::json!({"interview": interview, "challenge": challenge}),
-                undo,
-            ))
-        }
         Proposal::AddTask {
             title,
             description,
@@ -1425,6 +1298,99 @@ pub(crate) async fn act(
                     note: note.clone(),
                     from: title.clone(),
                     title: from.clone(),
+                },
+            ))
+        }
+        Proposal::AddMarginNote {
+            note,
+            title,
+            quote,
+            text,
+            ..
+        } => {
+            let id = note.clone();
+            let chats = state.chats.clone();
+            let saying = (quote.clone(), text.clone());
+            let id = state
+                .with_store(move |store| {
+                    let found = store
+                        .notes
+                        .iter()
+                        .find(|n| n.id == id)
+                        .ok_or(StatusCode::NOT_FOUND)?;
+                    let place = crate::margin::placed(&found.body, &saying.0, &[])
+                        .ok_or(StatusCode::CONFLICT)?;
+                    let thread = crate::margin::new_thread(
+                        &id,
+                        "chat",
+                        place,
+                        &saying.0,
+                        vec![crate::margin::felix_says(&saying.1)],
+                    );
+                    if crate::margin::put(&chats, &thread) {
+                        Ok(thread.id)
+                    } else {
+                        Err(StatusCode::TOO_MANY_REQUESTS)
+                    }
+                })
+                .await
+                .map_err(|code| match code {
+                    StatusCode::CONFLICT => "those words are not in the note any more".to_string(),
+                    StatusCode::NOT_FOUND => "the note is not there any more".to_string(),
+                    StatusCode::TOO_MANY_REQUESTS => {
+                        "this note has too many open margin notes".to_string()
+                    }
+                    _ => "leo could not save it".to_string(),
+                })?;
+            Ok((
+                serde_json::json!({ "thread": id }),
+                Proposal::RemoveMarginNote {
+                    summary: format!("Take the margin note off “{title}”"),
+                    note: note.clone(),
+                    title: title.clone(),
+                    id,
+                    quote: quote.clone(),
+                    text: text.clone(),
+                },
+            ))
+        }
+        Proposal::RemoveMarginNote {
+            note,
+            title,
+            id,
+            quote,
+            text,
+            ..
+        } => {
+            let chats = state.chats.clone();
+            let (held, gone) = (note.clone(), id.clone());
+            let removed = tokio::task::spawn_blocking(move || {
+                let thread = crate::margin::one(&chats, &held, &gone)?;
+                if thread.messages.iter().any(|m| m.from != "felix") {
+                    return Some(false);
+                }
+                Some(crate::margin::remove(&chats, &gone))
+            })
+            .await
+            .unwrap_or(None);
+            match removed {
+                Some(true) => {}
+                Some(false) => {
+                    return Err(
+                        "you have replied to that margin note, so it stays; dismiss it instead"
+                            .to_string(),
+                    )
+                }
+                None => return Err("that margin note is not there any more".to_string()),
+            }
+            Ok((
+                serde_json::Value::Null,
+                Proposal::AddMarginNote {
+                    summary: format!("Add the margin note back to “{title}”"),
+                    note: note.clone(),
+                    title: title.clone(),
+                    quote: quote.clone(),
+                    text: text.clone(),
                 },
             ))
         }

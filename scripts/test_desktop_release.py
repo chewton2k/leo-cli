@@ -102,7 +102,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_workflow_builds_only_supported_signed_apps(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
-        build = workflow.split('  build:\n', 1)[1].split('  go-runner:', 1)[0]
+        build = workflow.split('  build:\n', 1)[1].split('  publish:', 1)[0]
         for target in ['aarch64-apple-darwin', 'x86_64-apple-darwin', 'x86_64-pc-windows-msvc']:
             self.assertIn(target, build)
         self.assertNotIn('linux', build)
@@ -111,6 +111,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', build)
         self.assertIn('desktop_release.py manifest', workflow)
         self.assertIn('secrets: inherit', (ROOT / '.github/workflows/ci.yml').read_text())
+
+    def test_workflows_do_not_build_or_publish_interview_runtimes(self):
+        for name in ['ci.yml', 'release.yml']:
+            workflow = (ROOT / '.github/workflows' / name).read_text()
+            for language in ['go', 'java', 'rust']:
+                self.assertNotIn(f'  {language}-runner:', workflow)
+                self.assertNotIn(f'leo-{language}.tar.gz', workflow)
+                self.assertNotIn(f'outputs.{language}_runner', workflow)
 
     def test_linux_installer_exits_without_modifying_home(self):
         import tempfile

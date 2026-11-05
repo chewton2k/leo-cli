@@ -1,0 +1,1146 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use leo_core::store::Store;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::margin;
+use crate::{start_in, Places, Powers, Running, StartOptions, Writer};
+
+const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+struct Engine {
+    running: Running,
+    dir: tempfile::TempDir,
+    port: u16,
+    cookie: String,
+}
+
+async fn raw(port: u16, request: String) -> String {
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).await.unwrap();
+    String::from_utf8_lossy(&reply).to_string()
+}
+
+impl Engine {
+    async fn with(powers: Powers) -> Engine {
+        let dir = tempfile::tempdir().unwrap();
+        let places = Places {
+            store: Store::load_from(&dir.path().join("notes")).unwrap(),
+            sessions: dir.path().join("sessions.json"),
+        };
+        let options = StartOptions {
+            port: 0,
+            token: TOKEN.into(),
+        };
+        let running = start_in(places, options, powers).await.unwrap();
+        let port = running.port();
+        let signed_in = raw(
+            port,
+            format!("GET /?token={TOKEN} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
+        )
+        .await;
+        let cookie = signed_in
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("set-cookie: ")
+                    .or_else(|| line.strip_prefix("Set-Cookie: "))
+            })
+            .and_then(|value| value.split(';').next())
+            .unwrap()
+            .to_string();
+        Engine {
+            running,
+            dir,
+            port,
+            cookie,
+        }
+    }
+
+    fn chats(&self) -> std::path::PathBuf {
+        crate::chats::dir_for(&self.dir.path().join("notes"))
+    }
+
+    async fn send_as(
+        &self,
+        cookie: &str,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+    ) -> (u16, serde_json::Value) {
+        let port = self.port;
+        let body = body.unwrap_or_default();
+        let reply = raw(
+            port,
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+        .await;
+        let status = reply
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        let (head, text) = reply.split_once("\r\n\r\n").unwrap_or((&reply, ""));
+        let text = if head
+            .to_ascii_lowercase()
+            .contains("transfer-encoding: chunked")
+        {
+            text.lines().nth(1).unwrap_or_default()
+        } else {
+            text
+        };
+        (status, serde_json::from_str(text).unwrap_or_default())
+    }
+
+    async fn get(&self, path: &str) -> (u16, serde_json::Value) {
+        self.send_as(&self.cookie, "GET", path, None).await
+    }
+
+    async fn post(&self, path: &str, body: serde_json::Value) -> (u16, serde_json::Value) {
+        self.send_as(&self.cookie, "POST", path, Some(body.to_string()))
+            .await
+    }
+
+    async fn note(&self, title: &str, body: &str) -> (String, String) {
+        let (status, made) = self
+            .post(
+                "/api/notes",
+                serde_json::json!({ "title": title, "body": "" }),
+            )
+            .await;
+        assert!(status < 300, "{status}");
+        let id = made["id"].as_str().unwrap().to_string();
+        margin::set_mode(&self.chats(), &id, "along");
+        let version = self.edit(&id, body).await;
+        (id, version)
+    }
+
+    async fn edit(&self, id: &str, body: &str) -> String {
+        let (status, saved) = self
+            .send_as(
+                &self.cookie,
+                "PATCH",
+                &format!("/api/notes/{id}"),
+                Some(serde_json::json!({ "body": body }).to_string()),
+            )
+            .await;
+        assert_eq!(status, 200);
+        saved["version"].as_str().unwrap().to_string()
+    }
+
+    async fn read(&self, id: &str, version: &str, blocks: &[&str]) -> (u16, serde_json::Value) {
+        self.post(
+            &format!("/api/notes/{id}/margin/read"),
+            serde_json::json!({ "version": version, "blocks": blocks }),
+        )
+        .await
+    }
+
+    async fn stop(self) {
+        self.running.stop().await;
+    }
+}
+
+fn answering(text: &'static str) -> (Writer, Arc<AtomicUsize>) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let writer: Writer = Arc::new(move |_, _, _| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Ok(text.to_string())
+    });
+    (writer, calls)
+}
+
+async fn reading(text: &'static str) -> (Engine, Arc<AtomicUsize>) {
+    let (writer, calls) = answering(text);
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        ..Default::default()
+    })
+    .await;
+    (engine, calls)
+}
+
+const PASSAGE: &str = "then login just checks if it matches";
+const SAYS: &str = r#"{"quote":"just checks if it matches","text":"In plain text?"}"#;
+
+#[tokio::test]
+async fn read_along_is_off_on_a_fresh_install() {
+    let (engine, calls) = reading(SAYS).await;
+    let (_, settings) = engine.get("/api/margin").await;
+    assert_eq!(settings["default_mode"], "ask");
+    assert_eq!(settings["cap"], margin::DAILY_CAP);
+    assert_eq!(settings["today"], 0);
+    let (_, made) = engine
+        .post(
+            "/api/notes",
+            serde_json::json!({ "title": "New", "body": "" }),
+        )
+        .await;
+    let id = made["id"].as_str().unwrap();
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(view["mode"], "ask");
+    let version = engine.edit(id, PASSAGE).await;
+    let (status, why) = engine.read(id, &version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (403, Some("mode")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
+    let (engine, _) = reading(SAYS).await;
+    let (_, old) = engine
+        .post(
+            "/api/notes",
+            serde_json::json!({ "title": "Old", "body": "" }),
+        )
+        .await;
+    let (status, _) = engine
+        .post(
+            "/api/margin",
+            serde_json::json!({ "default_mode": "along" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (_, new) = engine
+        .post(
+            "/api/notes",
+            serde_json::json!({ "title": "New", "body": "" }),
+        )
+        .await;
+    let mode = |view: serde_json::Value| view["mode"].as_str().unwrap().to_string();
+    let old = old["id"].as_str().unwrap();
+    let new = new["id"].as_str().unwrap();
+    assert_eq!(
+        mode(engine.get(&format!("/api/notes/{old}/margin")).await.1),
+        "ask"
+    );
+    assert_eq!(
+        mode(engine.get(&format!("/api/notes/{new}/margin")).await.1),
+        "along"
+    );
+    let (status, _) = engine
+        .post(
+            &format!("/api/notes/{old}/margin"),
+            serde_json::json!({ "mode": "along" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        mode(engine.get(&format!("/api/notes/{old}/margin")).await.1),
+        "along"
+    );
+    let (status, _) = engine
+        .post(
+            &format!("/api/notes/{old}/margin"),
+            serde_json::json!({ "mode": "shout" }),
+        )
+        .await;
+    assert_eq!(status, 400);
+    for bad in [
+        serde_json::json!({ "cap": 7 }),
+        serde_json::json!({ "layout": "left" }),
+        serde_json::json!({ "pace": "fast" }),
+        serde_json::json!({ "default_mode": "x" }),
+    ] {
+        assert_eq!(engine.post("/api/margin", bad).await.0, 400);
+    }
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_read_saves_one_note_anchored_in_the_text() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine
+        .note("Signup", &format!("First.\n\n{PASSAGE}, I think?"))
+        .await;
+    let (status, read) = engine
+        .read(&id, &version, &[&format!("{PASSAGE}, I think?")])
+        .await;
+    assert_eq!(status, 200, "{read}");
+    assert_eq!(read["note"]["quote"], "just checks if it matches");
+    assert_eq!(read["note"]["prefix"], "First.\n\nthen login ");
+    assert_eq!(read["note"]["suffix"], ", I think?");
+    assert_eq!(read["note"]["messages"][0]["text"], "In plain text?");
+    assert_eq!(read["note"]["status"], "open");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(view["threads"].as_array().unwrap().len(), 1);
+    assert_eq!(engine.get("/api/margin").await.1["today"], 1);
+    let file = std::fs::read_dir(engine.dir.path().join("notes"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|f| f.path().extension().is_some_and(|e| e == "md"))
+        .map(|f| std::fs::read_to_string(f.path()).unwrap())
+        .collect::<String>();
+    assert!(!file.contains("In plain text"), "{file}");
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn silence_is_a_success_and_saves_nothing() {
+    for answer in ["{}", "", "No note needed."] {
+        let (engine, calls) = reading(answer).await;
+        let (id, version) = engine.note("Quiet", PASSAGE).await;
+        let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+        assert_eq!((status, &read["note"]), (200, &serde_json::Value::Null));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(engine.get("/api/margin").await.1["problem"].is_null());
+        let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+        assert!(view["threads"].as_array().unwrap().is_empty());
+        engine.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn a_quote_that_is_not_in_the_note_is_dropped() {
+    let (engine, calls) = reading(r#"{"quote":"words the model made up","text":"Hm."}"#).await;
+    let (id, version) = engine.note("Made up", PASSAGE).await;
+    let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, &read["note"]), (200, &serde_json::Value::Null));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert!(view["threads"].as_array().unwrap().is_empty());
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn reads_wait_a_while_and_only_changed_blocks_reach_the_model() {
+    let (engine, calls) = reading("{}").await;
+    let (id, version) = engine.note("Busy", PASSAGE).await;
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    let (status, why) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("soon")));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_note_that_just_spoke_keeps_quiet_for_a_few_minutes() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.note("Spoke", PASSAGE).await;
+    let held = margin::new_thread(
+        &id,
+        "read",
+        margin::placed(PASSAGE, PASSAGE, &[]).unwrap(),
+        PASSAGE,
+        vec![margin::felix_says("Hm.")],
+    );
+    assert!(margin::put(&engine.chats(), &held));
+    let (status, why) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("soon")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn the_daily_cap_counts_reads_across_notes() {
+    let (engine, calls) = reading("{}").await;
+    margin::set_prefs(
+        &engine.chats(),
+        &margin::Prefs {
+            cap: 1,
+            ..Default::default()
+        },
+    );
+    let (first, first_version) = engine.note("One", PASSAGE).await;
+    let (second, second_version) = engine.note("Two", PASSAGE).await;
+    assert_eq!(engine.read(&first, &first_version, &[PASSAGE]).await.0, 200);
+    let (status, why) = engine.read(&second, &second_version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("daily")));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(engine.get("/api/margin").await.1["today"], 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn reads_never_overlap() {
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (started, was_started) = tokio::sync::oneshot::channel::<()>();
+    let started = Mutex::new(Some(started));
+    let writer: Writer = Arc::new(move |_, _, _| {
+        if let Some(started) = started.lock().unwrap().take() {
+            let _ = started.send(());
+        }
+        let _ = released.lock().unwrap().recv();
+        Ok("{}".to_string())
+    });
+    let engine = Arc::new(
+        Engine::with(Powers {
+            toolless: Some(writer),
+            ..Default::default()
+        })
+        .await,
+    );
+    let (first, first_version) = engine.note("One", PASSAGE).await;
+    let (second, second_version) = engine.note("Two", PASSAGE).await;
+    let running = Arc::clone(&engine);
+    let slow =
+        tokio::spawn(async move { running.read(&first, &first_version, &[PASSAGE]).await.0 });
+    was_started.await.unwrap();
+    let (status, why) = engine.read(&second, &second_version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("busy")));
+    release.send(()).unwrap();
+    assert_eq!(slow.await.unwrap(), 200);
+}
+
+#[tokio::test]
+async fn no_read_runs_while_felix_is_answering() {
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (started, was_started) = tokio::sync::oneshot::channel::<()>();
+    let started = Mutex::new(Some(started));
+    let streamer: crate::chat::Streamer = Arc::new(move |_, _, _, _, _| {
+        if let Some(started) = started.lock().unwrap().take() {
+            let _ = started.send(());
+        }
+        let _ = released.lock().unwrap().recv();
+        Ok(crate::chat::Reply::from("Done.".to_string()))
+    });
+    let (writer, calls) = answering(SAYS);
+    let engine = Arc::new(
+        Engine::with(Powers {
+            toolless: Some(writer),
+            chat: Some(streamer),
+            ..Default::default()
+        })
+        .await,
+    );
+    let (id, version) = engine.note("Busy Felix", PASSAGE).await;
+    let chatting = Arc::clone(&engine);
+    let answer = tokio::spawn(async move {
+        chatting
+            .post(
+                "/api/chat",
+                serde_json::json!({ "messages": [{ "role": "user", "text": "hello" }] }),
+            )
+            .await
+            .0
+    });
+    was_started.await.unwrap();
+    let (status, why) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("felix")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    release.send(()).unwrap();
+    assert_eq!(answer.await.unwrap(), 200);
+}
+
+#[tokio::test]
+async fn opening_or_browsing_a_note_cannot_start_a_read() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.note("Browse", PASSAGE).await;
+    let _ = engine.get(&format!("/api/notes/{id}")).await;
+    let _ = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let bare = {
+        let (_, made) = engine
+            .post(
+                "/api/notes",
+                serde_json::json!({ "title": "T", "body": PASSAGE }),
+            )
+            .await;
+        let id = made["id"].as_str().unwrap().to_string();
+        margin::set_mode(&engine.chats(), &id, "along");
+        (id, made["version"].as_str().unwrap().to_string())
+    };
+    let (status, why) = engine.read(&bare.0, &bare.1, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (403, Some("unedited")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_read_is_refused_for_bad_ids_versions_and_sizes() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.note("Checks", PASSAGE).await;
+    assert_eq!(engine.read(&id, "0", &[PASSAGE]).await.0, 409);
+    assert_eq!(engine.read(&id, "../x", &[PASSAGE]).await.0, 400);
+    assert_eq!(
+        engine.read("00000000-dead", &version, &[PASSAGE]).await.0,
+        404
+    );
+    assert_eq!(engine.read("a%20b", &version, &[PASSAGE]).await.0, 400);
+    assert_eq!(engine.read(&id, &version, &[]).await.0, 400);
+    assert_eq!(
+        engine.read(&id, &version, &["not in the note"]).await.0,
+        400
+    );
+    let long = "x".repeat(margin::MOST_BLOCK_CHARS + 1);
+    assert_eq!(engine.read(&id, &version, &[&long]).await.0, 413);
+    let many = vec![PASSAGE; margin::MOST_BLOCKS + 1];
+    assert_eq!(engine.read(&id, &version, &many).await.0, 413);
+    let enough = "y".repeat(margin::MOST_BLOCK_CHARS);
+    let wide = vec![enough.as_str(); 3];
+    assert_eq!(engine.read(&id, &version, &wide).await.0, 413);
+    let huge = "z".repeat(margin::BODY_BYTES + 1);
+    assert_eq!(engine.read(&id, &version, &[&huge]).await.0, 413);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn the_margin_needs_a_session_and_the_right_host() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.note("Private", PASSAGE).await;
+    let path = format!("/api/notes/{id}/margin/read");
+    let body = serde_json::json!({ "version": version, "blocks": [PASSAGE] }).to_string();
+    let (status, _) = engine
+        .send_as("leo_session=nope", "POST", &path, Some(body.clone()))
+        .await;
+    assert_eq!(status, 401);
+    for (method, path) in [
+        ("GET", "/api/margin"),
+        ("POST", "/api/margin"),
+        ("GET", "/api/notes/abc/margin"),
+        ("POST", "/api/notes/abc/margin/threads"),
+        ("POST", "/api/notes/abc/margin/threads/t"),
+        ("POST", "/api/notes/abc/margin/threads/t/reply"),
+    ] {
+        assert_eq!(
+            engine.send_as("", method, path, Some("{}".into())).await.0,
+            401
+        );
+    }
+    let port = engine.port;
+    let foreign = raw(
+        port,
+        format!(
+            "POST {path} HTTP/1.1\r\nHost: evil.example:{port}\r\nCookie: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            engine.cookie,
+            body.len()
+        ),
+    )
+    .await;
+    assert!(foreign.starts_with("HTTP/1.1 421"), "{foreign}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_missing_or_failing_ai_stays_silent_and_leaves_one_line() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, version) = engine.note("No AI", PASSAGE).await;
+    let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, &read["note"]), (200, &serde_json::Value::Null));
+    assert!(engine.get("/api/margin").await.1["problem"].is_string());
+    engine.stop().await;
+
+    let fails = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let failing = Arc::clone(&fails);
+    let writer: Writer = Arc::new(move |_, _, _| {
+        if failing.load(Ordering::SeqCst) {
+            anyhow::bail!("secret provider detail")
+        }
+        Ok("{}".to_string())
+    });
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Broken", PASSAGE).await;
+    let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, &read["note"]), (200, &serde_json::Value::Null));
+    let (_, settings) = engine.get("/api/margin").await;
+    assert_eq!(settings["problem"], margin::PROBLEM);
+    assert!(!settings.to_string().contains("secret provider detail"));
+    fails.store(false, Ordering::SeqCst);
+    let (other, other_version) = engine.note("Fine", PASSAGE).await;
+    assert_eq!(engine.read(&other, &other_version, &[PASSAGE]).await.0, 200);
+    assert!(engine.get("/api/margin").await.1["problem"].is_null());
+    engine.stop().await;
+}
+
+fn talking(text: &'static str, prompts: Arc<Mutex<Vec<String>>>) -> crate::chat::Streamer {
+    Arc::new(move |_, user, _, _, _| {
+        prompts.lock().unwrap().push(user.to_string());
+        Ok(crate::chat::Reply::from(text.to_string()))
+    })
+}
+
+async fn thread_on(engine: &Engine, id: &str) -> String {
+    let body = engine.get(&format!("/api/notes/{id}")).await.1["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let thread = margin::new_thread(
+        id,
+        "read",
+        margin::placed(&body, PASSAGE, &[]).unwrap(),
+        PASSAGE,
+        vec![margin::felix_says("In plain text?")],
+    );
+    margin::put(&engine.chats(), &thread);
+    thread.id
+}
+
+#[tokio::test]
+async fn a_thread_takes_replies_within_its_limits() {
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let engine = Engine::with(Powers {
+        toolless_chat: Some(talking("Yes. Argon2id.", Arc::clone(&prompts))),
+        ..Default::default()
+    })
+    .await;
+    let (id, _) = engine.note("Thread", PASSAGE).await;
+    let thread = thread_on(&engine, &id).await;
+    let path = format!("/api/notes/{id}/margin/threads/{thread}/reply");
+    let (status, replied) = engine
+        .post(&path, serde_json::json!({ "text": "Hash it?" }))
+        .await;
+    assert_eq!(status, 200);
+    let said: Vec<&str> = replied["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(said, ["In plain text?", "Hash it?", "Yes. Argon2id."]);
+    let asked = prompts.lock().unwrap()[0].clone();
+    assert!(asked.contains("In plain text?") && asked.contains("Hash it?"));
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "text": "  " }))
+            .await
+            .0,
+        400
+    );
+    let long = "x".repeat(margin::MOST_ASK + 1);
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "text": long }))
+            .await
+            .0,
+        413
+    );
+    let elsewhere = format!("/api/notes/{id}/margin/threads/nope/reply");
+    assert_eq!(
+        engine
+            .post(&elsewhere, serde_json::json!({ "text": "Hi" }))
+            .await
+            .0,
+        404
+    );
+    let unknown = format!("/api/notes/missing/margin/threads/{thread}/reply");
+    assert_eq!(
+        engine
+            .post(&unknown, serde_json::json!({ "text": "Hi" }))
+            .await
+            .0,
+        404
+    );
+    let mut full = margin::one(&engine.chats(), &id, &thread).unwrap();
+    full.messages = vec![margin::you_say("x"); margin::MOST_MESSAGES];
+    margin::save_messages(&engine.chats(), &full);
+    let (status, why) = engine
+        .post(&path, serde_json::json!({ "text": "Hi" }))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("long")));
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn dismissing_and_resolving_take_a_thread_off_the_page_and_undo_brings_it_back() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Done", PASSAGE).await;
+    let thread = thread_on(&engine, &id).await;
+    let path = format!("/api/notes/{id}/margin/threads/{thread}");
+    let open = |view: serde_json::Value| view["threads"].as_array().unwrap().len();
+    for status in ["dismissed", "resolved"] {
+        let (code, _) = engine
+            .post(&path, serde_json::json!({ "status": status }))
+            .await;
+        assert_eq!(code, 200);
+        assert_eq!(
+            open(engine.get(&format!("/api/notes/{id}/margin")).await.1),
+            0
+        );
+        let reply = format!("{path}/reply");
+        assert_eq!(
+            engine
+                .post(&reply, serde_json::json!({ "text": "Hi" }))
+                .await
+                .0,
+            409
+        );
+        engine
+            .post(&path, serde_json::json!({ "status": "open" }))
+            .await;
+        assert_eq!(
+            open(engine.get(&format!("/api/notes/{id}/margin")).await.1),
+            1
+        );
+    }
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "status": "gone" }))
+            .await
+            .0,
+        400
+    );
+    let wrong = format!("/api/notes/{id}/margin/threads/nope");
+    assert_eq!(
+        engine
+            .post(&wrong, serde_json::json!({ "status": "open" }))
+            .await
+            .0,
+        404
+    );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn asking_about_selected_words_needs_no_read_along_and_the_words_must_be_there() {
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let engine = Engine::with(Powers {
+        toolless_chat: Some(talking("Because it is.", prompts)),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Ask", "same words\n\nsame words").await;
+    margin::set_mode(&engine.chats(), &id, "ask");
+    let path = format!("/api/notes/{id}/margin/threads");
+    let ask = |quote: &str, prefix: &str, version: &str| serde_json::json!({ "version": version, "quote": quote, "prefix": prefix, "question": "Why?" });
+    let (status, thread) = engine
+        .post(&path, ask("same words", "\n\n", &version))
+        .await;
+    assert_eq!(status, 200, "{thread}");
+    assert_eq!(thread["prefix"], "same words\n\n");
+    assert_eq!(thread["source"], "ask");
+    assert_eq!(thread["messages"][1]["text"], "Because it is.");
+    assert_eq!(engine.post(&path, ask("same words", "", "0")).await.0, 409);
+    let (status, why) = engine.post(&path, ask("not there", "", &version)).await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
+    let long = "x".repeat(margin::MOST_QUOTE + 1);
+    assert_eq!(engine.post(&path, ask(&long, "", &version)).await.0, 413);
+    let (status, why) = engine
+        .post(&path, ask("same words", "not beside it ", &version))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
+    let (status, why) = engine.post(&path, ask("sa", "", &version)).await;
+    assert_eq!((status, why["why"].as_str()), (400, Some("short")));
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn threads_follow_their_note_through_the_trash() {
+    let engine = Engine::with(Powers::default()).await;
+    let (keep, _) = engine.note("Keep", PASSAGE).await;
+    let (id, _) = engine.note("Delete", PASSAGE).await;
+    thread_on(&engine, &keep).await;
+    let thread = thread_on(&engine, &id).await;
+    let (status, _) = engine
+        .send_as(&engine.cookie, "DELETE", &format!("/api/notes/{id}"), None)
+        .await;
+    assert_eq!(status, 204);
+    assert_eq!(engine.get(&format!("/api/notes/{id}/margin")).await.0, 404);
+    assert!(margin::one(&engine.chats(), &id, &thread).is_some());
+    let (status, _) = engine
+        .post(&format!("/api/trash/{id}/restore"), serde_json::json!({}))
+        .await;
+    assert!(status < 300, "{status}");
+    assert_eq!(
+        engine.get(&format!("/api/notes/{id}/margin")).await.1["threads"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    engine
+        .send_as(&engine.cookie, "DELETE", &format!("/api/notes/{id}"), None)
+        .await;
+    let (status, _) = engine
+        .post("/api/trash/delete", serde_json::json!({ "all": true }))
+        .await;
+    assert_eq!(status, 200);
+    assert!(margin::one(&engine.chats(), &id, &thread).is_none());
+    assert_eq!(margin::open_on(&engine.chats(), &keep).len(), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn deleting_the_last_note_for_good_takes_its_threads_at_once() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Only one", PASSAGE).await;
+    let thread = thread_on(&engine, &id).await;
+    engine
+        .send_as(&engine.cookie, "DELETE", &format!("/api/notes/{id}"), None)
+        .await;
+    assert!(margin::one(&engine.chats(), &id, &thread).is_some());
+    let (status, _) = engine
+        .post(
+            "/api/trash/delete",
+            serde_json::json!({ "ids": [id.clone()] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert!(margin::every(&engine.chats()).is_empty());
+    engine.stop().await;
+}
+
+#[test]
+fn an_unreadable_file_stops_the_sweep() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes = dir.path().join("notes");
+    let mut store = Store::load_from(&notes).unwrap();
+    store.create_note("Kept", "", vec![], "").unwrap();
+    store.save().unwrap();
+    std::fs::write(
+        notes.join("Broken.md"),
+        "---\ntitle: [unclosed\n---\nbody\n",
+    )
+    .unwrap();
+    let store = Store::load_from(&notes).unwrap();
+    assert!(!store.unreadable.is_empty());
+    let chats = crate::chats::dir_for(&store.notes_dir);
+    margin::put(
+        &chats,
+        &margin::new_thread(
+            "elsewhere",
+            "read",
+            margin::Place {
+                prefix: String::new(),
+                suffix: String::new(),
+            },
+            "words",
+            Vec::new(),
+        ),
+    );
+    let start = chrono::Utc::now();
+    assert_eq!(margin::sweep_store(&chats, &store), 0);
+    let held = margin::every(&chats);
+    assert_eq!(held.len(), 1);
+    let kept = std::collections::HashSet::new();
+    margin::sweep(&chats, &kept, start);
+    assert_eq!(
+        margin::sweep(&chats, &kept, start + chrono::Duration::days(8)),
+        1,
+        "without the guard the same thread would go"
+    );
+}
+
+#[tokio::test]
+async fn bad_thread_ids_are_refused_before_anything_runs() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Ids", PASSAGE).await;
+    let reply = format!("/api/notes/{id}/margin/threads/a%20b/reply");
+    let status = format!("/api/notes/{id}/margin/threads/a%20b");
+    assert_eq!(
+        engine
+            .post(&reply, serde_json::json!({ "text": "Hi" }))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        engine
+            .post(&status, serde_json::json!({ "status": "open" }))
+            .await
+            .0,
+        400
+    );
+    engine.stop().await;
+}
+
+struct Healthy;
+
+impl crate::app_settings::AppApi for Healthy {
+    fn view(&self) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({}))
+    }
+    fn change(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({}))
+    }
+    fn health(&self, _: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({ "sections": [] }))
+    }
+}
+
+#[tokio::test]
+async fn health_shows_a_failed_read_through_its_route() {
+    let writer: Writer = Arc::new(|_, _, _| anyhow::bail!("down"));
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        app_settings: Some(Arc::new(Healthy)),
+        ..Default::default()
+    })
+    .await;
+    let (_, view) = engine.get("/api/health").await;
+    assert_eq!(view["sections"].as_array().unwrap().len(), 0);
+    let (id, version) = engine.note("Broken", PASSAGE).await;
+    let (_, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!(read["failed"], true, "the page keeps its baseline");
+    let (_, view) = engine.get("/api/health").await;
+    assert_eq!(view["sections"][0]["title"], "Felix");
+    assert_eq!(view["sections"][0]["checks"][0]["detail"], margin::PROBLEM);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn the_same_request_adds_once_even_when_its_base_has_moved() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, version) = engine.note("Twice", PASSAGE).await;
+    let path = format!("/api/notes/{id}/insert");
+    let first = serde_json::json!({ "text": "Added.", "base": version, "request": "press-one" });
+    let (status, done) = engine.post(&path, first).await;
+    assert_eq!(status, 200);
+    let moved = done["note"]["version"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let moved = if moved.is_empty() {
+        done["version"].as_str().unwrap().to_string()
+    } else {
+        moved
+    };
+    let again = serde_json::json!({ "text": "Added.", "base": moved, "request": "press-one" });
+    assert_eq!(engine.post(&path, again).await.0, 200);
+    let body = engine.get(&format!("/api/notes/{id}")).await.1["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(body.matches("Added.").count(), 1, "{body}");
+    engine.stop().await;
+}
+
+#[test]
+fn the_sweep_keeps_everything_while_notes_cannot_be_trusted() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let chats = crate::chats::dir_for(&store.notes_dir);
+    let thread = margin::new_thread(
+        "note",
+        "read",
+        margin::Place {
+            prefix: String::new(),
+            suffix: String::new(),
+        },
+        "words",
+        Vec::new(),
+    );
+    margin::put(&chats, &thread);
+    assert_eq!(margin::sweep_store(&chats, &store), 0);
+    assert_eq!(margin::open_on(&chats, "note").len(), 1);
+}
+
+#[test]
+fn the_tool_follows_each_access_mode_and_offers_undo() {
+    use crate::tools::{self, Access};
+    let (state, _dir, ids) = super::state_with(&[("Passage note", "")]);
+    let _ = super::run(crate::routes::notes::update_note(
+        axum::extract::State(state.clone()),
+        axum::extract::Path(ids[0].clone()),
+        axum::Json(serde_json::from_value(serde_json::json!({ "body": PASSAGE })).unwrap()),
+    ))
+    .unwrap();
+    let call = |quote: &str| tools::Call {
+        name: "add_margin_note".into(),
+        args: serde_json::json!({ "note": "Passage note", "quote": quote, "text": "Hash it first." }),
+    };
+    assert!(tools::manual_for(false, Access::Ask).contains("add_margin_note"));
+    assert!(tools::manual_for(false, Access::Auto).contains("add_margin_note"));
+    assert!(!tools::manual_for(false, Access::Read).contains("add_margin_note"));
+    let native = |access| {
+        tools::native_specs(false, access)
+            .iter()
+            .any(|spec| spec.name == "add_margin_note")
+    };
+    assert!(native(Access::Ask) && native(Access::Auto) && !native(Access::Read));
+
+    super::run(async {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut desk = tools::Desk::new(vec![], 8000);
+            let read =
+                crate::routes::organize::run(&state, &mut desk, Access::Read, &call(PASSAGE));
+            assert!(read.proposal.is_none(), "{}", read.result);
+            assert!(read.result.contains("read only"));
+
+            let bad =
+                crate::routes::organize::run(&state, &mut desk, Access::Ask, &call("not here"));
+            assert!(bad.proposal.is_none());
+            assert!(bad.result.contains("copied exactly"));
+
+            let done = crate::routes::organize::run(&state, &mut desk, Access::Ask, &call(PASSAGE));
+            let proposal = done.proposal.expect("a card");
+            assert!(
+                margin::open_on(&state.chats, &ids[0]).is_empty(),
+                "asked first"
+            );
+            assert!(matches!(proposal, tools::Proposal::AddMarginNote { .. }));
+
+            let shown = crate::routes::organize::act_now(&state, &proposal).unwrap();
+            assert_eq!(shown["state"], "applied");
+            let threads = margin::open_on(&state.chats, &ids[0]);
+            assert_eq!(threads.len(), 1);
+            assert_eq!(threads[0].source, "chat");
+            assert_eq!(shown["undo"]["kind"], "remove_margin_note");
+
+            let undo: tools::Proposal = serde_json::from_value(shown["undo"].clone()).unwrap();
+            let mut replied = threads[0].clone();
+            replied.messages.push(margin::you_say("Good point."));
+            margin::save_messages(&state.chats, &replied);
+            let refused = crate::routes::organize::act_now(&state, &undo).unwrap_err();
+            assert!(refused.contains("dismiss"), "{refused}");
+            assert_eq!(margin::open_on(&state.chats, &ids[0]).len(), 1);
+            let mut quiet = replied;
+            quiet.messages.pop();
+            margin::save_messages(&state.chats, &quiet);
+            let undone = crate::routes::organize::act_now(&state, &undo).unwrap();
+            assert!(margin::open_on(&state.chats, &ids[0]).is_empty());
+            assert_eq!(undone["undo"]["kind"], "add_margin_note");
+        })
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn gathering_includes_open_threads_after_the_notes_within_the_budget() {
+    let thread = margin::new_thread(
+        "n",
+        "read",
+        margin::Place {
+            prefix: String::new(),
+            suffix: String::new(),
+        },
+        PASSAGE,
+        vec![margin::felix_says("In plain text?")],
+    );
+    let block = margin::context(std::slice::from_ref(&thread), 1_000);
+    assert!(block.contains("In plain text?") && block.contains(PASSAGE));
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let id = store
+        .create_note("Long", "word ".repeat(20_000), vec![], "")
+        .unwrap()
+        .id
+        .clone();
+    let cache = crate::graph::Cache::default();
+    let room = 12_000;
+    let (_, text) = crate::chat::gather_seeing(
+        &store,
+        &cache,
+        Some(&id),
+        &[],
+        &[],
+        "word",
+        room,
+        None,
+        &[],
+        &block,
+    );
+    assert!(text.ends_with(&block), "the threads come after the notes");
+    assert!(
+        text.chars().count() <= room + 64,
+        "{}",
+        text.chars().count()
+    );
+    let (_, plain) = crate::chat::gather(&store, &cache, Some(&id), &[], "word", room);
+    assert!(!plain.contains("margin_threads"));
+}
+
+#[test]
+fn a_thread_on_a_trashed_note_exports_only_with_the_trash() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let id = store
+        .create_note("Gone", "words here", vec![], "")
+        .unwrap()
+        .id
+        .clone();
+    store.save().unwrap();
+    store.delete_notes(std::slice::from_ref(&id));
+    store.save().unwrap();
+    let chats = crate::chats::dir_for(&store.notes_dir);
+    margin::put(
+        &chats,
+        &margin::new_thread(
+            &id,
+            "read",
+            margin::placed("words here", "words", &[]).unwrap(),
+            "words",
+            Vec::new(),
+        ),
+    );
+    let packed = |trash: bool| {
+        let parts = crate::export::Parts {
+            chats: true,
+            trash,
+            ..Default::default()
+        };
+        let mut zip = std::io::Cursor::new(Vec::new());
+        crate::export::write_zip(&mut zip, &store.notes_dir, &chats, parts).unwrap();
+        zip.set_position(0);
+        let mut archive = zip::ZipArchive::new(zip).unwrap();
+        let found = archive.by_name("leo/margin.json").is_ok();
+        found
+    };
+    assert!(!packed(false));
+    assert!(packed(true));
+}
+
+#[test]
+fn exports_and_storage_cover_margin_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let chats = crate::chats::dir_for(&store.notes_dir);
+    let thread = margin::new_thread(
+        "note",
+        "read",
+        margin::Place {
+            prefix: String::new(),
+            suffix: String::new(),
+        },
+        "words",
+        vec![margin::felix_says("Kept here.")],
+    );
+    margin::put(&chats, &thread);
+    let mut zip = std::io::Cursor::new(Vec::new());
+    crate::export::write_zip(&mut zip, &store.notes_dir, &chats, Default::default()).unwrap();
+    zip.set_position(0);
+    let mut archive = zip::ZipArchive::new(zip).unwrap();
+    assert!(
+        archive.by_name("leo/margin.json").is_err(),
+        "chats were not chosen"
+    );
+    let with_chats = crate::export::Parts {
+        chats: true,
+        ..Default::default()
+    };
+    let mut zip = std::io::Cursor::new(Vec::new());
+    crate::export::write_zip(&mut zip, &store.notes_dir, &chats, with_chats).unwrap();
+    zip.set_position(0);
+    let mut archive = zip::ZipArchive::new(zip).unwrap();
+    assert!(archive.by_name("leo/margin.json").is_ok());
+
+    let captions = crate::captions::Captions::for_notes(&store.notes_dir);
+    let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
+    let kept = crate::storage::Kept {
+        captions: &captions,
+        vectors: &vectors,
+        recording: None,
+    };
+    let areas = crate::storage::more_areas(&store, &chats, &kept);
+    assert!(areas.iter().any(|a| a.id == "margin"));
+    let request = crate::storage::Request {
+        area: "margin".into(),
+        action: "delete-all".into(),
+        items: Vec::new(),
+    };
+    crate::storage::act_on_more(&store, &chats, &kept, &request)
+        .unwrap()
+        .unwrap();
+    assert!(margin::every(&chats).is_empty());
+}

@@ -303,21 +303,13 @@ start, the text protocol is used. Cache reads and writes from Claude Code's
 2.1.295 (`real_claude_calls_leos_tools_natively_inside_one_turn`, ignored):
 two calls and the answer in one turn, about 5 s.
 
-### The quick model and Python (`ai::quick_config`, `pyodide.rs`)
+### The quick model (`ai::quick_config`)
 
-`quick_outcome` runs the `[chat]` chain with each provider set to the first
-(cheapest) model in its `choice::WRITING` list and its lowest effort (Claude
-Code: Haiku, low), for interview grading and coverage. `pyodide` pins Pyodide
-0.28.3's five files by SHA-256 in `models_dir()/pyodide-0.28.3`, fetched only
-when the user first runs Python (`LEO_PYODIDE_URL` / `LEO_PYODIDE_MANIFEST`
-for tests). `clang` does the same for C++ (`@yowasp/clang` 22 from the npm
-registry, tarball and unpacked files SHA-256 pinned in `models_dir()/clang-…`,
-unpacked with `tar`; `fetch_into` is tested with a local tarball). `runtimes`
-fetches the Go and Java toolchains leo's own release carries (`GO`/`JAVA`
-packs: `leo-go.tar.gz`, `leo-java.tar.gz`, built by CI from
-`scripts/go-runner` and `scripts/java-runner`) and trusts one only when every file matches its sum in the pack's
-`files.sha256`, which for Go and Rust must also match the pinned sum (Java
-builds differ between machines, so leo takes its own release's).
+`quick_outcome` runs the `[chat]` chain with each provider set to the cheapest
+model in its `choice::WRITING` list and its lowest effort, for Study grading and
+other shared quick reviews. `Powers.quick` remains independent of the retired
+interview runtimes. Runtime downloads and pinning were removed on 2026-11-05;
+existing downloaded caches remain removable through Storage's safe generic cleanup.
 
 ### What the agent CLIs may use
 

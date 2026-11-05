@@ -1,7 +1,7 @@
 # leo
 
 Leo is a desktop note app for macOS and Windows, with local recording and
-dictation, interview practice, and Felix to help you study. Your notes stay as
+dictation and Felix to help you study. Your notes stay as
 Markdown files on your computer. Writing AI uses your signed-in Claude Code or
 Codex plan, or a local Ollama model.
 
@@ -91,15 +91,8 @@ keep tasks close by.
 
 ![Leo's note library with folder cards, note previews, and a tasks panel](public/notes-library.png)
 
-**Find connections.** Explore how ideas relate across your notes and classes,
-with explanations for each connection.
+**Study with Felix.** Explore your notes with questions, explanations and feedback.
 
-![Knowledge graph linking notes across classes with explanations in a side panel](public/knowledge-graph.png)
-
-**Practice and study with Felix.** Prepare for coding, system design, and other
-interviews, track your progress, or study your notes with questions and feedback.
-
-![Interview practice categories and progress alongside a study conversation with Felix](public/interview-practice.png)
 
 **Dictate into other apps.** Hold or tap your global shortcut, speak, and Leo
 pastes your words back. Custom words, filler removal, the last 20 dictations and
