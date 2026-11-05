@@ -659,7 +659,7 @@ mod tests {
         let legacy = "[chat]\nchain = [\"ollama\"]\n[sync]\nauto_push = \"when_idle\"\nidle_secs = 1\n[theme]\npreset = \"coral\"\n[calendar]\nkept = true\n";
         let (_d, path) = setup(legacy);
         let store = MemoryStore::default();
-        let cfg = Config::load_from(&path);
+        let cfg = Config::parse_with_built_ins(legacy).unwrap();
         assert_eq!(cfg.chat.chain, ["ollama"]);
         assert_eq!(cfg.theme.preset.as_deref(), Some("coral"));
         let page = describe(&cfg, &store, &Local::default(), &Default::default(), None);
