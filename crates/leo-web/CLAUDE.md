@@ -177,6 +177,40 @@ reader, seer, meaning, web, room, speech).
   else does; surfaces separate by tone (`--ground` rail and explorer, `--page`
   content, `--raised` popovers and opened surfaces, `--tint` group fill) and
   space rather than rules, which stay on inputs, tables and code.
+  Shell (2026-11-04, plan phase 3): from 1000 px the rail, its head and the
+  explorer share `--ground` with no rule between them or beside the head
+  (`.side`, `.side-rail`, `.side-head`); the page is one `--page` sheet whose
+  left corners are rounded by tone. `body::before` paints `--ground` behind
+  the rail and explorer (`--side` plus 16 px) and `body::after` paints the
+  rounded `--page` sheet from `--side` to the window edge, both fixed at
+  `z-index: -1` so they follow the `--side` fold transition and the window
+  background (and so the scrollbar gutter) stays `--page`; `.bar` takes the
+  matching top-left radius. Under 1000 px there is no sheet, just `--page`.
+  The selected explorer row and rail button are `--raised` with ink text (no
+  accent wash, no accent bar), hover is a 6% ink mix, and the tree guide is a
+  2 px 8% ink bar. Cards, folders, the Tasks and Background panels, the
+  select bar and the dock are `--raised` with the soft `--shadow` and no
+  border; groups and wells (`.panel`, boards' panel, interview cases and
+  attempts, store items, recording kinds, the calendar tray) are `--tint`;
+  selection on cards is a 2 px ink ring (`box-shadow`), never an accent
+  border. The bar has no rule: `.bar.scrolled::after` (and
+  `.interview-panes::after`) is a 20 px strip of `--page` faded with
+  `mask-image`, so content scrolling under the crumbs fades out (no backdrop
+  blur: it flickered); it is hidden until the window scrolls and its fade is
+  skipped under Reduced Motion. `.bar` keeps `--bar-height` (padding-bottom
+  11 px replaced the old 1 px rule). Between 640 and 999 px the page and bar
+  gutters are 28 px, and the library gets 40 px side padding from 1000 px
+  (vertical room stays tight: the Tasks panel needs 150 px under the first
+  row of cards). Single-edge 1 px rules left in `index.html` (all carry
+  meaning): `.prose hr`, table cells (`th`/`td`), and the calendar grid (day
+  header row, all-day cell, day column, month cell left and bottom). Anything
+  new uses tone or space.
+  The note toolbar (`nav.actions`, the "dock" of the plan) is one soft
+  `--raised` pill of 44 px icon buttons with `aria-label` names and a CSS
+  tooltip from the label (`button::after`, shown on hover and on keyboard
+  focus, `--text` on `--page`, fades over `--t-press`); the actions are
+  unchanged. The phone floating buttons (New note, Record, Upload) are unchanged. The dock proper (`#dock`: Tasks and
+  Background panels) keeps its layout and `--side`/`--right` offsets.
   Tapping Felix is the one playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
@@ -301,7 +335,8 @@ reader, seer, meaning, web, room, speech).
   folder page; on a note page only the note's row is. The rail, explorer, tabs and
   segmented controls are not text-selectable.
   The sidebar head and page toolbar share `--bar-height`, including the safe-area
-  inset, so their bottom dividers stay aligned with the explorer open or hidden.
+  inset, so their rows stay aligned with the explorer open or hidden (no rule
+  under either since 2026-11-04).
   Settings uses the same height for its sticky navigation offset.
   `leo-side` hides only the explorer, keeping the rail. The fold slides
   (2026-11-02, the user's call; the one width animation): `--side` is an
@@ -580,7 +615,7 @@ reader, seer, meaning, web, room, speech).
   Reset affects only the current tab of the captured problem. Board Undo and Redo
   keep up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay
   saved. The saved shape kinds and limits did not change.
-  Past submissions carry a status label and matching outline
+  Past submissions carry a status label and a matching tint
   (`interviews.attemptStatus`: checks decide, then the quick review, then Felix's
   scores; Passed, Failed · n/m, Partly, Awaiting review). The top bar is opaque
   (no backdrop blur), which stopped it flickering over sticky and animating content.
