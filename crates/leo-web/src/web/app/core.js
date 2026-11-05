@@ -827,13 +827,13 @@ async function showPassage(note, name, at) {
 
 function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
-      ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
-      ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
-      ${id ? `<button data-action="note-tasks">${ICON.calendar}<span>Tasks</span></button>` : ''}
-      <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
-      <button data-action="move">${ICON.move}<span>Move</span></button>
-      <button data-action="share">${ICON.share}<span>PDF</span></button>
-      <button data-action="delete" class="danger">${ICON.trash}<span>Delete</span></button>
+      ${id ? `<button type="button" data-action="note-map" data-id="${esc(id)}" aria-label="Graph">${ICON.map}</button>` : ''}
+      ${id && recorded ? `<button type="button" data-action="note-sources" aria-label="Transcript">${ICON.mic}</button>` : ''}
+      ${id ? `<button type="button" data-action="note-tasks" aria-label="Tasks">${ICON.calendar}</button>` : ''}
+      <button type="button" data-action="note-picture" aria-label="Picture">${ICON.image}</button>
+      <button type="button" data-action="move" aria-label="Move">${ICON.move}</button>
+      <button type="button" data-action="share" aria-label="PDF">${ICON.share}</button>
+      <button type="button" data-action="delete" class="danger" aria-label="Delete">${ICON.trash}</button>
     </nav>`;
 }
 
