@@ -51,12 +51,29 @@ test('anchor: lost when the passage between prefix and suffix was emptied or is 
   assert.equal(M.find(far, { quote: 'short', prefix: 'then login ', suffix: ', I think?' }), null);
 });
 
+test('anchor: a short or missing side never attaches to unrelated text', () => {
+  const text = 'ab some new words and a long enough tail';
+  assert.equal(M.find(text, { quote: 'old words', prefix: 'ab ', suffix: ' and a long enough tail' }), null);
+  assert.equal(M.find(text, { quote: 'old words', prefix: 'ab some ', suffix: ' t' }), null);
+  assert.equal(M.find('anything at all here', { quote: 'old words', prefix: '', suffix: '' }), null);
+});
+
 test('around gives the words beside a selection on its own line', () => {
   const text = 'same words\n\nsame words';
   assert.deepEqual(M.around(text, 'same words', 3), { prefix: 'same words\n\n', suffix: '' });
   assert.deepEqual(M.around(text, 'same words', 1), { prefix: '', suffix: '\n\nsame words' });
   assert.equal(M.around(text, 'missing', 1), null);
   assert.deepEqual(M.around('only here', 'only', 9), { prefix: '', suffix: ' here' });
+});
+
+test('around never splits a surrogate pair', () => {
+  for (const pad of ['', 'x']) {
+    const text = `${pad}${'😀'.repeat(40)}words${'😀'.repeat(40)}${pad}`;
+    const beside = M.around(text, 'words', 1);
+    assert.ok(beside.prefix.isWellFormed() && beside.suffix.isWellFormed());
+    assert.ok(JSON.stringify(beside).length > 0);
+    assert.ok(text.includes(`${beside.prefix}words${beside.suffix}`));
+  }
 });
 
 test('lineAfter counts the lines up to an offset', () => {

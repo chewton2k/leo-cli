@@ -1061,7 +1061,7 @@ fn a_thread_on_a_trashed_note_exports_only_with_the_trash() {
         .id
         .clone();
     store.save().unwrap();
-    store.delete_notes(&[id.clone()]);
+    store.delete_notes(std::slice::from_ref(&id));
     store.save().unwrap();
     let chats = crate::chats::dir_for(&store.notes_dir);
     margin::put(

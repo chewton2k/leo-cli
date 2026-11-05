@@ -4455,6 +4455,110 @@ test.describe('passages', () => {
     await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).not.toContain('Argon2id');
   });
 
+  test('the page and the real margin routes work together with a stubbed provider', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Real margin', body: 'Save the password in the users table.' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#margin-mode').click();
+    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea.line-edit');
+    await area.press('End');
+    await area.pressSequentially('\n\nThen login just checks if it matches, I think');
+    await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?', { timeout: 12000 });
+    await page.reload();
+    await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?');
+    await page.locator('.margin-note').click();
+    const reply = page.locator('.margin-reply textarea');
+    await reply.fill('So hash it?');
+    await reply.press('Enter');
+    await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
+    await page.locator('.margin-note').getByRole('button', { name: 'Add to note' }).dblclick();
+    await expect(page.locator('.toast')).toContainText('Added to note');
+    const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+    await expect.poll(body).toContain('Argon2id');
+    expect((await body()).match(/Argon2id/g)).toHaveLength(1);
+    const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
+    await expect.poll(left).toBe(0);
+    await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(body).not.toContain('Argon2id');
+    await expect.poll(left).toBe(1);
+  });
+
+  for (const [title, later, says] of [
+    ['re-finds its passage when the note changed underneath it', 'A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nLast.', 'Added to note'],
+    ['says so when its passage is gone', 'Everything was rewritten.', 'went at the end of the note'],
+  ]) {
+    test(`Add to note ${title}`, async ({ page }) => {
+      await page.setViewportSize({ width: 1600, height: 900 });
+      const note = await (await page.request.post('/api/notes', { data: { title: `Moved ${says}`, body: 'First.\n\nThe quoted words stay here.\n\nLast.' } })).json();
+      const asked = await page.request.post(`/api/notes/${note.id}/margin/threads`, { data: { version: note.version, quote: 'quoted words', question: 'Why?' } });
+      expect(asked.ok()).toBeTruthy();
+      await page.goto(`/#/n/${note.id}`);
+      await expect(page.locator('.margin-note')).toBeVisible();
+      let refused = 0;
+      await page.route('**/insert', async (route) => {
+        if (refused++) return route.continue();
+        await page.request.patch(`/api/notes/${note.id}`, { data: { body: later } });
+        await route.fulfill({ status: 409, json: { error: 'changed' } });
+      });
+      await page.locator('.margin-note').click();
+      await page.locator('.margin-note').getByRole('button', { name: 'Add to note' }).click();
+      await expect(page.locator('.toast').first()).toContainText(says);
+      const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+      await expect.poll(body).toContain('Argon2id');
+      if (says === 'Added to note') {
+        expect(await body()).toBe('A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nYes. Argon2id, then verify at login.\n\nLast.');
+      } else {
+        expect(await body()).toBe('Everything was rewritten.\n\nYes. Argon2id, then verify at login.\n');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#doc .blk-glow')).toHaveCount(0);
+      }
+    });
+  }
+
+  test('a failed read keeps its text for the next one and a refused read waits for an edit', async ({ page }) => {
+    await page.clock.install();
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Waits', body: 'Opening line that is long enough.' } })).json();
+    await page.request.post(`/api/notes/${note.id}/margin`, { data: { mode: 'along' } });
+    const reads = [];
+    await page.route('**/margin/read', async (route) => {
+      reads.push(route.request().postDataJSON().blocks);
+      if (reads.length === 1) return route.fulfill({ json: { note: null, failed: true } });
+      await route.fulfill({ status: 429, json: { why: 'soon', error: 'Soon.' } });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea.line-edit');
+    await area.press('End');
+    await area.pressSequentially('\n\nFirst changed paragraph long enough.');
+    await expect.poll(async () => { await page.clock.fastForward(1000); return reads.length; }).toBe(1);
+    await area.pressSequentially('\n\nSecond changed paragraph long enough.');
+    await expect.poll(async () => { await page.clock.fastForward(30000); return reads.length; }).toBe(2);
+    expect(reads[1]).toEqual(['First changed paragraph long enough.', 'Second changed paragraph long enough.']);
+    await page.clock.fastForward(300000);
+    await page.clock.fastForward(300000);
+    await page.waitForTimeout(200);
+    expect(reads).toHaveLength(2);
+  });
+
+  test('two selected characters go to the chat, not a margin note that cannot save', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Short pick', body: 'An ox stood here.' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea.line-edit');
+    await area.evaluate((a) => {
+      a.focus();
+      a.setSelectionRange(3, 5);
+      a.dispatchEvent(new Event('select'));
+    });
+    await page.keyboard.press('ControlOrMeta+Shift+e');
+    await expect(page.locator('#chat .chat-passage')).toContainText('ox');
+    await expect(page.locator('.margin-note')).toHaveCount(0);
+  });
+
   test('a lost margin note moves to the Felix panel and Settings starts with read-along off', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Lost place', body: 'Nothing like it here.' } })).json();

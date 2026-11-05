@@ -13,6 +13,7 @@
   const READ_CHARS = 8000;
   const LEAST_BLOCK_CHARS = 20;
   const NEAR = 120;
+  const AROUND = 48;
 
   function occurrences(source, text) {
     const hits = [];
@@ -40,7 +41,7 @@
     const before = prefix.slice(-TAIL);
     const after = suffix.slice(0, TAIL);
     const room = quote.length * 2 + NEAR;
-    const enough = (tail, whole) => tail.length >= Math.min(LEAST_TAIL, whole.length);
+    const enough = (tail, whole) => !whole || tail.length >= LEAST_TAIL;
     if (!enough(before, prefix) || !enough(after, suffix)) return null;
     if (!before && !after) return null;
     const starts = before ? occurrences(source, before).map((at) => at + before.length) : [0];
@@ -68,7 +69,13 @@
     const first = source.indexOf(quote, line > 1 ? start : 0);
     const at = first >= 0 ? first : source.indexOf(quote);
     if (at < 0) return null;
-    return { prefix: source.slice(Math.max(0, at - 48), at), suffix: source.slice(at + quote.length, at + quote.length + 48) };
+    const low = (code) => code >= 0xdc00 && code <= 0xdfff;
+    const high = (code) => code >= 0xd800 && code <= 0xdbff;
+    let from = Math.max(0, at - AROUND);
+    let to = Math.min(source.length, at + quote.length + AROUND);
+    if (from > 0 && low(source.charCodeAt(from))) from++;
+    if (to < source.length && high(source.charCodeAt(to - 1))) to--;
+    return { prefix: source.slice(from, at), suffix: source.slice(at + quote.length, to) };
   }
 
   function lineAfter(source, at) {

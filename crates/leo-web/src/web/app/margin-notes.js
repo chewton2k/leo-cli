@@ -7,7 +7,8 @@ const INK_DELAY_MS = 1140;
 const GLOW_MS = 2200;
 const MOST_ASKED = 600;
 const marginKit = window.leoMargin;
-const marginPage = { s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), open: null, draft: null, arriving: new Set(), timer: 0, reading: false, readFace: null, faceTimer: 0, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const LEAST_ASKED = 3;
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), open: null, draft: null, arriving: new Set(), timer: 0, reading: false, readFace: null, faceTimer: 0, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 async function marginLoadPrefs() {
@@ -463,46 +464,52 @@ function marginToChat(t) {
   marginRedraw();
 }
 
-async function marginInsert(s, text, line, request) {
+async function marginInsert(s, t, text, request) {
   await flush(s);
+  const source = s.doc.source();
+  const at = marginKit.find(source, t);
+  const line = at ? marginKit.lineAfter(source, at.to) : null;
   try {
-    return await api(`/api/notes/${enc(s.note.id)}/insert`, { method: 'POST', body: { text, line, base: s.note.version, request } });
+    return { done: await api(`/api/notes/${enc(s.note.id)}/insert`, { method: 'POST', body: { text, line, base: s.note.version, request } }), line };
   } catch (e) {
     if (e.status !== 409) throw e;
   }
   const fresh = await api(`/api/notes/${enc(s.note.id)}`);
-  return api(`/api/notes/${enc(s.note.id)}/insert`, { method: 'POST', body: { text, line: null, base: fresh.version, request } });
+  const moved = marginKit.find(fresh.body, t);
+  const next = moved ? marginKit.lineAfter(fresh.body, moved.to) : null;
+  return { done: await api(`/api/notes/${enc(s.note.id)}/insert`, { method: 'POST', body: { text, line: next, base: fresh.version, request } }), line: next };
 }
 
 async function marginAdd(t) {
+  if (marginPage.adding.has(t.id)) return;
+  marginPage.adding.add(t.id);
   const s = marginPage.s;
   const el = marginPage.els.get(t.id);
-  const text = marginNow(t);
-  const at = marginKit.find(s.doc.source(), t);
-  const line = at ? marginKit.lineAfter(s.doc.source(), at.to) : null;
+  const button = $('.margin-add', el);
+  button.disabled = true;
   marginSaying(el, '');
-  let done;
+  t.addRequest = t.addRequest || requestId();
+  let added;
   try {
-    done = await marginInsert(s, text, line, requestId());
+    added = await marginInsert(s, t, marginNow(t), t.addRequest);
   } catch (e) {
     if (e instanceof Locked) throw e;
     if (el.isConnected) marginSaying(el, e.status === 409 ? 'The note changed. Try once more.' : e.message);
     return;
+  } finally {
+    marginPage.adding.delete(t.id);
+    button.disabled = false;
   }
+  const { done, line } = added;
   const id = s.note.id;
-  await api(`/api/notes/${enc(id)}/margin/threads/${enc(t.id)}`, { method: 'POST', body: { status: 'resolved' } });
+  const threadPath = `/api/notes/${enc(id)}/margin/threads/${enc(t.id)}`;
   const open = () => state.view === 'note' && state.session && state.session.note.id === id;
-  if (open()) await showNote(id);
-  if (open() && line !== null) {
-    state.session.doc.glow(line + 1, line + 3);
-    setTimeout(() => { if (open()) state.session.doc.glow(); }, GLOW_MS);
-  }
-  toast('Added to note', {
+  toast(line === null ? 'Its passage has moved, so this went at the end of the note' : 'Added to note', {
     action: 'Undo',
     run: async () => {
       try {
         await api(`/api/notes/${enc(id)}`, { method: 'PATCH', body: { body: done.before, base: done.version } });
-        await api(`/api/notes/${enc(id)}/margin/threads/${enc(t.id)}`, { method: 'POST', body: { status: 'open' } });
+        await api(threadPath, { method: 'POST', body: { status: 'open' } }).catch(() => {});
         if (open()) await showNote(id);
         toast('Took it out of the note');
       } catch (e) {
@@ -510,10 +517,19 @@ async function marginAdd(t) {
       }
     },
   });
+  await api(threadPath, { method: 'POST', body: { status: 'resolved' } }).catch((e) => {
+    if (e instanceof Locked) throw e;
+  });
+  if (open()) await showNote(id);
+  if (open() && line !== null) {
+    state.session.doc.glow(line + 1, line + 3);
+    setTimeout(() => { if (open()) state.session.doc.glow(); }, GLOW_MS);
+  }
 }
 
 function marginAsk(s, picked) {
-  if (!marginPage.layer || chat.isOpen() || !picked.text.trim() || [...picked.text].length > MOST_ASKED) return false;
+  const size = [...picked.text.trim()].length;
+  if (!marginPage.layer || chat.isOpen() || size < LEAST_ASKED || [...picked.text].length > MOST_ASKED) return false;
   const beside = marginKit.around(s.doc.source(), picked.text, picked.from);
   if (!beside) return false;
   marginDropThread('draft');
@@ -553,7 +569,11 @@ function marginShowReading(s, blocks) {
 }
 
 async function marginRead(s) {
-  if (s !== marginPage.s || marginPage.reading || marginPage.mode !== 'along' || !s.note.id || document.hidden || chat.isBusy()) return;
+  if (marginPage.reading) {
+    marginPage.again = true;
+    return;
+  }
+  if (s !== marginPage.s || marginPage.mode !== 'along' || !s.note.id || document.hidden || chat.isBusy()) return;
   if (!marginKit.changedBlocks(marginPage.baseline, s.doc.source()).length) return;
   marginPage.reading = true;
   try {
@@ -566,7 +586,7 @@ async function marginRead(s) {
     marginShowReading(s, blocks);
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;
-    marginPage.baseline = marginKit.blocksOf(source);
+    if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
     if (got?.note) {
       marginPage.threads.push(got.note);
       marginPage.arriving.add(got.note.id);
@@ -581,7 +601,9 @@ async function marginRead(s) {
     clearTimeout(marginPage.faceTimer);
     marginPage.readFace?.remove();
     marginPage.readFace = null;
-    if (s === marginPage.s && marginPage.mode === 'along' && marginKit.changedBlocks(marginPage.baseline, s.doc.source()).length) {
+    const again = marginPage.again;
+    marginPage.again = false;
+    if (again && s === marginPage.s && marginPage.mode === 'along') {
       marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular, marginPage.nextRead - Date.now()));
     }
   }
