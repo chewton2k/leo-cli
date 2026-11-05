@@ -136,6 +136,7 @@ fn other_models() -> Area {
     let root = leo_services::config::choice::models_dir();
     let named = [
         leo_services::providers::speech_model_dir(),
+        leo_services::speech::vad::dir(),
         leo_services::meaning::dir(),
         leo_services::pyodide::dir(),
     ];
@@ -482,6 +483,7 @@ impl Housekeeper for Housekeeping {
                 items,
                 &[
                     leo_services::providers::speech_model_dir(),
+                    leo_services::speech::vad::dir(),
                     leo_services::meaning::dir(),
                     leo_services::pyodide::dir(),
                 ],

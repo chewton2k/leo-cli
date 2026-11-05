@@ -19,4 +19,4 @@ body[data-open="true"] #text { display: block; }
 #caret[hidden] { display: none; }
 @keyframes caret { 50% { opacity: 0; } }
 body[data-state="error"] #text, body[data-state="notice"] #text { color: var(--muted); }
-body[data-state="loading"] #dot, body[data-state="transcribing"] #dot, body[data-state="writing"] #dot { background: var(--accent); }
+body[data-state="starting"] #dot, body[data-state="loading"] #dot, body[data-state="transcribing"] #dot, body[data-state="writing"] #dot { background: var(--accent); }

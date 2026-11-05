@@ -111,9 +111,9 @@ scan, or a loopback connect with a 300 ms timeout. Never a real request.
 `manual.rs` creates one note on first run: a one-screen quickstart for the app
 (Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
 real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (20); deleting the
+in a `.manual-installed` marker carrying `MANUAL_VERSION` (21); deleting the
 manual survives the next launch, and a version bump rewrites the user's note.
-Tests: under 60 lines, names Settings, Felix, Record and ⌘J, and names no
+Tests: under 60 lines, names Settings, Felix, Record and ⌘F, and names no
 terminal command.
 
 ### Data model

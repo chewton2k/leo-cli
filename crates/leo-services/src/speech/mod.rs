@@ -30,7 +30,7 @@ pub fn prepare(pcm: Vec<f32>) -> anyhow::Result<Vec<Vec<f32>>> {
         pcm.len() <= 320 * 16_000 && pcm.iter().all(|s| s.is_finite()),
         "This audio is too long or damaged. Try a shorter recording."
     );
-    let mut chunker = chunking::Chunker::new(Box::new(|| Ok(Box::new(vad::EarshotVad::new(0.5)?))));
+    let mut chunker = chunking::Chunker::new(Box::new(vad::detector));
     let mut chunks = chunker.push(pcm);
     chunks.extend(chunker.finish());
     Ok(chunks)

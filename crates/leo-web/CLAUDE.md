@@ -54,6 +54,8 @@ reader, seer, meaning, web, room, speech).
   `#/map[/id]`, `#/calendar`, `#/boards[/id]`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
+- Native quit confirmation keeps the current page and uses its existing toast
+  (`events.js`); Updates explains that every successful installation reopens Leo.
 - Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
   `--note-width`, 980 px by default; Settings → Appearance → Note width picks
   Comfortable (760 px), Wide or Full width, kept per browser in
@@ -61,8 +63,8 @@ reader, seer, meaning, web, room, speech).
   Width checks measure the reading column; its outer wrapper also reserves the
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
-- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J or Cmd/Ctrl+K
-  anywhere (Cmd+L belongs to the browser's address bar), `/`, the sidebar
+- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+F
+  anywhere, the sidebar
   Search button, the header search button or the phone menu opens one line
   (`sheets.js` `quickLeo`, toggled by `toggleQuickLeo`). It is also the search
   bar (2026-11-03, the user's call): every query offers "Search every note",
@@ -149,11 +151,13 @@ reader, seer, meaning, web, room, speech).
   Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
   the menu and returns focus to its button without closing the conversation.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
-  follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
-  entrances, hover lifts or sliding gliders. `<details>` slide their height
+  follows a click, quick (`MOTION_MS` 180), transform/clip/height/opacity only. No
+  idle animation or hover lifts. `<details>` slide their height
   (`slideHeight`); the sidebar fold slides `--side`; Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
   ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
-  content. Reduced Motion turns all of it off. Tapping Felix is the one
+  content. Notes fade in place so text never moves during an immediate selection; confirmed note/folder removals leave
+  over 180 ms only after the delete succeeds, and delayed deletes never navigate
+  a newer page. Reduced Motion turns all of it off. Tapping Felix is the one
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
@@ -178,8 +182,12 @@ reader, seer, meaning, web, room, speech).
   Select-all and multi-line undo selections keep the blocks rendered. A newly
   focused source editor retains the rendered text height (scrolling internally
   for longer inline Markdown); input resumes normal height fitting. Heading
-  source prefixes hang left of the rendered text position. A selection across
-  lines stays rendered in place: dragging out of the edited line carries on across the lines (`dragAnchor`), Shift+click selects,
+  source prefixes hang left of the rendered text position. During a selection
+  dragged out of an editor, its source text keeps the editor's geometry and
+  scroll position in a selectable div until the selection clears; clicking it
+  resumes the same textarea. Other blocks stay rendered. The drag anchor is
+  captured before mouse movement, since macOS can report `selectionDirection`
+  as `none` for a backwards range. Dragging carries on across the lines (`dragAnchor`), Shift+click selects,
   copy and cut give the Markdown, and typing, Enter, Delete or paste replace it
   through the raw lines, then only the caret's line stays open.
   Autosave PATCHes 700 ms after the last change with `base` = the loaded
@@ -894,7 +902,9 @@ the same idle loop.
   grid (`CAL_HOUR_PX` 48, 15-minute snap) with an All day row of spanning bars
   (`schedule.lanes`), side-by-side overlaps (`schedule.dayColumns`) and a now
   line; Month shows three chips a day and "n more" (Day view). The right tray
-  holds a mini month, Overdue and No date. Pointer drags (boards' rules: 5 px
+  leads with Tasks, Overdue and No date before the mini month. Narrow windows
+  keep this task tray above the calendar instead of hiding it, with its own
+  bounded scroll area and no mini month. Pointer drags (boards' rules: 5 px
   or a 300 ms touch hold, capture on `#app`, Escape cancels, the click after
   a drop is swallowed) move a task (Month: day only), resize a Leo task's end
   by its bottom edge, schedule a tray task, or sweep empty time into an inline
@@ -1286,11 +1296,33 @@ the first heading never shifts or narrows the writing column. A narrow pane or
 phone reserves a fixed disclosure row; its expanded outline overlays the note.
 Outline toggles and original-file open/close controls focus explicitly so
 WKWebView preserves keyboard focus when their markup changes.
-Heading jumps keep the URL and reading-position flow; typing refreshes only the
+Heading jumps scroll smoothly (instantly with Reduced Motion), keeping the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. A width observer refits
 the active textarea in place when panes resize, clearing internal scroll so text
 and the caret stay visible; it disconnects with the document. Scroll/resize observers,
 frames and timers are released with the document. The outline never prints.
+
+Stopping a line editor reconciles blocks in place: unchanged source blocks retain
+their DOM, including rendered math, diagrams and open callouts. Source editors
+keep the rendered block height and margins until input so code, tables, quotes
+and math do not move the lines below when clicked.
+Pointer activation never scrolls an already visible part of a block into view;
+keyboard navigation still reveals its editor. Rendered/source caret conversion
+uses UTF-16 offsets throughout, matching DOM ranges and textarea selections even
+when a line contains emoji.
+Selection endpoints on list markers stay within the edited item's source range.
+Programmatic insertion commits source-selection mode first and retains the
+existing append behavior, so picture insertion never uses a detached textarea.
+
+Writing AI shows detected Codex/Claude accounts with bounded CLI sign-in checks,
+5-hour/7-day meters, reset times and the age of saved usage. Detection never
+changes the chosen provider; unknown or absent limits are stated explicitly.
+PDF export keeps Windows' native print function (Tauri calls it internally),
+uses the native bridge on macOS, and reports bridge errors without losing the
+note. A completed export cannot rename a newer page.
+The browser runner requires a fresh disposable home and points both coding
+providers at missing fixture binaries before startup, so autodetection cannot
+inspect the developer's signed-in accounts.
 
 Combine’s chunker and dropped-content recovery share fence recognition: a closing
 line needs the opener’s character and at least its full length, with no trailing
@@ -1414,3 +1446,34 @@ and Settings. Every Settings section uses the same Settings / section breadcrumb
 Storage and Trash keep their routes and controllers inside that frame. Storage
 category cards remove outer Settings padding so only their compact summary sets
 the closed height.
+Usage opens from the rail above Settings and shows remaining subscription windows,
+with unknown and expired readings explicit. The combined Quick Leo uses only
+Cmd/Ctrl+F and retains task/search/question/navigation ranking. Explicit named
+month dates and ISO dates keep their deadline; omitted years use the next date.
+The calendar tray puts its mini calendar before tasks, and all-day/timed grids
+share the full width without scrollbar gutters shifting their day boundaries.
+Search-result and Quick Leo note opens carry the query into a bounded CSS Custom
+Highlight, cleared after five seconds or navigation without changing editor DOM.
+
+Usage keeps a single provider column with compact Session/Weekly rows: remaining
+percentage at left, a muted provider-colored bar and reset time at right. The
+dialog has no nested settings card or setup prose; unknown readings stay explicit.
+
+Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
+minimum timed block. Overlap layout includes that visual minimum; saved task
+times stay unchanged. Google export, .ics download and delete/stop-tracking
+actions use icon controls with accessible names and hover titles in both peeks
+and task sheets.
+Minimum-height blocks resize from the original end plus pointer movement,
+including scroll movement; a sideways grip drag cannot lengthen a short task.
+Month rows grow to fit their previews and More action; the month grid scrolls
+and keeps its position across redraws instead of clipping larger task cards.
+
+Ordinary Settings reads never refresh coding-plan limits. Usage first draws saved
+readings, then POSTs `/api/settings/usage`, behind the session gate and one refresh
+slot, with blocking CLI work outside store locks. Failed refresh leaves saved
+meters visible; responses from closed sheets or old page generations are ignored.
+Search scrolls the matched Range itself, including within very tall paragraphs.
+A resize with zero vertical movement never writes a synthetic end to a deadline.
+Quick Leo accepts a year directly after a comma and validates local minute-based
+ISO datetimes as one date/time before removing them from the title.

@@ -108,8 +108,9 @@ ASR models, languages, checksums, benchmark speeds and accuracy. Accuracy uses
 the chosen language, or the geometric mean of measured word error rates for
 auto detection; missing or invalid measurements remain unknown. The selected
 model and language live in `<config>/speech-model.json`; files live in
-`models_dir()/speech`. `Library` verifies exact size and SHA-256, caches verified
-size/mtime stamps, downloads at most two models into owned temporary files,
+`models_dir()/speech`. `Library` verifies exact size and SHA-256, keeps verified
+size/mtime stamps in `<config>/speech-verified.json` (hashing on every launch held
+the first dictation back 1.6 s before its microphone opened), downloads at most two models into owned temporary files,
 checks cancellation while awaiting the network, and promotes atomically.
 Linked paths and hard-linked models are refused. Selection/deletion/promotion
 use a private file lock. The previous ONNX folder is removed after a
@@ -119,18 +120,35 @@ the current model.
 `speech/engine.rs` admits eight jobs, gives dictation priority between audio
 chunks, and pauses lower-priority work during a dictation reservation. One
 actor owns the supervisor and model. Recording pins it; otherwise idle unload
-is 60 seconds. Stop and updater unload retry a full request channel within one
+is five minutes (Handy's default). Stop and updater unload retry a full request channel within one
 five-second deadline shared by enqueue and acknowledgement; ordinary job
 admission stays immediate and bounded. Saturation tests free queue capacity
 explicitly rather than depending on actor-thread scheduling.
 Model deletion waits behind inference, unloads the worker first,
 and refuses deletion of an active recording/dictation model. Long audio uses
-30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
-VAD with onset, pre-roll and hangover. Slow catalog models skip live passes.
+30-second target / 40-second maximum cuts at VAD pauses. `vad::detector` is Silero
+at 0.3, Handy's default, with Earshot at 0.5 if Silero cannot load. Dictation filters
+while capturing, and the engine only cuts and pads clips under a second, as Handy
+does. Recordings have no Handy equivalent and are never trimmed: a chunk goes to the
+model whole unless VAD, on a copy raised to speech level (median frame level of the
+whole clip to 0.1, gain 1-50), hears nothing in it (2026-11-04: lecturers often have
+no microphone, and the audio is deleted once transcribed). On a synthetic distant
+voice at 8 dB over room noise with a loud nearby talker 15% of the time, words found
+were 63% with 95th percentile raised trimming vs 90% untrimmed; plain Silero trimming
+of a distant voice gave 34.7% WER vs 13.1%. Chatter 10 dB under the voice or closer
+defeats the model itself (59%+ WER untrimmed). Raising means amplified noise can
+reach the model; Parakeet stayed empty on it, Whisper was not tested. Slow catalog
+models skip live passes.
 
 `speech/supervisor.rs` owns a crash-isolated worker, re-executing the current
 binary with `--leo-speech-worker` before normal app/CLI startup. Only the worker
-initializes native backends, loads a model or runs inference. Framed JSON/PCM,
+initializes GPU backends, loads a speech model or runs speech inference. The one
+exception is Silero VAD: a small CPU-only model that runs in the app process on a
+CPU-mask backend, as in Handy (2026-11-04, the user's call), written to
+`models_dir()/vad` from bytes embedded in the crate and compared before first use.
+Each detector loads its own `Model`, because one model's compute lock would make
+dictation wait behind chunk scoring. A native fault there takes the app down, which
+the worker rule otherwise prevents. Framed JSON/PCM,
 queues, stderr and deadlines are bounded; crashes/hangs are reaped and retried
 once (CPU after GPU failure). Apple Silicon uses Metal; Intel macOS and Windows
 use CPU. The Rust binding and native sys crate are both pinned to exactly
@@ -202,6 +220,13 @@ choices, model list with prices, key account and whether it is stored, sign-in
 or plan usage for agents, notes such as Ollama not running) never includes a
 key; `apply` validates every change against `choice`, writes through
 `toml_edit` (creating the commented default file when missing).
+
+`coding_plans` detects both configured coding CLIs without changing the selected
+writer. It returns only availability, tri-state sign-in and saved usage windows;
+auth probes use the same cleaned plan environment as writing and never expose
+their raw output or make a model call. An installed CLI alone is not sign-in.
+Availability and sign-in use the same normalized `AgentCli::bin`, including
+when a missing, empty or whitespace-only setting falls back to the default CLI.
 
 `import.rs` turns uploads into a note: native Markdown extraction precedes AI
 study-note writing. `import/office.rs` preserves Word headings (including

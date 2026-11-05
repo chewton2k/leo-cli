@@ -31,6 +31,28 @@ pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
     }
 }
 
+pub(crate) async fn refresh_usage(State(state): State<AppState>) -> Response {
+    let Some(settings) = state.settings.clone() else {
+        return no_settings();
+    };
+    let Ok(permit) = state.usage_refreshes.clone().try_acquire_owned() else {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "Usage is already refreshing. Wait a moment and try again." }))).into_response();
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        settings.refresh_usage();
+    })
+    .await
+    {
+        Ok(()) => get_settings(State(state)).await,
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "Could not refresh usage. Try again in a moment." })),
+        )
+            .into_response(),
+    }
+}
+
 pub(crate) async fn change_setting(
     State(state): State<AppState>,
     Json(change): Json<serde_json::Value>,

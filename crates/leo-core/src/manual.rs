@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 20;
+const MANUAL_VERSION: u32 = 21;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -95,7 +95,7 @@ edit it, or delete it — it will not come back.
 ## Getting around
 
 ```
-⌘K or ⌘J  search, ask, remind or jot anything
+⌘F        search, ask, remind or jot anything
 New note  top of the sidebar, or the first card in a folder
 Settings  bottom of the sidebar
 ```
@@ -274,7 +274,7 @@ mod tests {
             "Settings",
             "Felix",
             "Record",
-            "⌘J",
+            "⌘F",
             "Dictation",
             "Health",
             "Option+Space",

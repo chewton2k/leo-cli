@@ -38,6 +38,7 @@ const ICON = {
   share: svg('<path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   minus: svg('<path d="M5 12h14"/>'),
+  download: svg('<path d="M12 4v12M7 11l5 5 5-5M4 18v3h16v-3"/>'),
   upload: svg('<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>'),
   image: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
   paperclip: svg('<path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/>'),
@@ -290,6 +291,17 @@ function stillMotion() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+async function dismissContent(elements) {
+  const live = Array.from(elements).filter(el => el.isConnected);
+  if (!stillMotion()) {
+    await Promise.all(live.map(el => el.animate([
+      { opacity: 1, transform: 'none' },
+      { opacity: 0, transform: 'translateY(6px) scale(.98)' },
+    ], { duration: MOTION_MS, easing: EASE_OUT }).finished.catch(() => {})));
+  }
+  for (const el of live) el.remove();
+}
+
 function stopSlide(el) {
   delete el.dataset.folding;
   const run = moving.get(el);
@@ -431,7 +443,56 @@ const skeleton = (n) => Array.from({ length: n }, () => '<div class="skeleton"><
 let state = { view: null };
 let seq = 0;
 
-function go(hash, { replace = false } = {}) {
+const SEARCH_HIGHLIGHT_MS = 5000;
+const SEARCH_HIGHLIGHT_MOST = 300;
+const SEARCH_HIGHLIGHT_NODES = 20000;
+let searchHighlightTimer;
+let searchPassage = null;
+
+function clearSearchHighlight() {
+  clearTimeout(searchHighlightTimer);
+  CSS.highlights?.delete('leo-search');
+}
+
+function highlightSearch(root, query) {
+  clearSearchHighlight();
+  if (!CSS.highlights || typeof Highlight === 'undefined') return false;
+  const words = Array.from(String(query || '')).slice(0, 2000).join('').split(/\s+/).map(word => word.replace(/^#/, '')).filter(Boolean).slice(0, 20);
+  if (!words.length) return false;
+  const pattern = new RegExp(words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const ranges = [];
+  let node;
+  let seen = 0;
+  while (ranges.length < SEARCH_HIGHLIGHT_MOST && seen++ < SEARCH_HIGHLIGHT_NODES && (node = walk.nextNode())) {
+    if (node.parentElement.closest('textarea, script, style, .katex-mathml')) continue;
+    pattern.lastIndex = 0;
+    let match;
+    while (ranges.length < SEARCH_HIGHLIGHT_MOST && (match = pattern.exec(node.textContent))) {
+      const range = document.createRange();
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
+      ranges.push(range);
+    }
+  }
+  if (!ranges.length) return false;
+  CSS.highlights.set('leo-search', new Highlight(...ranges));
+  const first = ranges[0];
+  const rect = first.getBoundingClientRect();
+  if (rect.top < 80 || rect.bottom > window.innerHeight) window.scrollBy({ top: (rect.top + rect.bottom - window.innerHeight) / 2, behavior: 'instant' });
+  searchHighlightTimer = setTimeout(clearSearchHighlight, SEARCH_HIGHLIGHT_MS);
+  return true;
+}
+
+window.addEventListener('hashchange', () => {
+  clearSearchHighlight();
+  if (searchPassage && searchPassage.hash !== location.hash) searchPassage = null;
+});
+
+function go(hash, { replace = false, search = null } = {}) {
+  clearSearchHighlight();
+  const query = search ?? (state.view === 'search' ? state.query : null);
+  searchPassage = query && hash.startsWith('#/n/') ? { hash, query } : null;
   if (location.hash === hash) return route();
   if (replace) {
     history.replaceState(history.state, '', hash);
@@ -524,7 +585,7 @@ async function showFolder(dir) {
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
   drawFolder();
-  if (arrived) arriveInFolder();
+  if (arrived) arriveOnPage();
 }
 
 const PAGE = 200;
@@ -662,16 +723,19 @@ function folderTrashAsk() {
 }
 
 async function folderTrashNow() {
+  const mine = seq;
   const move = state.trashMove;
   closeSheet();
   if (!move) return;
   state.trashMove = null;
   const done = await api('/api/trash/move', { method: 'POST', body: move });
+  if (mine === seq) await dismissContent(app.querySelectorAll('.pick-card.picked, .folder.picked'));
   const parts = [];
   if (done.notes) parts.push(plural(done.notes, 'note'));
   if (done.folders) parts.push(plural(done.folders, 'folder'));
   const undo = done.ids && (done.ids.length || (done.dirs && done.dirs.length)) ? { action: 'Undo', run: () => undoTrashMove(done) } : { action: 'Open trash', run: () => go('#/trash') };
   toast(`Moved ${parts.join(' and ') || 'nothing'} to the trash`, undo);
+  if (mine !== seq) return;
   state.selecting = false;
   await showFolder(state.dir);
 }
@@ -770,6 +834,9 @@ function noteActions(id, recorded = false) {
 }
 
 async function showNote(id, { fresh = null, draft = null } = {}) {
+  const passage = searchPassage?.hash === noteHash(id) ? searchPassage : null;
+  searchPassage = null;
+  clearSearchHighlight();
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
@@ -793,8 +860,13 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   drawOriginals(note);
   hideAskFloat();
   s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+  arriveOnPage(app.querySelector('article.note'));
   if (citedLines && citedLines.id === note.id) showCitedLines();
-  else restoreReading(note.id, mine);
+  else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
+    clearTimeout(reading.timer);
+    reading.id = note.id;
+    reading.user = false;
+  } else restoreReading(note.id, mine);
   drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');

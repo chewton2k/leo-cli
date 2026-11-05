@@ -30,10 +30,7 @@ impl reqwest_updater::dns::Resolve for PublicDns {
 enum Command {
     Check,
     Download,
-    Install {
-        restart: bool,
-        lease: leo_core::activity::Lease,
-    },
+    Install { lease: leo_core::activity::Lease },
     Stop,
 }
 struct Pending {
@@ -103,7 +100,7 @@ impl Updates {
         }
         Ok(())
     }
-    fn request_install(&self, restart: bool) -> Result<()> {
+    fn request_install(&self) -> Result<()> {
         ensure!(
             self.ready.load(Ordering::Acquire),
             "Download the update first, then restart Leo."
@@ -121,11 +118,7 @@ impl Updates {
                 return Err(error);
             }
         };
-        if self
-            .tx
-            .try_send(Command::Install { restart, lease })
-            .is_err()
-        {
+        if self.tx.try_send(Command::Install { lease }).is_err() {
             self.operating.store(false, Ordering::Release);
             anyhow::bail!("Updates are busy. Try again in a moment.");
         }
@@ -143,7 +136,7 @@ impl Updates {
             self.ready.load(Ordering::Acquire),
             leo_core::activity::global().busy(),
         ) {
-            return self.request_install(false).is_ok();
+            return self.request_install().is_ok();
         }
         false
     }
@@ -202,22 +195,22 @@ impl Updates {
                         self.failed("Check for updates first, then download the new version.");
                     }
                 }
-                Command::Install { restart, lease } => {
+                Command::Install { lease } => {
                     if let Some(pending) = pending.as_ref().filter(|p| p.bytes.is_some()) {
                         self.set("state", "installing");
-                        let result = apply(
-                            lease,
-                            || leo_services::speech::engine::engine().unload_worker(),
-                            || {
-                                if restart {
-                                    crate::update_window::remember(&leo_core::paths::config_dir()?)?;
-                                }
-                                pending
-                                    .update
-                                    .install(pending.bytes.as_ref().unwrap())
-                                    .map_err(anyhow::Error::from)
-                            },
-                        );
+                        let result = leo_core::paths::config_dir().and_then(|config| {
+                            apply(
+                                lease,
+                                &config,
+                                || leo_services::speech::engine::engine().unload_worker(),
+                                || {
+                                    pending
+                                        .update
+                                        .install(pending.bytes.as_ref().unwrap())
+                                        .map_err(anyhow::Error::from)
+                                },
+                            )
+                        });
                         match result {
                             Ok(lease) => {
                                 *self
@@ -225,16 +218,9 @@ impl Updates {
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner()) = Some(lease);
                                 self.installed.store(true, Ordering::Release);
-                                if restart {
-                                    self.app.restart();
-                                } else {
-                                    self.app.exit(0);
-                                }
+                                self.app.restart();
                             }
                             Err(_) => {
-                                if let Ok(config) = leo_core::paths::config_dir() {
-                                    crate::update_window::take(&config);
-                                }
                                 self.failed("The update could not be installed. Quit and reopen Leo, then try Restart to update again.");
                             }
                         }
@@ -328,7 +314,7 @@ impl UpdateApi for Updates {
         match action {
             "check_updates" => self.enqueue(Command::Check),
             "download_update" => self.enqueue(Command::Download),
-            "restart_update" => self.request_install(true),
+            "restart_update" => self.request_install(),
             _ => anyhow::bail!("Choose Check now, Download or Restart to update."),
         }
     }
@@ -341,11 +327,16 @@ fn quit_install(enabled: bool, ready: bool, busy: bool) -> bool {
 }
 fn apply(
     lease: leo_core::activity::Lease,
+    config: &std::path::Path,
     stop: impl FnOnce() -> Result<()>,
     install: impl FnOnce() -> Result<()>,
 ) -> Result<leo_core::activity::Lease> {
     stop()?;
-    install()?;
+    crate::update_window::remember(config)?;
+    if let Err(error) = install() {
+        crate::update_window::take(config);
+        return Err(error);
+    }
     Ok(lease)
 }
 
@@ -378,11 +369,13 @@ mod tests {
     }
     #[test]
     fn installation_stops_the_worker_first_and_excludes_new_capture() {
+        let config = tempfile::tempdir().unwrap();
         let gate = leo_core::activity::Gate::default();
         let lease = gate.install().unwrap();
         let order = std::cell::RefCell::new(Vec::new());
         let completion = super::apply(
             lease,
+            config.path(),
             || {
                 assert!(gate.begin().is_err());
                 order.borrow_mut().push("stop");
@@ -396,14 +389,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(*order.borrow(), vec!["stop", "install"]);
+        assert!(crate::update_window::take(config.path()));
         assert!(gate.begin().is_err());
         drop(completion);
         assert!(!gate.busy());
         let lease = gate.install().unwrap();
         assert!(super::apply(
             lease,
+            config.path(),
             || anyhow::bail!("worker did not stop"),
             || panic!("must not install")
+        )
+        .is_err());
+        assert!(!gate.busy());
+        assert!(!crate::update_window::take(config.path()));
+    }
+
+    #[test]
+    fn every_installation_marks_a_foreground_restart_and_failure_clears_it() {
+        let config = tempfile::tempdir().unwrap();
+        let gate = leo_core::activity::Gate::default();
+        for fails in [false, true] {
+            let result = super::apply(
+                gate.install().unwrap(),
+                config.path(),
+                || Ok(()),
+                || {
+                    assert!(config.path().join("update-foreground").is_file());
+                    if fails {
+                        anyhow::bail!("installation failed");
+                    }
+                    Ok(())
+                },
+            );
+            assert_eq!(result.is_err(), fails);
+            assert_eq!(crate::update_window::take(config.path()), !fails);
+            drop(result);
+            assert!(!gate.busy());
+        }
+        let blocked = tempfile::NamedTempFile::new().unwrap();
+        assert!(super::apply(
+            gate.install().unwrap(),
+            blocked.path(),
+            || Ok(()),
+            || panic!("must not install without remembering the foreground restart")
         )
         .is_err());
         assert!(!gate.busy());

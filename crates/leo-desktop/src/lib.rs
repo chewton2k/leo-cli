@@ -10,6 +10,8 @@ mod overlay;
 mod paste_tx;
 mod permissions;
 mod port;
+#[cfg(target_os = "macos")]
+mod quit;
 mod secure_input;
 mod settings;
 mod shell_path;
@@ -111,9 +113,6 @@ pub fn run() {
                         let visible = window.is_visible().unwrap_or(true)
                             && !window.is_minimized().unwrap_or(false);
                         sync_visible(&window, visible, true);
-                        if visible && update_window::may_open(leo_core::activity::global()) {
-                            let _ = window.set_focus();
-                        }
                     }
                 })
                 // Tauri's own file-drop handler swallows the webview's drag events,
@@ -163,8 +162,6 @@ pub fn run() {
                 .traffic_light_position(tauri::LogicalPosition::new(18.0, 31.0))
                 .initialization_script("window.__LEO_APP__ = 'mac';");
             let window = builder.build()?;
-            #[cfg(target_os = "macos")]
-            active_space(&window)?;
             let handle = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -179,6 +176,8 @@ pub fn run() {
                     set_visible(&handle, visible);
                 }
             });
+            #[cfg(target_os = "macos")]
+            quit::menu(app.handle())?;
             tray::build(app.handle())?;
             open_at_login_once(app.handle(), config.as_deref());
             app_settings.apply_startup()?;
@@ -186,10 +185,31 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("leo could not start");
-    app.run(|app, event| match event {
+    #[cfg(target_os = "macos")]
+    let mut quitting = quit::Confirm::default();
+    app.run(move |app, event| match event {
+        RunEvent::Ready => {
+            if app
+                .get_webview_window(MAIN)
+                .is_some_and(|w| w.is_visible().unwrap_or(false))
+            {
+                show(app);
+            }
+        }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show(app),
-        RunEvent::ExitRequested { api, .. } => {
+        RunEvent::ExitRequested { api, code, .. } => {
+            #[cfg(target_os = "macos")]
+            if !quitting.allows(code, std::time::Instant::now()) {
+                api.prevent_exit();
+                show(app);
+                if let Some(window) = app.get_webview_window(MAIN) {
+                    let _ = window.eval("window.leoFromApp?.('quit', '')");
+                }
+                return;
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = code;
             if app
                 .try_state::<std::sync::Arc<updates::Updates>>()
                 .is_some_and(|updates| updates.on_quit())
@@ -202,11 +222,13 @@ pub fn run() {
     });
 }
 
-const PRINT: &str = "window.print = () => window.__TAURI_INTERNALS__.invoke('print_page');";
+const PRINT: &str = "(() => { const nativePrint = window.print.bind(window); window.print = () => window.__LEO_APP__ === 'mac' ? new Promise(done => setTimeout(done)).then(() => window.__TAURI_INTERNALS__.invoke('print_page')) : nativePrint(); })();";
 
 #[tauri::command]
 fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {
-    window.print().map_err(|e| e.to_string())
+    window
+        .print()
+        .map_err(|_| "Could not open the print dialog. Try exporting the note again.".into())
 }
 
 static LAST_DOWNLOAD: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
@@ -247,54 +269,23 @@ fn back_up(app: &AppHandle) {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn active_space(window: &tauri::WebviewWindow) -> tauri::Result<()> {
-    use objc2_app_kit::NSWindow;
-    let native = window.ns_window()?;
-    let native = unsafe { &*native.cast::<NSWindow>() };
-    native.setCollectionBehavior(space_behavior(native.collectionBehavior()));
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn space_behavior(
-    current: objc2_app_kit::NSWindowCollectionBehavior,
-) -> objc2_app_kit::NSWindowCollectionBehavior {
-    use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
-    (current & !Behavior::CanJoinAllSpaces) | Behavior::MoveToActiveSpace
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod space_tests {
-    use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
-
-    #[test]
-    fn opening_moves_to_the_active_desktop_without_pinning_every_desktop() {
-        for current in [
-            Behavior::Default,
-            Behavior::CanJoinAllSpaces | Behavior::Managed,
-        ] {
-            let result = super::space_behavior(current);
-            assert!(result.contains(Behavior::MoveToActiveSpace));
-            assert!(!result.contains(Behavior::CanJoinAllSpaces));
-            assert_eq!(
-                result.contains(Behavior::Managed),
-                current.contains(Behavior::Managed)
-            );
-        }
-    }
-}
-
 pub(crate) fn show(app: &AppHandle) {
-    if !update_window::may_open(leo_core::activity::global()) {
-        return;
-    }
-    if let Some(window) = app.get_webview_window(MAIN) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        set_visible(&window, true);
-        let _ = window.set_focus();
-    }
+    let app = app.clone();
+    let caller = app.clone();
+    let _ = caller.run_on_main_thread(move || {
+        if !update_window::may_open(leo_core::activity::global()) {
+            return;
+        }
+        if let Some(window) = app.get_webview_window(MAIN) {
+            let _ = window.unminimize();
+            let _ = window.show();
+            set_visible(&window, true);
+            #[cfg(target_os = "macos")]
+            update_window::focus(&window);
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn set_visible(window: &tauri::WebviewWindow, visible: bool) {

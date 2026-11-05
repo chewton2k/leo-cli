@@ -37,6 +37,34 @@ test('panel refresh updates controls and keyed rows without resetting native sta
   })).toBe(true);
 });
 
+test('coding accounts show readable usage and sign-in states in both themes and narrow windows', async ({ page }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const source = fs.readFileSync(path.join(web, 'app/settings.js'), 'utf8');
+  await page.setContent('<style>' + css + '</style><main class="settings" id="plans"></main>');
+  await page.addScriptTag({ content: `const esc = text => String(text).replace(/</g, '&lt;').replace(/"/g, '&quot;'), rel = () => 'just now'; ${source.slice(source.indexOf('const PLAN_STALE_MS'), source.indexOf('const THEME_LABELS'))}` });
+  for (const theme of ['light', 'dark']) {
+    for (const width of [1200, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(theme => {
+        document.documentElement.dataset.theme = theme;
+        const limits = { five_hour: { used: .25, resets_at: Date.now() / 1000 + 3600 }, seven_day: { used: .93, resets_at: Date.now() / 1000 + 86400 }, seen_at: new Date().toISOString() };
+        document.querySelector('#plans').innerHTML = codingPlans({ tasks: [{ task: 'writing', provider: 'codex' }], plans: [{ provider: 'codex', name: 'Codex', installed: true, signed_in: true, limits }, { provider: 'claude_code', name: 'Claude Code', installed: true, signed_in: false, signin: 'claude auth login', limits: null }] });
+      }, theme);
+      await expect(page.getByRole('meter')).toHaveCount(2);
+      await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '75');
+      await expect(page.getByRole('meter', { name: 'Codex 7 day remaining' })).toHaveAttribute('aria-valuenow', '7');
+      await expect(page.getByText('Signed in', { exact: true })).toBeVisible();
+      await expect(page.getByText('Signed out', { exact: true })).toBeVisible();
+      await expect(page.getByText('Selected for writing')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      for (const card of await page.locator('.coding-plan').all()) {
+        expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      }
+    }
+  }
+});
+
 test('Settings sections keep drafts and selections across redraws in both themes', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');

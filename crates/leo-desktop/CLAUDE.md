@@ -31,8 +31,12 @@ a test, or leave it unset to see the user's own data.
 ## Behaviour
 
 - Close hides the window and queues a backup; Dock click and "Open leo" show
-  it; "Quit leo" (menu bar icon) or ⌘Q exits, and `RunEvent::Exit` backs up and
-  stops the engine (6 s cap). Tauri's default menu supplies Edit (⌘C/⌘V/⌘Z/⌘A)
+  it; on macOS, Leo's Quit menu items or ⌘Q need a second attempt within three seconds
+  (the first shows a prompt). Update restarts and error exits bypass this guard.
+  `RunEvent::Exit` backs up and stops the engine (6 s cap).
+  The macOS app menu replaces the predefined native Quit item with a regular
+  ⌘Q item routed through `app.exit(0)`, so it reaches the guard and update actor.
+  Tauri's default menu supplies Edit (⌘C/⌘V/⌘Z/⌘A)
   and binds none of the page's shortcuts.
 - `links::stays_inside`: only `http://127.0.0.1|localhost:<port>` and the
   bundled page stay in the window; navigation and new windows elsewhere open in
@@ -57,7 +61,14 @@ a test, or leave it unset to see the user's own data.
   files reach the page's own handlers (`drag.js`).
 - Downloads save to `~/Downloads` under a free name (`links::download_path`)
   and are revealed when done.
-- `window.print` calls the `print_page` command (the webview's own print).
+- `window.print` calls `print_page` on macOS; Windows retains its original
+  native function, since Tauri's print implementation calls back into JS.
+  Calling the bridge on Windows would recurse instead of opening the dialog.
+  The macOS bridge waits one task first: WebKit reads the print job's title,
+  which names the saved PDF, from a copy that lags `document.title`.
+  Custom commands have explicit permissions: only `main` at the loopback engine
+  may print, and only the bundled `dictation` popup may call `dictation_popup`.
+  Tauri treats loopback pages as remote origins and refuses ungranted commands.
 - Capability `default`: remote `http://127.0.0.1:*`/`localhost:*`, core
   defaults, window dragging and double-click maximize.
 
@@ -79,9 +90,15 @@ microphone, trailing space and Press Enter after pasting were removed
 and drop them on the next save. Capture releases
 its input before local VAD/transcription, word rules, local history and paste.
 Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
-they play on their own thread after the microphone is open (Handy's order), so
-the start chime never delays capture and the first words are kept. The app warms
-CoreAudio at launch and non-streaming models load at keypress.
+they play on their own thread. The popup says "Starting microphone…" until the
+first audio arrives, silence included; only then does it say Listening and
+play the start chime (Handy's readiness cue). No audio at all in 8 s is an error (a
+Bluetooth headset can take seconds to switch).
+At launch the app warms CoreAudio, checks the model stamp and, on Apple Silicon
+once per app version (`<config>/speech-shaders-ready`), has a throwaway worker
+compile the Metal shaders (about 4 s) so the first shortcut does not. No model is loaded at
+launch (2026-11-04: warming measured 620 ms vs 612 ms for the first stream and
+held about 900 MB on every launch). Audio queues while a model loads.
 Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
 never expose the test actions or write a test paste file.
 
@@ -113,10 +130,17 @@ The popup follows Handy's live preview: state changes are pushed as a
 `dictation` event (revision-stamped, skipped when the popup is Off; the page
 polls only if listening fails), committed and tentative words render with a
 caret, the text pins to its newest line, and 16 FFT buckets
-(`dictation::visualizer`) drive nine smoothed bars. Streaming models get the
-1650 ms streaming VAD hangover and ~32 ms feeds, so the model hears the tail
-it needs for the last words and their punctuation; text stays visible while
-the final pass runs. With AI writing on, Escape stays registered through the
+(`dictation::visualizer`) drive nine smoothed bars. Dictation follows Handy (2026-11-04, the
+user's call): audio passes Silero VAD at 0.3 in this process with the 1650 ms
+streaming hangover (450 ms for models that do not stream) in ~32 ms feeds, the
+stream's text is final, and the same filtered audio goes to a batch run only when
+that text is empty or there was no stream. Measured on 73 read clips, Silero with
+the stream gave 2.61% WER vs 2.96% unfiltered. Differences from Handy: streaming
+models too slow for live text (`Selected.live`) skip the live pass (Voxtral: about
+103 s for 60 s of speech, estimated); if Silero cannot load, dictation runs
+unfiltered; and when a streaming model's filter kept nothing, the batch run gets
+the raw audio, so quiet speech is not lost whole. Text stays
+visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
 reason. Settings warns when no writing AI is set up (`writing_ready`).
@@ -153,6 +177,11 @@ and scripts/set-version.sh remain authoritative.
 Release assets are macOS arm64/x64 app archives and DMGs plus Windows x64 NSIS.
 CI uses one stable self-signed identity and verifies both bundle and CLI signatures;
 updater signatures cover the same app archive or NSIS used by terminal installation.
+Windows builds set `TRANSCRIBE_CMAKE_ARGS` to an AVX2 floor (2026-11-04): transcribe.cpp
+otherwise tunes to the build machine, which crashed with an illegal instruction when CI
+reused a cache from another runner and would on users' processors too. Handy picks
+instructions at run time with dynamic backends instead. Silero refuses a processor
+below that floor, since it runs in the app process; the worker contains its own crash.
 Windows uses the dynamic CRT to match transcribe-cpp; its release-only config
 bundles the Visual C++ runtime DLLs next to the executables.
 No Linux release/test rows remain. Chromium and targeted WebKit browser jobs run
@@ -184,14 +213,17 @@ native capture, final transcription and dictation remain active. A finished page
 load resynchronizes visibility in case hide/show happened during navigation.
 
 Foreground requests (single instance, Dock and tray page commands) are refused
-while the core installation lease is held. Explicit update restarts leave a
+while the core installation lease is held. Every successful update reopens Leo,
+including install-on-quit. Installations leave a
 private atomic one-use `update-foreground` marker, consumed only after the
 single-instance check, so `--hidden` from login cannot hide the updated app.
 Failed installation removes the marker and releases the opening restriction.
 
-The main window uses MoveToActiveSpace, clearing CanJoinAllSpaces while retaining
-other collection flags: opening from the tray, Dock or a second launch brings
-Leo to the current desktop instead of switching back to its original desktop.
 Automatic updater checks run at release startup and after an hour without an
 updater command. Installation replaces the running bundle; the staged previous
 bundle is removed, and unrelated application copies are never deleted.
+Foreground requests run on the main thread, move the main window to the active
+macOS Space and explicitly make it the main/key window. Initial activation runs
+at Ready, never after an arbitrary page reload; hidden login launches stay hidden.
+The macOS tray opens its menu through NSStatusItem directly for either mouse
+button, avoiding tray-icon's simulated click that fails in other full-screen Spaces.

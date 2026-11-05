@@ -77,7 +77,7 @@ async function calendarFixture(browser, run, { width = 1360, height = 900, view 
       throw new Error('No fake for '+method+' '+url);
     }
     ${page}
-    const actions={${calActions}'task-done':el=>{const id=el.dataset.id,on=el.dataset.on||null;const task=calFind(id);const done=!(task&&taskDoneOn(task,on));return setTaskDone(id,done,on);},'task-delete':el=>deleteTask(el.dataset.id),'task-new':()=>{},close:()=>closeSheet()};
+    const actions={${calActions}'task-done':el=>{const id=el.dataset.id,on=el.dataset.on||null;const task=calFind(id);const done=!(task&&taskDoneOn(task,on));return setTaskDone(id,done,on);},'task-delete':el=>deleteTask(el.dataset.id),'task-new':el=>newTaskSheet(el.dataset.day||null),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     window.errors=[];window.db=db;
@@ -144,6 +144,16 @@ test('the calendar fills the room beside the explorer and shows a week of events
     expect(cal.x).toBeGreaterThanOrEqual(explorer.x + explorer.width - 1);
     expect(cal.x + cal.width).toBeLessThanOrEqual(1360 + 1);
     await expect(page.locator('.cal-dayhead')).toHaveCount(7);
+    expect(await page.locator('.cal-hours').evaluate(el => getComputedStyle(el).backgroundImage)).not.toBe('none');
+    const boundaries = await page.evaluate(() => {
+      const lefts = selector => [...document.querySelectorAll(selector)].map(el => el.getBoundingClientRect().left);
+      return [lefts('.cal-dayhead'), lefts('.cal-allday-cell'), lefts('.cal-col')];
+    });
+    for (let day = 0; day < 7; day++) {
+      expect(Math.abs(boundaries[0][day] - boundaries[2][day])).toBeLessThan(1);
+      expect(Math.abs(boundaries[1][day] - boundaries[2][day])).toBeLessThan(1);
+    }
+
     await expect(page.locator('.cal-dayhead.today')).toContainText('3');
     await expect(page.locator('.cal-col[data-day="2026-11-03"] .cal-now')).toHaveCount(1);
     await expect(page.locator('.cal-allday .cal-item', { hasText: 'Reading week' })).toHaveCount(1);
@@ -155,6 +165,45 @@ test('the calendar fills the room beside the explorer and shows a week of events
     await expect(page.locator('.cal-item[data-id="task-note"] .cal-grip')).toHaveCount(0);
     await expect(page.locator('.cal-tray-list h2.late')).toContainText('Overdue');
     await expect(page.locator('.cal-tray-row', { hasText: 'Draft essay outline' })).toBeVisible();
+  });
+});
+
+test('tasks follow the mini calendar and stay visible above a narrow calendar', async ({ browser }) => {
+  for (const width of [1360, 1000, 674]) {
+    await calendarFixture(browser, async page => {
+      const side = page.locator('#cal-side');
+      await expect(side.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible();
+      const row = side.locator('.cal-tray-row', { hasText: 'Draft essay outline' });
+      await expect(row).toBeVisible();
+      const tasks = await row.boundingBox();
+      const mini = side.locator('.cal-mini');
+      if (width === 1360) {
+        const month = await mini.boundingBox();
+        expect(month.y + month.height).toBeLessThan(tasks.y);
+      } else {
+        await expect(mini).toBeHidden();
+        const main = await page.locator('#cal-main').boundingBox();
+        expect(tasks.y + tasks.height).toBeLessThanOrEqual(main.y);
+      }
+      await row.locator('.cal-check').click();
+      await settled(page);
+      await expect(side.locator('.cal-tray-row', { hasText: 'Draft essay outline' })).toHaveCount(0);
+    }, { width });
+  }
+});
+
+test('the task sidebar creates undated tasks from its empty state', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(async () => { window.db.tasks = []; await loadSchedule(); });
+    const side = page.locator('#cal-side');
+    await expect(side).toContainText('Tasks without a date appear here.');
+    await side.getByRole('button', { name: 'New task', exact: true }).click();
+    await expect(page.locator('#task-title')).toBeFocused();
+    await page.locator('#task-title').fill('Read the next chapter');
+    await page.locator('#task-add').click();
+    await settled(page);
+    await expect(side.locator('.cal-tray-row', { hasText: 'Read the next chapter' })).toBeVisible();
+    expect(await page.evaluate(() => window.db.tasks[0].date)).toBeNull();
   });
 });
 
@@ -171,7 +220,9 @@ test('a task drags to a new time, its bottom edge sets how long it takes, and Un
     await expect(page.locator('.cal-col[data-day="2026-11-03"] .cal-item[data-id="task-study"]')).toHaveCount(1);
 
     const grip = await page.locator('.cal-item[data-id="task-study"] .cal-grip').boundingBox();
-    await dragTo(page, { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 }, await point(page, '2026-11-03', 15 * 60 + 30));
+    const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+    const delta = (await point(page, '2026-11-03', 15 * 60 + 30)).y - (await point(page, '2026-11-03', 14 * 60)).y;
+    await dragTo(page, from, { x: from.x, y: from.y + delta });
     expect(await task(page, 'task-study')).toMatchObject({ date: '2026-11-03', time: '13:00:00', end: '15:30:00' });
 
     await page.evaluate(() => { window.failNext = 'The disk is full.'; });
@@ -316,11 +367,13 @@ test('Day, Week and Month switch by the control or the keyboard, and the choice 
 
 test('on a narrow window the calendar keeps the explorer and the peek covers only the calendar', async ({ browser }) => {
   await calendarFixture(browser, async page => {
-    await expect(page.locator('.cal-side')).toBeHidden();
+    await expect(page.locator('.cal-side')).toBeVisible();
     await page.locator('.cal-item[data-id="task-lab"] .cal-open').click();
     const side = await page.locator('#cal-side.peek').boundingBox();
     const explorer = await page.locator('#explorer').boundingBox();
     expect(side.x).toBeGreaterThanOrEqual(explorer.x + explorer.width - 1);
+    await page.locator('[data-action="cal-peek-close"]').click();
+    await expect(page.locator('#cal-side .cal-tray-row').first()).toBeVisible();
   }, { width: 1000, view: 'day' });
 });
 
@@ -362,5 +415,120 @@ test('creating a time range respects grid boundaries and either drag direction',
       const hm=m=>{m=Math.min(1439,m);return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
       expect(request).toMatchObject({time:hm(Math.min(start,end)),end:hm(Math.max(start,end))});
     }
+  });
+});
+
+test('calendar tasks have readable blocks and compact accessible action icons', async ({ browser }, testInfo) => {
+  for (const view of ['week', 'day', 'month', 'all-day']) {
+    await calendarFixture(browser, async page => {
+      const item = page.locator('.cal-item[data-id="task-lab"]').first();
+      await page.evaluate(allDay => {
+        const task = cal.data.tasks.find(task => task.id === 'task-lab');
+        task.title = 'Math 164 homework — finish exercises 1–20 and submit the worked solutions before the deadline';
+        if (allDay) { task.time = null; task.end = null; }
+        Object.assign(window.db.tasks.find(saved => saved.id === task.id), task);
+        drawCalendar();
+      }, view === 'all-day');
+
+      if (view === 'day') {
+        await page.locator('.cal-dayhead').first().click();
+        await page.evaluate(() => { cal.selected = '2026-11-05'; drawCalendar(); });
+      }
+      if (view === 'month') await page.locator('[data-action="cal-view"][data-view="month"]').click();
+      await settled(page);
+      await expect(item).toBeVisible();
+      const height = (await item.boundingBox()).height;
+      expect(height).toBeGreaterThanOrEqual(view === 'all-day' ? 44 : 60);
+      expect(await item.locator('.cal-title').evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(13);
+      if (view !== 'day') expect((await item.locator('.cal-title').boundingBox()).height).toBeGreaterThan(25);
+      if (view === 'week') await item.screenshot({ path: testInfo.outputPath('readable-task.png') });
+      await item.locator('.cal-open').click();
+      const actions = page.locator('#cal-peek-acts');
+      for (const name of ['Add to Google Calendar', 'Download .ics', 'Delete']) {
+        const control = actions.getByRole(name === 'Download .ics' ? 'link' : 'button', { name, exact: true });
+        await expect(control).toBeVisible();
+        await expect(control.locator('svg')).toHaveCount(1);
+        expect((await control.textContent()).trim()).toBe('');
+        await expect(control).toHaveAttribute('title', name);
+      }
+      const boxes = await actions.locator('.icon-btn').evaluateAll(controls => controls.map(control => control.getBoundingClientRect().y));
+      expect(Math.max(...boxes) - Math.min(...boxes)).toBeLessThan(1);
+      await page.screenshot({ path: testInfo.outputPath('task-icons-' + view + '.png') });
+      if (view === 'week') await actions.screenshot({ path: testInfo.outputPath('task-action-icons.png') });
+    });
+  }
+});
+
+test('readable minimum task heights participate in calendar overlap layout', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      const task = cal.data.tasks.find(task => task.id === 'task-lab');
+      cal.data.tasks.push({ ...task, id: 'task-nearby', title: 'Nearby deadline', time: '11:45:00' });
+      drawCalendar();
+    });
+    const first = await page.locator('.cal-item[data-id="task-lab"]').boundingBox();
+    const second = await page.locator('.cal-item[data-id="task-nearby"]').boundingBox();
+    expect(second.x).toBeGreaterThan(first.x + 5);
+  });
+});
+
+test('enlarged task blocks do not change duration on a horizontal resize drag', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    for (const end of [null, '11:01:00', '11:05:00', '11:15:00', '11:17:00', '12:00:00']) {
+      await page.evaluate(end => {
+        for (const tasks of [cal.data.tasks, window.db.tasks]) tasks.find(task => task.id === 'task-lab').end = end;
+        drawCalendar();
+      }, end);
+      const before = (await patches(page, 'task-lab')).length;
+      const grip = await page.locator('.cal-item[data-id="task-lab"] .cal-grip').boundingBox();
+      const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+      await dragTo(page, from, { x: from.x + 12, y: from.y });
+      expect((await task(page, 'task-lab')).end).toBe(end);
+      expect((await patches(page, 'task-lab')).length).toBe(before);
+    }
+  });
+});
+
+test('larger month tasks keep every preview and the more action inside their day', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      const task = window.db.tasks.find(task => task.id === 'task-lab');
+      for (let index = 0; index < 4; index++) window.db.tasks.push({ ...task, id: 'month-task-' + index, title: 'Additional homework ' + index });
+      for (let week = 1; week < 6; week++) {
+        for (let index = 0; index < 3; index++) window.db.tasks.push({ ...task, id: `busy-${week}-${index}`, date: S.dayKey(S.addDays(S.fromKey(task.date), week * 7)) });
+      }
+
+    });
+    await page.locator('.cal-views [data-view="month"]').click();
+    await settled(page);
+    const cell = page.locator('.cal-cell[data-day="2026-11-05"]');
+    await expect(cell.locator('.cal-item')).toHaveCount(3);
+    const bounds = await cell.boundingBox();
+    const more = await cell.getByRole('button', { name: '3 more' }).boundingBox();
+    expect(more.y + more.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+    await page.locator('.cal-month-grid').evaluate(grid => { grid.scrollTop = 40; });
+    await page.evaluate(() => drawCalendar());
+    expect(await page.locator('.cal-month-grid').evaluate(grid => grid.scrollTop)).toBe(40);
+
+    await cell.getByRole('button', { name: '3 more' }).click();
+    await expect(page.locator('.cal-dayhead')).toHaveCount(1);
+    await expect(page.locator('.cal-item[data-kind="task"]')).toHaveCount(5);
+  });
+});
+
+test('a sideways deadline resize at the scroll edge still preserves its absent end', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      for (const tasks of [cal.data.tasks, window.db.tasks]) Object.assign(tasks.find(task => task.id === 'task-lab'), { time: '20:00:00', end: null });
+      drawCalendar();
+      const grip = document.querySelector('.cal-item[data-id="task-lab"] .cal-grip');
+      const scroll = document.querySelector('#cal-scroll');
+      scroll.scrollTop += grip.getBoundingClientRect().bottom - (scroll.getBoundingClientRect().bottom - 10);
+    });
+    const grip = await page.locator('.cal-item[data-id="task-lab"] .cal-grip').boundingBox();
+    const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+    await dragTo(page, from, { x: from.x + 12, y: from.y });
+    expect((await task(page, 'task-lab')).end).toBe(null);
+    expect(await patches(page, 'task-lab')).toHaveLength(0);
   });
 });

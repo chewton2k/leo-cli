@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::io::Read;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -9,16 +11,22 @@ use transcribe_cpp::{Backend, RunOptions};
 use super::library::Selected;
 use super::protocol::DeviceSelector;
 use super::supervisor::{EngineSupervisor, Fed, LoadSpec};
-use super::vad::{
-    frames_for_duration_ms, EarshotVad, SmoothedVad, VadFrame, VoiceActivityDetector,
-    VAD_OFFLINE_HANGOVER_MS, VAD_ONSET_MS, VAD_PREFILL_MS,
-};
+use super::vad::{detector, CaptureVad, VAD_OFFLINE_HANGOVER_MS};
 
 const QUEUED: usize = 8;
-const IDLE: Duration = Duration::from_secs(60);
+const SHADERS_MARKER: &str = "speech-shaders-ready";
+const IDLE: Duration = Duration::from_secs(5 * 60);
 const POLL: Duration = Duration::from_millis(20);
 const CONTROL_LIMIT: Duration = Duration::from_secs(5);
 const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
+const MOST_FEEDS: usize = 300 * 16_000 / 512 + 2;
+const FRAME: usize = 256;
+const MOST_MARKER_BYTES: u64 = 64;
+const SPEECH_LEVEL: f32 = 0.1;
+const MOST_GAIN: f32 = 50.0;
+const SHORTEST_CLIP: usize = 16_000;
+const SHORT_CLIP_PADDED: usize = 20_000;
+const _: () = assert!(MOST_FEEDS * 512 >= 300 * 16_000);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
@@ -30,6 +38,7 @@ pub enum Priority {
 struct Job {
     _admission: Pin,
     selected: Selected,
+    gain: f32,
     chunks: VecDeque<Vec<f32>>,
     text: Vec<String>,
     priority: Priority,
@@ -139,9 +148,14 @@ impl Engine {
             })
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again in a moment."))?;
         let admission = Pin(self.admitted.clone());
-        let chunks = super::prepare(pcm)?.into();
+        let gain = if priority == Priority::Dictation {
+            1.0
+        } else {
+            speech_gain(&pcm)
+        };
+        let chunks = speech_chunks(pcm, gain)?.into();
         let (reply, answer) = mpsc::sync_channel(1);
-        self.requests.try_send(Message::Run(Job { _admission: admission, selected, chunks, text: Vec::new(), priority, reply }))
+        self.requests.try_send(Message::Run(Job { _admission: admission, selected, gain, chunks, text: Vec::new(), priority, reply }))
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Your recorded audio is kept; try again in a moment."))?;
         answer.recv_timeout(ANSWER_LIMIT).context(
             "Transcription took too long. Your audio is kept; try a faster speech model.",
@@ -154,6 +168,19 @@ impl Engine {
         }
     }
 
+    pub fn prepare_after_update(&self, config: &Path, version: &str) {
+        let marker = config.join(SHADERS_MARKER);
+        if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            && !self.stopped.load(Ordering::Acquire)
+            && !shaders_ready(&marker, version)
+            && self.supervisor.devices().is_some()
+        {
+            if let Err(error) = std::fs::write(&marker, version) {
+                log::warn!("Could not remember the prepared speech shaders: {error}");
+            }
+        }
+    }
+
     pub fn stream(
         &self,
         selected: Selected,
@@ -163,7 +190,7 @@ impl Engine {
             !self.stopped.load(Ordering::Acquire),
             "The speech engine is stopping. Reopen Leo."
         );
-        let (feed, audio) = mpsc::sync_channel(128);
+        let (feed, audio) = mpsc::sync_channel(MOST_FEEDS);
         let (reply, answer) = mpsc::sync_channel(1);
         self.requests
             .try_send(Message::Stream {
@@ -309,24 +336,58 @@ impl Heard {
     }
 }
 
-fn trim(pcm: Vec<f32>) -> Result<Vec<f32>> {
-    let detector = EarshotVad::new(0.5)?;
-    let frame = detector.frame_samples();
-    let mut vad = SmoothedVad::new(
-        Box::new(detector),
-        frames_for_duration_ms(VAD_PREFILL_MS, frame),
-        frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, frame),
-        frames_for_duration_ms(VAD_ONSET_MS, frame),
-    );
-    let mut out = Vec::new();
-    for chunk in pcm.chunks(frame) {
-        let mut padded = vec![0.0; frame];
-        padded[..chunk.len()].copy_from_slice(chunk);
-        if let VadFrame::Speech(heard) = vad.push_frame(&padded)? {
-            out.extend_from_slice(heard);
+fn speech_gain(pcm: &[f32]) -> f32 {
+    let mut levels: Vec<f32> = pcm
+        .chunks(FRAME)
+        .map(frame_level)
+        .filter(|level| *level > 0.0)
+        .collect();
+    levels.sort_by(f32::total_cmp);
+    match levels.get(levels.len() / 2) {
+        Some(level) => (SPEECH_LEVEL / level).clamp(1.0, MOST_GAIN),
+        None => 1.0,
+    }
+}
+
+fn raised(pcm: &[f32], gain: f32) -> Vec<f32> {
+    pcm.iter().map(|n| n * gain).collect()
+}
+
+fn shaders_ready(marker: &Path, version: &str) -> bool {
+    let mut seen = String::new();
+    std::fs::File::open(marker)
+        .and_then(|file| file.take(MOST_MARKER_BYTES).read_to_string(&mut seen))
+        .is_ok()
+        && seen == version
+}
+
+fn frame_level(frame: &[f32]) -> f32 {
+    (frame.iter().map(|n| n * n).sum::<f32>() / frame.len() as f32).sqrt()
+}
+
+fn speech_chunks(pcm: Vec<f32>, gain: f32) -> Result<Vec<Vec<f32>>> {
+    let mut chunks = super::prepare(raised(&pcm, gain))?;
+    for chunk in &mut chunks {
+        chunk.iter_mut().for_each(|n| *n /= gain);
+    }
+    Ok(chunks)
+}
+
+fn heard_speech(pcm: &[f32], gain: f32) -> Result<bool> {
+    let mut vad = CaptureVad::new(detector()?, VAD_OFFLINE_HANGOVER_MS);
+    for part in pcm.chunks(16_000) {
+        if !vad.push(&raised(part, gain)).is_empty() {
+            return Ok(true);
         }
     }
-    Ok(out)
+    Ok(!vad.finish().is_empty())
+}
+
+fn padded(mut pcm: Vec<f32>) -> Vec<f32> {
+    if !pcm.is_empty() && pcm.len() < SHORTEST_CLIP {
+        pcm.resize(SHORT_CLIP_PADDED, 0.0);
+    }
+    pcm
 }
 
 fn run(
@@ -500,7 +561,15 @@ fn run(
                 model = Some(job.selected.path.clone());
             }
             if let Some(chunk) = job.chunks.pop_front() {
-                let pcm = trim(chunk)?;
+                let pcm = if job.priority == Priority::Dictation {
+                    padded(chunk)
+                } else {
+                    if heard_speech(&chunk, job.gain)? {
+                        chunk
+                    } else {
+                        Vec::new()
+                    }
+                };
                 if !pcm.is_empty() {
                     let run = RunOptions {
                         language: (job.selected.language != "auto")
@@ -523,6 +592,69 @@ fn run(
             }
             Ok(()) => pending.push(job),
         }
+    }
+}
+
+#[cfg(test)]
+mod audio_level_tests {
+    use super::*;
+
+    #[test]
+    fn a_short_dictation_is_padded_and_an_empty_one_stays_empty() {
+        let short = padded(vec![0.5; 4_000]);
+        assert_eq!(short.len(), SHORT_CLIP_PADDED);
+        assert_eq!(short[3_999], 0.5);
+        assert_eq!(short[4_000], 0.0);
+        assert!(padded(Vec::new()).is_empty());
+        assert_eq!(padded(vec![0.5; SHORTEST_CLIP]).len(), SHORTEST_CLIP);
+    }
+
+    #[test]
+    fn a_quiet_voice_is_raised_and_a_loud_one_left_alone() {
+        assert_eq!(speech_gain(&[0.0; 1_024]), 1.0);
+        assert_eq!(speech_gain(&[0.5; 1_024]), 1.0);
+        assert!((speech_gain(&[0.01; 1_024]) - 10.0).abs() < 0.01);
+        assert_eq!(speech_gain(&[0.000_01; 1_024]), MOST_GAIN);
+    }
+
+    #[test]
+    fn a_silent_lead_in_does_not_hide_a_quiet_voice() {
+        let mut clip = vec![0.0; 256 * 99];
+        clip.extend(vec![0.01; 256]);
+        assert!((speech_gain(&clip) - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_model_gets_a_recording_at_its_original_level() {
+        let mut clip = vec![0.01; 25_600];
+        clip[0] = 0.5;
+        let gain = speech_gain(&clip);
+        let chunks = speech_chunks(clip, gain).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!((chunks[0][0] - 0.5).abs() < 0.000_1);
+        assert!((chunks[0][25_000] - 0.01).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn a_loud_voice_near_the_microphone_does_not_hide_the_lecturer() {
+        let mut clip = vec![0.002; 7_000];
+        clip.extend(vec![0.5; 3_000]);
+        assert!((speech_gain(&clip) - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn digital_silence_has_no_speech_in_it() {
+        assert!(!heard_speech(&[0.0; 32_000], 1.0).unwrap());
+    }
+
+    #[test]
+    fn shaders_are_prepared_once_per_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(SHADERS_MARKER);
+        assert!(!shaders_ready(&marker, "1.0.0"));
+        std::fs::write(&marker, "1.0.0").unwrap();
+        assert!(shaders_ready(&marker, "1.0.0"));
+        assert!(!shaders_ready(&marker, "1.0.1"));
     }
 }
 

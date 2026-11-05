@@ -90,10 +90,21 @@ test('Updates renders ready, busy and release notes safely with independent defa
   assert.ok(html.includes('at startup and every hour'));
   assert.ok(html.includes('same installed app'));
   assert.ok(html.includes('Updates wait for recording and dictation to finish.'));
+  assert.ok(html.includes('Leo reopens after every update'));
   assert.ok(html.includes('Finish recording or dictation'));
   assert.ok(html.includes('checked'));
   assert.equal((html.match(/role="switch"/g) || []).length, 2);
   assert.ok(!html.includes('<script>'));
   assert.ok(html.includes('Accessibility'));
   assert.ok(html.includes('leo update') && html.includes('leo uninstall'));
+});
+
+test('a native quit confirmation explains both ways to quit without navigating', async () => {
+  const messages = [];
+  const window = {};
+  const events = fs.readFileSync(path.join(__dirname, '../src/web/app/events.js'), 'utf8');
+  vm.runInNewContext(events.slice(events.indexOf('const APP_SETTINGS =')), { window, toast: text => messages.push(text), go: () => assert.fail('Quit must keep the current page') });
+  await window.leoFromApp('quit', '');
+  assert.equal(messages.length, 1);
+  assert.ok(messages[0].includes('⌘Q again') && messages[0].includes('Quit again') && messages[0].includes('3 seconds'));
 });

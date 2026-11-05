@@ -13,7 +13,7 @@ window.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && ['j', 'k'].includes(e.key.toLowerCase())) {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
     e.preventDefault();
     toggleQuickLeo();
     return;
@@ -46,10 +46,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === '/') {
-    e.preventDefault();
-    toggleQuickLeo();
-  } else if (e.key === 'n' && state.view === 'folder') {
+  if (e.key === 'n' && state.view === 'folder') {
     go(state.dir ? `#/new/${enc(state.dir)}` : '#/new');
   }
 });
@@ -355,6 +352,7 @@ document.addEventListener('paste', (e) => {
 // Start on the Record page; one already running is just shown.
 const APP_SETTINGS = ['general', 'updates'];
 window.leoFromApp = async (what, which) => {
+  if (what === 'quit') return toast('Press ⌘Q again or choose Quit again within 3 seconds to quit Leo.');
   if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
   if (what !== 'record' || !['microphone', 'call'].includes(which)) return;
   if (recorder.active()) return go('#/record');
