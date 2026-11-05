@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 function helpers(listeners = {}) {
-  const context = { Event, esc: value => String(value).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), localStorage: { getItem: () => 'dictation', setItem() {} }, document: { addEventListener: (type, handler) => (listeners[type] = listeners[type] || []).push(handler) }, app: { querySelector: () => null }, svg: paths => `<svg>${paths}</svg>`, ICON: {} };
+  const context = { Event, esc: value => String(value).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), localStorage: { getItem: () => 'dictation', setItem() {} }, document: { addEventListener: (type, handler) => (listeners[type] = listeners[type] || []).push(handler) }, app: { querySelector: () => null }, svg: paths => `<svg>${paths}</svg>`, ICON: {}, stillMotion: () => false };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), context);
   return context;
@@ -130,4 +130,10 @@ test('a reset button shows only while the value differs and names its setting', 
   const shown = h.settingReset('Note width', 'width', true), hidden = h.settingReset('Note width', 'width', false);
   assert.ok(shown.includes(' data-on ') && !hidden.includes('data-on'));
   for (const html of [shown, hidden]) assert.ok(html.includes('data-action="setting-reset" data-reset="width" aria-label="Reset Note width to default"'));
+});
+
+test('Settings motion asks stillMotion, the one place that reads Reduced Motion', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8');
+  assert.ok(!source.includes('prefers-reduced-motion'));
+  assert.ok(source.includes('stillMotion()'));
 });

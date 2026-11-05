@@ -163,7 +163,7 @@ function seekSettingsTarget(entry) {
 }
 function arriveAtSetting(target) {
   if (!target.isConnected) return;
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const still = stillMotion();
   if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
   target.scrollIntoView({ block: 'center' });
   target.focus({ preventScroll: true });
@@ -235,7 +235,7 @@ function placeSettingsPill(nav, on) {
   pill.style.transform = `translateY(${on.offsetTop}px)`;
   pill.style.height = `${on.offsetHeight}px`;
   pill.classList.add('placed');
-  if (!from || Math.abs(from.top - on.offsetTop) < 1 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (!from || Math.abs(from.top - on.offsetTop) < 1 || stillMotion()) return;
   pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.22, 1, .36, 1)' });
 }
 
@@ -324,9 +324,6 @@ document.addEventListener('keydown', (e) => {
   pickSegment(options[next]);
 });
 
-// Cards for a choice that deserves a picture: real radios under a title, a sentence and an
-// optional diagram. One ring glides to the picked card; a hidden `field` carries the value and
-// fires `change`, like `segmented`. Choices are [value, title, description, diagram].
 let choiceCardsMade = 0;
 function choiceCards({ label, choices, current, field = '' }) {
   const name = `choice-${++choiceCardsMade}`;
@@ -360,7 +357,6 @@ document.addEventListener('change', (e) => {
   if (field) field.dispatchEvent(new Event('change', { bubbles: true }));
 });
 
-// A small reset button that shows only while the value differs from its default.
 function settingReset(label, key, differs) {
   return `<button type="button" class="set-reset"${differs ? ' data-on' : ''} data-action="setting-reset" data-reset="${esc(key)}" aria-label="Reset ${esc(label)} to default" title="Reset to default">${svg('<path d="M4 9h11a5 5 0 0 1 0 10h-4"/><path d="M8 5L4 9l4 4"/>')}</button>`;
 }

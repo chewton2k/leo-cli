@@ -681,8 +681,6 @@
     for (const { name, value } of to.attributes) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
   }
 
-  // Makes `from` hold what `to` holds while keeping every node that already matches, so a reply that
-  // grows does not redraw its finished text (the selection survives) and only new words arrive.
   function settle(from, to, arrives) {
     const was = runs(from);
     const now = runs(to);
