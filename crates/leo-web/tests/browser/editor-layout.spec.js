@@ -699,6 +699,8 @@ test('typing a list or checklist marker renders it at once and keeps the caret i
     await page.goto(url);
     await page.locator('#doc .blk').first().click();
     const area = page.locator('#doc textarea');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
     await page.keyboard.type('- ');
     await expect(page.locator('#doc li')).toHaveCount(1);
     await expect(area).toBeFocused();
@@ -706,7 +708,7 @@ test('typing a list or checklist marker renders it at once and keeps the caret i
     await expect(page.locator('#doc .task-item input[data-box]')).toHaveCount(1);
     await page.keyboard.type('buy milk');
     await expect(area).toHaveValue('buy milk');
-    expect(await page.evaluate(() => doc.source())).toBe('- [ ] buy milk');
+    expect(await page.evaluate(() => doc.source())).toBe('Start\n- [ ] buy milk');
     await area.evaluate(el => el.setSelectionRange(0, 0));
     await page.keyboard.press('Backspace');
     await expect(page.locator('#doc li')).toHaveCount(0);

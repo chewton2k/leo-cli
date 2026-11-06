@@ -75,7 +75,7 @@
           method: 'PATCH', body: { ...edit, base: s.note.version },
         });
       } catch (error) {
-        if (error.status !== 409 && error.status !== 404) throw error;
+        if (error.status !== 409) throw error;
         const title = `${edit.title} (conflict from leo)`;
         const note = await api('/api/notes', { method: 'POST', body: { ...edit, title, directory: s.note.directory } });
         s.edit.title = `${s.edit.title} (conflict from leo)`;

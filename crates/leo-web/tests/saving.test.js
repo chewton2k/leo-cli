@@ -77,23 +77,6 @@ test('a recovered draft uses its original base so external edits create a confli
   assert.equal(local.length, 0);
 });
 
-test('a draft whose note was deleted elsewhere becomes a new note instead of failing forever', async () => {
-  const local = storage();
-  const old = manager(async () => {}, local);
-  old.changed(old.open(note()), edit('Kept words'));
-  const requests = [];
-  const m = manager(async (path, options) => {
-    requests.push({ path, ...options });
-    if (options.method === 'PATCH') throw Object.assign(new Error('gone'), { status: 404 });
-    return { ...note(), ...options.body, id: 'copy', version: 'copy-v1' };
-  }, local);
-  await m.flush(m.open(note()));
-  assert.equal(requests[1].method, 'POST');
-  assert.equal(requests[1].body.body, 'Kept words');
-  assert.equal(m.unsaved(), false);
-  assert.equal(local.length, 0);
-});
-
 test('offline new-note drafts recover with their folder and tags', async () => {
   const local = storage();
   const m = manager(async () => { throw new Error('offline'); }, local);

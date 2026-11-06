@@ -78,6 +78,7 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await expect(page.locator('#margin-mode')).toBeEnabled();
+    await page.waitForFunction(() => document.querySelector('.note-columns').dataset.margin);
     if (threads.length) await page.waitForFunction(() => document.querySelector('.margin-ink path.squiggle'));
     await run(page);
     expect(errors).toEqual([]);

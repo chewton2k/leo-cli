@@ -27,7 +27,9 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
   meaning vectors, note connections, calendar feeds, note-task metadata,
-  reading positions. Writes touch only what changed.
+  reading positions. Old caption, graph and meaning JSON files are brought
+  in on first open and renamed `*.before-database` (the browser tests seed the
+  note connections this way). Writes touch only what changed.
 
 ## Serving and security
 
@@ -812,8 +814,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   while a preview or save is pending, and a failed save redraws the saved
   values. Restore tasks is a real button; a zip or a file without task ids is
   refused with what to pick instead. A card lists edits kept in this window
-  that could not be saved, with Try again and Discard (`saving.discardAll`); a
-  draft whose note is gone (404) is saved as a new note like a conflict.
+  that could not be saved, with Try again and Discard (`saving.discardAll`).
   Forever deletes nothing. Expiry runs when the engine starts (`start_in`),
   once a day (held in `Background`, stopped with the engine) and right after
   POST `/api/keep` (`keeping::expire_now`): uploads (files under

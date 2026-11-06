@@ -2097,7 +2097,7 @@ test.describe('export and this browser', () => {
 test.describe('advanced settings', () => {
   test('chooses how long each kind of data is kept, asking before deleting sooner', async ({ page }) => {
     await page.goto('/#/settings/keeping');
-    await expect(page).toHaveURL(/#\/settings\/storage$/);
+    await expect(page).toHaveURL(/#\/settings\/keeping$/);
     await expect(page.getByRole('heading', { level: 1, name: 'Keeping' })).toBeVisible();
     await expect(page.locator('select[data-keep]')).toHaveCount(5);
     const trash = page.locator('select[data-keep="trash_days"]');

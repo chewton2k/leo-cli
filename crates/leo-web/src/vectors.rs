@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use base64::Engine;
 use leo_core::notes::Note;
 use leo_core::store::Store;
+use serde::{Deserialize, Serialize};
 
 pub type Meaning = Arc<dyn Fn(&[String], bool) -> Result<Vec<Vec<f32>>> + Send + Sync>;
 
@@ -21,6 +23,18 @@ pub type Near = BTreeMap<String, std::collections::BTreeSet<String>>;
 pub struct Entry {
     pub hash: String,
     pub pieces: Vec<(usize, Vec<f32>)>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct OnDisk {
+    #[serde(default)]
+    notes: BTreeMap<String, Stored>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Stored {
+    hash: String,
+    pieces: Vec<(usize, String)>,
 }
 
 pub struct Vectors {
@@ -42,6 +56,14 @@ fn from_blob(bytes: &[u8]) -> Option<Vec<f32>> {
             .map(|c| f32::from_le_bytes(*c))
             .collect()
     })
+}
+
+fn decode(text: &str) -> Option<Vec<f32>> {
+    from_blob(
+        &base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .ok()?,
+    )
 }
 
 pub fn hash_of(note: &Note) -> String {
@@ -108,6 +130,28 @@ impl Vectors {
 
     pub fn at(path: PathBuf) -> Vectors {
         let db = crate::db::beside(&path);
+        let old: Option<OnDisk> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
+        if let Some(old) = old {
+            let saved = db.with(|c| {
+                let tx = c.transaction()?;
+                for (id, stored) in &old.notes {
+                    for (at, v) in &stored.pieces {
+                        if let Some(v) = decode(v) {
+                            tx.execute(
+                                "INSERT OR REPLACE INTO vectors (note, at, hash, v) VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![id, *at as i64, stored.hash, to_blob(&v)],
+                            )?;
+                        }
+                    }
+                }
+                tx.commit()
+            });
+            if saved.is_ok() {
+                crate::db::put_aside(&path);
+            }
+        }
         let rows: Vec<(String, i64, String, Vec<u8>)> = db
             .with(|c| {
                 let mut found =
