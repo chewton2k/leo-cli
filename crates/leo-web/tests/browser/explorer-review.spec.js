@@ -33,7 +33,7 @@ async function moveChoices(page, row) {
 }
 async function menuFor(page, locator) {
   await locator.dispatchEvent('contextmenu', { clientX: 200, clientY: 300 });
-  await expect(page.locator('.explorer-menu')).toBeVisible();
+  await expect(page.locator('.popup-menu')).toBeVisible();
 }
 const items = (page) => page.getByRole('menuitem').allTextContents();
 async function folders(page) {
@@ -162,7 +162,7 @@ test('opening a context menu never selects a folder or changes the open note', a
   await openNote(page, current);
   const before = page.url();
   await folderRow(page, dir).click({ button: 'right' });
-  await expect(page.locator('.explorer-menu')).toBeVisible();
+  await expect(page.locator('.popup-menu')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(folderRow(page, dir)).not.toHaveAttribute('aria-current', 'page');
   await expect(page.locator('#side .side-group [data-action="new"]')).toHaveAttribute('data-dir', '');

@@ -135,7 +135,7 @@ test('explorer keyboard menu clamps to the viewport and blank space cannot delet
   expect(menu.y + menu.height).toBeLessThanOrEqual(viewport.height);
   await page.keyboard.press('Escape');
   await page.locator('#title').click({ button: 'right' });
-  await expect(page.locator('.explorer-menu')).toHaveCount(0);
+  await expect(page.locator('.popup-menu')).toHaveCount(0);
 });
 
 for (const width of [390, 900]) test(`compact Folders at ${width} shares rows, traps focus and returns to More`, async ({ page }, testInfo) => {

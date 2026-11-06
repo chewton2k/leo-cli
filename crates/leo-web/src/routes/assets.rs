@@ -10,6 +10,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/browse.js"),
     include_str!("../web/app/trash.js"),
     include_str!("../web/app/settings-navigation.js"),
+    include_str!("../web/app/popup-menu.js"),
     include_str!("../web/app/select-menu.js"),
     include_str!("../web/app/settings.js"),
     include_str!("../web/app/dictation.js"),

@@ -31,8 +31,8 @@ const actions = {
     go('#/boards');
   },
   'kanban-new-board': () => kanbanNewBoard(),
-  'kanban-board-menu': () => kanbanBoardMenu(),
-  'kanban-column-menu': (el) => kanbanColumnMenu(el.dataset.col),
+  'kanban-board-menu': kanbanBoardMenu,
+  'kanban-column-menu': kanbanColumnMenu,
   'kanban-add-card': (el) => kanbanComposer(el.dataset.col),
   'kanban-add-column': () => kanbanAddColumn(),
   'kanban-open-card': (el) => kanbanCardPanel(el.dataset.card),

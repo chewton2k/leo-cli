@@ -129,7 +129,7 @@ function kanbanColumnHtml(column) {
     <header class="kanban-col-head" title="Drag to move this column">
       <input class="kanban-col-name" data-kanban-name="${esc(column.id)}" value="${esc(column.name)}" size="${column.name.length + 1}" maxlength="80" aria-label="Column name" spellcheck="false" autocomplete="off">
       <span class="badge kanban-count" data-count-col="${esc(column.id)}">${cards.length}</span>
-      <button class="icon-btn kanban-col-more" data-action="kanban-column-menu" data-col="${esc(column.id)}" aria-label="Options for ${esc(column.name)}" title="Column options">${ICON.more}</button>
+      <button class="icon-btn kanban-col-more" data-action="kanban-column-menu" data-col="${esc(column.id)}" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ${esc(column.name)}" title="Column options">${ICON.more}</button>
     </header>
     <div class="kanban-cards" data-col="${esc(column.id)}">${cards.map(kanbanCardHtml).join('')}</div>
     <button class="kanban-add-card" data-action="kanban-add-card" data-col="${esc(column.id)}">${ICON.plus}<span>Add card</span></button>
@@ -152,7 +152,7 @@ function kanbanHeadHtml() {
     <label class="select-control kanban-more" hidden><select id="kanban-switch" aria-label="More boards"></select>${ICON.chevron}</label>
     <button class="icon-btn kanban-tab-new" data-action="kanban-new-board" aria-label="New board" title="New board">${ICON.plus}</button>
     ${kanban.board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="btn plain sm kanban-add-col" data-action="kanban-add-column" title="Add column">${ICON.plus}<span>Add column</span></button>` : ''}
-    <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
+    <button class="icon-btn" data-action="kanban-board-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Board options" title="Board options">${ICON.more}</button>
   </header>`;
 }
 
@@ -215,7 +215,7 @@ function drawKanban() {
   const typing = active?.dataset.kanbanName ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
   const composers = [...app.querySelectorAll('.kanban-composer')].map((form) => {
     const text = form.querySelector('textarea');
-    return { column: form.dataset.composer, text: text.value, start: text.selectionStart, end: text.selectionEnd, focus: text === active };
+    return { column: form.dataset.composer, text: text.value, start: text.selectionStart, end: text.selectionEnd, focus: text === active, priority: form.querySelector('.segment.on').dataset.priority };
   });
   let host = app.querySelector('.kanban-board');
   if (!host) {
@@ -386,84 +386,74 @@ async function kanbanSaveColumns(columns, moveTo = null) {
   return true;
 }
 
-function kanbanColumnMenu(id) {
+function kanbanMenuPoint(owner) {
+  const bounds = owner.getBoundingClientRect();
+  return { x: bounds.left, y: bounds.bottom + 4 };
+}
+
+function kanbanEditName(selector) {
+  const input = app.querySelector(selector);
+  input?.focus();
+  input?.select();
+}
+
+function kanbanColumnMenu(owner) {
+  const id = owner.dataset.col;
   const board = kanban.board;
   const column = kanbanColumn(id);
   if (!column) return;
   const at = board.columns.indexOf(column);
   const count = kanbanCardsIn(id).length;
   const others = board.columns.filter((c) => c.id !== id);
-  const box = sheet(`<h3>${esc(column.name)}</h3>
-    <p class="hint">${count === 1 ? '1 card' : `${count} cards`}</p>
-    <div class="panel kanban-menu">
-      <button type="button" class="list-row" data-kanban="rename">${KANBAN_ICON.pencil}<span class="grow">Rename</span></button>
-      <button type="button" class="list-row" data-kanban="left"${at === 0 ? ' disabled' : ''}>${ICON.back}<span class="grow">Move left</span></button>
-      <button type="button" class="list-row" data-kanban="right"${at === board.columns.length - 1 ? ' disabled' : ''}>${ICON.chevron}<span class="grow">Move right</span></button>
-    </div>
-    ${others.length ? `<div class="kanban-delete-col">
-      ${count ? `<div class="set-row"><span class="set-label">Move its cards to</span><label class="select-control"><select id="kanban-move-to" aria-label="Move its cards to">${others.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
-      <div class="buttons"><button type="button" class="btn plain danger" data-kanban="delete">${ICON.trash}<span>Delete column</span></button></div>
-    </div>` : '<p class="hint">A board keeps at least one column.</p>'}`);
-  box.addEventListener('click', (e) => {
-    const button = e.target.closest('[data-kanban]');
-    if (!button || button.disabled) return;
-    const what = button.dataset.kanban;
-    if (what === 'rename') {
-      closeSheet(true);
-      const input = app.querySelector(`[data-kanban-name="${CSS.escape(id)}"]`);
-      input?.focus();
-      input?.select();
-      return;
-    }
-    const columns = [...board.columns];
-    if (what === 'left' || what === 'right') {
-      const to = at + (what === 'left' ? -1 : 1);
-      [columns[at], columns[to]] = [columns[to], columns[at]];
-      closeSheet();
-      kanbanSaveColumns(columns).catch(fail);
-    } else if (what === 'delete') {
-      const target = $('#kanban-move-to', box)?.value || null;
-      closeSheet();
-      kanbanSaveColumns(columns.filter((c) => c.id !== id), target).then((saved) => {
-        if (!saved) return;
-        toast(count ? `Deleted “${column.name}” and moved its cards to “${kanbanColumn(target)?.name || 'another column'}”` : `Deleted “${column.name}”`);
-      }).catch(fail);
-    }
+  const shift = (by) => {
+    const columns = [...kanban.board.columns];
+    const from = columns.findIndex((c) => c.id === id);
+    if (!columns[from] || !columns[from + by]) return;
+    [columns[from], columns[from + by]] = [columns[from + by], columns[from]];
+    return kanbanSaveColumns(columns);
+  };
+  const remove = async (target = null) => {
+    const saved = await kanbanSaveColumns(kanban.board.columns.filter((c) => c.id !== id), target);
+    if (saved) toast(count ? `Deleted “${column.name}” and moved its cards to “${kanbanColumn(target)?.name || 'another column'}”` : `Deleted “${column.name}”`);
+  };
+  popupMenu(owner, {
+    label: `Options for ${column.name}`,
+    point: kanbanMenuPoint(owner),
+    rows: [
+      { text: 'Rename', icon: KANBAN_ICON.pencil, run: () => kanbanEditName(`[data-kanban-name="${CSS.escape(id)}"]`) },
+      { text: 'Move left', icon: ICON.back, off: at === 0, run: () => shift(-1) },
+      { text: 'Move right', icon: ICON.chevron, off: at === board.columns.length - 1, run: () => shift(1) },
+      { line: true },
+      {
+        text: 'Delete column',
+        icon: ICON.trash,
+        danger: true,
+        off: !others.length,
+        run: remove,
+        next: count ? [{ note: `Move ${count === 1 ? 'its card' : `its ${count} cards`} to` }, ...others.map((c) => ({ text: c.name, run: () => remove(c.id) }))] : null,
+      },
+    ],
   });
 }
 
-function kanbanBoardMenu() {
+function kanbanBoardMenu(owner) {
   const board = kanban.board;
   if (!board) return;
   const count = kanban.cards.length;
-  const box = sheet(`<h3>${esc(board.name)}</h3>
-    <p class="hint">${count === 1 ? '1 card' : `${count} cards`} · ${board.columns.length === 1 ? '1 column' : `${board.columns.length} columns`}</p>
-    <div class="panel kanban-menu">
-      <button type="button" class="list-row" data-kanban="rename">${KANBAN_ICON.pencil}<span class="grow">Rename board</span></button>
-      <button type="button" class="list-row" data-kanban="column"${board.columns.length >= KANBAN_MOST_COLUMNS ? ' disabled' : ''}>${ICON.plus}<span class="grow">Add column</span></button>
-    </div>
-    <div class="buttons"><button type="button" class="btn plain danger" data-kanban="delete">${ICON.trash}<span>Delete board</span></button></div>`);
-  box.addEventListener('click', (e) => {
-    const button = e.target.closest('[data-kanban]');
-    if (!button || button.disabled) return;
-    const what = button.dataset.kanban;
-    if (what === 'rename') {
-      closeSheet(true);
-      const input = app.querySelector('[data-kanban-name="board"]');
-      input?.focus();
-      input?.select();
-    } else if (what === 'column') {
-      closeSheet(true);
-      kanbanAddColumn().catch(fail);
-    } else if (what === 'delete') {
-      if (button.dataset.sure !== '1') {
-        button.dataset.sure = '1';
-        button.querySelector('span').textContent = count ? `Delete the board and its ${count === 1 ? 'card' : `${count} cards`}` : 'Delete the board';
-        return;
-      }
-      closeSheet();
-      kanbanDeleteBoard(board).catch(fail);
-    }
+  popupMenu(owner, {
+    label: 'Board options',
+    point: kanbanMenuPoint(owner),
+    rows: [
+      { text: 'Rename board', icon: KANBAN_ICON.pencil, run: () => kanbanEditName('[data-kanban-name="board"]') },
+      { text: 'Add column', icon: ICON.plus, off: board.columns.length >= KANBAN_MOST_COLUMNS, run: kanbanAddColumn },
+      { line: true },
+      {
+        text: 'Delete board',
+        icon: ICON.trash,
+        danger: true,
+        next: [{ text: count ? `Delete the board and its ${count === 1 ? 'card' : `${count} cards`}` : 'Delete the board', icon: ICON.trash, danger: true, run: () => kanbanDeleteBoard(board) }],
+      },
+    ],
   });
 }
 
@@ -477,7 +467,16 @@ async function kanbanDeleteBoard(board) {
   go(left.length ? `#/boards/${enc(left[0].id)}` : '#/boards', { replace: true });
 }
 
-function kanbanComposer(columnId, { text: typed = '', start = null, end = null, focus = true } = {}) {
+function kanbanPriorityPick(chip) {
+  const box = chip.closest('.segmented');
+  for (const c of box.querySelectorAll('[data-priority]')) {
+    c.classList.toggle('on', c === chip);
+    c.setAttribute('aria-pressed', String(c === chip));
+  }
+  syncSegmented(box);
+}
+
+function kanbanComposer(columnId, { text: typed = '', start = null, end = null, focus = true, priority: chosen = '' } = {}) {
   const column = app.querySelector(`.kanban-col[data-col="${CSS.escape(columnId)}"]`);
   const button = column?.querySelector('.kanban-add-card');
   if (!button || !kanban.board) return;
@@ -486,7 +485,7 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
   const form = document.createElement('div');
   form.className = 'kanban-composer';
   form.dataset.composer = columnId;
-  form.innerHTML = `<textarea class="set-input" rows="2" maxlength="300" placeholder="What needs doing?" aria-label="New card title"></textarea><div class="kanban-composer-row"><button type="button" class="btn sm primary" data-kanban="add">Add card</button><button type="button" class="btn sm plain" data-kanban="cancel">Cancel</button></div>`;
+  form.innerHTML = `<textarea class="set-input" rows="2" maxlength="300" placeholder="What needs doing?" aria-label="New card title"></textarea>${segmented({ label: 'Priority', action: 'kanban-priority', key: 'priority', current: chosen, choices: KANBAN_PRIORITIES })}<div class="kanban-composer-row"><button type="button" class="btn sm primary" data-kanban="add">Add card</button><button type="button" class="btn sm plain" data-kanban="cancel">Cancel</button></div>`;
   button.replaceWith(form);
   const text = form.querySelector('textarea');
   // Cards save one after another, so typing the next one while the last saves loses nothing.
@@ -497,9 +496,9 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
     form.replaceWith(button);
     button.focus({ preventScroll: true });
   };
-  const post = async (title) => {
+  const post = async (title, priority) => {
     try {
-      const card = await api(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId } });
+      const card = await api(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId, priority } });
       const tab = kanban.boards.find((b) => b.id === boardId);
       if (kanban.board?.id !== boardId) { if (tab) tab.cards = (tab.cards || 0) + 1; return; }
       if (kanbanCard(card.id)) return;
@@ -514,27 +513,39 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
     } catch (e) {
       if (e instanceof Locked) throw e;
       const open = app.querySelector(`.kanban-composer[data-composer="${CSS.escape(columnId)}"] textarea`);
-      if (kanban.board?.id === boardId && open && !open.value.trim()) open.value = title;
+      if (kanban.board?.id === boardId && open && !open.value.trim()) {
+        open.value = title;
+        kanbanPriorityPick(open.parentElement.querySelector(`[data-priority="${priority}"]`));
+      }
       toast(e.message, { bad: true });
     }
   };
   const add = () => {
     const title = text.value.replace(/\s+/g, ' ').trim();
     if (!title) { text.focus(); return Promise.resolve(); }
+    const priority = form.querySelector('.segment.on').dataset.priority;
     text.value = '';
+    kanbanPriorityPick(form.querySelector('[data-priority=""]'));
     text.focus();
     waiting++;
-    queue = queue.then(() => post(title)).finally(() => { waiting--; });
+    queue = queue.then(() => post(title, priority)).finally(() => { waiting--; });
     return queue;
   };
+  form.addEventListener('mousedown', (e) => {
+    if (e.target !== text) e.preventDefault();
+  });
   form.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-priority]');
+    if (chip) kanbanPriorityPick(chip);
     const what = e.target.closest('[data-kanban]')?.dataset.kanban;
     if (what === 'add') add().catch(fail);
     else if (what === 'cancel') close();
   });
+  form.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  });
   text.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); add().catch(fail); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
   });
   form.addEventListener('focusout', (e) => {
     if (!form.contains(e.relatedTarget) && !text.value.trim() && !waiting) setTimeout(() => { if (form.isConnected && !form.contains(document.activeElement)) close(); }, 0);
@@ -669,11 +680,7 @@ function kanbanCardPanel(id) {
     try {
       const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { priority: chip.dataset.priority } });
       kanbanUpdate(card, done);
-      for (const c of box.querySelectorAll('[data-priority]')) {
-        c.classList.toggle('on', c === chip);
-        c.setAttribute('aria-pressed', String(c === chip));
-      }
-      syncSegmented(chip.closest('.segmented'));
+      kanbanPriorityPick(chip);
     } catch (err) {
       if (err instanceof Locked) throw err;
       toast(err.message, { bad: true });

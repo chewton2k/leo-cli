@@ -180,7 +180,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `{x, y}`; `popEdge` puts the origin at the nearest point of the menu, upward menus reveal and close
   from their bottom edge. They start at .95 and keep the clip reveal; a click during the entrance lands
   on what is drawn. The margin menu and the outline run their own reversible animations with the same
-  values. A closing context menu takes `.explorer-menu-gone` and `aria-hidden`, so lookups see one menu.
+  values. A closing context menu takes `.popup-menu-gone` and `aria-hidden`, so lookups see one menu.
 - Stagger: `cascade(list)` staggers direct children by 30 ms (capped at 150) on first arrival only,
   never on a re-render; `cascade(el, 'settling')` and the CSS for sheets, `.settings-section.arrive`,
   the chat panel and margin replies bring inner groups in 30 and 60 ms apart. Board lanes and cards
@@ -871,10 +871,10 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   Cards show the title (three lines at most), the muted subheading, two lines of the
   description when there is one (`.kanban-has-text`) and the priority arrow top right. Add
   card sits directly under the last card; its composer stays open for the next card (adds
-  are queued so fast typing loses nothing). A redraw keeps each lane's scroll. ⋯ sheets for
-  a column (rename, move left/right, delete moving its cards) and the board (rename, add
-  column, delete with a second press, Undo). Under 600 px lanes are 82vw and snap, and Add
-  column lives in the ⋯ sheet. A card opens in a side panel beside the board like a note
+  are queued so fast typing loses nothing). A redraw keeps each lane's scroll. ⋯ opens the shared `popupMenu`, the explorer's
+  menu, for a column (rename, move left/right, delete moving its cards) and the board
+  (rename, add column, delete with a second press, Undo). Add card picks a priority (reset
+  after each card). Under 600 px lanes are 82vw and snap, and Add column lives in the ⋯ menu. A card opens in a side panel beside the board like a note
   (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board redraws, a
   full-screen layer under 760 px): title, subheading, status and board (the shared select
   menu), priority (`segmented`, `data-priority`), a borderless description (autosave after

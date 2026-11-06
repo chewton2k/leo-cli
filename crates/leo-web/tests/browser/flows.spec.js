@@ -1711,7 +1711,7 @@ test.describe('folders', () => {
     await expect(row(`${top}/week1`)).toBeVisible();
     await row(`${top}/week1`).hover();
     await row(`${top}/week1`).click({ button: 'right' });
-    await page.locator('.explorer-menu [data-explorer-action="folder"]').click();
+    await page.getByRole('menuitem', { name: 'New folder here' }).click();
     await expect(page.locator('.sheet h3')).toHaveText('New folder in week1');
     await page.locator('#folder-name').fill('lab');
     await page.locator('[data-action="create-folder"]').click();

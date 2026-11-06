@@ -435,19 +435,6 @@ async function openExplorerNote(el) {
   } catch (error) { if (current()) fail(error); }
 }
 
-let explorerPopup = null;
-function closeExplorerMenu(focus = true) {
-  if (!explorerPopup) return;
-  const { box, owner } = explorerPopup;
-  explorerPopup = null;
-  box.inert = true;
-  box.setAttribute('aria-hidden', 'true');
-  box.className = 'explorer-menu-gone';
-  fold(box, () => box.remove());
-  if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'false');
-  if (focus && owner.isConnected) owner.focus({ preventScroll: true });
-}
-
 function explorerTarget(el) {
   const note = el.closest('.side-note-wrap')?.querySelector('.side-note');
   if (note) return { kind: 'note', id: note.dataset.id, dir: note.dataset.from || '' };
@@ -458,42 +445,17 @@ function explorerTarget(el) {
 }
 
 function explorerMenu(el, event = null) {
-  closeExplorerMenu(false);
+  closePopup(false);
   const target = Object.freeze(explorerTarget(el));
   const owner = el.closest('button') || el.closest('.side-tree, .side-group');
   if (!owner) return;
-  const box = document.createElement('div');
-  box.className = 'explorer-menu';
-  box.setAttribute('role', 'menu');
-  box.setAttribute('aria-label', target.kind === 'note' ? 'Note options' : 'Folder options');
   const rows = target.kind === 'note'
     ? [['open', 'Open'], ['rename', 'Rename'], ['move', 'Move'], ['trash', 'Move to trash']]
     : [['new', target.dir ? 'New note here' : 'New note'], ['folder', target.dir ? 'New folder here' : 'New folder'], ...(target.kind === 'folder' && target.dir ? [['rename', 'Rename'], ['move', 'Move'], ['trash', 'Move to trash']] : [])];
-  box.innerHTML = rows.map(([action, label]) => `<button type="button" role="menuitem" data-explorer-action="${action}">${label}</button>`).join('');
-  document.body.appendChild(box);
-  if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'true');
-  const bounds = owner.getBoundingClientRect();
-  box.style.left = `${Math.max(8, Math.min(event?.clientX ?? bounds.right, innerWidth - box.offsetWidth - 8))}px`;
-  box.style.top = `${Math.max(8, Math.min(event?.clientY ?? bounds.bottom, innerHeight - box.offsetHeight - 8))}px`;
-  explorerPopup = { box, owner, target };
-  unfold(box, event ? { x: event.clientX, y: event.clientY } : owner);
-  const buttons = [...box.querySelectorAll('button')];
-  buttons[0].focus();
-  box.addEventListener('click', (e) => {
-    const action = e.target.closest('[data-explorer-action]')?.dataset.explorerAction;
-    if (!action) return;
-    closeExplorerMenu();
-    explorerAction(action, target).catch(fail);
-  });
-  box.addEventListener('keydown', (e) => {
-    const at = buttons.indexOf(document.activeElement);
-    let next;
-    if (e.key === 'ArrowDown') next = (at + 1) % buttons.length;
-    else if (e.key === 'ArrowUp') next = (at + buttons.length - 1) % buttons.length;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = buttons.length - 1;
-    else if (e.key === 'Escape' || e.key === 'Tab') { closeExplorerMenu(); e.preventDefault(); e.stopPropagation(); return; }
-    if (next !== undefined) { e.preventDefault(); buttons[next].focus(); }
+  popupMenu(owner, {
+    label: target.kind === 'note' ? 'Note options' : 'Folder options',
+    point: event && { x: event.clientX, y: event.clientY },
+    rows: rows.map(([action, text]) => ({ text, run: () => explorerAction(action, target) })),
   });
 }
 
@@ -508,11 +470,6 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
   explorerMenu(event.target);
 });
-document.addEventListener('pointerdown', (event) => {
-  if (explorerPopup && !explorerPopup.box.contains(event.target)) closeExplorerMenu(false);
-});
-addEventListener('hashchange', () => closeExplorerMenu(false));
-
 function explorerFocus(at) {
   const host = $('#folders-sheet') || $('#side');
   if (!host || !at) return null;

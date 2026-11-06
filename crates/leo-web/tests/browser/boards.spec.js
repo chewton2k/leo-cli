@@ -63,9 +63,10 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
     ${core.slice(core.indexOf('const moving'), core.indexOf('function rel('))}
     ${read('app/motion.js')}
+    ${read('app/popup-menu.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/boards.js')}
-    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
+    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':kanbanBoardMenu,'kanban-column-menu':kanbanColumnMenu,'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     async function route(){closeSheet(true);const m=location.hash.match(/^#\\/boards\\/?(.*)$/);if(!m){leaveBoards();state={view:'other'};app.innerHTML='<p id="elsewhere">Elsewhere</p>';return;}await showBoards(decodeURIComponent(m[1]));}
@@ -251,8 +252,9 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
 
     // Deleting To do moves its two cards to the column picked.
     await page.locator('[data-action="kanban-column-menu"][data-col="ktodo00001"]').click();
-    await page.locator('#kanban-move-to').selectOption({ label: 'Waiting' });
-    await page.locator('.scrim [data-kanban="delete"]').click();
+    await page.getByRole('menuitem', { name: 'Delete column' }).click();
+    await expect(page.locator('.popup-menu p')).toHaveText('Move its 2 cards to');
+    await page.getByRole('menuitem', { name: 'Waiting' }).click();
     await expect(page.locator('.kanban-col')).toHaveCount(3);
     await expect.poll(() => page.evaluate(() => window.db.cards.filter(c => c.board === 'bwork00001' && c.column !== 'kdoing0001').map(c => c.title))).toEqual(['Write essay', 'Read chapter 3']);
 
@@ -264,13 +266,65 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
     await expect(page.locator('.kanban-card')).toHaveCount(0);
 
     await page.locator('[data-action="kanban-board-menu"]').click();
-    await page.locator('.scrim [data-kanban="delete"]').click();
-    await expect(page.locator('.scrim [data-kanban="delete"]')).toContainText('Delete the board');
-    await page.locator('.scrim [data-kanban="delete"]').click();
+    await page.getByRole('menuitem', { name: 'Delete board' }).click();
+    await page.getByRole('menuitem', { name: 'Delete the board' }).click();
     await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Work');
     await expect(page.locator('.kanban-tab')).toHaveCount(2);
     await page.locator('.toast button').click();
     await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Job search');
+  });
+});
+
+test('column and board options open as a small menu by their button, not a sheet', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const button = page.locator('[data-action="kanban-column-menu"][data-col="kdoing0001"]');
+    await page.locator('.kanban-col').nth(1).hover();
+    await button.click();
+    const menu = page.getByRole('menu', { name: 'Options for In progress' });
+    await expect(menu).toBeVisible();
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    const [box, anchor] = [await menu.boundingBox(), await button.boundingBox()];
+    expect(Math.abs(box.y - anchor.y - anchor.height)).toBeLessThan(8);
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: 'Move left' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.db.boards[0].columns[0].id)).toBe('kdoing0001');
+    await expect(menu).toHaveCount(0);
+
+    await page.locator('[data-action="kanban-board-menu"]').click();
+    await expect(page.getByRole('menu', { name: 'Board options' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.popup-menu')).toHaveCount(0);
+    await expect(page.locator('[data-action="kanban-board-menu"]')).toBeFocused();
+    await page.locator('[data-action="kanban-board-menu"]').click();
+    await page.mouse.click(5, 5);
+    await expect(page.locator('.popup-menu')).toHaveCount(0);
+  });
+});
+
+test('a new card can take a priority, which resets for the next card and survives a redraw', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.locator('[data-action="kanban-add-card"][data-col="ktodo00001"]').click();
+    const composer = page.locator('.kanban-composer');
+    const text = composer.locator('textarea');
+    const box = await composer.boundingBox();
+    const chips = await composer.locator('.segment').evaluateAll(els => els.map(el => el.scrollWidth <= el.clientWidth));
+    expect(chips, `every label fits in a ${box.width}px composer`).toEqual([true, true, true, true]);
+    await composer.getByRole('button', { name: 'High' }).click();
+    await expect(composer).toBeVisible();
+    await expect(text).toBeFocused();
+    await text.fill('Urgent one');
+    await page.evaluate(() => kanbanRefresh());
+    await settled(page);
+    await expect(composer.getByRole('button', { name: 'High' })).toHaveAttribute('aria-pressed', 'true');
+    await text.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.title === 'Urgent one')?.priority)).toBe('high');
+    await expect(page.locator('.kanban-card', { hasText: 'Urgent one' }).locator('.kanban-priority.high')).toHaveCount(1);
+    await expect(composer.getByRole('button', { name: 'None' })).toHaveAttribute('aria-pressed', 'true');
+    await text.fill('Plain one');
+    await text.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.title === 'Plain one')?.priority)).toBe('');
   });
 });
 
@@ -304,7 +358,7 @@ test('a redraw keeps half-typed names and new cards, a failed delete says so, an
     // A column delete that fails keeps the column and does not claim it was deleted.
     await page.locator('[data-action="kanban-column-menu"][data-col="kdone00001"]').click();
     await page.evaluate(() => { window.failNext = 'Leo could not save the board.'; });
-    await page.locator('.scrim [data-kanban="delete"]').click();
+    await page.getByRole('menuitem', { name: 'Delete column' }).click();
     await settled(page);
     await expect(page.locator('.kanban-col')).toHaveCount(3);
     const toasts = await page.evaluate(() => window.toasts.map(t => t.message));

@@ -23,7 +23,7 @@ test('compact note selection honors the latest click in either response order', 
     };
     const source = fs.readFileSync(path.join(__dirname, '../src/web/app/side.js'), 'utf8');
     vm.createContext(context);
-    vm.runInContext('let explorerOpenSeq = 0;\n' + source.slice(source.indexOf('async function openExplorerNote('), source.indexOf('let explorerPopup')), context);
+    vm.runInContext('let explorerOpenSeq = 0;\n' + source.slice(source.indexOf('async function openExplorerNote('), source.indexOf('function explorerTarget(')), context);
     const row = id => ({ dataset: { id }, closest: () => box });
     const first = context.openExplorerNote(row('first'));
     const latest = context.openExplorerNote(row('latest'));
@@ -45,7 +45,7 @@ test('reopening the open note from the Folders sheet waits for its save instead 
   };
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/side.js'), 'utf8');
   vm.createContext(context);
-  vm.runInContext('let explorerOpenSeq = 0;\n' + source.slice(source.indexOf('async function openExplorerNote('), source.indexOf('let explorerPopup')), context);
+  vm.runInContext('let explorerOpenSeq = 0;\n' + source.slice(source.indexOf('async function openExplorerNote('), source.indexOf('function explorerTarget(')), context);
   await context.openExplorerNote({ dataset: { id: 'open' }, closest: () => ({ isConnected: true }) });
   assert.deepEqual(fetched, []);
   assert.deepEqual(went, [['#/n/open', undefined]]);
