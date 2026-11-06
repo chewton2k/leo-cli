@@ -928,3 +928,12 @@ document.addEventListener('change', async (e) => {
 document.addEventListener('pointerdown', (e) => {
   if (!e.target.closest?.('.margin-mode-wrap')) marginModeMenu(false);
 });
+
+function marginShown() {
+  const s = marginPage.s;
+  if (!s || marginPage.mode !== 'along') return;
+  clearTimeout(marginPage.timer);
+  marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE[marginPrefs?.pace] || READ_PAUSE.regular, marginPage.nextRead - Date.now()));
+}
+document.addEventListener('visibilitychange', marginShown);
+window.addEventListener?.('leo-visibility', marginShown);

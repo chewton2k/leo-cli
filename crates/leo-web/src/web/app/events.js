@@ -133,7 +133,8 @@ window.addEventListener(
   { passive: true }
 );
 
-const tellVisible = () => api('/api/visible', { method: 'POST', body: { visible: document.visibilityState !== 'hidden' } }).catch(() => {});
+let toldVisibleAt = Date.now();
+const tellVisible = () => api('/api/visible', { method: 'POST', body: { visible: document.visibilityState !== 'hidden', at: ++toldVisibleAt } }).catch(() => {});
 document.addEventListener('visibilitychange', tellVisible);
 setTimeout(tellVisible, 0);
 

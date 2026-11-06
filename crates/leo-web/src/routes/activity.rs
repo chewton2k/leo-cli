@@ -72,12 +72,21 @@ pub(crate) fn activity_tasks(
 #[derive(serde::Deserialize)]
 pub(crate) struct PageVisible {
     visible: bool,
+    #[serde(default)]
+    at: u64,
 }
 
 pub(crate) async fn page_visible(
     State(state): State<AppState>,
     Json(page): Json<PageVisible>,
 ) -> axum::http::StatusCode {
+    if state
+        .page_seen
+        .fetch_max(page.at, std::sync::atomic::Ordering::AcqRel)
+        > page.at
+    {
+        return axum::http::StatusCode::NO_CONTENT;
+    }
     state
         .covered
         .store(!page.visible, std::sync::atomic::Ordering::Release);

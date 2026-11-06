@@ -86,6 +86,7 @@ async function loadSchedule(mine = seq) {
     cal.polls = 0;
     cal.timer = setTimeout(() => {
       if (appVisible()) loadSchedule(mine);
+      else cal.missed = true;
     }, CAL_POLL_MS);
   }
   if (cal.drag || cal.compose) {
@@ -108,7 +109,11 @@ function calSettled() {
 
 function calendarShown() {
   if (!appVisible()) return;
-  if (state.view === 'calendar' && Date.now() - cal.loadedAt > 120000) loadSchedule(seq);
+  if (state.view === 'calendar' && (cal.missed || Date.now() - cal.loadedAt > 120000)) {
+    cal.missed = false;
+    cal.loadedAt = Date.now();
+    loadSchedule(seq);
+  }
   if (tasksWin.stale) loadTasksWindow().catch(() => {});
 }
 document.addEventListener('visibilitychange', calendarShown);

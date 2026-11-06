@@ -66,6 +66,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),
         covered: Default::default(),
+        page_seen: Default::default(),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
             changes: None,

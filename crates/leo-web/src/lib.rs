@@ -174,6 +174,7 @@ struct AppState {
     visible: Arc<std::sync::atomic::AtomicBool>,
     shown: Arc<tokio::sync::Notify>,
     covered: Arc<std::sync::atomic::AtomicBool>,
+    page_seen: Arc<std::sync::atomic::AtomicU64>,
     refresh_requested: Arc<std::sync::atomic::AtomicBool>,
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
@@ -608,6 +609,7 @@ pub(crate) async fn start_in(
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),
         covered: Default::default(),
+        page_seen: Default::default(),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
             changes: Some(store_refresh::Changes::new(&notes)),

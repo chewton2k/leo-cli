@@ -41,12 +41,17 @@ async fn showing_the_window_reconciles_external_edits_before_the_watcher_deliver
     std::fs::write(notes.join("External.md"), "Outside edit").unwrap();
     let covered =
         |state: &crate::AppState| state.covered.load(std::sync::atomic::Ordering::Acquire);
-    crate::routes::activity::page_visible(
-        axum::extract::State(running.state.clone()),
-        axum::Json(serde_json::from_str(r#"{"visible":false}"#).unwrap()),
-    )
-    .await;
-    assert!(covered(&running.state));
+    for said in [r#"{"visible":false,"at":5}"#, r#"{"visible":true,"at":4}"#] {
+        crate::routes::activity::page_visible(
+            axum::extract::State(running.state.clone()),
+            axum::Json(serde_json::from_str(said).unwrap()),
+        )
+        .await;
+    }
+    assert!(
+        covered(&running.state),
+        "an older message that arrives late changes nothing"
+    );
     assert!(running.set_visible(true));
     assert!(!covered(&running.state));
     let found = running
