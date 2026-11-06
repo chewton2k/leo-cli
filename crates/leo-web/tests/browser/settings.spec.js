@@ -196,7 +196,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)}, saving={drafts:()=>[]};
-    window.errors=[]; window.leoChat={usageRows:()=>[]};
+    window.errors=[]; window.leoChat={usageRows:()=>[],usageWeek:()=>[]};
     const page={tasks:[]};
     let appStatusReads=0;
     async function api(url,options={}) {

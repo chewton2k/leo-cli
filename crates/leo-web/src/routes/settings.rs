@@ -21,7 +21,13 @@ pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
-    match tokio::task::spawn_blocking(move || settings.describe(&notes_dir)).await {
+    let usage = std::sync::Arc::clone(&state.usage);
+    let described = tokio::task::spawn_blocking(move || {
+        let mut page = settings.describe(&notes_dir);
+        page["felix_week"] = serde_json::json!(usage.week());
+        page
+    });
+    match described.await {
         Ok(mut page) => {
             page["felix_usage"] = serde_json::json!(state.usage.snapshot());
             page["felix_tools"] = serde_json::json!(state.usage.tools());
@@ -70,6 +76,7 @@ pub(crate) async fn change_setting(
         settings.apply(&change).map(|message| {
             warm.clear();
             let mut page = settings.describe(&notes_dir);
+            page["felix_week"] = serde_json::json!(usage.week());
             page["felix_usage"] = serde_json::json!(usage.snapshot());
             page["felix_tools"] = serde_json::json!(usage.tools());
             (message, page)

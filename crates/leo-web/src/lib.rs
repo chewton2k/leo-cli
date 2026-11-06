@@ -583,6 +583,7 @@ pub(crate) async fn start_in(
             .with_vectors(Arc::clone(&vectors)),
     );
     let chats = chats::dir_for(&store.notes_dir);
+    powers.usage.save_in(chats.clone());
     let quick = powers.quick;
     let chat = powers.chat;
     let settings = powers.settings;

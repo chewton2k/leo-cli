@@ -673,6 +673,23 @@ test('actual quiz sends keep the prior model history stable through hints, marki
   assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
 });
 
+test('the saved week adds up by model and states the cached share', () => {
+  const [week, big, unknown, bad] = C.usageWeek([
+    { model: 'big', calls: 2, input: 1000, cached: 750, output: 40 },
+    { model: '', calls: 1, input: 0, cached: 0, output: 0 },
+    { model: '<b>', calls: NaN, input: -1, cached: 5, output: Infinity },
+    { calls: 1 },
+  ]);
+  assert.equal(week.label, 'Last 7 days');
+  assert.equal(week.detail, '3 requests · 1,000 in (75% from the cache) · 40 out');
+  assert.equal(big.detail, '2 requests · 1,000 in (75% from the cache) · 40 out');
+  assert.equal(unknown.label, 'Model not reported');
+  assert.equal(unknown.detail, '1 request · 0 in · 0 out');
+  assert.equal(bad.detail, '0 requests · 0 in · 0 out');
+  assert.deepEqual(C.usageWeek(null), []);
+  assert.deepEqual(C.usageWeek([]), []);
+});
+
 test('usage breakdown separates cached input, failures and unknown counts without accepting arbitrary labels', () => {
   const rows = C.usageRows([
     { purpose: 'answer', calls: 3, input: 12000, cached: 10000, output: 400, median_ms: 3200, p95_ms: 5000 },
