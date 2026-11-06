@@ -1712,7 +1712,7 @@ test.describe('folders', () => {
     await row(`${top}/week1`).hover();
     await row(`${top}/week1`).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'New folder here' }).click();
-    await expect(page.locator('.sheet h3')).toHaveText('New folder in week1');
+    await expect(page.locator('#folder-name')).toHaveAttribute('placeholder', 'New folder in week1');
     await page.locator('#folder-name').fill('lab');
     await page.locator('#folder-name').press('Enter');
     await expect(page).toHaveURL(/\/(?:#\/)?$/);
