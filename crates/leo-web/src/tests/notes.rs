@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn a_failed_read_does_not_reload_the_store_and_a_failed_write_does() {
+    let (state, _dir, _ids) = state_with(&[("One", "")]);
+    let missed: Result<(), StatusCode> = run(state.read_store(|_| Err(StatusCode::NOT_FOUND)));
+    assert_eq!(missed, Err(StatusCode::NOT_FOUND));
+    assert!(!state.store.lock().unwrap().reload);
+    let failed: Result<(), StatusCode> = run(state.with_store(|_| Err(StatusCode::CONFLICT)));
+    assert_eq!(failed, Err(StatusCode::CONFLICT));
+    assert!(state.store.lock().unwrap().reload);
+}
+
+#[test]
 fn saving_another_note_preserves_external_creates_and_edits_before_watch_delivery() {
     for creating in [false, true] {
         let (state, _dir, ids) = state_with(&[("Local", ""), ("External", "")]);

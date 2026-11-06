@@ -420,7 +420,7 @@ impl AppState {
                 store.reload = false;
             }
             let result = work(&mut store);
-            if result.is_err() {
+            if writing && result.is_err() {
                 store.reload = true;
             }
             result
