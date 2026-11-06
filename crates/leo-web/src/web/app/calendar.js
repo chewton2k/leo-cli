@@ -385,7 +385,9 @@ function drawCalendar() {
   const body = cal.view === 'month' ? calMonth(days, plan, today) : calTimeGrid(days, plan, today);
   const scroll = $('#cal-scroll') || $('.cal-month-grid');
   const keep = scroll ? scroll.scrollTop : null;
+  const views = main.querySelector('.cal-views');
   main.innerHTML = `${calHead(days)}${body}`;
+  if (views?.querySelector('.segment.on')?.dataset.view === cal.view) main.querySelector('.cal-views').replaceWith(views);
   main.dataset.view = cal.view;
   settleNow('cal', (id) => app.querySelector(`.cal-item[data-id="${CSS.escape(id)}"], .cal-tray-row[data-id="${CSS.escape(id)}"]`));
   const box = $('#cal-scroll') || $('.cal-month-grid');
@@ -428,6 +430,8 @@ function calGo() {
 
 function calSetView(view) {
   if (!CAL_VIEWS.some(([v]) => v === view) || view === cal.view) return;
+  const from = CAL_VIEWS.findIndex(([v]) => v === cal.view);
+  overlapOut($('#cal-main > :last-child'));
   cal.view = view;
   try {
     localStorage.setItem(CAL_VIEW_KEY, view);
@@ -435,6 +439,9 @@ function calSetView(view) {
     cal.view = view;
   }
   calGo();
+  const views = $('.cal-views .segmented');
+  if (views) syncSegmented(views, from);
+  cascade($('#cal-main'), 'swap-in');
 }
 
 document.addEventListener('keydown', (e) => {
@@ -563,7 +570,10 @@ function calFollow() {
   if (!d || !d.live) return;
   calEdge(d);
   calClearMarks();
-  if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)`;
+  if (d.ghost) {
+    const page = app.getBoundingClientRect();
+    d.ghost.style.transform = `translate(${pastEdge(d.x, page.left, page.right) + 10}px, ${pastEdge(d.y, page.top, page.bottom) + 6}px)`;
+  }
   if (d.mode === 'resize') {
     const before = d.task.end ? S.minutesOf(d.task.end) : d.start + d.length;
     const moved = d.y === d.startY ? 0 : calMinutesIn(d.col, d.y) - d.start - d.offset;
@@ -594,6 +604,7 @@ function calDragEnd() {
   if (!d) return;
   clearTimeout(d.timer);
   document.removeEventListener('touchmove', calHoldStill);
+  d.settled = liftedRect(d.ghost);
   d.ghost?.remove();
   d.source?.classList.remove('lifted');
   calClearMarks();
@@ -624,7 +635,7 @@ function calDrop() {
     return calCompose(target.day, target.minutes, target.end);
   }
   const task = d.task;
-  if (d.mode !== 'resize') settleLater('cal', task.id, null);
+  if (d.mode !== 'resize') settleLater('cal', task.id, d.settled);
   let next;
   if (d.mode === 'resize') next = { date: target.day, time: calHM(task.time), end: S.timeOf(target.end) };
   else if (target.minutes === 'keep') next = { date: target.day, time: calHM(task.time), end: calHM(task.end) };
@@ -1452,7 +1463,7 @@ function finishTaskInWindow(id, done, on) {
   tasksWin.finished.set(id, entry);
   drawTasksWindow();
   const check = tasksBox.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]`);
-  if (check && !stillMotion()) check.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: MOTION_MS, easing: EASE_OUT });
+  pulse(check, { lift: 1.18 });
   entry.timer = setTimeout(() => {
     if (tasksWin.finished.get(id) !== entry) return;
     tasksWin.finished.delete(id);
@@ -1566,7 +1577,7 @@ function toggleTasksWindow() {
   const pill = (box) => `inset(${Math.max(0, box.height - 46)}px ${Math.max(0, box.width - 46)}px 0 0 round 23px)`;
   if (folding) {
     tasksBox.dataset.folding = '1';
-    const run = tasksBox.animate([{ clipPath: 'inset(0 0 0 0 round 14px)' }, { clipPath: pill(before) }], { duration: MOTION_MS, easing: EASE_OUT });
+    const run = tasksBox.animate([{ clipPath: 'inset(0 0 0 0 round 14px)' }, { clipPath: pill(before) }], { duration: MOTION_MS * EXIT_SHARE, easing: EASE_EXIT });
     run.onfinish = run.oncancel = () => {
       delete tasksBox.dataset.folding;
       setTasksFolded(true);

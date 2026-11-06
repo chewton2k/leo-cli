@@ -76,7 +76,8 @@ async function calendarFixture(browser, run, { width = 1360, height = 900, view 
       }
       throw new Error('No fake for '+method+' '+url);
     }
-    const EASE_OUT='ease-out';
+    ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
+    ${core.slice(core.indexOf('const moving'), core.indexOf('function rel('))}
     ${read('app/motion.js')}
     ${read('app/settings-navigation.js')}
     ${page}

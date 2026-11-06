@@ -153,8 +153,50 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   `.chat-history-group`, `.pick-head`).
 - Kept on purpose: the speech-model filters (five wrapping filters, `library-views`),
   the model picker (a menu of models with effort chips), the margin-mode menu (its own
-  interrupted-motion and keyboard tests) and chat.js's attach and access menus (chat.js
-  is a separate script without the app's helpers).
+  interrupted-motion and keyboard tests) and chat.js's attach and access menus (their
+  rows are richer than a list; they move through `leoMotion`).
+
+## Motion rules (2026-11-06, the owner's list; the single place for these)
+
+Quick and caused: nothing moves without a reason, nothing bounces on everyday UI (Felix
+the mascot is a character and keeps his springs), nothing tweens while held. Every
+scripted animation is skipped under `stillMotion()`; CSS motion sits under
+`prefers-reduced-motion: no-preference` or the global reduce rule.
+
+- Tokens (`index.html`) and their script twins (`app/core.js`): `--ease-arrive` /
+  `EASE_OUT` for entrances, `--ease-move` / `EASE_MOVE` for things that stay on screen and
+  change position, `--ease-exit` / `EASE_EXIT` for exits, `--ease-drawer` for the chat panel.
+  Durations `--t-press` 100, `--t-follow` / `MOTION_MS` 180, `--t-open` / `OPEN_MS` 200,
+  `--t-drawer` / `DRAWER_MS` 240. An exit is its entrance × 0.8 (`--t-*-out`, `EXIT_SHARE`,
+  `LEAVE_MS`). Drop-downs run 150 to 250 ms. A symmetric position change is a move, not an exit.
+- chat.js, doc.js, recording.js and pane-resize.js are separate scripts: they reach the
+  helpers through `window.leoMotion` (set in motion.js, absent in some fixtures, so each
+  call has a plain fallback); doc.js reads the curve from the CSS token.
+- Press: everything pressable scales to .97 with the individual `scale` property (one grouped
+  rule at the end of the style block), never draggable rows, `.actions` tooltips or disabled controls.
+- Knobs: `knobStretch(el, pseudo)` stretches 12% along the travel, peaking mid-move, on `scale`, so
+  the position transition is untouched and it ends at exactly 1 (switch, segmented pill, choice ring).
+- Popovers: `unfold(menu, from)` / `fold(menu, then)`. `from` is the trigger element or a pointer
+  `{x, y}`; `popEdge` puts the origin at the nearest point of the menu, upward menus reveal and close
+  from their bottom edge. They start at .95 and keep the clip reveal; a click during the entrance lands
+  on what is drawn. The margin menu and the outline run their own reversible animations with the same
+  values. A closing context menu takes `.explorer-menu-gone` and `aria-hidden`, so lookups see one menu.
+- Stagger: `cascade(list)` staggers direct children by 30 ms (capped at 150) on first arrival only,
+  never on a re-render; `cascade(el, 'settling')` and the CSS for sheets, `.settings-section.arrive`,
+  the chat panel and margin replies bring inner groups in 30 and 60 ms apart. Board lanes and cards
+  only fade: transforms there would count as overflow in `kanbanFit`.
+- Moves: `flipList`, `pillGlide`, `settle`. `settle` follows an arc (x and y on different progress,
+  `arcPoints`) and lifts onto a fixed carrier when an ancestor clips (`clippedBy`), so a drop
+  passes lane and row bounds. `flyInto(ghost, target)` carries a card into another board's tab, or
+  "n more" when that tab went back into the overflow; it pulses on landing.
+- Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
+- Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
+  and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
+  looks up by class right after a change scopes to `#app`.
+- Colour: selection colour arrives with the thumb (`.segment`, `.switch`) or as a wipe (`.tab-wipe`);
+  never on hover. `iconSwap(host, change, part)` crossfades one icon into another with blur and scale.
+- Rubber band: `rubber(over, reach)` and `pastEdge(at, low, high)` resist a pull past a limit without
+  overshoot (sheet swipe upward, pane and chat grips, board and calendar ghosts past the page).
 
 ## Notes, editing and browsing
 
@@ -1017,7 +1059,7 @@ Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Moti
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
 The wide rail is vertically centred in the reading viewport, including short
-notes. Its dropdown reveals and retracts with a 180 ms clip/translate animation,
+notes. Its dropdown reveals over 240 ms and retracts over 192 ms from its toggle,
 reverses from its current frame on repeated clicks, and snaps with Reduced Motion.
 Preview updates never redraw the editor, and destroy removes the rail and tooltip. Note
 width preferences still cap the reading column. Headings stay on one line with
@@ -1122,9 +1164,8 @@ sets the route if needed and `seekSettingsTarget` waits (MutationObserver on
 `#app`, 2.5 s, then falls back to the page heading) until `[data-find]` exists
 inside that section's own element, so the placeholder-then-content double draw
 cannot lose it; then it waits for the arrival animation, scrolls the target to
-the centre, focuses it (`tabindex=-1`) and pulses it once: a 650 ms opacity pulse
-on `::after` in `--accent`; Reduced Motion skips the pulse and shows an outline
-until blur. Routes stay `#/settings/<section>`; Keeping
+the centre, focuses it (`tabindex=-1`) and rings it once with `pulse(target, { ring: true })`;
+Reduced Motion skips the pulse and shows an outline until blur. Routes stay `#/settings/<section>`; Keeping
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
@@ -1277,7 +1318,7 @@ persistence at activation; an in-memory-only draft cannot bypass the save.
 
 Text-input and virtual Enter (`beforeinput` newline/paragraph/line-break) share
 list continuation with keydown Enter. Shift+Enter and composition keep their own
-paths. Heading previews and menus use 260 ms motion, a taller hover peak, and
+paths. Heading previews and menus use 240 ms motion (192 ms out), a taller hover peak, and
 outside clicks dismiss the heading list without swallowing the destination click.
 Chats history keeps its list mounted while the desktop column or compact overlay
 animates; collapsed content is inert, the toggle exposes its expanded state, and

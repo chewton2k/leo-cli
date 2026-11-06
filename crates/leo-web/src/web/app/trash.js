@@ -12,6 +12,7 @@ async function showTrash() {
   state.trashDays = keep ? keep.trash_days : 30;
   if (!items.length) state.selecting = false;
   drawTrash();
+  if (!before) cascade(app.querySelector('.trash-row')?.parentElement);
 }
 
 function drawTrash() {
@@ -70,6 +71,7 @@ async function trashRestorePicked() {
   if (!ids.length) return;
   const done = await api('/api/trash/restore', { method: 'POST', body: { ids } });
   toast(`Restored ${plural(done.restored, 'note')}`);
+  pulse($('.toast'));
   state.picked = new Set();
   state.selecting = false;
   await showTrash();

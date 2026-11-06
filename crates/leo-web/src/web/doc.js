@@ -171,7 +171,9 @@
     const OUTLINE_WIDE = 900;
     const MOST_PREVIEW_LINES = 24;
     const MOST_PREVIEW_CHARS = 800;
-    const OUTLINE_MOTION_MS = 260;
+    const OUTLINE_MOTION_MS = 240;
+    const OUTLINE_EXIT_MS = OUTLINE_MOTION_MS * .8;
+    const outlineEase = () => getComputedStyle(document.documentElement).getPropertyValue('--ease-arrive').trim() || 'ease-out';
 
     function closeOutline() {
       outlineMotion?.cancel();
@@ -199,10 +201,10 @@
         outlineClosing = false;
         return true;
       }
-      const closed = { clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-4px)' };
+      const closed = { clipPath: 'inset(0 0 100% 0)', transform: 'scale(.95)' };
       const shown = { clipPath: 'inset(0 0 0 0)', transform: 'none' };
       outlineDetails.open = true;
-      const run = outlineNav.animate([from || (open ? closed : shown), open ? shown : closed], { duration: OUTLINE_MOTION_MS, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      const run = outlineNav.animate([from || (open ? closed : shown), open ? shown : closed], { duration: open ? OUTLINE_MOTION_MS : OUTLINE_EXIT_MS, easing: outlineEase() });
       outlineMotion = run;
       run.onfinish = () => {
         if (outlineMotion !== run) return;
@@ -223,10 +225,10 @@
         outlinePreviewClosing = false;
         return;
       }
-      const closed = { opacity: 0, transform: 'translateX(-6px)' };
+      const closed = { opacity: 0, transform: 'translateX(-6px) scale(.95)' };
       const shown = { opacity: 1, transform: 'none' };
       outlinePreview.hidden = false;
-      const run = outlinePreview.animate([from || (open ? closed : shown), open ? shown : closed], { duration: OUTLINE_MOTION_MS, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'both' });
+      const run = outlinePreview.animate([from || (open ? closed : shown), open ? shown : closed], { duration: open ? OUTLINE_MOTION_MS : OUTLINE_EXIT_MS, easing: outlineEase(), fill: 'both' });
       outlinePreviewMotion = run;
       run.onfinish = () => {
         if (outlinePreviewMotion !== run) return;

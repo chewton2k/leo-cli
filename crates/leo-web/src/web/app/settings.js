@@ -148,7 +148,7 @@ function togglePicker(el) {
   const menu = el.parentElement.querySelector('.picker-menu');
   closePickers(menu);
   const opening = menu.hidden || Boolean(menu.dataset.folding);
-  if (opening) unfold(menu);
+  if (opening) unfold(menu, el);
   else fold(menu);
   el.setAttribute('aria-expanded', String(opening));
 }

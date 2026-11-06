@@ -3,7 +3,26 @@
 
   const STEP = 32;
   const BIG_STEP = 96;
+  const REACH = 18;
+  const BOUNCE_MS = 140;
   let active = null;
+
+  function stretched(wanted, limit) {
+    const motion = root.leoMotion;
+    if (limit === null || !motion || motion.stillMotion()) return null;
+    return { limit, over: motion.rubber(wanted - limit, REACH) };
+  }
+
+  function bounceBack({ limit, over }, apply, held, done) {
+    const start = performance.now();
+    const step = (now) => {
+      const left = 1 - Math.min(1, (now - start) / BOUNCE_MS);
+      if (held() || !left) return done();
+      apply(limit + over * left * left);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
 
   function create({ handle, key, measure, limits, apply, enabled, storage = null, onChange = () => {} }) {
     let preferred = null;
@@ -43,6 +62,7 @@
     function stop(event) {
       if (!drag || (event?.pointerId !== undefined && event.pointerId !== drag.id)) return;
       const id = drag.id;
+      const back = drag.back;
       const tapped = event?.type === 'pointerup' && Math.abs(event.clientX - drag.x) < 4;
       tap = tapped ? { at: event.timeStamp, x: event.clientX } : null;
       drag = null;
@@ -52,7 +72,15 @@
         document.body.classList.remove('pane-resizing');
       }
       keep();
+      if (back) bounceBack(back, apply, () => Boolean(drag), fit);
     }
+
+    function pull(wanted) {
+      const [min, max] = limits();
+      drag.back = stretched(wanted, wanted < min ? min : wanted > max ? max : null);
+      if (drag.back) apply(drag.back.limit + drag.back.over);
+    }
+
 
     handle.addEventListener('pointerdown', (event) => {
       if (!enabled() || event.button !== 0) return;
@@ -74,7 +102,9 @@
       if (!drag || event.pointerId !== drag.id) return;
       if (!enabled() || !(event.buttons & 1)) return stop(event);
       if (!handle.hasPointerCapture(event.pointerId)) return stop(event);
-      change(drag.width + event.clientX - drag.x);
+      const wanted = drag.width + event.clientX - drag.x;
+      change(wanted);
+      if (drag) pull(wanted);
     });
     for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, stop);
     root.addEventListener('blur', stop);
@@ -94,5 +124,5 @@
     return { fit, stop };
   }
 
-  root.leoPaneResize = { create };
+  root.leoPaneResize = { create, stretched, bounceBack };
 })(typeof window === 'undefined' ? globalThis : window);

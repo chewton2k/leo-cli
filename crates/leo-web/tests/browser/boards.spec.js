@@ -60,7 +60,8 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
       if((m=url.match(/^\\/api\\/cards\\/([^/]+)$/))){const card=db.cards.find(c=>c.id===m[1]);if(method==='DELETE'){db.cards=db.cards.filter(c=>c!==card);return {...card,rank:0};}Object.assign(card,body);return {...card,rank:0};}
       throw new Error('No fake for '+method+' '+url);
     }
-    const EASE_OUT='ease-out';
+    ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
+    ${core.slice(core.indexOf('const moving'), core.indexOf('function rel('))}
     ${read('app/motion.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/boards.js')}

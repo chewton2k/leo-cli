@@ -31,7 +31,7 @@ test('note deletion preserves failures and never redirects another open note', a
 
 const motionSource = fs.readFileSync(path.resolve(__dirname, '../src/web/app/motion.js'), 'utf8');
 function motion(extra = {}) {
-  const context = { stillMotion: () => false, EASE_OUT: 'ease-out', MOTION_MS: 180, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
+  const context = { overlapOut() {}, unfold() {}, fold() {}, cascade() {}, pulse() {}, rubber() {}, iconSwap() {}, stillMotion: () => false, EASE_OUT: 'ease-out', EASE_MOVE: 'ease-in-out', EASE_EXIT: 'ease-in', MOTION_MS: 180, OPEN_MS: 200, DRAWER_MS: 240, EXIT_SHARE: .8, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
   vm.createContext(context);
   vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
   return context.api;
@@ -151,4 +151,15 @@ test('the selection pill does not glide without a previous place, under Reduced 
   assert.equal(motion({ stillMotion: () => true }).pillGlide({ left: 10, top: 40, width: 200, height: 30 }, pill(to)), null);
   assert.equal(motion().pillGlide({ ...to }, pill(to)), null);
   assert.equal(motion().pillGlide({ left: 10, top: 40, width: 200, height: 30 }, pill(to)), 'ran');
+});
+
+test('a settling object takes a slight curve and ends exactly in place', () => {
+  const played = [];
+  const el = { dataset: {}, getBoundingClientRect: () => ({ left: 100, top: 100 }), animate: (frames) => { played.push(frames); return {}; } };
+  const m = motion({ performance: { now: () => 0 } });
+  m.settleLater('x', 'a', { left: 200, top: 200 });
+  m.settleNow('x', () => el);
+  const middle = played[0][Math.floor(played[0].length / 2)].transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/).slice(1).map(Number);
+  assert.notEqual(middle[0], middle[1]);
+  assert.equal(played[0].at(-1).transform, 'none');
 });

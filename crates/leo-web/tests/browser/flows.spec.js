@@ -2134,7 +2134,7 @@ test.describe('advanced settings', () => {
     await page.request.delete(`/api/notes/${note.id}`);
     await page.goto('/#/');
     await page.goto('/#/trash');
-    await expect(page.locator('.hint')).toContainText('stay here for 7 days');
+    await expect(page.locator('#app .hint')).toContainText('stay here for 7 days');
     await page.request.post('/api/keep', { data: { trash_days: 30, chat_days: null } });
   });
 

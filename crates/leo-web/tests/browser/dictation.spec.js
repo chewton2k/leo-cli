@@ -10,7 +10,7 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
   const initial = () => ({ settings: { shortcut: 'option+space', mode: 'both', custom_words: ['Initial'], fillers: true, popup: 'live', top: false }, microphones: ['External microphone'], shortcut: {}, recent: [{ id: 1, text: '<img src=x onerror=bad()>' }] });
   let view = initial();
   const script = `const app=document.querySelector('#app'),$=s=>document.querySelector(s); let seq=1,state={view:'settings',dictation:${JSON.stringify(view)}};
-    const ICON={chevron:''}, svg=p=>'<svg>'+p+'</svg>', fail=e=>console.error(e); const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const pulse=()=>{},cascade=()=>{},overlapOut=()=>{},ICON={chevron:''}, svg=p=>'<svg>'+p+'</svg>', fail=e=>console.error(e); const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function settingsOption(value,label,current){return '<option value="'+esc(value)+'"'+(value===current?' selected':'')+'>'+esc(label)+'</option>';}
     async function api(url,options={}){const response=await fetch(url,{method:options.method||'GET',headers:{'Content-Type':'application/json'},body:options.body?JSON.stringify(options.body):undefined});return response.json();}
     ${source}

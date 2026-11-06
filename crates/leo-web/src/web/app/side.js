@@ -440,7 +440,10 @@ function closeExplorerMenu(focus = true) {
   if (!explorerPopup) return;
   const { box, owner } = explorerPopup;
   explorerPopup = null;
-  box.remove();
+  box.inert = true;
+  box.setAttribute('aria-hidden', 'true');
+  box.className = 'explorer-menu-gone';
+  fold(box, () => box.remove());
   if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'false');
   if (focus && owner.isConnected) owner.focus({ preventScroll: true });
 }
@@ -473,6 +476,7 @@ function explorerMenu(el, event = null) {
   box.style.left = `${Math.max(8, Math.min(event?.clientX ?? bounds.right, innerWidth - box.offsetWidth - 8))}px`;
   box.style.top = `${Math.max(8, Math.min(event?.clientY ?? bounds.bottom, innerHeight - box.offsetHeight - 8))}px`;
   explorerPopup = { box, owner, target };
+  unfold(box, event ? { x: event.clientX, y: event.clientY } : owner);
   const buttons = [...box.querySelectorAll('button')];
   buttons[0].focus();
   box.addEventListener('click', (e) => {

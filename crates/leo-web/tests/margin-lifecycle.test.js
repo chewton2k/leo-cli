@@ -16,7 +16,7 @@ function harness() {
     enc: encodeURIComponent, Locked: class extends Error {},
     setTimeout: (fn, delay) => { const id = ++next; fn.delay = delay; timers.set(id, fn); return id; },
     clearTimeout: (id) => timers.delete(id), cancelAnimationFrame() {},
-    $: () => null, fail: (e) => { throw e; }, ON_MAC: true,
+    $: () => null, fail: (e) => { throw e; }, ON_MAC: true, MOTION_MS: 180, POP_FROM: .95,
     esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '',
   };
   vm.createContext(context);

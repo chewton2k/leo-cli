@@ -7,6 +7,7 @@ const BOARD_KINDS = ['add_card', 'update_card', 'move_card', 'delete_card', 'res
 const KANBAN_MOST_COLUMNS = 12;
 const KANBAN_HOLD_MS = 300;
 const KANBAN_EDGE = 56;
+const KANBAN_OTHERS = '.kanban-card:not(.kanban-placeholder)';
 const KANBAN_SAVE_MS = 600;
 const KANBAN_PRIORITIES = [['', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
 const KANBAN_ICON = {
@@ -72,11 +73,18 @@ async function showBoards(arg) {
   if (arg && arg !== id) history.replaceState(history.state, '', `#/boards/${enc(id)}`);
   const data = await api(`/api/boards/${enc(id)}`);
   if (mine !== seq) return;
-  kanban.board = data.board;
-  kanban.cards = data.cards || [];
   kanbanRemember(id);
   document.title = `${data.board.name} · leo`;
+  const opening = kanban.board?.id !== id || !app.querySelector('.kanban-cols');
+  if (opening) overlapOut(app.querySelector('.kanban-cols'));
+  kanban.board = data.board;
+  kanban.cards = data.cards || [];
   drawKanban();
+  if (opening) {
+    cascade(app.querySelector('.kanban-cols'), 'settling');
+    cascade(app.querySelector('.kanban-tabs'), 'tab-wipe');
+    for (const list of app.querySelectorAll('.kanban-cards')) cascade(list);
+  }
 }
 
 // Fetch the open board again after a change, so ranks renumbered by leo are known here.
@@ -502,6 +510,7 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
       if (list) list.scrollTop = list.scrollHeight;
       kanbanCounts();
       kanbanFit();
+      pulse(list?.lastElementChild, { lift: 1.02 });
     } catch (e) {
       if (e instanceof Locked) throw e;
       const open = app.querySelector(`.kanban-composer[data-composer="${CSS.escape(columnId)}"] textarea`);
@@ -774,7 +783,8 @@ function kanbanLift() {
 function kanbanFollow() {
   const d = kanban.drag;
   if (!d || !d.live) return;
-  d.ghost.style.transform = `translate(${d.x - d.dx}px, ${d.y - d.dy}px)`;
+  const page = app.getBoundingClientRect();
+  d.ghost.style.transform = `translate(${pastEdge(d.x, page.left, page.right) - d.dx}px, ${pastEdge(d.y, page.top, page.bottom) - d.dy}px)`;
   const under = document.elementFromPoint(d.x, d.y);
   for (const tab of document.querySelectorAll('.kanban-tab.drop-on')) tab.classList.remove('drop-on');
   d.tab = null;
@@ -787,11 +797,11 @@ function kanbanFollow() {
     }
     const list = under?.closest('.kanban-col')?.querySelector('.kanban-cards');
     if (!list) return;
-    const before = [...list.querySelectorAll('.kanban-card:not(.kanban-placeholder)')].find((c) => {
+    const before = [...list.querySelectorAll(KANBAN_OTHERS)].find((c) => {
       const r = c.getBoundingClientRect();
-      return d.y < r.top + r.height / 2;
+      return d.y < r.top - new DOMMatrix(getComputedStyle(c).transform).m42 + r.height / 2;
     }) || null;
-    if (d.item.parentElement !== list || d.item.nextElementSibling !== before) list.insertBefore(d.item, before);
+    if (d.item.parentElement !== list || d.item.nextElementSibling !== before) flipList(app.querySelector('.kanban-cols'), KANBAN_OTHERS, (c) => c.dataset.card, () => list.insertBefore(d.item, before));
   } else {
     const row = app.querySelector('.kanban-cols');
     if (!row) return;
@@ -829,7 +839,7 @@ function kanbanEdges() {
   d.frame = requestAnimationFrame(kanbanEdges);
 }
 
-function kanbanEnd() {
+function kanbanEnd(keepGhost = false) {
   const d = kanban.drag;
   if (!d) return null;
   kanban.drag = null;
@@ -838,7 +848,7 @@ function kanbanEnd() {
   document.removeEventListener('touchmove', kanbanHoldStill);
   if (!d.live) return null;
   d.settled = liftedRect(d.ghost);
-  d.ghost?.remove();
+  if (!keepGhost) d.ghost?.remove();
   d.item.classList.remove('kanban-placeholder');
   document.body.classList.remove('kanban-dragging');
   kanbanFit();
@@ -855,10 +865,16 @@ function kanbanCancel() {
 }
 
 async function kanbanDrop() {
-  const d = kanbanEnd();
-  if (!d || !kanban.board) return;
-  settleLater(`kanban-${d.kind}`, d.id, d.settled);
-  settleNow(`kanban-${d.kind}`, () => d.item);
+  const d = kanbanEnd(true);
+  if (!d) return;
+  const home = d.tab ? app.querySelector(`[data-kanban-drop="${CSS.escape(d.tab)}"]`) : null;
+  if (home) flyInto(d.ghost, home.matches('.kanban-over') ? app.querySelector('.kanban-more') : home);
+  else d.ghost?.remove();
+  if (!kanban.board) return;
+  if (!d.tab) {
+    settleLater(`kanban-${d.kind}`, d.id, d.settled);
+    settleNow(`kanban-${d.kind}`, () => d.item);
+  }
   if (d.kind === 'col') {
     const order = [...app.querySelectorAll('.kanban-col')].map((c) => c.dataset.col);
     if (order.join('\n') === kanban.board.columns.map((c) => c.id).join('\n')) return;

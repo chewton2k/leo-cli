@@ -57,12 +57,16 @@ async function appChange(change) {
   } finally { scheduleAppStatus(generation); }
 }
 
+let updateChecking = false;
 function updateAppStatus() {
   updateOnboardingPermissions();
   updateUpdateBanner();
+  const checked = updateChecking && desktopApp?.updates?.state === 'current';
+  updateChecking = desktopApp?.updates?.state === 'checking';
   if (state.view === 'settings' && state.section === 'updates') {
     const box = $('#app-updates');
     refreshPanel(box, updatesCard(desktopApp));
+    if (checked) pulse(box.querySelector('.update-status'), { ring: true });
   }
   if (state.view === 'settings' && state.section === 'general') {
     const box = $('#app-general');
@@ -85,7 +89,7 @@ async function pollAppStatus(generation) {
 }
 app.addEventListener('change', (event) => {
   const field = event.target.closest('[data-app-pref]');
-  if (field) appChange({ action: 'preference', field: field.dataset.appPref, value: field.checked }).catch(fail);
+  if (field) appChange({ action: 'preference', field: field.dataset.appPref, value: field.checked }).then(() => pulse(field)).catch(fail);
 });
 document.addEventListener('visibilitychange', appVisibilityChanged);
 if (typeof window !== 'undefined' && window.addEventListener) {

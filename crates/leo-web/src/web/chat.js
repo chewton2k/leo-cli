@@ -647,7 +647,7 @@
     (text.match(WORDS) || []).forEach((part, i) => {
       const word = document.createElement('span');
       word.className = 'word';
-      word.style.animationDelay = `${Math.min(i, 8) * 40}ms`;
+      word.style.animationDelay = `${Math.min(i, 8) * 30}ms`;
       word.textContent = part;
       out.append(word);
     });
@@ -774,9 +774,25 @@
     const body = $('#chat-body');
     const input = $('#chat-input');
 
+    function popMenu(menu, open, trigger, then) {
+      const motion = root.leoMotion;
+      if (!motion) {
+        menu.hidden = !open;
+        if (then) then();
+      } else if (open) motion.unfold(menu, trigger);
+      else motion.fold(menu, then);
+    }
+
     function attachMenu(open) {
-      $('#chat-attach-menu').hidden = !open;
-      $('[data-chat="attach"]').setAttribute('aria-expanded', String(open));
+      const trigger = $('[data-chat="attach"]');
+      popMenu($('#chat-attach-menu'), open, trigger);
+      trigger.setAttribute('aria-expanded', String(open));
+    }
+
+    function accessMenu(open) {
+      const trigger = $('#chat-access');
+      popMenu($('#chat-access-menu'), open, trigger);
+      trigger.setAttribute('aria-expanded', String(open));
     }
 
     const faces = () => [...document.querySelectorAll('.felix:not(.felix-preview)')];
@@ -904,8 +920,7 @@
       try {
         storage.setItem(ACCESS_KEY, state.access);
       } catch (e) {}
-      $('#chat-access-menu').hidden = true;
-      $('#chat-access').setAttribute('aria-expanded', 'false');
+      accessMenu(false);
       drawAccess();
       if (state.busy) { state.busy.permissionWanted = state.access; postPermission(state.busy); }
     }
@@ -990,6 +1005,7 @@
 
     let dragFrom = null;
     let gripTap = null;
+    const stretchWidth = (px) => document.documentElement.style.setProperty('--chat-w', `${px}px`);
     grip.addEventListener('pointerdown', (e) => {
       if (!wide() || e.button !== 0) return;
       e.preventDefault();
@@ -1006,16 +1022,21 @@
       if (!dragFrom) return;
       if (!(e.buttons & 1)) return letGo(e);
       if (!grip.hasPointerCapture(e.pointerId)) return;
-      setWidth(dragFrom.width + dragFrom.x - e.clientX, false);
+      const wanted = dragFrom.width + dragFrom.x - e.clientX;
+      setWidth(wanted, false);
+      dragFrom.back = root.leoPaneResize.stretched(wanted, wanted < LEAST_WIDTH ? LEAST_WIDTH : wanted > widest() ? widest() : null);
+      if (dragFrom.back) stretchWidth(dragFrom.back.limit + dragFrom.back.over);
     });
     const letGo = (e) => {
       if (!dragFrom) return;
       const tapped = e.type === 'pointerup' && Math.abs(e.clientX - dragFrom.x) < 4;
+      const back = dragFrom.back;
       dragFrom = null;
       if (grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
       document.body.classList.remove('chat-resizing');
       gripTap = tapped ? { at: e.timeStamp, x: e.clientX } : null;
       if (!tapped) setWidth(panel.getBoundingClientRect().width, true);
+      if (!tapped && back) root.leoPaneResize.bounceBack(back, stretchWidth, () => Boolean(dragFrom), () => setWidth(back.limit, false));
     };
     grip.addEventListener('pointerup', letGo);
     grip.addEventListener('pointercancel', letGo);
@@ -1099,6 +1120,7 @@
 
     function showSidebar(on) {
       state.sidebar = on;
+      if (on) root.leoMotion?.cascade($('#chat-history-list'));
       if (wide()) {
         try {
           storage.setItem(SIDEBAR, on ? '1' : '0');
@@ -1500,15 +1522,14 @@
     function closePick() {
       state.pick = null;
       const box = $('#chat-pick');
-      box.hidden = true;
-      box.innerHTML = '';
+      popMenu(box, false, input, () => { if (!state.pick) box.innerHTML = ''; });
     }
 
     function drawPick() {
       const box = $('#chat-pick');
       const p = state.pick;
       if (!p) return closePick();
-      box.hidden = false;
+      if (box.hidden || box.dataset.folding) popMenu(box, true, input);
       const rows = p.notes.length
         ? p.notes.map((n, i) => `<button class="chat-pick-row${i === p.at ? ' on' : ''}" data-chat="pick" data-i="${i}" role="option" aria-selected="${i === p.at}"><b>${escape(n.title || 'Untitled')}</b><span>${escape(n.directory || 'All notes')}</span></button>`).join('')
         : `<div class="chat-pick-none">${p.loading ? 'Looking…' : state.refs.length >= MOST_REFS ? `Up to ${MOST_REFS} notes at once.` : 'No notes match.'}</div>`;
@@ -2281,11 +2302,17 @@
 
     function drawSend() {
       const stop = Boolean(state.busy) && !input.value.trim();
-      $('#chat-send').classList.toggle('stop', stop);
-      $('#chat-send').setAttribute('aria-label', stop ? 'Stop' : state.busy ? 'Send to Felix while he works' : 'Send');
-      $('#chat-send').innerHTML = stop
-        ? '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>'
-        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+      const send = $('#chat-send');
+      const shown = () => {
+        send.classList.toggle('stop', stop);
+        send.innerHTML = stop
+          ? '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+      };
+      send.setAttribute('aria-label', stop ? 'Stop' : state.busy ? 'Send to Felix while he works' : 'Send');
+      if (send.classList.contains('stop') === stop) shown();
+      else if (root.leoMotion) root.leoMotion.iconSwap(send, shown);
+      else shown();
       input.placeholder = state.busy ? 'Add to what Felix is doing…' : 'Message Felix, or type @ to add a note…';
     }
 
@@ -2585,8 +2612,7 @@
       awake();
       if (!e.target.closest('[data-chat^="attach"]')) attachMenu(false);
       if (!e.target.closest('[data-chat^="access"]')) {
-        $('#chat-access-menu').hidden = true;
-        $('#chat-access').setAttribute('aria-expanded', 'false');
+        accessMenu(false);
       }
       if (e.target.closest('.felix') && !e.target.closest('[data-chat]')) {
         tapped();
@@ -2677,8 +2703,7 @@
       else if (what === 'classes-all') answerClasses(true);
       else if (what === 'access') {
         const menu = $('#chat-access-menu');
-        menu.hidden = !menu.hidden;
-        el.setAttribute('aria-expanded', String(!menu.hidden));
+        accessMenu(menu.hidden || Boolean(menu.dataset.folding));
       } else if (what === 'access-pick') {
         setAccess(el.dataset.access);
         input.focus();
@@ -2686,7 +2711,7 @@
         const menu = $('#chat-attach-menu');
         if (state.pick && state.pick.from === 'button') closePick();
         else if (!prepare) openPick('button', '', 0);
-        else attachMenu(menu.hidden);
+        else attachMenu(menu.hidden || Boolean(menu.dataset.folding));
       } else if (what === 'attach-note') {
         attachMenu(false);
         openPick('button', '', 0);
@@ -2813,13 +2838,13 @@
     panel.addEventListener('keydown', (e) => {
       const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access']]
         .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
-        .find((x) => !x.menu.hidden);
+        .find((x) => !x.menu.hidden && !x.menu.dataset.folding);
       if (!open) return;
       const { menu, trigger } = open;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopImmediatePropagation();
-        menu.hidden = true;
+        popMenu(menu, false, trigger);
         trigger.setAttribute('aria-expanded', 'false');
         trigger.focus();
       } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && (menu.contains(e.target) || e.target === trigger)) {
