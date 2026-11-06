@@ -1313,6 +1313,7 @@
       }
     }
 
+    const deleting = new Set();
     async function forget(id) {
       const button = [...panel.querySelectorAll('.chat-history-x')].find((item) => item.dataset.id === id);
       if (state.doomed !== id) {
@@ -1321,9 +1322,10 @@
         button?.focus({ preventScroll: true });
         return;
       }
-      if (button?.disabled) return;
+      if (button?.disabled || deleting.has(id)) return;
       const focused = document.activeElement === button;
       if (button) button.disabled = true;
+      deleting.add(id);
       try {
         const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
         if (!response.ok) throw new Error('delete failed');
@@ -1331,6 +1333,7 @@
         notify('Leo could not delete that conversation. Try again.');
         return;
       } finally {
+        deleting.delete(id);
         if (button?.isConnected) {
           button.disabled = false;
           if (focused && document.activeElement === document.body) button.focus({ preventScroll: true });
@@ -1608,7 +1611,7 @@
         return `<span class="study-idea ${o.state}" title="${escape(t)}">${mark}${escape(t)}</span>`;
       }).join('<span class="study-sep" aria-hidden="true">·</span>');
       box.hidden = false;
-      box.innerHTML = `<div class="study-ideas" aria-label="Ideas in this session">${ideas}</div><span class="study-count">${c.covered} of ${c.total}</span><button type="button" class="msg-act" data-chat="session-finish">Finish</button>`;
+      box.innerHTML = `<div class="study-ideas" aria-label="Ideas in this session">${ideas}</div><span class="study-count">${c.covered} of ${c.total} ${c.total === 1 ? 'idea' : 'ideas'}</span><button type="button" class="msg-act" data-chat="session-finish">Finish</button>`;
     }
 
     function recapCard(s) {
@@ -1864,7 +1867,7 @@
       const open = !done && !q.predict;
       const writing = thinkingOpen.has(q);
       const thinking = open && writing ? `<textarea class="quiz-thinking" ${where} rows="2" maxlength="${MOST_THINKING}" placeholder="What are you thinking? Half-formed is fine" aria-label="Your thinking"${off}>${escape(state.drafts[`think:${i}:${k}`] || '')}</textarea>` : '';
-      const sure = open ? `<div class="quiz-sure" role="group" aria-label="How sure are you?">${Object.entries(SURE).map(([id, label]) => `<button type="button" class="quiz-sure-pick${q.sure === id ? ' on' : ''}" data-chat="quiz-sure" ${where} data-sure="${id}" aria-pressed="${q.sure === id}"${off}>${label}</button>`).join('')}${writing ? '' : `<button type="button" class="quiz-hint-ask" data-chat="quiz-think" ${where}${off}>Add your thinking</button>`}</div>${thinking}` : '';
+      const sure = open ? `<div class="quiz-sure" role="group" aria-label="How sure are you?"><span class="quiz-sure-label" aria-hidden="true">How sure?</span>${Object.entries(SURE).map(([id, label]) => `<button type="button" class="quiz-sure-pick${q.sure === id ? ' on' : ''}" data-chat="quiz-sure" ${where} data-sure="${id}" aria-pressed="${q.sure === id}"${off}>${label}</button>`).join('')}${writing ? '' : `<button type="button" class="quiz-hint-ask" data-chat="quiz-think" ${where}${off}>Add your thinking</button>`}</div>${thinking}` : '';
       const own = done && (SURE[q.sure] || q.thinking) ? `<div class="quiz-own">${[SURE[q.sure], q.thinking].filter(Boolean).map(escape).join(' · ')}</div>` : '';
       const hints = hintsOf(q);
       const hinted = hints
@@ -1874,7 +1877,7 @@
       const askHint = open && !pending && !waiting ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>${hints.length ? 'Another hint' : 'Get a hint'}</button>` : '';
       const marked = done && q.correct !== null && q.correct !== undefined;
       const judged = marked && !reply;
-      const verdict = judged && q.kind !== 'multiple_choice' ? `<div class="quiz-verdict">${q.correct ? 'Right' : 'Not quite'}</div>` : '';
+      const verdict = judged ? `<div class="quiz-verdict">${q.correct ? 'Right' : 'Not quite'}</div>` : '';
       const feedback = judged && q.feedback ? `<div class="quiz-explain prose">${cite(render(q.feedback), sources, escape)}</div>` : '';
       const why = `${verdict}${feedback}${judged && q.explain && !(q.feedback && q.kind !== 'multiple_choice') ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : ''}`;
       const onward = q.held && marked && !marking ? `<div class="quiz-next"><button type="button" class="btn primary sm" data-chat="quiz-next" ${where}${state.busy ? ' disabled' : ''}>Next question</button>${reply ? '' : `<button type="button" class="btn plain sm" data-chat="quiz-why" ${where}${state.busy ? ' disabled' : ''}>Ask Felix ${q.correct ? 'why' : 'to explain'}</button>`}</div>` : '';
@@ -1884,7 +1887,7 @@
           : reply.pending ? '<div class="quiz-reply"><span class="typing"><i></i><i></i><i></i></span></div>' : '')
         : '';
       const tone = q.correct === true ? ' right' : q.correct === false ? ' wrong' : '';
-      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${q.predict ? 'Predict' : escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${sure}${answer}${own}${askHint}${result}${why}${said}${onward}</div>`;
+      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${q.predict ? 'Predict · a guess, not marked' : escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${sure}${answer}${own}${askHint}${result}${why}${said}${onward}</div>`;
     }
 
     function askHint(i, k) {

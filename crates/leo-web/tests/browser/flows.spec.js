@@ -196,10 +196,10 @@ test('a phone edit preserves an external edit as a separate conflict copy', asyn
   expect(updated.status()).toBe(200);
   await page.locator('.line-edit').fill('Phone edit');
   await expect(page.locator('#save-state')).toHaveText('Saved');
-  await expect(page.locator('#title')).toContainText('conflict from phone');
+  await expect(page.locator('#title')).toContainText('conflict from leo');
   const notes = await (await page.request.get('/api/notes')).json();
   expect(notes.find((n) => n.id === note.id).body).toBe('Computer edit');
-  expect(notes.some((n) => n.title === 'Conflict example (conflict from phone)' && n.body === 'Phone edit')).toBe(true);
+  expect(notes.some((n) => n.title === 'Conflict example (conflict from leo)' && n.body === 'Phone edit')).toBe(true);
 });
 
 test('authenticated requests cannot create notes outside the notes folder', async ({ page }) => {
@@ -877,7 +877,7 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').fill('teach me queues');
     await chat.locator('#chat-input').press('Enter');
     const predict = chat.locator('.quiz-card').first();
-    await expect(predict.locator('.quiz-kind')).toHaveText('Predict');
+    await expect(predict.locator('.quiz-kind')).toHaveText('Predict · a guess, not marked');
     await expect(predict.locator('[data-chat="quiz-sure"]')).toHaveCount(0);
     await predict.locator('.quiz-input').fill('the order');
     await predict.locator('[data-chat="quiz-check"]').click();
@@ -1676,7 +1676,6 @@ test.describe('settings', () => {
     await page.locator('.settings-nav a[href="#/settings/models"]').click();
     await expect(page.getByRole('heading', { name: 'In use', exact: true })).toBeVisible();
     await expect(page.locator('[data-task-card="speech"], [data-key-input]')).toHaveCount(0);
-    await expect(page.locator('.settings-nav a[href="#/settings/backup"]')).toHaveCount(0);
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
     await page.locator('.settings-nav a[href="#/settings/writing"]').click();

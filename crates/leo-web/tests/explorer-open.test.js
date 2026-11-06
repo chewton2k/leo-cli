@@ -34,3 +34,19 @@ test('compact note selection honors the latest click in either response order', 
     assert.deepEqual(opened, ['latest']);
   }
 });
+
+test('reopening the open note from the Folders sheet waits for its save instead of drawing an earlier copy', async () => {
+  const fetched = [], went = [];
+  const context = {
+    seq: 1, state: { session: { note: { id: 'open' } } },
+    api: async url => { fetched.push(url); return { id: 'open' }; },
+    enc: encodeURIComponent, sideWide: () => false, noteHash: id => `#/n/${id}`,
+    go: async (hash, options) => { went.push([hash, options]); }, fail: e => { throw e; },
+  };
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/app/side.js'), 'utf8');
+  vm.createContext(context);
+  vm.runInContext('let explorerOpenSeq = 0;\n' + source.slice(source.indexOf('async function openExplorerNote('), source.indexOf('let explorerPopup')), context);
+  await context.openExplorerNote({ dataset: { id: 'open' }, closest: () => ({ isConnected: true }) });
+  assert.deepEqual(fetched, []);
+  assert.deepEqual(went, [['#/n/open', undefined]]);
+});

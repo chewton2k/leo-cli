@@ -347,7 +347,7 @@ function newFolder(el) {
   const given = el && el.dataset && el.dataset.parent;
   const parent = creationDir(given);
   const scrim = sheet(`<h3>New folder${parent ? ` in ${esc(folderLabel(parent))}` : ''}</h3>
-    <label class="field">${ICON.folder}<input id="folder-name" data-parent="${esc(parent)}" placeholder="${parent ? 'Name, e.g. week 3' : 'Name, e.g. cs130'}" autocomplete="off" enterkeyhint="done"></label>
+    <label class="field">${ICON.folder}<input id="folder-name" data-parent="${esc(parent)}" placeholder="${parent ? 'Name, e.g. week 3' : 'Name, e.g. cs130'}" maxlength="120" autocomplete="off" enterkeyhint="done"></label>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="create-folder">Create</button></div>`);
   const input = $('#folder-name', scrim);
   input.focus();
@@ -399,7 +399,7 @@ async function renameFolder() {
 
 function deleteFolderAsk(from = state.dir) {
   if (!from || typeof from !== 'string') return;
-  const box = sheet(`<h3>Delete “${esc(folderLabel(from))}”?</h3>
+  const box = sheet(`<h3>Move “${esc(folderLabel(from))}” to the trash?</h3>
     <p>This folder, its subfolders and all their notes move to the trash. Undo brings them back.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-delete-now" data-from="${esc(from)}">Move to trash</button></div>`);
   focusOnClose(box, { kind: 'folder', dir: from });
@@ -454,8 +454,9 @@ async function createFolder() {
 
 function validFolderName(name) {
   if (!name) { toast('Enter a folder name.', { bad: true }); return false; }
-  if (new TextEncoder().encode(name).length > 240) { toast('That folder name is too long. Use a shorter name.', { bad: true }); return false; }
-  if (/[\/\\]/.test(name) || name === '.' || name === '..') { toast('Use a single folder name, without / or ..', { bad: true }); return false; }
+  if ([...name].length > 120 || new TextEncoder().encode(name).length > 240) { toast('That folder name is too long. Use 120 characters or fewer.', { bad: true }); return false; }
+  if (/[\/\\]/.test(name)) { toast('A folder name cannot contain / or \\. To nest folders, make one, then make another inside it.', { bad: true }); return false; }
+  if (name === '.' || name === '..') { toast('Choose a name other than . or ..', { bad: true }); return false; }
   return true;
 }
 

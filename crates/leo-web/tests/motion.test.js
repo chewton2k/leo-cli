@@ -48,7 +48,7 @@ const motionSource = fs.readFileSync(path.resolve(__dirname, '../src/web/app/mot
 function motion(extra = {}) {
   const context = { stillMotion: () => false, EASE_OUT: 'ease-out', MOTION_MS: 180, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
   vm.createContext(context);
-  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, sameKeys, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
+  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
   return context.api;
 }
 
@@ -70,8 +70,6 @@ test('list moves skip reduced motion, unchanged lists, single rows and big lists
   assert.equal(m.flipSkip({ reduced: false, count: 1 }), true);
   assert.equal(m.flipSkip({ reduced: false, count: m.FLIP_ROWS }), false);
   assert.equal(m.flipSkip({ reduced: false, count: m.FLIP_ROWS + 1 }), true);
-  assert.equal(m.sameKeys(['a', 'b'], ['a', 'b']), true);
-  assert.equal(m.sameKeys(['a', 'b'], ['b', 'a']), false);
 });
 
 test('a big or still list changes at once and reads no layout', () => {

@@ -69,10 +69,6 @@ function flipList(root, selector, keyOf, change, { ms = FLIP_MS, changed = true 
   return result;
 }
 
-function sameKeys(a, b) {
-  return a.length === b.length && a.every((key, i) => key === b[i]);
-}
-
 function transitionSkip({ reduced, sheet, same, first }) {
   if (reduced) return 'reduced';
   if (sheet) return 'sheet';

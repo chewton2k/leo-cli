@@ -123,7 +123,7 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   if (!['workspace', 'note', 'search', 'trash'].includes(state.view)) return;
-  if (state.view === 'note' && (busy() || !state.session.note.id)) return;
+  if (state.view === 'note' && (busy() || !state.session?.note.id)) return;
   render().catch(fail);
 });
 
@@ -253,11 +253,8 @@ async function render() {
   const arg = decodeURIComponent(rest);
   const prepared = kind === 'n' && openingNote?.id === arg.replace(/\/edit$/, '') ? openingNote : null;
   openingNote = null;
-  stopLibraryArrival();
-  if (kind && !/^(?:f|n|new)$/.test(kind)) {
-    document.body.classList.toggle('on-library', false);
-    document.body.classList.toggle('on-note', false);
-  }
+  stopPageArrival();
+  if (kind && !/^(?:f|n|new)$/.test(kind)) document.body.classList.toggle('on-note', false);
   if (kind !== 'search') closeSearch();
   if (kind !== 'n') chat.setContext(null);
   if (kind !== 'record') recorder.leave();

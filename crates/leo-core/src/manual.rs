@@ -113,10 +113,10 @@ Choose a model, shortcut, microphone and word rules in Settings → Dictation.
 
 ## Felix
 
-Ask Felix about your notes or have him quiz you in Study.
+Ask Felix about your notes, or ask him to teach you a topic or quiz you.
 He can add tasks and notes, and asks first unless you let him act on his own.
 Select words and press ⌘⇧E for an answer in the margin; Settings → Felix lets
-him read along as you write. Switch modes in the menu above a note's title.
+him read along as you write. Choose Reads along or When you ask above a note's title.
 
 ## Writing
 

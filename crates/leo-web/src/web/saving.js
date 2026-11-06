@@ -76,9 +76,9 @@
         });
       } catch (error) {
         if (error.status !== 409) throw error;
-        const title = `${edit.title} (conflict from phone)`;
+        const title = `${edit.title} (conflict from leo)`;
         const note = await api('/api/notes', { method: 'POST', body: { ...edit, title, directory: s.note.directory } });
-        s.edit.title = `${s.edit.title} (conflict from phone)`;
+        s.edit.title = `${s.edit.title} (conflict from leo)`;
         conflict(s, note);
         return note;
       }

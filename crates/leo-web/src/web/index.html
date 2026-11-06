@@ -740,7 +740,7 @@ label.trash-row { cursor: pointer; }
   html { scrollbar-gutter: auto !important; }
   body { --side: 0px !important; --right: 0px !important; --top: 0px !important; --bottom: 0px !important; }
   html, body { background: #fff; color: #1c1c1a; padding: 0 !important; margin: 0; font-size: 11pt; line-height: 1.55; }
-  .margin-layer, .margin-mode, .note-outline, .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .pane-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, [data-print-off] { display: none !important; }
+  .margin-layer, .margin-mode, .note-outline, .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .note-context, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .pane-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, [data-print-off] { display: none !important; }
   body.files-over main::after { display: none !important; }
   .store-all { position: static !important; }
   main, body.on-note main { max-width: none !important; width: auto !important; padding: 0 !important; margin: 0 !important; }
@@ -2326,6 +2326,7 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 .passage-list { max-height: min(56vh, 520px); }
 .passage-text { flex: 1; min-width: 0; font-size: 15px; line-height: 1.6; padding: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .quiz-sure { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.quiz-sure-label { font-size: 13px; color: var(--muted); margin-right: 2px; }
 .quiz-sure-pick { min-height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; }
 .quiz-sure-pick:hover:not(:disabled) { color: var(--text); }
 .quiz-sure-pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }

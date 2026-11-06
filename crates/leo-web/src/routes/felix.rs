@@ -389,15 +389,15 @@ const SURE: [&str; 4] = ["", "sure", "think", "guess"];
 const THINKING_CHARS: usize = 2_000;
 
 fn sealed(said: &str) -> String {
-    said.trim().replace("</student", "&lt;/student")
+    said.trim().replace("</", "&lt;/")
 }
 
 pub(crate) fn mark_with(writer: &crate::graph::Writer, body: &MarkBody) -> Option<(bool, String)> {
     let user = format!(
         "<question>\n{}\n</question>\n<model_answer>\n{}\n</model_answer>\n{}<student_answer>\n{}\n</student_answer>{}{}",
-        body.question.trim(),
-        body.answer.trim(),
-        if body.explain.trim().is_empty() { String::new() } else { format!("<why>\n{}\n</why>\n", body.explain.trim()) },
+        sealed(&body.question),
+        sealed(&body.answer),
+        if body.explain.trim().is_empty() { String::new() } else { format!("<why>\n{}\n</why>\n", sealed(&body.explain)) },
         sealed(&body.given),
         match body.confidence.as_str() {
             "sure" => "\n<student_confidence>sure</student_confidence>",

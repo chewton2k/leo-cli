@@ -87,10 +87,9 @@ app supports macOS and Windows only.
 
 ## What you can do
 
-**Organize your notes.** Browse folders in a grid or list, search your notes, and
-keep tasks close by.
-
-![Leo's note library with folder cards, note previews, and a tasks panel](public/notes-library.png)
+**Organize your notes.** Browse folders and notes in the explorer beside your
+note. Right-click a note or folder to rename, move or trash it, with Undo. Search
+your notes and keep tasks close by.
 
 **Study with Felix.** Ask anything, or say what you want to learn: Felix finds where
 your understanding stops, teaches one step at a time and quizzes you on your notes.

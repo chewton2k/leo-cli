@@ -433,6 +433,27 @@ mod tests {
     }
 
     #[test]
+    fn a_wrong_prediction_is_never_brought_back_for_review() {
+        let dir = tempfile::tempdir().unwrap();
+        study(
+            dir.path(),
+            "chat-predict-1",
+            vec![
+                said("user", "teach me BFS"),
+                serde_json::json!({
+                    "role": "assistant",
+                    "text": "Before we start, a guess.",
+                    "quizzes": [
+                        { "question": "What will BFS visit first?", "given": "the deepest node", "correct": false, "predict": true }
+                    ]
+                }),
+            ],
+            at(1, 9),
+        );
+        assert!(missed(dir.path(), at(3, 9)).is_empty());
+    }
+
+    #[test]
     fn a_wrong_answer_given_in_a_quiz_card_is_offered_for_review() {
         let dir = tempfile::tempdir().unwrap();
         study(

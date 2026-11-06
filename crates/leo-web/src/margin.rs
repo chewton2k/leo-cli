@@ -590,14 +590,18 @@ pub fn parsed(reply: &str) -> ReadAnswer {
         return ReadAnswer::Silent;
     }
     let text = reply.trim();
-    let json = if let Some(fenced) = text
-        .strip_prefix("```json")
-        .or_else(|| text.strip_prefix("```"))
-    {
+    let json = if let Some(fenced) = text.strip_prefix("```") {
         let Some(body) = fenced.strip_suffix("```") else {
             return ReadAnswer::Invalid;
         };
-        body.trim()
+        match body.split_once('\n') {
+            Some((info, rest)) if info.trim().chars().all(char::is_alphanumeric) => rest.trim(),
+            _ => body
+                .strip_prefix("json")
+                .or_else(|| body.strip_prefix("JSON"))
+                .unwrap_or(body)
+                .trim(),
+        }
     } else {
         text
     };
@@ -895,13 +899,22 @@ mod tests {
             parsed(&format!("{{\"quote\":\"abc\",\"text\":\"{long}\"}}")),
             ReadAnswer::Invalid
         );
-        assert_eq!(
-            parsed("```json\n{\"quote\":\"abc\",\"text\":\"Hm.\"}\n```"),
-            ReadAnswer::Note(Found {
-                quote: "abc".into(),
-                text: "Hm.".into()
-            })
-        );
+        for reply in [
+            "```json\n{\"quote\":\"abc\",\"text\":\"Hm.\"}\n```",
+            "```JSON\n{\"quote\":\"abc\",\"text\":\"Hm.\"}\n```",
+            "```\n{\"quote\":\"abc\",\"text\":\"Hm.\"}\n```",
+            "```json{\"quote\":\"abc\",\"text\":\"Hm.\"}```",
+            "```{\"quote\":\"abc\",\n\"text\":\"Hm.\"}```",
+        ] {
+            assert_eq!(
+                parsed(reply),
+                ReadAnswer::Note(Found {
+                    quote: "abc".into(),
+                    text: "Hm.".into()
+                }),
+                "{reply}"
+            );
+        }
     }
 
     #[test]

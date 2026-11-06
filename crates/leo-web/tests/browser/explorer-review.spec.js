@@ -312,7 +312,7 @@ test('note titles keep slashes as text while folder names stay strict', async ({
   const input = page.getByRole('textbox', { name: 'Folder name' });
   await input.fill('a/b');
   await page.locator('[data-action="folder-rename-save"]').click();
-  await expect(page.locator('.toast')).toContainText('single folder name');
+  await expect(page.locator('.toast')).toContainText('cannot contain /');
   await expect(input).toHaveValue('a/b');
 });
 

@@ -398,11 +398,13 @@ async fn no_daily_limit_keeps_reading_past_the_old_cap() {
     assert_eq!(status, 200);
     assert_eq!(view["cap"], margin::NO_CAP);
     assert_eq!(view["gap"], 300);
-    assert!(margin::spend_read(&engine.chats(), margin::NO_CAP));
+    for _ in 0..81 {
+        assert!(margin::spend_read(&engine.chats(), margin::NO_CAP));
+    }
     let (id, version) = engine.note("One", PASSAGE).await;
     assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(margin::reads_today(&engine.chats(), margin::NO_CAP), 2);
+    assert_eq!(margin::reads_today(&engine.chats(), margin::NO_CAP), 82);
     engine.stop().await;
 }
 

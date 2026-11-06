@@ -238,7 +238,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   try {
     for(const theme of ['light','dark']) {
       const page=await browser.newPage({colorScheme:theme,viewport:{width:900,height:850}});
-      await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/backup');
+      await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/general');
       await expect(page.getByRole('heading',{level:1,name:'General'})).toBeVisible();
       await expect(page).toHaveURL(/#\/settings\/general$/);
       await page.clock.install();
@@ -253,7 +253,6 @@ test('Settings sections keep drafts and selections across redraws in both themes
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
       await expect(page.getByRole('heading',{level:1,name:'General'})).toBeVisible();
-      await expect(page.locator('.settings-nav a[href="#/settings/backup"]')).toHaveCount(0);
       const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
       const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
       const gap=await page.locator('.settings-layout').evaluate(el=>parseFloat(getComputedStyle(el).paddingTop));
@@ -560,7 +559,7 @@ test('page toolbars share geometry and storage categories stay compact', async (
   for (const width of [2000, 1200, 390]) {
     await page.setViewportSize({ width, height: 850 });
     let baseline;
-    for (const classes of ['', 'on-settings', 'on-library', 'on-note']) {
+    for (const classes of ['', 'on-settings', 'on-note']) {
       await page.locator('body').evaluate((body, value) => { body.className = value; }, classes);
       const box = await page.locator('.bar-row').boundingBox();
       if (!baseline) baseline = box;

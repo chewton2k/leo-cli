@@ -66,7 +66,7 @@ function sideRow(action, icon, label, { on = false, attrs = '', count = '', hint
 function sidePlace() {
   const view = state.view;
   if (view === 'workspace') return 'home';
-  if (view === 'folder' || view === 'note' || view === 'new') return `dir:${state.dir || ''}`;
+  if (view === 'note' || view === 'new') return `dir:${state.dir || ''}`;
   // Storage and Trash live inside Settings, so the sidebar shows Settings for them.
   if (view === 'storage' || view === 'trash') return 'settings';
   return view;
@@ -424,7 +424,7 @@ addEventListener('resize', () => {
 let explorerOpenSeq = 0;
 async function openExplorerNote(el) {
   const request = ++explorerOpenSeq;
-  if (!el.closest('#folders-sheet')) return go(noteHash(el.dataset.id));
+  if (!el.closest('#folders-sheet') || state.session?.note.id === el.dataset.id) return go(noteHash(el.dataset.id));
   const box = el.closest('.scrim');
   const mine = seq;
   const current = () => request === explorerOpenSeq && mine === seq && box.isConnected && !sideWide();
@@ -441,6 +441,7 @@ function closeExplorerMenu(focus = true) {
   const { box, owner } = explorerPopup;
   explorerPopup = null;
   box.remove();
+  if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'false');
   if (focus && owner.isConnected) owner.focus({ preventScroll: true });
 }
 
@@ -467,6 +468,8 @@ function explorerMenu(el, event = null) {
     : [['new', target.dir ? 'New note here' : 'New note'], ['folder', target.dir ? 'New folder here' : 'New folder'], ...(target.kind === 'folder' && target.dir ? [['rename', 'Rename'], ['move', 'Move'], ['trash', 'Move to trash']] : [])];
   box.innerHTML = rows.map(([action, label]) => `<button type="button" role="menuitem" data-explorer-action="${action}">${label}</button>`).join('');
   document.body.appendChild(box);
+  if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'true');
+  addEventListener('scroll', (e) => { if (!box.contains(e.target)) closeExplorerMenu(false); }, { capture: true, once: true });
   const bounds = owner.getBoundingClientRect();
   box.style.left = `${Math.max(8, Math.min(event?.clientX ?? bounds.right, innerWidth - box.offsetWidth - 8))}px`;
   box.style.top = `${Math.max(8, Math.min(event?.clientY ?? bounds.bottom, innerHeight - box.offsetHeight - 8))}px`;
@@ -564,10 +567,13 @@ function renameExplorerNote(note) {
     if (save.disabled || !validNoteName(title)) return;
     save.disabled = true;
     try {
-      await api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { title, base: note.version } });
+      const renamed = await api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { title, base: note.version } });
       if (box.isConnected) closeSheet();
       await afterExplorerNote(note.id);
-      toast(`Renamed note to “${title}”`);
+      toast(`Renamed note to “${title}”`, {
+        action: 'Undo',
+        run: () => api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { title: note.title, base: renamed.version } }).then(() => afterExplorerNote(note.id)).catch(fail),
+      });
     } catch (error) { fail(error); }
     finally { if (save.isConnected) save.disabled = false; }
   };
@@ -604,6 +610,6 @@ function validNoteName(name) {
 }
 
 async function afterExplorerNote(id) {
-  if (state.view === 'note' && state.session?.note.id === id && !saving.unsaved()) await showNote(id);
+  if (state.view === 'note' && state.session?.note.id === id && !saving.get(state.session.key)) await showNote(id);
   await loadSideFolders();
 }

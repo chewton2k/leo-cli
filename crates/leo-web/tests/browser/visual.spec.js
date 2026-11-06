@@ -49,8 +49,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const [name, hash, mask] of [
-  ['folders', '#/', []],
-  ['folder', '#/f/cs130', []],
+  ['workspace', '#/', []],
   ['search', '#/search/queue', []],
   ['trash', '#/trash', []],
   ['settings', '#/settings', []],

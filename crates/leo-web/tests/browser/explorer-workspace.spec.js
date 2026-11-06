@@ -186,7 +186,7 @@ for (const width of [390, 900]) test(`compact Folders at ${width} shares rows, t
   await page.locator(`${host} [data-action="new-folder"]`).click();
   await page.locator('#folder-name').fill('Unsafe/Name');
   await page.locator('[data-action="create-folder"]').click();
-  await expect(page.locator('.toast')).toContainText('single folder name');
+  await expect(page.locator('.toast')).toContainText('cannot contain /');
   await expect(page.locator('#folder-name')).toHaveValue('Unsafe/Name');
   await page.locator('.sheet [data-action="close"]').click();
   await expect(page.locator(host)).toBeVisible();

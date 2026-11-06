@@ -139,9 +139,7 @@ const actions = {
     go(dir ? `#/new/${enc(dir)}` : '#/new');
   },
   'new-folder': newFolder,
-  'folder-rename': () => renameFolderSheet(),
   'folder-rename-save': renameFolder,
-  'folder-delete': () => deleteFolderAsk(),
   'folder-delete-now': deleteFolderNow,
   'create-folder': createFolder,
   settings: () => {

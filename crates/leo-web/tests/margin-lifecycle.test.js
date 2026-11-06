@@ -79,7 +79,7 @@ test('mode updates retain confirmed state after failure and ignore departed note
 });
 
 test('refused reads keep pending changes and show a safe pause reason', async () => {
-  for (const [why, status] of [['daily', 'Paused for today'], ['felix', 'Paused while Felix answers'], ['unknown', 'Could not read this change. Check Writing AI and try again.']]) {
+  for (const [why, status] of [['daily', 'Paused for today: daily limit reached'], ['felix', 'Paused while Felix answers'], ['unknown', 'Could not read this change. Check Writing AI and try again.']]) {
     const h = harness();
     const pending = h.context.marginRead(h.state.s);
     await new Promise(setImmediate);
@@ -110,7 +110,7 @@ test('a stale 409 without a reason says the note changed and a retry follows the
 });
 
 test('a refusal with a reason is never mistaken for a stale version', async () => {
-  for (const [status, why, expected] of [[409, 'daily', 'Paused for today'], [429, 'soon', 'Paused after a recent comment'], [403, 'unedited', 'Reads changes after you edit']]) {
+  for (const [status, why, expected] of [[409, 'daily', 'Paused for today: daily limit reached'], [429, 'soon', 'Paused after a recent comment'], [403, 'unedited', 'Reads changes after you edit']]) {
     const h = harness();
     const pending = h.context.marginRead(h.state.s);
     await new Promise(setImmediate);
@@ -223,4 +223,21 @@ test('leaving with a queued hover lets the next note schedule and paint its own 
     h.context.api = async () => { throw new Error('offline'); };
     assert.equal((await h.context.marginLoadPrefs()).layout, saved || 'both');
   }
+});
+
+test('switching to When you ask during the save sends nothing, and a late answer leaves no status', async () => {
+  const h = harness();
+  let sent = 0;
+  h.context.api = () => { sent++; return new Promise(() => {}); };
+  h.context.flush = async () => { h.state.mode = 'ask'; };
+  await h.context.marginRead(h.state.s);
+  assert.equal(sent, 0);
+
+  const late = harness();
+  const pending = late.context.marginRead(late.state.s);
+  await new Promise(setImmediate);
+  late.state.mode = 'ask';
+  late.settle().resolve({ note: null });
+  await pending;
+  assert.equal(late.state.status, '');
 });

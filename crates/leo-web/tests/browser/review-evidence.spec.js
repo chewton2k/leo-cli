@@ -842,12 +842,15 @@ test('R17 the loaded explorer keeps its rows and never flashes Opening notes dur
   }, dir);
   await page.goto('/#/settings/general');
   await expect(page.locator('.settings-nav')).toBeVisible();
-  for (const name of ['Appearance', 'Felix', 'General']) {
-    const link = page.locator('.settings-nav a', { hasText: name }).first();
-    if (await link.count()) { await link.click(); await page.waitForTimeout(250); }
+  for (const name of ['Felix', 'General']) {
+    await page.locator(`.settings-nav a[href="#/settings/${name.toLowerCase()}"]`).click();
+    await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
   }
   const theme = page.locator('[data-action="theme-pick"]');
-  if (await theme.count()) { await theme.nth(1).click(); await page.waitForTimeout(250); await theme.nth(0).click(); await page.waitForTimeout(250); }
+  await theme.nth(1).click();
+  await expect(theme.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await theme.nth(0).click();
+  await expect(theme.nth(0)).toHaveAttribute('aria-pressed', 'true');
   await createNote(page, `Cached row late ${tag}`, 'Arrives while Settings is open.', dir);
   await page.evaluate(() => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('leo-visibility')); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(2500);

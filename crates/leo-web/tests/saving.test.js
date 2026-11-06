@@ -72,7 +72,7 @@ test('a recovered draft uses its original base so external edits create a confli
   await m.flush(s);
   assert.equal(requests[0].body.base, 'v1');
   assert.equal(requests[1].body.body, 'Phone draft');
-  assert.match(requests[1].body.title, /conflict from phone/);
+  assert.match(requests[1].body.title, /conflict from leo/);
   assert.equal(s.note.id, 'copy');
   assert.equal(local.length, 0);
 });

@@ -352,7 +352,9 @@ price strings (`rates`); agents are "on your plan" and local models free.
 Ollama/local 8k tokens; a valid `context` setting overrides it. `note_tokens`
 reserves 45%, capped at 120k for plan providers; legacy API accounting keeps its
 50k cost cap. `felix_room` independently caps Felix's note budget at 32,000
-characters, or the weakest provider's smaller allowance. `felix_context` separately
+characters, or the weakest provider's smaller allowance, after setting aside
+`FELIX_PROMPT_TOKENS` (4,200) for Felix's system prompt so an 8k local window
+is not overrun. `felix_context` separately
 bounds warm-session retention by the weakest model window, capped at 480,000
 characters, so smaller retrieval does not force frequent cold starts. Recording/upload
 synthesis and gap-filling retain their larger model-sized budgets and output limits. Effort choices come from `choice::efforts` and

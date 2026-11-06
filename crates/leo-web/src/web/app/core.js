@@ -525,9 +525,13 @@ async function go(hash, { replace = false, search = null, note = null, isCurrent
   clearSearchHighlight();
   const query = search ?? (state.view === 'search' ? state.query : null);
   searchPassage = query && hash.startsWith('#/n/') ? { hash, query } : null;
-  if (location.hash === hash) return route();
+  if (location.hash === hash) {
+    marginLeave();
+    return route();
+  }
   if (replace) {
     history.replaceState(history.state, '', hash);
+    marginLeave();
     route();
   } else {
     location.hash = hash;
@@ -639,7 +643,7 @@ async function showWorkspace(dir = null) {
   }
   if (state.session?.doc) state.session.doc.destroy();
   state = { view: 'workspace', dir: '' };
-  document.body.classList.remove('on-note', 'on-library');
+  document.body.classList.remove('on-note');
   chrome({});
   swap('workspace', () => {
     app.innerHTML = `<section class="workspace-empty">${empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
@@ -741,7 +745,6 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   let s;
   swap(`n:${note.id || 'new'}`, () => {
     scrollToTop();
-    document.body.classList.toggle('on-library', false);
     document.body.classList.toggle('on-note', true);
     if (source.note && source.note !== note.id) closeSource();
     if (state.session && state.session.doc) state.session.doc.destroy();
@@ -756,7 +759,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
-    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Waits until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
+    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause and sends them to your writing AI.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
     <div class="note-meta"><span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>

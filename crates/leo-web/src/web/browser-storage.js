@@ -2,7 +2,7 @@
   'use strict';
   const MOST_KEYS = 1000;
   const NOTE = 'leo-draft-v1:';
-  const NAMES = { 'leo-chat-v1': 'Cached Felix conversation', 'leo-felix-access': 'Felix permissions', 'leo-chat-sidebar': 'Chat sidebar', 'leo-chat-width': 'Chat panel width', 'leo-library': 'Notes view, sort and filters', 'leo-calendar-hide-done': 'Calendar completion filter', 'leo-tasks-folded': 'Tasks panel preference', 'leo-source-width': 'Source panel width', 'leo-side': 'Sidebar preference', 'leo-side-open': 'Expanded folders (old)', 'leo-side-folders': 'Expanded folders', 'leo-last-place': 'Where you left off' };
+  const NAMES = { 'leo-chat-v1': 'Cached Felix conversation', 'leo-felix-access': 'Felix permissions', 'leo-chat-sidebar': 'Chat sidebar', 'leo-chat-width': 'Chat panel width', 'leo-library': 'Notes view, sort and filters (old)', 'leo-calendar-hide-done': 'Calendar completion filter', 'leo-tasks-folded': 'Tasks panel preference', 'leo-source-width': 'Source panel width', 'leo-side': 'Sidebar preference', 'leo-side-open': 'Expanded folders (old)', 'leo-side-folders': 'Expanded folders', 'leo-last-place': 'Where you left off' };
   function size(bytes) {
     if (!Number.isFinite(bytes) || bytes < 0) return 'Unknown';
     if (bytes < 1024) return `${bytes} bytes`;

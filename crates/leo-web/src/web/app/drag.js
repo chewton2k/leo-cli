@@ -314,7 +314,7 @@ async function afterMove(from, to, noteId = null) {
   }
   if (from && state.view === 'note' && (dir === from || dir.startsWith(`${from}/`))) state.dir = to + dir.slice(from.length);
   const affected = noteId === state.session?.note.id || from && (dir === from || dir.startsWith(`${from}/`));
-  if (affected && state.view === 'note' && state.session?.note.id && !saving.unsaved()) await showNote(state.session.note.id);
+  if (affected && state.view === 'note' && state.session?.note.id && !saving.get(state.session.key)) await showNote(state.session.note.id);
   else await showLatest();
   await loadSideFolders();
 }

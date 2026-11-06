@@ -5,9 +5,7 @@ const TASK_USE = {
 };
 
 async function showSettings(section) {
-  const requested = section;
   section = settingsSection(section);
-  if (requested === 'backup' && location.hash === '#/settings/backup') history.replaceState(history.state, '', '#/settings/general');
   // Trash is a page of notes rather than a setting, so a bare #/settings never reopens it.
   if (section === 'trash') return showTrash();
   try { localStorage.setItem('leo-settings-section', section); } catch (e) {}

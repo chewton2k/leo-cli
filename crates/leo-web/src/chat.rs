@@ -1394,8 +1394,8 @@ mod tests {
 
     #[test]
     fn the_prompt_leaves_room_for_the_notes() {
-        let added = HELPING.len() + LEARNING.len();
-        assert!(added < 11_500, "{added} bytes");
+        let system = BASE.len() + REPLY_STYLE.len() + HELPING.len() + LEARNING.len();
+        assert!(system < 4_200 * 4, "{system} bytes");
     }
 
     #[test]

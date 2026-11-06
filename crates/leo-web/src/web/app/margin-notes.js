@@ -232,6 +232,7 @@ async function marginChangeMode(mode) {
     marginPage.mode = done.mode;
     marginPage.baseline = marginKit.blocksOf(s.doc.source());
     clearTimeout(marginPage.timer);
+    clearTimeout(marginPage.faceTimer);
     marginSetStatus('');
     marginRedraw();
   } catch (e) {
@@ -242,6 +243,7 @@ async function marginChangeMode(mode) {
     if (marginPage.s === s) {
       marginPage.changing = false;
       marginControl();
+      if (document.activeElement === document.body) $('#margin-mode')?.focus({ preventScroll: true });
     }
   }
 }
@@ -822,7 +824,7 @@ async function marginRead(s) {
   marginPage.reading = reading;
   try {
     await flush(s);
-    if (s !== marginPage.s || saving.unsaved()) return;
+    if (s !== marginPage.s || marginPage.mode !== 'along' || saving.unsaved()) return;
     const source = s.doc.source();
     const blocks = marginKit.changedBlocks(marginPage.baseline, source);
     if (!blocks.length) return;
@@ -830,8 +832,10 @@ async function marginRead(s) {
     marginShowReading(s, blocks);
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;
+    const along = marginPage.mode === 'along';
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
-    if (got?.failed) marginSetStatus('Could not read this change. Check Writing AI and try again.');
+    if (!along) marginSetStatus('');
+    else if (got?.failed) marginSetStatus('Could not read this change. Check Writing AI and try again.');
     else if (got?.note) marginSetStatus('');
     else marginSetStatus('No comment this time', true);
     if (got?.note) {
@@ -844,10 +848,11 @@ async function marginRead(s) {
   } catch (e) {
     if (e instanceof Locked) throw e;
     if (marginPage.s === s) {
-      const paused = { daily: 'Paused for today', soon: 'Paused after a recent comment', busy: 'Already reading', felix: 'Paused while Felix answers', unedited: 'Reads changes after you edit', mode: 'When you ask' };
+      const paused = { daily: 'Paused for today: daily limit reached', soon: 'Paused after a recent comment', busy: 'Already reading', felix: 'Paused while Felix answers', unedited: 'Reads changes after you edit', mode: '' };
       const stale = e.status === 409 && !e.data?.why;
       if (stale) marginPage.nextRead = 0;
-      marginSetStatus(paused[e.data?.why] || (stale ? 'This note changed while Felix was reading. He will try again after your next edit.' : 'Could not read this change. Check Writing AI and try again.'));
+      if (marginPage.mode !== 'along') marginSetStatus('');
+      else marginSetStatus(paused[e.data?.why] || (stale ? 'This note changed while Felix was reading. He will try again after your next edit.' : 'Could not read this change. Check Writing AI and try again.'));
     }
   } finally {
     if (s === marginPage.s && marginPage.reading === reading) {
@@ -898,8 +903,8 @@ function felixSettingsCards(view, page) {
   return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['ask', 'When you ask', `Select a passage, then choose Ask Felix or press ${marginAskKeys()}, type your question and send. Ordinary browsing or typing does not activate this mode.`], ['along', 'Reads along', 'He reads what changed after a pause and speaks only when it matters.']] })}<p class="hint">Applies to notes made from now on. Each note has its own menu above its title.</p></section>
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card felix-rhythm"><header><h3>How often he reads</h3></header><p class="hint" id="felix-rhythm" aria-live="polite">${esc(felixRhythm(view))}</p><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['regular', 'Regular'], ['slow', 'Slow']] })}</div>
-    <div class="set-row" data-find="felix-gap"><span class="set-label">Time between reads</span>${segmented({ label: 'Time between reads', field: 'data-margin-pref="gap"', current: String(view.gap), choices: view.gaps.map((gap) => [String(gap), marginWait(gap)]) })}</div>
-    <div class="set-row" data-find="felix-cap"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: String(view.cap), choices: view.caps.map((cap) => [String(cap), cap ? String(cap) : 'No limit']) })}</div>
+    <div class="set-row" data-find="felix-gap"><span class="set-label">Time between reads</span>${segmented({ label: 'Time between reads', field: 'data-margin-pref="gap"', current: String(view.gap), choices: (view.gaps || []).map((gap) => [String(gap), marginWait(gap)]) })}</div>
+    <div class="set-row" data-find="felix-cap"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: String(view.cap), choices: (view.caps || []).map((cap) => [String(cap), cap ? String(cap) : 'No limit']) })}</div>
     ${view.problem ? `<p class="set-note warn" role="status">${esc(view.problem)}</p>` : ''}</section>`;
 }
 

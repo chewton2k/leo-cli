@@ -140,7 +140,7 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   copy and cut give the Markdown, and typing, Enter, Delete or paste replace it
   through the raw lines, then only the caret's line stays open.
   Autosave PATCHes 700 ms after the last change with `base` = the loaded
-  `version` (FNV-1a); 409 → "<title> (conflict from phone)". `saving.js`
+  `version` (FNV-1a); 409 → "<title> (conflict from leo)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
   Checkbox clicks update the live input and task style without redrawing the

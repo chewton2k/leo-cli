@@ -15,7 +15,7 @@ const THREADS = {
   long: { id: 't2', quote: WORDS, prefix: 'begins here and ', suffix: ' and then it ends.', status: 'open', messages: [{ from: 'felix', text: 'This runs long. Split it.' }] },
 };
 
-const MODE_MARKUP = `<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">{{pen}}</span><span id="margin-mode-label">When you ask</span>{{chevron}}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Select a passage, then choose Ask Felix.</small></button></div></div>`;
+const MODE_MARKUP = `<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">{{pen}}</span><span id="margin-mode-label">When you ask</span>{{chevron}}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause and sends them to your writing AI.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div>`;
 
 async function fixture(browser, run, { width = 1280, height = 800, layout = 'right', mode = 'ask', threads = [THREADS.short, THREADS.long], context = {}, source = SOURCE } = {}) {
   const core = read('app/core.js');
@@ -607,7 +607,7 @@ test('margin replies expand as borderless retained controls and collapse out of 
     expect(closing.at(-1).height).toBe(0);
     expect(await more.evaluate(el => el.inert)).toBe(true);
     await expect(more).toHaveAttribute('aria-hidden', 'true');
-  }, { threads: [THREADS.short], context: { recordVideo: { dir: path.join('/tmp/leo-margin-round3-video', test.info().project.name), size: { width: 1280, height: 800 } } } });
+  }, { threads: [THREADS.short], context: { recordVideo: { dir: test.info().outputPath('video'), size: { width: 1280, height: 800 } } } });
 });
 
 test('margin diagram answers reuse escaped Markdown figures instead of displaying source or active HTML', async ({ browser }) => {

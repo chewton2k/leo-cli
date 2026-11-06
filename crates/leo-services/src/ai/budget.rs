@@ -75,6 +75,7 @@ const NOTES_SHARE: f64 = 0.45;
 const PAID_NOTE_TOKENS: u32 = 50_000;
 const PLAN_NOTE_TOKENS: u32 = 120_000;
 const FELIX_CHARS: usize = 32_000;
+const FELIX_PROMPT_TOKENS: u32 = 4_200;
 const FELIX_CONTEXT_CHARS: usize = 480_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,10 +128,12 @@ pub fn felix_room(config: &Config) -> usize {
                 .provider(name)
                 .cloned()
                 .or_else(|| Config::built_in_provider(name))?;
-            Some(
-                (note_tokens(window_of(name, &provider)) as usize * CHARS_PER_TOKEN)
-                    .min(FELIX_CHARS),
-            )
+            let window = window_of(name, &provider);
+            let after_prompt = Window {
+                tokens: window.tokens.saturating_sub(FELIX_PROMPT_TOKENS),
+                ..window
+            };
+            Some((note_tokens(after_prompt) as usize * CHARS_PER_TOKEN).min(FELIX_CHARS))
         })
         .min()
         .unwrap_or(FELIX_CHARS)
@@ -343,7 +346,7 @@ mod tests {
             assert_eq!(felix_room(&config), FELIX_CHARS);
             for chain in [[name, "ollama"], ["ollama", name]] {
                 config.chat.chain = chain.map(str::to_string).to_vec();
-                assert_eq!(felix_room(&config), 3_686 * CHARS_PER_TOKEN);
+                assert_eq!(felix_room(&config), 1_796 * CHARS_PER_TOKEN);
             }
         }
         config.chat.chain = vec![];
@@ -364,8 +367,12 @@ mod tests {
             for context in [2_048, 8_192, 256_000, 1_000_000] {
                 let mut custom = provider(kind, None, None);
                 custom.context = Some(context);
-                let room = (note_tokens(window_of("custom", &custom)) as usize * CHARS_PER_TOKEN)
-                    .min(FELIX_CHARS);
+                let window = window_of("custom", &custom);
+                let after_prompt = Window {
+                    tokens: window.tokens.saturating_sub(FELIX_PROMPT_TOKENS),
+                    ..window
+                };
+                let room = (note_tokens(after_prompt) as usize * CHARS_PER_TOKEN).min(FELIX_CHARS);
                 config.providers.insert("custom".into(), custom);
                 assert_eq!(felix_room(&config), room);
                 assert!(room <= FELIX_CHARS);
