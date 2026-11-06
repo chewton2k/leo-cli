@@ -67,18 +67,23 @@ pub fn expire_uploads(notes_dir: &Path, days: Option<u32>, now: DateTime<Utc>) -
                 gone += 1;
             }
         }
-        let _ = std::fs::remove_dir(&dir);
     }
     gone
 }
 
-pub fn expire_transcripts(notes_dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
+pub fn expire_transcripts(
+    notes_dir: &Path,
+    days: Option<u32>,
+    now: DateTime<Utc>,
+    active: Option<&str>,
+) -> usize {
     let Some(cutoff) = cutoff(days, now) else {
         return 0;
     };
     let root = leo_core::recording::root(notes_dir);
     child_dirs(&root, leo_core::recording::valid_id)
         .into_iter()
+        .filter(|dir| active.is_none() || dir.file_name().and_then(|n| n.to_str()) != active)
         .filter(|dir| older(dir, cutoff) && std::fs::remove_dir_all(dir).is_ok())
         .count()
 }
@@ -92,7 +97,9 @@ pub fn expire_audio(
     let Some(days) = days else {
         return 0;
     };
-    let cutoff = now - chrono::Duration::days(i64::from(days));
+    let Some(cutoff) = now.checked_sub_signed(chrono::Duration::days(i64::from(days))) else {
+        return 0;
+    };
     let Ok(pending) = housekeeper.pending_recordings() else {
         return 0;
     };
@@ -125,7 +132,7 @@ pub(crate) async fn expire_now(state: &AppState) {
     let _ = tokio::task::spawn_blocking(move || {
         let now = Utc::now();
         expire_uploads(&notes_dir, keep.upload_days, now);
-        expire_transcripts(&notes_dir, keep.transcript_days, now);
+        expire_transcripts(&notes_dir, keep.transcript_days, now, active.as_deref());
         if let Some(housekeeper) = housekeeper {
             expire_audio(&*housekeeper, keep.audio_days, now, active.as_deref());
         }
@@ -178,7 +185,7 @@ mod tests {
         let archive = transcript(&notes, "note-one-aaa", 4000, 0);
         let now = Utc::now();
         assert_eq!(expire_uploads(&notes, None, now), 0);
-        assert_eq!(expire_transcripts(&notes, None, now), 0);
+        assert_eq!(expire_transcripts(&notes, None, now, None), 0);
         assert!(file.exists() && archive.exists());
     }
 
@@ -190,7 +197,6 @@ mod tests {
         let other = upload(&notes, "note-two", "gone.pdf", 30, 0);
         assert_eq!(expire_uploads(&notes, Some(7), Utc::now()), 2);
         assert!(!old.exists() && new.exists() && !other.exists());
-        assert!(!other.parent().unwrap().exists(), "an emptied folder goes");
         assert!(new.parent().unwrap().exists());
     }
 
@@ -229,7 +235,7 @@ mod tests {
         let (_tmp, notes) = data();
         let old = transcript(&notes, "note-one-aaa", 31, 0);
         let new = transcript(&notes, "note-two-bbb", 29, 0);
-        assert_eq!(expire_transcripts(&notes, Some(30), Utc::now()), 1);
+        assert_eq!(expire_transcripts(&notes, Some(30), Utc::now(), None), 1);
         assert!(!old.exists() && new.exists());
     }
 
@@ -238,7 +244,7 @@ mod tests {
         let (_tmp, notes) = data();
         let inside = transcript(&notes, "note-one-aaa", 29, 86_000);
         let outside = transcript(&notes, "note-two-bbb", 30, 120);
-        assert_eq!(expire_transcripts(&notes, Some(30), Utc::now()), 1);
+        assert_eq!(expire_transcripts(&notes, Some(30), Utc::now(), None), 1);
         assert!(inside.exists() && !outside.exists());
     }
 
@@ -253,7 +259,7 @@ mod tests {
         let root = leo_core::recording::root(&notes);
         std::fs::create_dir_all(&root).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("note-one-link")).unwrap();
-        assert_eq!(expire_transcripts(&notes, Some(7), Utc::now()), 0);
+        assert_eq!(expire_transcripts(&notes, Some(7), Utc::now(), None), 0);
         assert!(outside.join("keep.json").exists());
     }
 

@@ -181,12 +181,7 @@ async fn retired_practice_routes_are_gone_while_shared_routes_stay_available() {
         let reply = ask_with(port, path, &host, cookie).await;
         assert!(reply.starts_with("HTTP/1.1 404"), "{path}: {reply}");
     }
-    for path in [
-        "/api/progress/combine:note-1",
-        "/api/review",
-        "/api/boards",
-        "/api/margin",
-    ] {
+    for path in ["/api/review", "/api/boards", "/api/margin"] {
         let reply = ask_with(port, path, &host, cookie).await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
     }

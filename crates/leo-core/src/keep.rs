@@ -41,10 +41,24 @@ pub fn path_for(notes_dir: &Path) -> PathBuf {
 }
 
 pub fn load(notes_dir: &Path) -> Keep {
-    std::fs::read_to_string(path_for(notes_dir))
+    let read: Keep = std::fs::read_to_string(path_for(notes_dir))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let offered = |days: Option<u32>, otherwise: Option<u32>| {
+        if CHOICES.contains(&days) {
+            days
+        } else {
+            otherwise
+        }
+    };
+    Keep {
+        trash_days: offered(read.trash_days, default_trash_days()),
+        chat_days: offered(read.chat_days, None),
+        upload_days: offered(read.upload_days, None),
+        transcript_days: offered(read.transcript_days, None),
+        audio_days: offered(read.audio_days, None),
+    }
 }
 
 pub fn save(notes_dir: &Path, keep: &Keep) -> Result<()> {
@@ -83,6 +97,22 @@ pub fn describe(days: Option<u32>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hand_edited_period_outside_the_choices_never_shortens_what_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::write(
+            path_for(&notes),
+            r#"{"trash_days":0,"chat_days":1,"upload_days":0,"transcript_days":3,"audio_days":4000000000}"#,
+        )
+        .unwrap();
+        assert_eq!(load(&notes), Keep::default());
+        std::fs::write(path_for(&notes), r#"{"upload_days":90,"audio_days":7}"#).unwrap();
+        let kept = load(&notes);
+        assert_eq!((kept.upload_days, kept.audio_days), (Some(90), Some(7)));
+    }
 
     #[test]
     fn nothing_saved_means_thirty_days_of_trash_and_chats_kept_forever() {

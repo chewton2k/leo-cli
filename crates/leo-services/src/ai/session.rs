@@ -105,18 +105,6 @@ struct CodexTalk {
     sent: usize,
 }
 
-struct Unavailable(String);
-
-impl Session for Unavailable {
-    fn native(&self) -> bool {
-        false
-    }
-
-    fn say(&mut self, _text: &str, _turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
-        anyhow::bail!("{}", self.0)
-    }
-}
-
 impl Session for CodexTalk {
     fn native(&self) -> bool {
         true
@@ -411,15 +399,17 @@ pub fn open(
                     .iter()
                     .map(|t| (t.name.clone(), t.description.clone(), t.schema.clone()))
                     .collect();
-                return match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
-                    Ok(thread) => Some(Box::new(CodexTalk {
-                        sent: schemas + systems.native.len(),
-                        thread,
-                        provider: name.clone(),
-                        config: config.clone(),
-                    })),
-                    Err(e) => Some(Box::new(Unavailable(e.to_string()))),
-                };
+                match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
+                    Ok(thread) => {
+                        return Some(Box::new(CodexTalk {
+                            sent: schemas + systems.native.len(),
+                            thread,
+                            provider: name.clone(),
+                            config: config.clone(),
+                        }))
+                    }
+                    Err(_) => continue,
+                }
             }
             Some(ProviderKind::Openai) => {
                 let key = match provider.key_env.as_deref() {
@@ -789,52 +779,5 @@ mod tests {
             open(&config, &store, &systems, &tools()).is_none(),
             "no key, no session"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_codex_that_cannot_isolate_native_sessions_says_to_update_it() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("codex");
-        std::fs::write(
-            &bin,
-            r##"#!/bin/sh
-if [ "$1" = features ]; then echo 'shell_tool stable true'; exit 0; fi
-if [ "$2" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi
-exit 1
-"##,
-        )
-        .unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut config = Config::default();
-        config.chat.chain = vec!["codex".into()];
-        config.providers.get_mut("codex").unwrap().bin = Some(bin.to_string_lossy().into());
-        let mut talk = open(
-            &config,
-            &MemoryStore::default(),
-            &Systems {
-                native: "n",
-                text: "t",
-            },
-            &[],
-        )
-        .unwrap();
-        let err = talk
-            .say(
-                "hello",
-                Turn {
-                    tail: "",
-                    max_tokens: 100,
-                    most_calls: 0,
-                    sink: &mut |_| {},
-                    restart: &mut || {},
-                    call: &mut |_, _| String::new(),
-                    stopped: &|| false,
-                    tools_done: &|| true,
-                },
-            )
-            .unwrap_err();
-        assert!(err.to_string().contains("Update Codex"), "{err}");
     }
 }

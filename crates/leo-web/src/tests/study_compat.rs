@@ -25,12 +25,6 @@ fn study_quiz_marking_keeps_quick_writer_validation_and_verdicts() {
         Json(serde_json::from_value(serde_json::json!({"question": "Why a queue?", "answer": "Arrival order", "given": ""})).unwrap()),
     ));
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let response = run(crate::routes::progress::get(
-        State(state),
-        Path("combine:note-1".into()),
-    ));
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(json_of(response)["fraction"].is_null());
 }
 
 #[test]

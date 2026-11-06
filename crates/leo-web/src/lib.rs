@@ -663,7 +663,13 @@ pub(crate) async fn start_in(
 
     tokio::spawn({
         let state = state.clone();
-        async move { keeping::expire_now(&state).await }
+        async move {
+            let mut daily = tokio::time::interval(std::time::Duration::from_secs(86_400));
+            loop {
+                daily.tick().await;
+                keeping::expire_now(&state).await;
+            }
+        }
     });
 
     let background = Background {
@@ -870,7 +876,6 @@ fn router(state: AppState) -> Router {
         .route("/theme.js", get(routes::assets::theme_js))
         .route("/chat.js", get(chat_js))
         .route("/pane-resize.js", get(routes::assets::pane_resize_js))
-        .route("/api/progress/{key}", get(routes::progress::get))
         .route("/api/chat", post(chat_reply))
         .route("/api/quiz/mark", post(routes::felix::mark_quiz))
         .route(

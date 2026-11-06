@@ -63,6 +63,10 @@ fn discard_recording(root: &Path, id: &str) -> Result<()> {
         }
     }
     for dir in dirs {
+        anyhow::ensure!(
+            !session::locked(&dir),
+            "The recording is still finishing. Try again in a moment."
+        );
         std::fs::remove_dir_all(dir)?;
     }
     Ok(())
