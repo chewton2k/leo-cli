@@ -610,13 +610,21 @@ pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> us
         return 0;
     };
     let before = now - chrono::Duration::days(i64::from(days));
-    read_all(chats)
-        .into_iter()
-        .filter(|task| task.deleted && task.updated_at < before)
-        .filter(|task| {
-            task_path(chats, &format!("{}.json", task.id))
-                .is_ok_and(|path| std::fs::remove_file(path).is_ok())
+    let Ok(entries) = checked_dir(chats).and_then(|dir| Ok(std::fs::read_dir(dir)?)) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .take(MOST_TASKS * 2)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            read_file(chats, path).is_some_and(|task| {
+                task.deleted
+                    && task.updated_at < before
+                    && path.file_stem().and_then(|stem| stem.to_str()) == Some(task.id.as_str())
+            })
         })
+        .filter(|path| std::fs::remove_file(path).is_ok())
         .count()
 }
 
@@ -804,9 +812,15 @@ mod tests {
         assert_eq!(forget_deleted(&chats, Some(30), now), 0);
         assert!(file.exists());
         let later = now + chrono::Duration::days(31);
+        let copy = dir.path().join("notes/.leo/tasks/task-0002 (copy).json");
+        std::fs::copy(&file, &copy).unwrap();
+        let old = std::fs::read_to_string(&copy).unwrap();
+        std::fs::write(&copy, old.replace("task-0001", "task-0002")).unwrap();
         assert_eq!(forget_deleted(&chats, Some(30), later), 1);
         assert!(!file.exists());
+        assert!(copy.exists(), "only a tombstone under its own name is removed");
         assert_eq!(load_all(&chats).len(), 1);
+        assert!(load(&chats, "task-0002").is_some());
     }
 
     #[test]
