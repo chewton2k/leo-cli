@@ -366,8 +366,10 @@ fn settle(
                 .and_then(|v| *v)
                 .is_some_and(|at| at.elapsed() >= policy.finish_limit);
             if finishing
-                && !waiting_for_model(&error)
-                && (expired || (attempt >= policy.attempts_after_stop && !rate_limited(&error)))
+                && (expired
+                    || (attempt >= policy.attempts_after_stop
+                        && !rate_limited(&error)
+                        && !waiting_for_model(&error)))
             {
                 if write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err() {
                     if let Ok(mut terminal) = work.terminal.lock() {
@@ -385,7 +387,7 @@ fn settle(
                 } else {
                     policy.wait(attempt)
                 };
-                if finishing && !waiting_for_model(&error) {
+                if finishing {
                     if let Some(at) = work.stopped_at.lock().ok().and_then(|v| *v) {
                         wait = wait.min(policy.finish_limit.saturating_sub(at.elapsed()));
                     }
@@ -463,6 +465,29 @@ mod tests {
             dir.path(),
             Arc::new(|_| Err("429 too many requests".into())),
             policy,
+            false,
+            tx,
+        );
+        let start = Instant::now();
+        worker.wait();
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(rx.try_iter().any(|e| matches!(e, Update::Failed { .. })));
+        assert!(dir.path().join(wav::done_name(0)).exists());
+        assert!(dir.path().join("seg-00000.err").exists());
+    }
+
+    #[test]
+    fn a_missing_model_ends_after_the_finish_window_and_keeps_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        loud(dir.path(), 0);
+        let (tx, rx) = mpsc::channel();
+        let worker = Transcriber::start(
+            dir.path(),
+            Arc::new(|_| Err("Download a model in Settings → Speech models.".into())),
+            Policy {
+                finish_limit: Duration::from_millis(40),
+                ..quick()
+            },
             false,
             tx,
         );
