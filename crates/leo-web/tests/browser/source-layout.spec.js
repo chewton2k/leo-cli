@@ -232,6 +232,7 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     await page.locator('#doc .blk').filter({hasText:'First paragraph.'}).click();
     const editor = page.locator('#doc textarea');
     await editor.fill('## Newly typed heading');
+    await page.locator('.note-outline summary').hover();
     await expect(nav.getByRole('button', {name:'Newly typed heading'})).toBeVisible();
     await expect(editor).toBeFocused();
     await expect(nested).toHaveAttribute('aria-expanded', 'false');

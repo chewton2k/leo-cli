@@ -3787,6 +3787,7 @@ test.describe('passages', () => {
   });
 
   test('Felix reads along only after an edit, speaks in the margin, and his answer lands in the note', async ({ page }) => {
+    await page.request.post('/api/margin', { data: { layout: 'both' } });
     await page.setViewportSize({ width: 1600, height: 900 });
     const start = 'Save the password in the users table.';
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: start } })).json();
@@ -3805,7 +3806,7 @@ test.describe('passages', () => {
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
     await expect(page.locator('#margin-mode')).toHaveText('Reads along');
-    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'right');
+    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'both');
     await page.reload();
     await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.waitForTimeout(4500);
@@ -3842,9 +3843,11 @@ test.describe('passages', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle).toBeFocused();
     await page.locator('.margin-note').click();
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Ask in chat' })).toBeHidden();
     const reply = page.locator('.margin-reply textarea');
     await expect(reply).toBeFocused();
-    expect(await reply.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
+    expect(await reply.evaluate((el) => { const css = getComputedStyle(el); return css.boxShadow.includes('0px 1px 0px') && !css.boxShadow.includes('rgba(0, 0, 0, 0)'); })).toBe(true);
     await reply.fill('So hash it?');
     await reply.press('Enter');
     await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
@@ -3963,6 +3966,7 @@ test.describe('passages', () => {
   });
 
   test('the note column stays put through a draft, a thread and a dismissal, and Marks only centres it', async ({ page }) => {
+    await page.request.post('/api/margin', { data: { layout: 'right' } });
     await page.setViewportSize({ width: 1700, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Steady column', body: 'A binary heap keeps the minimum at the root.' } })).json();
     await page.goto(`/#/n/${note.id}`);

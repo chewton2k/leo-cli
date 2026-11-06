@@ -275,6 +275,14 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-reply { margin-top: 9px; }
 .margin-reply textarea { display: block; width: 100%; margin: 0; padding: 0; border: 0; outline: 0; resize: none; background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; }
 .margin-reply textarea:focus-visible { outline: none; box-shadow: 0 1px 0 var(--accent); border-radius: 0; }
+.margin-note .diagram-art svg { background: transparent !important; }
+.margin-note .diagram-art svg text, .margin-note .diagram-art .nodeLabel { font-family: Georgia, serif !important; }
+.margin-note .diagram-art .node rect, .margin-note .diagram-art .node circle, .margin-note .diagram-art .node polygon { fill: transparent !important; stroke: var(--muted) !important; stroke-width: 1px !important; }
+.margin-note .drawing { background: transparent; box-shadow: none; padding: 0; }
+.margin-note .drawing img { filter: grayscale(1); }
+:root[data-theme="dark"] .margin-note .drawing img { filter: grayscale(1) invert(1); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .margin-note .drawing img { filter: grayscale(1) invert(1); } }
+
 .margin-reply textarea::placeholder { color: var(--muted); }
 .margin-problem { margin: 7px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
 .margin-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding-top: 10px; }
@@ -1135,7 +1143,7 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 .chat { flex-direction: row; }
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chat-history { display: flex; flex-direction: column; background: var(--field); visibility: hidden; opacity: 0; pointer-events: none; clip-path: inset(0 0 0 100%); transition: margin-left .22s cubic-bezier(.2,.8,.2,1), clip-path .22s cubic-bezier(.2,.8,.2,1), opacity .16s ease-out, visibility 0s .22s; }
-.chat.with-history .chat-history { visibility: visible; opacity: 1; pointer-events: auto; clip-path: inset(0); transition-delay: 0s; }
+.chat.with-history .chat-history { visibility: visible; opacity: 1; pointer-events: auto; clip-path: inset(0 -6px 0 0); transition-delay: 0s; }
 @media (min-width: 900px) {
   :root { --chat-w: clamp(560px, 48vw, 820px); }
   .chat { width: var(--chat-w); }

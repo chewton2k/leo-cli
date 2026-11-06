@@ -436,7 +436,8 @@ async fn answered(
         failed,
     );
     let text = reply.map(|r| r.text).unwrap_or_default();
-    let text = text.trim();
+    let text: String = text.trim().chars().take(margin::MOST_REPLY).collect();
+    let text = margin::without_open_fence(&text);
     if text.is_empty() {
         return Err(Box::new(said(
             StatusCode::BAD_GATEWAY,
@@ -444,7 +445,7 @@ async fn answered(
             "Felix could not answer just now. Try again.",
         )));
     }
-    Ok(text.chars().take(margin::MOST_REPLY).collect())
+    Ok(text.to_string())
 }
 
 pub(crate) async fn ask(

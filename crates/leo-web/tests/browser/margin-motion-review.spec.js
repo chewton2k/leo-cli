@@ -620,5 +620,40 @@ test('margin diagram answers reuse escaped Markdown figures instead of displayin
     await page.evaluate(() => watchDiagrams());
     await expect(answer.locator('.diagram-art svg')).toHaveCount(1);
     await expect(answer.locator('.diagram-art')).toContainText('Sugar');
+    expect(await answer.locator('.diagram-art .node rect').first().evaluate(el => getComputedStyle(el).fill)).toBe('rgba(0, 0, 0, 0)');
+    expect(await answer.locator('.diagram-art .nodeLabel').first().evaluate(el => getComputedStyle(el).fontFamily)).toMatch(/Georgia/);
   }, { threads: [thread] });
+});
+
+test('a fresh margin reply with a sketch draws it instead of showing its source', async ({ browser }) => {
+  const sketch = 'Both make energy.\n\n```svg\n<svg viewBox="0 0 40 20" xmlns="http://www.w3.org/2000/svg"><title>Two shapes</title><circle cx="10" cy="10" r="8"/></svg>\n```';
+  await fixture(browser, async page => {
+    await page.evaluate(([t, reply]) => {
+      api = async () => ({ ...t, messages: [...t.messages, { from: 'you', text: 'Sketch it.' }, { from: 'felix', text: reply }] });
+      marginOpen('t1', true);
+    }, [THREADS.short, sketch]);
+    const box = page.locator('.margin-note[data-id="t1"] textarea');
+    await box.fill('Sketch it.');
+    await box.press('Enter');
+    const answer = page.locator('.margin-note[data-id="t1"] .margin-felix').last();
+    await expect(answer.locator('figure.drawing img')).toHaveCount(1);
+    await expect(answer).not.toContainText('```');
+  });
+});
+
+test('only drafts offer the chat fallback and replies keep Add to note', async ({ browser }) => {
+  await fixture(browser, async page => {
+    await page.evaluate(() => marginOpen('t1', true));
+    const note = page.locator('.margin-note[data-id="t1"]');
+    await expect(note.getByRole('button', { name: 'Add to note' })).toBeVisible();
+    await expect(note.getByRole('button', { name: 'Ask in chat' })).toBeHidden();
+    await expect(note.getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
+    await page.evaluate(() => {
+      const text = session.doc.source().slice(0, 12);
+      marginAsk(session, { text, from: 0, to: 12 });
+    });
+    const draft = page.locator('.margin-note[data-id="draft"]');
+    await expect(draft.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
+    await expect(draft.getByRole('button', { name: 'Add to note' })).toBeHidden();
+  }, { threads: [THREADS.short] });
 });

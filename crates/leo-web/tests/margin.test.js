@@ -164,6 +164,14 @@ test('drawing: a wave spans its width and a tether joins its ends', () => {
   assert.ok(M.tether({ x: 10, y: 20 }, { x: 110, y: 40 }, 80).startsWith('M10.0 20.0 L80.0 20.0 C'), 'a tether clears the rest of the line');
 });
 
+
+ test('both margins are the default, saved choices and narrow fallback survive', () => {
+  assert.equal(M.arrangement({ width: 1800 }), 'both');
+  assert.equal(M.arrangement({ width: 1800, setting: 'right' }), 'right');
+  assert.equal(M.arrangement({ width: 1000 }), 'right');
+  assert.equal(M.arrangement({ width: 800 }), 'marks');
+});
+
 for (const [name, fn] of cases) {
   try {
     fn();

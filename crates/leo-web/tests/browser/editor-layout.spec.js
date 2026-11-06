@@ -922,7 +922,7 @@ test('heading rail stays vertically centred and its dropdown animates with reduc
       const animate=el.animate.bind(el);
       el.animate=(...args)=>{const run=animate(...args);run.pause();return run;};
     });
-    await summary.click();
+    await summary.focus(); await summary.press('Enter');
     expect(await nav.evaluate(el=>el.getAnimations().some(a=>a.playState==='paused'))).toBe(true);
     await nav.evaluate(el=>{for(const run of el.getAnimations())run.currentTime=90;});
     expect(await nav.evaluate(el=>getComputedStyle(el).clipPath)).not.toBe('none');
@@ -932,7 +932,7 @@ test('heading rail stays vertically centred and its dropdown animates with reduc
     const menu=await nav.boundingBox();
     expect(menu.y).toBeGreaterThanOrEqual(0);
     expect(menu.y+menu.height).toBeLessThanOrEqual(640);
-    await summary.click();
+    await summary.focus(); await summary.press('Enter');
     expect(await nav.evaluate(el=>el.getAnimations().some(a=>a.playState==='paused'))).toBe(true);
     await nav.evaluate(el=>{for(const run of el.getAnimations())run.finish();});
     await expect(details).not.toHaveAttribute('open','');
@@ -941,7 +941,7 @@ test('heading rail stays vertically centred and its dropdown animates with reduc
     await expect.poll(()=>nav.evaluate(el=>el.getAnimations().length)).toBe(0);
     await expect(details).toHaveAttribute('open','');
     await page.emulateMedia({reducedMotion:'reduce'});
-    await summary.click();
+    await summary.focus(); await summary.press('Enter');
     await expect(details).not.toHaveAttribute('open','');
     expect(await nav.evaluate(el=>el.getAnimations().length)).toBe(0);
     await page.setViewportSize({width:390,height:844});
@@ -1041,14 +1041,14 @@ test('heading disclosure closes on outside clicks while the destination keeps it
         button.onclick = () => { window.outsideClicks = (window.outsideClicks || 0) + 1; };
         document.querySelector('#bar').append(button);
       });
-      await summary.click();
+      await summary.focus(); await summary.press('Enter');
       await expect(details).toHaveAttribute('open', '');
       await page.locator('#outside-outline').click();
       await expect(details).not.toHaveAttribute('open', '');
       expect(await page.evaluate(() => window.outsideClicks)).toBe(1);
       await page.locator('#outside-outline').focus();
       await expect(page.locator('#outside-outline')).toBeFocused();
-      await summary.click();
+      await summary.focus(); await summary.press('Enter');
       await expect(details).toHaveAttribute('open', '');
       await page.locator('#doc .blk').nth(1).click();
       await expect(details).not.toHaveAttribute('open', '');
@@ -1163,4 +1163,28 @@ test('typing a dash then text continues at the next marker through keyboard and 
       expect(geometry.itemHeight).toBeLessThanOrEqual(geometry.lineHeight + 2);
     }
   }, { body: '' });
+});
+
+ test('heading disclosure hover crosses into menu without taking editor focus', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url);
+    await page.locator('#doc .blk').nth(1).click();
+    const editor = page.locator('#doc textarea');
+    const summary = page.locator('.note-outline summary');
+    const nav = page.locator('.note-outline nav');
+    await summary.hover();
+    await expect(nav).toBeVisible();
+    await expect(editor).toBeFocused();
+    await nav.hover();
+    await expect(nav).toBeVisible();
+    await page.mouse.move(1000, 100);
+    await expect(nav).toBeHidden();
+    await summary.focus();
+    await summary.press('Enter');
+    await expect(nav).toBeVisible();
+    await page.mouse.click(1000, 100);
+    await expect(nav).toBeHidden();
+  }, { body: '# One\nParagraph\n## Two\nMore' });
 });

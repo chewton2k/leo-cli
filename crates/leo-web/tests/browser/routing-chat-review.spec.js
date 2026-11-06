@@ -161,11 +161,15 @@ for (const layout of ['desktop', 'compact', 'source']) test(`Chats history ${lay
     window.historyScroll = list.scrollTop;
     for (const run of historyMotion) run.currentTime = run.effect.getTiming().duration * .5;
   });
-  const before = await history.boundingBox();
   const close = layout === 'desktop' ? toggle : history.locator('.chat-history-back');
-  await close.evaluate(el => { el.focus(); el.click(); });
-  const after = await history.boundingBox();
-  expect(Math.abs(after.x - before.x), 'reverse starts from the current position').toBeLessThan(2);
+  const reversal = await close.evaluate(el => {
+    const history = document.querySelector('#chat-history');
+    el.focus({ preventScroll: true });
+    const before = history.getBoundingClientRect().x;
+    el.click();
+    return { before, after: history.getBoundingClientRect().x };
+  });
+  expect(Math.abs(reversal.after - reversal.before), 'reverse preserves position in the same browser turn').toBeLessThan(1);
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => { for (const run of historyMotion) run.finish(); });
   await expect(history).toBeHidden();

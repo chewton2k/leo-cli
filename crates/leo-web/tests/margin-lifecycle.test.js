@@ -215,3 +215,12 @@ test('leaving with a queued hover lets the next note schedule and paint its own 
   assert.equal(h.state.hover, 'new');
   assert.equal(h.state.pointer, 0);
 });
+
+ test('preference failure keeps the remembered layout or defaults to both', async () => {
+  for (const saved of [null, 'right', 'marks', 'both']) {
+    const h = harness();
+    h.context.localStorage = { getItem: () => saved };
+    h.context.api = async () => { throw new Error('offline'); };
+    assert.equal((await h.context.marginLoadPrefs()).layout, saved || 'both');
+  }
+});

@@ -495,10 +495,11 @@ target. Check the page sequence after loading preferences.
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
   POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
   messages sent), and never run twice at once for a thread.
+- Replies cap at `MOST_REPLY` (4,000) so a sketch fits; `without_open_fence` drops a fence cut off mid-drawing.
 - Add to note uses `/insert` with one request id per thread (`/insert` dedupes on note
   and request, whatever the base), runs once at a time and shows Undo before it closes
   the thread. After a 409 it re-finds the passage, or says it went to the end and
-  skips the glow. Open in chat attaches the quote. `add_margin_note`'s Undo is refused
+  skips the glow. Only drafts offer Ask in chat, which attaches the quote. `add_margin_note`'s Undo is refused
   once the user has replied. `chat::gather_seeing` adds open threads of the open note
   after the notes (`margin::context`, at most 3,000 characters and an eighth of the
   note room); the block's fence is keyed per process and stable while its content is,
@@ -506,7 +507,7 @@ target. Check the page sequence after loading preferences.
   (`Warm.margin`).
 - Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix of at
   least 6 characters, or an edge of the note, then lost), `stack`, `sides`,
-  `arrangement`. Right margin needs 928 px of column, Both 1,192 px. The margin is
+  `arrangement`. Both margins is the default; saved choices still win. Right margin needs 928 px of column, Both 1,192 px. The margin is
   reserved up front on every note, in both modes, whatever its threads
   (2026-11-04, the orchestrator's decision): `.note-columns[data-margin]` pads the
   column, so the note is min(its note width, the room left) and sits left of centre,
@@ -1145,3 +1146,5 @@ outside clicks dismiss the heading list without swallowing the destination click
 Chats history keeps its list mounted while the desktop column or compact overlay
 animates; collapsed content is inert, the toggle exposes its expanded state, and
 Escape cancelling delete confirmation stops later same-panel abort handlers.
+
+The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Diagram replies prefer sparse monochrome SVG sketches with serif labels for pictorial subjects; Mermaid stays strict and SVG stays an inert image.

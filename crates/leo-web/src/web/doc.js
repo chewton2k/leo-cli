@@ -153,6 +153,7 @@
     let outlineIndex = null;
     let outlineMotion = null;
     let outlineClosing = false;
+    let outlinePointerType = '';
     let outlinePreviewMotion = null;
     let outlinePreviewClosing = false;
     if (outlineTicks) {
@@ -183,7 +184,7 @@
       if (!e.target.closest('summary')) return false;
       e.preventDefault();
       outlinePeek(null);
-      moveOutline(!outlineDetails.open || outlineClosing);
+      if (!e.detail || outlinePointerType !== 'mouse' || !outlineDetails.open || outlineClosing) moveOutline(!outlineDetails.open || outlineClosing);
       return true;
     }
 
@@ -234,6 +235,21 @@
         outlinePreviewMotion = null;
         run.cancel();
       };
+    }
+
+    function outlineDown(e) {
+      outlinePointerType = e.pointerType;
+    }
+
+    function outlineEnter(e) {
+      if (e.pointerType !== 'mouse' || e.buttons) return;
+      outlinePeek(null);
+      if (!outlineDetails.open || outlineClosing) moveOutline(true);
+    }
+
+    function outlineExit(e) {
+      if (e.pointerType !== 'mouse' || outlineDetails.contains(e.relatedTarget)) return;
+      if (outlineDetails.open && !outlineClosing) moveOutline(false);
     }
 
     function outlineOutside(e) {
@@ -435,6 +451,9 @@
     }) : null;
     if (outlineNav) {
       outline.addEventListener('click', outlineGo);
+      outlineDetails.addEventListener('pointerdown', outlineDown);
+      outlineDetails.addEventListener('pointerenter', outlineEnter);
+      outlineDetails.addEventListener('pointerleave', outlineExit);
       outlineTicks.addEventListener('pointermove', outlineHover);
       outlineTicks.addEventListener('pointerleave', outlineLeave);
       outlineTicks.addEventListener('focus', outlineFocus);
@@ -1380,6 +1399,9 @@
         if (editResize) editResize.disconnect();
         if (outlineNav) {
           outline.removeEventListener('click', outlineGo);
+          outlineDetails.removeEventListener('pointerdown', outlineDown);
+          outlineDetails.removeEventListener('pointerenter', outlineEnter);
+          outlineDetails.removeEventListener('pointerleave', outlineExit);
           outlineTicks.removeEventListener('pointermove', outlineHover);
           outlineTicks.removeEventListener('pointerleave', outlineLeave);
           outlineTicks.removeEventListener('focus', outlineFocus);

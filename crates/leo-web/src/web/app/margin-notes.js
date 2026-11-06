@@ -31,7 +31,7 @@ function marginRemember(prefs) {
 }
 
 function marginLayout(columns) {
-  return marginKit.arrangement({ width: columns.clientWidth, setting: marginPrefs?.layout || marginRemembered() || 'right', noteWidth: window.leoTheme.noteWidth(), panel: chat.isOpen() });
+  return marginKit.arrangement({ width: columns.clientWidth, setting: marginPrefs?.layout || marginRemembered() || 'both', noteWidth: window.leoTheme.noteWidth(), panel: chat.isOpen() });
 }
 
 async function marginLoadPrefs() {
@@ -39,7 +39,7 @@ async function marginLoadPrefs() {
   try {
     marginRemember(await api('/api/margin'));
   } catch (e) {
-    return { layout: 'right', pace: 'regular' };
+    return { layout: marginRemembered() || 'both', pace: 'regular' };
   }
   return marginPrefs;
 }
@@ -280,9 +280,11 @@ function inkWords(box, text) {
 }
 
 function marginAnswer(line, text, arriving = false) {
-  if (text.includes('```')) {
+  const md = window.leoMarkdown;
+  const html = md.render(text, { interactive: false, dir: marginPage.s?.note.directory || '' });
+  if (html !== `<p>${md.escape(text)}</p>`) {
     line.classList.add('prose');
-    line.innerHTML = window.leoMarkdown.render(text, { interactive: false, dir: marginPage.s?.note.directory || '' });
+    line.innerHTML = html;
   } else if (arriving) inkWords(line, text);
   else line.textContent = text;
 }
@@ -296,7 +298,7 @@ function marginElement(t) {
   el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}"></button><div class="margin-said"></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
     <form class="margin-reply"><textarea rows="1" maxlength="1000" aria-label="Reply to Felix" placeholder="Reply"></textarea></form>
     <p class="margin-problem" role="status" hidden></p>
-    <div class="margin-acts"><button type="button" class="margin-add" data-margin-act="add">Add to note</button><button type="button" class="msg-act" data-margin-act="chat">Open in chat</button><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button></div></div></div>`;
+    <div class="margin-acts"><button type="button" class="margin-add" data-margin-act="add">Add to note</button><button type="button" class="msg-act" data-margin-act="chat">Ask in chat</button><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button></div></div></div>`;
   marginPage.layer.appendChild(el);
   marginPage.els.set(t.id, el);
   marginPage.observer?.observe(el);
@@ -335,7 +337,7 @@ function marginFill(el, t, arriving) {
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', `${open ? 'Close' : 'Open'} Felix’s note on “${t.quote.slice(0, 80)}”`);
   $('.margin-add', el).hidden = draft || !marginNow(t);
-  $('[data-margin-act="chat"]', el).textContent = draft ? 'Ask in chat' : 'Open in chat';
+  $('[data-margin-act="chat"]', el).hidden = !draft;
   $('[data-margin-act="resolve"]', el).hidden = draft;
   $('[data-margin-act="dismiss"]', el).textContent = draft ? 'Cancel' : 'Dismiss';
   $('textarea', el).placeholder = el.getAttribute('aria-busy') === 'true' ? 'Felix is thinking…' : draft ? 'Ask Felix about this' : 'Reply';
@@ -676,7 +678,7 @@ async function marginSubmit(e) {
     marginDraw();
     const fresh = marginPage.els.get(done.id);
     const replies = fresh && [...fresh.querySelectorAll('.margin-felix')];
-    if (replies?.length) inkWords(replies[replies.length - 1], marginNow(done));
+    if (replies?.length) marginAnswer(replies[replies.length - 1], marginNow(done), true);
     $('textarea', fresh)?.focus();
   } catch (error) {
     if (error instanceof Locked) throw error;
