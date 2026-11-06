@@ -562,11 +562,27 @@ pub enum ReadAnswer {
 }
 
 pub fn without_open_fence(text: &str) -> &str {
-    let fences: Vec<usize> = text.match_indices("```").map(|(at, _)| at).collect();
-    match fences.last() {
-        Some(&last) if fences.len() % 2 == 1 => text[..last].trim_end(),
-        _ => text,
+    let mut open: Option<(usize, char, usize)> = None;
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let marker = line.trim_start_matches(' ');
+        let first = marker.chars().next().filter(|c| matches!(c, '`' | '~'));
+        if let (true, Some(mark)) = (line.len() - marker.len() <= 3, first) {
+            let run = marker.len() - marker.trim_start_matches(mark).len();
+            let rest = marker[run..].trim();
+            match open {
+                None if run >= 3 && !(mark == '`' && rest.contains('`')) => {
+                    open = Some((at, mark, run));
+                }
+                Some((_, opened, least)) if mark == opened && run >= least && rest.is_empty() => {
+                    open = None;
+                }
+                _ => {}
+            }
+        }
+        at += line.len();
     }
+    open.map_or(text, |(start, ..)| text[..start].trim_end())
 }
 
 pub fn parsed(reply: &str) -> ReadAnswer {
@@ -1094,6 +1110,14 @@ mod tests {
         let whole = "Two jobs.\n\n```svg\n<svg></svg>\n```";
         assert_eq!(without_open_fence(whole), whole);
         assert_eq!(without_open_fence("```svg\n<svg>"), "");
+        let inline = "Write ```code``` like this.";
+        assert_eq!(without_open_fence(inline), inline);
+        let mid_line = "Three ``` marks, then more words.";
+        assert_eq!(without_open_fence(mid_line), mid_line);
+        assert_eq!(without_open_fence("Words.\n\n~~~\ncut"), "Words.");
+        assert_eq!(without_open_fence("Words.\n````\n```\ncut"), "Words.");
+        let closed = "````\n```\n````";
+        assert_eq!(without_open_fence(closed), closed);
         assert_eq!(
             without_open_fence("No fence, ünïcode."),
             "No fence, ünïcode."
