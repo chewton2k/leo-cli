@@ -4735,7 +4735,7 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await box.locator('.quick-row', { hasText: 'Search every note' }).click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/search/Idea ${tag}`);
   await expect(page.locator('.side-note').filter({ hasText: `Idea ${tag}` })).toBeVisible();
-  await page.waitForFunction(() => state.view === 'search');
+  await expect(page.locator('#search-input')).toBeVisible();
 
   await page.keyboard.press('ControlOrMeta+f');
   await input.fill('What is a heap?');
