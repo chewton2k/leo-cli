@@ -3,9 +3,7 @@ pub mod edit;
 pub mod file_store;
 pub mod provider;
 pub mod secret;
-pub mod speech_migration;
 pub mod sync;
-pub mod theme;
 pub mod tidy;
 
 use std::collections::BTreeMap;
@@ -23,8 +21,6 @@ pub struct Config {
     pub transcribe: TaskChain,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
-    #[serde(default)]
-    pub theme: theme::ThemeConfig,
     #[serde(default)]
     pub sync: sync::SyncConfig,
 }
@@ -191,18 +187,7 @@ kind = "parakeet"
     /// falls back to built-in defaults so the app always starts.
     pub fn load() -> Config {
         match Config::config_path() {
-            Ok(path) => {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    if let Err(error) =
-                        speech_migration::retire_speech_keys(&text, &secret::default_store())
-                    {
-                        leo_core::diag::warn(format!(
-                            "Old speech credentials could not be removed: {error}"
-                        ));
-                    }
-                }
-                Config::load_from(&path)
-            }
+            Ok(path) => Config::load_from(&path),
             Err(e) => {
                 leo_core::diag::warn(format!("config: {e}; using defaults"));
                 let mut cfg = Config::default();
@@ -228,22 +213,6 @@ kind = "parakeet"
         };
         cfg.apply_env_overrides();
         cfg
-    }
-
-    /// Write the commented default config if none exists yet. Returns the path
-    /// and whether it was newly created.
-    pub fn ensure_exists() -> Result<(std::path::PathBuf, bool)> {
-        let path = Config::config_path()?;
-        if path.exists() {
-            return Ok((path, false));
-        }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("could not create {}", parent.display()))?;
-        }
-        std::fs::write(&path, Config::default_toml())
-            .with_context(|| format!("could not write {}", path.display()))?;
-        Ok((path, true))
     }
 
     /// Env vars win over the file, so a one-off override needs no file edit.
@@ -331,7 +300,7 @@ mod tests {
 chain = ["ollama", "anthropic"]
 
 [transcribe]
-chain = ["whisper_cpp", "openai_whisper"]
+chain = ["parakeet"]
 
 [providers.ollama]
 kind = "openai"
@@ -339,23 +308,18 @@ base_url = "http://localhost:11434/v1"
 model = "qwen3:8b"
 max_tokens = 4096
 
-[providers.whisper_cpp]
-kind = "whisper_cpp"
-bin = "whisper-cli"
-model_path = "~/.leo/models/ggml-base.en.bin"
+[providers.parakeet]
+kind = "parakeet"
 "#;
         let cfg = Config::parse(toml).unwrap();
         assert_eq!(cfg.chat.chain, vec!["ollama", "anthropic"]);
-        assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp", "openai_whisper"]);
+        assert_eq!(cfg.transcribe.chain, vec!["parakeet"]);
         assert_eq!(cfg.providers["ollama"].kind, Some(ProviderKind::Openai));
         assert_eq!(
             cfg.providers["ollama"].base_url.as_deref(),
             Some("http://localhost:11434/v1")
         );
-        assert_eq!(
-            cfg.providers["whisper_cpp"].kind,
-            Some(ProviderKind::WhisperCpp)
-        );
+        assert_eq!(cfg.providers["parakeet"].kind, Some(ProviderKind::Parakeet));
     }
 
     /// An empty file means "no opinion about chains", not "no providers": every
@@ -445,11 +409,11 @@ model = "my-own-model"
     #[test]
     fn a_block_of_another_kind_under_a_built_in_name_takes_nothing_from_it() {
         let cfg = Config::parse_with_built_ins(
-            "[providers.gemini]\nkind = \"openai_transcribe\"\nbase_url = \"http://localhost:8000/v1\"\n",
+            "[providers.gemini]\nkind = \"codex\"\nbase_url = \"http://localhost:8000/v1\"\n",
         )
         .unwrap();
         let gemini = cfg.provider("gemini").unwrap();
-        assert_eq!(gemini.kind, Some(ProviderKind::Transcriptions));
+        assert_eq!(gemini.kind, Some(ProviderKind::Codex));
         assert_eq!(gemini.key_env, None);
         assert_eq!(gemini.model, None);
     }
@@ -477,6 +441,13 @@ model = "my-own-model"
     }
 
     #[test]
+    fn an_old_theme_table_is_ignored() {
+        let cfg =
+            Config::parse("[chat]\nchain = [\"ollama\"]\n[theme]\npreset = \"mono\"\n").unwrap();
+        assert_eq!(cfg.chat.chain, ["ollama"]);
+    }
+
+    #[test]
     fn malformed_toml_is_an_error_naming_the_problem() {
         let err = Config::parse("[chat\nchain = ]").unwrap_err();
         let msg = err.to_string();
@@ -501,12 +472,36 @@ kind = "telepathy"
     }
 
     #[test]
-    fn the_old_transcription_kind_name_still_parses() {
-        let cfg = Config::parse("[providers.mine]\nkind = \"groq\"\n").unwrap();
-        assert_eq!(
-            cfg.providers["mine"].kind,
-            Some(ProviderKind::Transcriptions)
-        );
+    fn a_file_naming_removed_kinds_still_loads_without_them() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[chat]
+chain = ["codex"]
+[transcribe]
+chain = ["mine", "w"]
+[providers.mine]
+kind = "groq"
+[providers.w]
+kind = "whisper_cpp"
+model_path = "/m.bin"
+[providers.a]
+kind = "chat_audio"
+[providers.t]
+kind = "openai_transcribe"
+[theme]
+preset = "mono"
+"#,
+        )
+        .unwrap();
+        let cfg = Config::load_from(&path);
+        assert_eq!(cfg.chat.chain, ["codex"]);
+        assert_eq!(cfg.transcribe.chain, ["parakeet"]);
+        for name in ["mine", "w", "a", "t"] {
+            assert!(cfg.provider(name).is_none(), "{name}");
+        }
     }
 
     /// The shipped config is the primary UI for the model layer, so every
@@ -533,11 +528,6 @@ kind = "telepathy"
                         "{name}: key_env presence should match whether it is local"
                     );
                 }
-                ProviderKind::Transcriptions | ProviderKind::ChatAudio => {
-                    assert!(p.model.is_some(), "{name} has no model");
-                    assert!(p.key_from.is_some(), "{name} should share its chat key");
-                }
-                ProviderKind::WhisperCpp => panic!("{name}: no built-in runs an external program"),
                 ProviderKind::ClaudeCode | ProviderKind::Codex => {
                     assert!(
                         p.key_env.is_none(),
@@ -546,10 +536,6 @@ kind = "telepathy"
                     assert!(p.base_url.is_none(), "{name} is a program, not a server");
                 }
                 ProviderKind::Parakeet => {
-                    assert!(
-                        p.model_path.is_none(),
-                        "{name} should use the models folder"
-                    );
                     assert!(p.key_env.is_none(), "{name} runs on this computer");
                 }
             }

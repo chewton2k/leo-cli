@@ -338,7 +338,7 @@ mod tests {
         assert!(prompt
             .user
             .starts_with("<recorded_on>Tuesday, October 13, 2026</recorded_on>"));
-        let rules = crate::ai::chat::build_structure_prompt("x").system;
+        let rules = crate::ai::chat::build_structure_prompt_with("x", &[]).system;
         assert!(rules.contains("<recorded_on>") && rules.contains("Never invent a task"));
         assert!(rules.contains("Practice questions belong in Check yourself"));
     }

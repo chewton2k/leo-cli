@@ -43,16 +43,10 @@ const CHAT_JS: &str = include_str!("../web/chat.js");
 pub(crate) async fn pane_resize_js() -> Response {
     javascript(include_str!("../web/pane-resize.js"))
 }
-const AUDIO_QUEUE_JS: &str = include_str!("../web/audio-queue.js");
 pub(crate) async fn browser_storage_js() -> Response {
     javascript(include_str!("../web/browser-storage.js"))
 }
 
-pub(crate) async fn audio_queue_js() -> Response {
-    javascript(AUDIO_QUEUE_JS)
-}
-
-const RECORDER_JS: &str = include_str!("../web/recorder.js");
 const RECORDING_JS: &str = include_str!("../web/recording.js");
 
 pub(crate) async fn index() -> Html<&'static str> {
@@ -262,10 +256,6 @@ pub(crate) async fn margin_js() -> Response {
 }
 pub(crate) async fn chat_js() -> Response {
     javascript(CHAT_JS)
-}
-
-pub(crate) async fn recorder_js() -> Response {
-    javascript(RECORDER_JS)
 }
 
 pub(crate) async fn recording_js() -> Response {

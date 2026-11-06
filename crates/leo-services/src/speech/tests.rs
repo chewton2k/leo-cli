@@ -315,35 +315,6 @@ fn deleting_the_only_downloaded_model_clears_the_choice() {
 }
 
 #[test]
-fn the_old_onnx_folder_is_kept_until_a_verified_download_is_ready() {
-    let (dir, l) = fixture();
-    let old = dir.path().join("parakeet-tdt-0.6b-v3-int8");
-    std::fs::create_dir(&old).unwrap();
-    std::fs::write(old.join("encoder.int8.onnx"), "old model").unwrap();
-    let (url, server) = model_server(b"wrong");
-    assert!(l
-        .fetch(
-            "parakeet-tdt-0.6b-v3",
-            &url,
-            &AtomicBool::new(false),
-            &|_, _| {}
-        )
-        .is_err());
-    server.join().unwrap();
-    assert!(old.exists());
-    let (url, server) = model_server(b"model");
-    l.fetch(
-        "parakeet-tdt-0.6b-v3",
-        &url,
-        &AtomicBool::new(false),
-        &|_, _| {},
-    )
-    .unwrap();
-    server.join().unwrap();
-    assert!(!old.exists());
-}
-
-#[test]
 fn downloaded_models_include_empty_and_uncatalogued_files() {
     let (dir, library) = fixture();
     std::fs::create_dir_all(dir.path().join("models")).unwrap();

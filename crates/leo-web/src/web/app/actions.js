@@ -189,7 +189,6 @@ const actions = {
     activity.folded = !activity.folded;
     drawActivity();
   },
-  'rec-rejoin': () => recorder.rejoin().catch(fail),
   'rec-point': () => recorder.point(),
   'rec-dismiss': () => recorder.dismiss(),
   'rec-discard': (el) => discardRecordingAsk(el),

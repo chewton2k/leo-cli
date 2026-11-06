@@ -947,11 +947,11 @@ fn the_tool_follows_each_access_mode_and_offers_undo() {
         name: "add_margin_note".into(),
         args: serde_json::json!({ "note": "Passage note", "quote": quote, "text": "Hash it first." }),
     };
-    assert!(tools::manual_for(false, Access::Ask).contains("add_margin_note"));
-    assert!(tools::manual_for(false, Access::Auto).contains("add_margin_note"));
-    assert!(!tools::manual_for(false, Access::Read).contains("add_margin_note"));
+    assert!(tools::manual_for(Access::Ask).contains("add_margin_note"));
+    assert!(tools::manual_for(Access::Auto).contains("add_margin_note"));
+    assert!(!tools::manual_for(Access::Read).contains("add_margin_note"));
     let native = |access| {
-        tools::native_specs(false, access)
+        tools::native_specs(access)
             .iter()
             .any(|spec| spec.name == "add_margin_note")
     };
@@ -1130,7 +1130,6 @@ fn exports_and_storage_cover_margin_threads() {
     let kept = crate::storage::Kept {
         captions: &captions,
         vectors: &vectors,
-        recording: None,
     };
     let areas = crate::storage::more_areas(&store, &chats, &kept);
     assert!(areas.iter().any(|a| a.id == "margin"));

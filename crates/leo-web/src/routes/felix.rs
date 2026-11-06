@@ -730,8 +730,6 @@ fn execute_tool(
             proposal: None,
             found: Vec::new(),
         }
-    } else if tools::is_web(&call.name) {
-        desk.run_web(call)
     } else if call.name == "look_at_picture" {
         look_at_picture(state, desk, call)?
     } else if call.name == "read_original" {
@@ -1192,18 +1190,15 @@ fn answer(
         }
         spent
     };
-    let web = state.web.clone().filter(|w| (w.needed)());
-    let web_on = web.is_some();
-    let text = format!("{system}\n\n{}", tools::manual_for(web_on, access));
+    let text = format!("{system}\n\n{}", tools::manual_for(access));
     let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
-    let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
+    let native = format!("{system}\n\n{}", tools::guidance_for(access));
     let mut desk = tools::Desk::new(
         continued
             .as_ref()
             .map_or_else(|| sources.clone(), |c| c.sources.clone()),
         room,
     )
-    .with_web(web)
     .with_access(access)
     .with_documents(documents)
     .with_captions(Arc::clone(&state.captions))
@@ -1216,7 +1211,7 @@ fn answer(
         .as_ref()
         .map(|c| c.warm.reads.clone())
         .unwrap_or_default();
-    let specs = tools::native_specs(web_on, access);
+    let specs = tools::native_specs(access);
     let keep = |talk: Box<dyn chat::Conversation>,
                 sent: usize,
                 sources: Vec<chat::SourceRef>,
@@ -1828,7 +1823,6 @@ pub(crate) async fn chat_reply(
     let warm_key = crate::warm::hash_of(&(
         mode,
         format!("{access:?}"),
-        state.web.as_ref().is_some_and(|w| (w.needed)()),
         documents_room,
         crate::warm::config_stamp(),
     ));

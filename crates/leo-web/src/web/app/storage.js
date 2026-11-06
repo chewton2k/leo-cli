@@ -153,12 +153,10 @@ function storageAreas(areas, open) {
   }).join('');
 }
 
-const browserAudioStorage = window.leoAudioQueue?.pick();
-
 function browserStorageCard() {
   const data = state.browserStorage;
-  if (!data) return '<section class="set-card"><header><h3>This browser</h3></header><p class="hint" role="status">Checking draft backups and recovery audio…</p></section>';
-  return `<section class="set-card"><header><h3>This browser · ${esc(window.leoBrowserStorage.size(data.total))} of copies</h3></header><p class="hint">Separate from the server total. Estimated draft and cache sizes; audio sizes count recorded bytes. Browser preferences reset the next time you open Leo. Your browser manages its downloaded website cache separately.</p>${data.error ? `<p class="hint">${esc(data.error)}</p>` : ''}${data.areas.length ? storageAreas(data.areas, state.storageOpen || new Set()) : '<p class="hint">No saved browser copies.</p>'}</section>`;
+  if (!data) return '<section class="set-card"><header><h3>This browser</h3></header><p class="hint" role="status">Checking draft backups…</p></section>';
+  return `<section class="set-card"><header><h3>This browser · ${esc(window.leoBrowserStorage.size(data.total))} of copies</h3></header><p class="hint">Separate from the server total. Estimated draft and cache sizes. Browser preferences reset the next time you open Leo. Your browser manages its downloaded website cache separately.</p>${data.error ? `<p class="hint">${esc(data.error)}</p>` : ''}${data.areas.length ? storageAreas(data.areas, state.storageOpen || new Set()) : '<p class="hint">No saved browser copies.</p>'}</section>`;
 }
 
 async function loadBrowserStorage(mine = seq) {
@@ -169,11 +167,6 @@ async function loadBrowserStorage(mine = seq) {
     const items = L.list(window.localStorage);
     if (items.length) areas.push({ id:'browser-local',title:'Draft backups and browser preferences',about:'Unsaved note drafts, a cached Felix conversation, and preferences in this browser. Open a note to recover work before discarding its backup.',path:'This browser only',items,bytes:items.reduce((n,i)=>n+i.bytes,0),actions:[{id:'delete',label:'Discard selected',selected:true,confirm:'The selected browser copies are removed. Unsaved drafts may no longer be recoverable. Saved notes and chats on the Leo server stay.'}] });
   } catch (_) { errors.push('This browser does not allow Leo to inspect its draft backups and preferences.'); }
-  try {
-    const audio = await browserAudioStorage?.summaries() || [];
-    const items = audio.map(i=>({...i,label:'Recording recovery copy',detail:`${i.chunks} chunks · ${i.id}`,size:L.size(i.bytes),locked:recorder.active()}));
-    if (items.length) areas.push({id:'browser-recovery',title:'Recovery audio in this browser',about:'Audio waiting for the server to confirm it was saved. These copies belong to this browser; audio on the server is listed separately. Stop a recording before discarding recovery copies.',path:'This browser · recording recovery',items,bytes:items.reduce((n,i)=>n+i.bytes,0),actions:[{id:'delete',label:'Discard selected audio',selected:true,confirm:'Selected recovery audio in this browser is permanently discarded. Already saved server audio and notes stay.'}]});
-  } catch (_) { errors.push('Recovery audio could not be inspected. Check this browser’s site storage permissions and refresh Storage.'); }
   if (mine !== seq || state.view !== 'storage') return;
   for (const area of areas) area.size=L.size(area.bytes);
   state.browserStorage={areas,total:areas.reduce((n,a)=>n+a.bytes,0),error:errors.join(' ')};
@@ -329,12 +322,6 @@ async function storageGo() {
     if (request.items.includes('leo-chat-v1')) chat.forgetBrowserCache();
     await loadBrowserStorage(mine);
     return toast('Discarded selected browser copies. Saved server data stays.');
-  }
-  if (request.area === 'browser-recovery') {
-    if (recorder.active()) return toast('Stop the recording before discarding recovery audio.', {bad:true});
-    for (const id of request.items) await browserAudioStorage.clear(id);
-    await loadBrowserStorage(mine);
-    return toast('Discarded selected recovery audio from this browser.');
   }
   const done = await api('/api/storage', { method: 'POST', body: request });
   let browserWarning = '';

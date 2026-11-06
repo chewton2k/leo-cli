@@ -3,7 +3,7 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, storage housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, web, room, speech, toolless, toolless_chat).
+reader, seer, meaning, room, speech, toolless, toolless_chat).
 
 ## Layout
 
@@ -20,15 +20,15 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
 
 - Pure helpers are separate files served on their own and node-tested from
   `tests/markdown.rs` `run_node_tests`: `markdown.js`, `editing.js`,
-  `schedule.js`, `saving.js`, `audio-queue.js`,
+  `schedule.js`, `saving.js`,
   `recording.js`, `margin.js` (tests in `tests/*.test.js`).
 
 - Everything leo-web computes or keeps besides notes and uploads lives in one
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
   meaning vectors, note connections, calendar feeds, note-task metadata,
-  reading positions. Old JSON files are brought in on first open
-  and renamed `*.before-database`. Writes touch only what changed.
+  reading positions. Old caption, graph and meaning JSON files are brought
+  in on first open and renamed `*.before-database`. Writes touch only what changed.
 
 ## Serving and security
 
@@ -376,8 +376,8 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   unclear). Text written
   before a tool call is kept (a paragraph break, not a restart). A broken
   agent session sends `{"reset"}` and is redone through the text protocol
-  (`FALLBACK_TRIES`). Web tools only for AIs without their own web
-  (`web::allowed`, public addresses only).
+  (`FALLBACK_TRIES`). Felix has no web tools of his own; an AI's own web search
+  is left to it.
 
 - Read tools: search_notes, open_note, connected_notes, read_document,
   read_transcript, read_original, look_at_picture, calculate (`calc.rs`, a
@@ -576,12 +576,12 @@ target. Check the page sequence after loading preferences.
 
 - Recording (`record.rs`, `recording.js`): new microphone/screen/call captures
   run in Rust through the listener. `nativecall` is the native dual-track
-  source; old browser/tab/call sources and journals remain readable for
-  recovery. The page starts/stops/pauses and shows levels/transcripts; it never
-  opens a browser microphone or screen-audio picker. Native jobs have no page
-  heartbeat lifetime. Housekeeper's `pending_recordings` supplies retained
-  native sessions; recovery starts in Writing state and supports Finish available.
-  Browser recovery still replays IndexedDB/journal audio through bounded channels.
+  source. The page starts/stops/pauses and shows levels/transcripts; it never
+  opens a browser microphone or screen-audio picker, and the server takes no
+  audio from the page. Native jobs have no page heartbeat lifetime.
+  Housekeeper's `pending_recordings` supplies retained native sessions; recovery
+  starts in Writing state and supports Finish available, and anything the
+  Housekeeper does not list is not found.
 
 - Screenshots (the user's call): paste a PNG/JPEG/GIF/WebP into Your notes while
   recording instead of a browser screen picker. The existing snapshot endpoint
@@ -618,8 +618,8 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   into the notes' git backup. `.gitattributes` merges them by union and the
   reader takes the line with the newest `updated_at`, so a task changed on two
   computers never conflicts. Deleting writes a tombstone line (`deleted`),
-  never removes the file (no modify/delete conflicts). Rows from the old
-  leo.db `tasks` table move into files once (`migrate`).
+  never removes the file (no modify/delete conflicts). Rows left in the old
+  leo.db `tasks` table are not read.
 
 - Note tasks: checkboxes under an Action items heading (or To do, Next steps,
   Deadlines) plus promoted ones (`note_tasks` in leo.db, located by text and
@@ -793,14 +793,10 @@ loading rejects symbolic/hard links, nonregular files and oversized data, and
 repairs existing permissions. Session persistence failures refuse authentication.
 Original attachments and standalone tasks check every component inside their data
 root, use nofollow regular-file reads and atomic writes, and refuse symbolic links.
-Legacy task migration removes only rows whose matching task was safely retained.
 
-Database handles are cached up to 32 paths, migration markers up to 64; filesystem
-checks/open/close occur outside the database cache mutex. Live browser PCM queues
-hold 64 chunks per track; cancellation-aware sends have a ten-second deadline and
-run outside the recording mutex. Failed delivery keeps the journal for recovery
-and stops an incomplete recording from becoming a note. Audio/point workers retain
-their save guard through I/O and in-memory acknowledgement even if the HTTP client
+Database handles are cached up to 32 paths; filesystem
+checks/open/close occur outside the database cache mutex. Point and screenshot
+workers retain their save guard through I/O and in-memory acknowledgement even if the HTTP client
 leaves. Recording warnings retain at most 40 entries of 2,000 Unicode characters.
 Storage validates complete recording selections before deletion and rejects linked
 recording, originals and picture roots. Legacy writing CLI profiles appear only
@@ -1028,7 +1024,7 @@ Back returns to the previous note; only the explicit Storage route selects Stora
 `/api/health`; blocking native work runs off async tasks and outside the store
 lock. Explicit `/api/backup/setup` has a single-operation semaphore. Recording
 reserves `capture_activity` before creating a job; its lease prevents updater
-installation through the durable save, including browser-journal recovery.
+installation through the durable save.
 
 Router completion and error handling check a render generation and the current
 hash. Late missing-note/offline failures cannot redirect, toast or overwrite a
@@ -1049,8 +1045,7 @@ App-status polling stops when the document or native window is hidden and
 invalidates late responses on visibility changes. Return triggers an immediate
 refresh and one polling chain. Ordinary note views check every 30 s; Settings,
 active updates and permission onboarding keep their responsive cadence. Dictation,
-model-download and native-recording display polls pause while hidden; browser-fed
-capture/journaling continues. Automatic status GETs do not reset user-idle time.
+model-download and native-recording display polls pause while hidden. Automatic status GETs do not reset user-idle time.
 Graph/vector/caption maintenance starts after its first interval and defers while
 the native window is hidden or the capture activity gate is busy.
 
@@ -1100,7 +1095,7 @@ ISO datetimes as one date/time before removing them from the title.
 
 Interview coding practice, its style, tools, workspaces and runtime downloads were
 removed by user decision. Chat and Study retain quiz and ask_user cards, marking,
-study sessions and review. Shared progress meters, meterBar, source-more, Mermaid,
+study sessions and review. Shared progress meters, source-more, Mermaid,
 KaTeX, margin notes and board tools remain independent of the retired feature.
 
 Legacy interviews, interview_keys and interview_problem_undo tables and their rows

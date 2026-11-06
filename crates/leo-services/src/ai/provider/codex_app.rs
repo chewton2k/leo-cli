@@ -78,7 +78,10 @@ impl CodexThread {
         let program =
             locate(agent.bin()).ok_or_else(|| fail(format!("{} is not installed", agent.bin())))?;
         if !codex_native_isolated(&program) {
-            return Err(fail("this Codex version cannot isolate native sessions; leo will use its isolated text tools instead".into()));
+            return Err(fail(
+                "this Codex version cannot isolate native sessions. Update Codex, then try again."
+                    .into(),
+            ));
         }
         let room = agent.room()?;
         let mut command = leo_core::children::quiet_command(&program);

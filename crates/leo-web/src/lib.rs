@@ -22,7 +22,6 @@ mod originals;
 mod progress;
 mod read_cache;
 pub mod record;
-mod record_journal;
 pub mod reply;
 pub mod review;
 mod routes;
@@ -58,8 +57,7 @@ use leo_core::store::Store;
 
 use crate::routes::activity::activity;
 use crate::routes::assets::{
-    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recorder_js, recording_js,
-    saving_js,
+    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recording_js, saving_js,
 };
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
@@ -107,23 +105,6 @@ pub struct UploadFile {
 }
 
 pub type Room = Arc<dyn Fn() -> usize + Send + Sync>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WebHit {
-    pub title: String,
-    pub url: String,
-    pub snippet: String,
-}
-
-pub type WebSearch = Arc<dyn Fn(&str) -> Result<Vec<WebHit>> + Send + Sync>;
-pub type WebPage = Arc<dyn Fn(&str) -> Result<String> + Send + Sync>;
-
-#[derive(Clone)]
-pub struct Web {
-    pub search: WebSearch,
-    pub page: WebPage,
-    pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
-}
 
 pub struct Fetched {
     pub body: Option<Vec<u8>>,
@@ -191,7 +172,6 @@ pub struct Powers {
     pub reader: Option<Reader>,
     pub room: Option<Room>,
     pub context: Option<Room>,
-    pub web: Option<Web>,
     pub converse: Option<chat::Converser>,
     pub seer: Option<captions::Seer>,
     pub meaning: Option<vectors::Meaning>,
@@ -239,7 +219,6 @@ struct AppState {
     reader: Option<Reader>,
     room: Option<Room>,
     context: Option<Room>,
-    web: Option<Web>,
     converse: Option<chat::Converser>,
     seer: Option<captions::Seer>,
     captions: Arc<captions::Captions>,
@@ -617,7 +596,6 @@ pub(crate) async fn start_in(
     let housekeeper = powers.housekeeper;
     let reader = powers.reader;
     let room = powers.room;
-    let web = powers.web;
     let converse = powers.converse;
     let seer = powers.seer;
     let meaning = powers.meaning;
@@ -674,7 +652,6 @@ pub(crate) async fn start_in(
         reader,
         room,
         context: powers.context,
-        web,
         converse,
         seer,
         captions,
@@ -966,10 +943,6 @@ fn router(state: AppState) -> Router {
             "/api/record/{id}",
             get(record::status).delete(record::discard),
         )
-        .route(
-            "/api/record/{id}/audio",
-            post(record::audio).layer(axum::extract::DefaultBodyLimit::max(record::AUDIO_BYTES)),
-        )
         .route("/api/record/{id}/pause", post(record::pause))
         .route("/api/record/{id}/point", post(record::point))
         .route("/api/record/{id}/wants", post(record::wants))
@@ -982,8 +955,6 @@ fn router(state: AppState) -> Router {
         .route("/api/record/{id}/stop", post(record::stop))
         .route("/api/record/{id}/finish", post(record::finish_available))
         .route("/api/record/{id}/recover", post(record::recover))
-        .route("/recorder.js", get(recorder_js))
-        .route("/audio-queue.js", get(routes::assets::audio_queue_js))
         .route(
             "/browser-storage.js",
             get(routes::assets::browser_storage_js),

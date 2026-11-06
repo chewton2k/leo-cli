@@ -506,7 +506,6 @@ pub fn act_on(
 pub struct Kept<'a> {
     pub captions: &'a crate::captions::Captions,
     pub vectors: &'a crate::vectors::Vectors,
-    pub recording: Option<String>,
 }
 
 pub const CONFIG_FILES: [(&str, &str); 9] = [
@@ -555,9 +554,8 @@ const SMALL_FILES: [(&str, &str); 7] = [
     ),
 ];
 
-const LISTED_ELSEWHERE: [&str; 13] = [
+const LISTED_ELSEWHERE: [&str; 12] = [
     "recording-sources",
-    "browser-audio",
     "notes",
     "chats",
     "attachments",
@@ -722,7 +720,6 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
         ),
     ));
     out.extend(recording_sources_area(store));
-    out.extend(browser_audio_area(store, kept.recording.as_deref()));
     let data = data_dir(&store.notes_dir);
     let mut items: Vec<Item> = std::fs::read_dir(&data)
         .map(|entries| {
@@ -841,26 +838,18 @@ pub fn act_on_more(
                     .to_string(),
             )
         }
-        ("recording-sources", "delete") => remove_kept_folders(
-            &leo_core::recording::root(&store.notes_dir),
-            &request.items,
-            None,
-        )
-        .map(|n| plural_deleted(n, "recording transcript")),
+        ("recording-sources", "delete") => {
+            remove_kept_folders(&leo_core::recording::root(&store.notes_dir), &request.items)
+                .map(|n| plural_deleted(n, "recording transcript"))
+        }
         ("recording-sources", "orphans") => {
             let gone: Vec<String> = folder_names(&leo_core::recording::root(&store.notes_dir))
                 .into_iter()
                 .filter(|id| store.find_note(id).is_none())
                 .collect();
-            remove_kept_folders(&leo_core::recording::root(&store.notes_dir), &gone, None)
+            remove_kept_folders(&leo_core::recording::root(&store.notes_dir), &gone)
                 .map(|n| plural_deleted(n, "recording transcript"))
         }
-        ("browser-audio", "delete") => remove_kept_folders(
-            &crate::record_journal::root(&store.notes_dir),
-            &request.items,
-            kept.recording.as_deref(),
-        )
-        .map(|n| plural_deleted(n, "unsaved recording")),
         ("other", "delete") => {
             let data = data_dir(&store.notes_dir);
             let mut gone = 0;
@@ -904,7 +893,7 @@ fn folder_names(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn remove_kept_folders(root: &Path, ids: &[String], live: Option<&str>) -> Result<usize> {
+fn remove_kept_folders(root: &Path, ids: &[String]) -> Result<usize> {
     anyhow::ensure!(
         ids.len() <= MOST_SIZE_ENTRIES,
         "Choose fewer recordings to delete."
@@ -921,9 +910,6 @@ fn remove_kept_folders(root: &Path, ids: &[String], live: Option<&str>) -> Resul
     for id in ids {
         if !leo_core::recording::valid_id(id) {
             bail!("That is not a recording leo knows.");
-        }
-        if live == Some(id.as_str()) {
-            bail!("That recording is still going. Stop it first.");
         }
         let dir = leo_core::paths::contained_path(root, Path::new(id))?;
         if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
@@ -983,56 +969,6 @@ fn recording_sources_area(store: &Store) -> Option<Area> {
             ),
             act("orphans", "Delete transcripts whose note is gone", None, false),
         ],
-    })
-}
-
-fn browser_audio_area(store: &Store, live: Option<&str>) -> Option<Area> {
-    let root = crate::record_journal::root(&store.notes_dir);
-    let titles: std::collections::HashMap<String, Option<String>> =
-        crate::record_journal::pending(&store.notes_dir)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|j| (j.id, j.title))
-            .collect();
-    let items: Vec<Item> = folder_names(&root)
-        .into_iter()
-        .map(|id| {
-            let path = root.join(&id);
-            let going = live == Some(id.as_str());
-            Item {
-                label: titles
-                    .get(&id)
-                    .cloned()
-                    .flatten()
-                    .unwrap_or_else(|| "A recording without a title".into()),
-                detail: if going {
-                    "Recording now".into()
-                } else {
-                    "Audio that has not become a note yet; Record can recover it".into()
-                },
-                bytes: size_of(&path),
-                when: modified(&path),
-                locked: going,
-                id,
-            }
-        })
-        .collect();
-    if items.is_empty() {
-        return None;
-    }
-    Some(Area {
-        id: "browser-audio".into(),
-        title: "Recordings not saved yet".into(),
-        about: "Audio a browser sent while recording, kept until its note is saved so nothing is lost if the page or leo stops. It is deleted once the note is saved.".into(),
-        path: root.display().to_string(),
-        bytes: items.iter().map(|i| i.bytes).sum(),
-        items,
-        actions: vec![act(
-            "delete",
-            "Delete the selected recordings",
-            Some("This audio is deleted for good and cannot become a note."),
-            true,
-        )],
     })
 }
 
@@ -1207,14 +1143,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("recordings");
         std::fs::create_dir_all(root.join("safe-recording")).unwrap();
-        std::fs::create_dir_all(root.join("live-recording")).unwrap();
-        for ids in [
-            vec!["safe-recording".into(), "../outside".into()],
-            vec!["safe-recording".into(), "live-recording".into()],
-        ] {
-            assert!(remove_kept_folders(&root, &ids, Some("live-recording")).is_err());
-            assert!(root.join("safe-recording").is_dir());
-        }
+        let ids = vec!["safe-recording".into(), "../outside".into()];
+        assert!(remove_kept_folders(&root, &ids).is_err());
+        assert!(root.join("safe-recording").is_dir());
     }
 
     #[cfg(unix)]
@@ -1227,11 +1158,11 @@ mod tests {
         std::fs::create_dir_all(&notes).unwrap();
         std::fs::create_dir_all(outside.join("saved-recording")).unwrap();
         std::fs::write(outside.join("picture.png"), "keep").unwrap();
-        for name in ["recording-sources", "browser-audio"] {
-            let linked = temp.path().join(name);
+        {
+            let linked = temp.path().join("recording-sources");
             symlink(&outside, &linked).unwrap();
             assert!(folder_names(&linked).is_empty());
-            assert!(remove_kept_folders(&linked, &["saved-recording".into()], None).is_err());
+            assert!(remove_kept_folders(&linked, &["saved-recording".into()]).is_err());
             assert!(outside.join("saved-recording").is_dir());
         }
         symlink(&outside, temp.path().join("attachments")).unwrap();
@@ -1249,7 +1180,7 @@ mod tests {
             regular.join("saved-recording"),
         )
         .unwrap();
-        assert!(remove_kept_folders(&regular, &["saved-recording".into()], None).is_err());
+        assert!(remove_kept_folders(&regular, &["saved-recording".into()]).is_err());
     }
 
     fn at(day: u32) -> DateTime<Utc> {
@@ -1316,7 +1247,6 @@ mod tests {
         let kept = Kept {
             captions: &captions,
             vectors: &vectors,
-            recording: None,
         };
         let list = more_areas(&store, &path, &kept);
         let tasks = area(&list, "tasks");
@@ -1550,7 +1480,6 @@ mod tests {
         let kept = Kept {
             captions: &captions,
             vectors: &vectors,
-            recording: None,
         };
         let list = more_areas(&store, &chats_dir, &kept);
         let ids: Vec<&str> = list.iter().map(|a| a.id.as_str()).collect();
@@ -1636,7 +1565,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_transcripts_and_unsaved_browser_audio_are_listed_and_can_go() {
+    fn recording_transcripts_are_listed_and_can_go() {
         let (tmp, store, _graphs, chats_dir) = setup();
         let data = tmp.path();
         let note = store.notes[0].id.clone();
@@ -1645,41 +1574,22 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("session-1234.json"), "{}").unwrap();
         }
-        for (id, title) in [("journal-live-01", "Live"), ("journal-left-01", "Left")] {
-            let dir = data.join("browser-audio").join(id);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(
-                dir.join("session.json"),
-                serde_json::json!({"id": id, "directory": "", "title": title, "source": "browser", "profile": {}})
-                    .to_string(),
-            )
-            .unwrap();
-            std::fs::write(dir.join("00000000000000000000.pcm"), [0u8; 64]).unwrap();
-        }
         let captions = crate::captions::Captions::for_notes(&store.notes_dir);
         let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
         let kept = Kept {
             captions: &captions,
             vectors: &vectors,
-            recording: Some("journal-live-01".into()),
         };
         let list = more_areas(&store, &chats_dir, &kept);
         let sources = area(&list, "recording-sources");
         let labels: Vec<&str> = sources.items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&store.notes[0].title.as_str()));
         assert!(labels.contains(&"A note that is gone"));
-        let audio = area(&list, "browser-audio");
-        let rows: Vec<(&str, bool)> = audio
-            .items
-            .iter()
-            .map(|i| (i.label.as_str(), i.locked))
-            .collect();
-        assert!(rows.contains(&("Live", true)) && rows.contains(&("Left", false)));
         assert!(
             list.iter()
                 .filter(|a| a.id == "other")
                 .flat_map(|a| a.items.iter())
-                .all(|i| i.id != "recording-sources" && i.id != "browser-audio"),
+                .all(|i| i.id != "recording-sources"),
             "listed once, in their own areas"
         );
 
@@ -1696,11 +1606,6 @@ mod tests {
             )
             .unwrap()
         };
-        assert!(ask("browser-audio", "delete", &["journal-live-01"]).is_err());
-        assert!(ask("browser-audio", "delete", &["../notes"]).is_err());
-        ask("browser-audio", "delete", &["journal-left-01"]).unwrap();
-        assert!(data.join("browser-audio/journal-live-01").is_dir());
-        assert!(!data.join("browser-audio/journal-left-01").exists());
         ask("recording-sources", "orphans", &[]).unwrap();
         assert!(data.join("recording-sources").join(&note).is_dir());
         assert!(!data.join("recording-sources/note-that-is-gone").exists());

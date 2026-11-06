@@ -237,23 +237,6 @@ impl Sessions {
             (gone, gone)
         })
     }
-
-    pub fn end_others(&self, current: &str) -> Result<usize> {
-        self.change(|list| {
-            let before = list.len();
-            list.retain(|s| token::same(&s.secret, current));
-            let gone = before - list.len();
-            (gone, gone > 0)
-        })
-    }
-
-    pub fn end_all(&self) -> Result<usize> {
-        self.change(|list| {
-            let gone = list.len();
-            list.clear();
-            (gone, gone > 0)
-        })
-    }
 }
 
 pub struct Gate {
@@ -272,11 +255,6 @@ impl Gate {
             sessions,
             link: std::sync::RwLock::new(None),
         }
-    }
-
-    pub fn set_link(&self, host: Option<&str>) {
-        let mut link = self.link.write().unwrap_or_else(|e| e.into_inner());
-        *link = host.map(site_of);
     }
 
     pub fn site_for(&self, from_this_computer: bool, through_link: bool) -> String {
@@ -357,23 +335,17 @@ mod tests {
     }
 
     #[test]
-    fn signing_out_the_others_keeps_this_browser_and_old_sessions_expire() {
+    fn old_sessions_expire() {
         let sessions = Sessions::in_memory();
         let mine = sessions
             .start("Firefox/131.0 (Windows NT 10.0)", "127.0.0.1:8742", at(0))
             .unwrap();
-        let other = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
-        assert_eq!(sessions.end_others(&mine).unwrap(), 1);
-        assert!(!sessions.check(&other, at(1)));
         assert!(sessions.check(&mine, at(1)));
         let month = KEEP_DAYS * 24 * 60;
         assert!(
             !sessions.check(&mine, at(month + 10)),
             "a session unused for a month expires"
         );
-        let a = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
-        assert_eq!(sessions.end_all().unwrap(), 1);
-        assert!(!sessions.check(&a, at(1)));
     }
 
     #[test]

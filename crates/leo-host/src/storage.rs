@@ -275,60 +275,6 @@ fn settings() -> Option<Area> {
     })
 }
 
-fn writing_profiles_at(root: &Path) -> Area {
-    let safe = std::fs::symlink_metadata(root).is_ok_and(|m| m.is_dir());
-    let items: Vec<Item> = [("agy", "Google Antigravity"), ("copilot", "GitHub Copilot")]
-        .into_iter()
-        .filter(|_| safe)
-        .filter_map(|(id, label)| {
-            let path = leo_core::paths::contained_path(root, Path::new(id)).ok()?;
-            let metadata = std::fs::symlink_metadata(&path).ok()?;
-            if !metadata.is_dir() {
-                return None;
-            }
-            Some(Item {
-                id: id.into(),
-                label: label.into(),
-                detail: "Saved private sign-in state and caches from a removed writing provider."
-                    .into(),
-                bytes: size_of(&path),
-                when: metadata
-                    .modified()
-                    .ok()
-                    .map(chrono::DateTime::<chrono::Utc>::from),
-                locked: false,
-            })
-        })
-        .collect();
-    let bytes = items.iter().map(|item| item.bytes).sum();
-    Area {
-        id: "writing-profiles".into(),
-        title: "Legacy writing profiles".into(),
-        about: "Saved data from removed Google Antigravity and GitHub Copilot support. Nothing is deleted automatically; private contents are never included in exports.".into(),
-        path: root.display().to_string(),
-        bytes,
-        actions: if items.is_empty() { Vec::new() } else {
-            vec![act("clear", "Clear selected profiles", Some("Saved sign-in details, conversation history and local caches for these removed writing providers are deleted. This cannot be undone. A profile in use cannot be cleared."), true)]
-        },
-        items,
-    }
-}
-
-fn clear_writing_profiles(items: &[String]) -> Result<String> {
-    anyhow::ensure!(
-        !items.is_empty()
-            && items.len() <= 2
-            && items
-                .iter()
-                .all(|id| matches!(id.as_str(), "agy" | "copilot")),
-        "Choose a legacy writing profile shown in Storage."
-    );
-    for name in items {
-        leo_services::ai::provider::scoped_cli::clear_profile(name)?;
-    }
-    Ok("Cleared the selected legacy writing profiles.".into())
-}
-
 fn delete_recordings(root: &Path, ids: &[String]) -> Result<String> {
     if ids.len() > MOST_RECORDINGS || ids.iter().any(|id| !leo_core::recording::valid_id(id)) {
         bail!("That is not a recording leo knows.");
@@ -442,18 +388,11 @@ impl Housekeeper for Housekeeping {
         out.push(other_models());
         out.extend(application());
         out.extend(settings());
-        if let Ok(root) = leo_services::ai::provider::scoped_cli::profile_root() {
-            let area = writing_profiles_at(&root);
-            if !area.items.is_empty() {
-                out.push(area);
-            }
-        }
         out
     }
 
     fn act(&self, area: &str, action: &str, items: &[String]) -> Option<Result<String>> {
         match (area, action) {
-            ("writing-profiles", "clear") => Some(clear_writing_profiles(items)),
             ("recordings", "delete") => Some(
                 session::root()
                     .map_err(|e| anyhow!(e))
@@ -483,30 +422,6 @@ impl Housekeeper for Housekeeping {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn writing_profiles_show_metadata_without_exposing_authentication_contents() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("agent-profiles");
-        std::fs::create_dir_all(root.join("agy")).unwrap();
-        std::fs::create_dir_all(root.join("copilot")).unwrap();
-        std::fs::write(root.join("agy/token.json"), "fake-private-token").unwrap();
-        std::fs::write(root.join("copilot/history.json"), "fake-private-chat").unwrap();
-        let area = writing_profiles_at(&root);
-        assert_eq!(area.items.len(), 2);
-        assert!(area.bytes > 0);
-        assert_eq!(area.actions[0].id, "clear");
-        assert!(area.actions[0]
-            .confirm
-            .as_ref()
-            .unwrap()
-            .contains("cannot be undone"));
-        let rendered = serde_json::to_string(&area).unwrap();
-        assert!(!rendered.contains("fake-private-token"));
-        assert!(!rendered.contains("fake-private-chat"));
-        assert!(!rendered.contains("token.json"));
-        assert!(clear_writing_profiles(&["../outside".into()]).is_err());
-    }
 
     #[test]
     fn retired_runtime_caches_remain_visible_and_removable_without_changing_saved_work() {

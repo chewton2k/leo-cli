@@ -70,7 +70,7 @@
   const STREAK_GAP_MS = 1500;
   const TRANSFORM_MS = 2800;
   const demonMode = () => typeof document !== 'undefined' && document.documentElement.dataset.felix === 'demon';
-  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', web_search: 'tool-search', open_page: 'tool-open', read_document: 'tool-open', read_transcript: 'tool-open', look_at_picture: 'tool-search', calculate: 'tool-edit' };
+  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', read_document: 'tool-open', read_transcript: 'tool-open', look_at_picture: 'tool-search', calculate: 'tool-edit' };
   const poseOf = (tool) => POSES[tool] || null;
 
   function splitLines(buffer) {
@@ -1746,8 +1746,6 @@
       connected_notes: '<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8"/>',
       edit_note: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
       create_note: '<path d="M12 5v14M5 12h14"/>',
-      web_search: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
-      open_page: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 13h10M7 16h6"/>',
       read_document: '<path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h6"/>',
       read_transcript: '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
       look_at_picture: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-8 7"/>',

@@ -66,10 +66,6 @@ impl Steering {
             .map(|all| all.keys().cloned().collect())
             .unwrap_or_default()
     }
-
-    pub fn is_open(&self, id: &str) -> bool {
-        self.0.lock().is_ok_and(|all| all.contains_key(id))
-    }
 }
 
 impl Steer {
@@ -150,7 +146,6 @@ mod tests {
         assert_eq!(steering.add(&id, "too many"), Err("full"));
         assert_eq!(steering.add("someone-else", "hi"), Err("gone"));
         drop(steer);
-        assert!(!steering.is_open(&id), "a finished answer takes no more");
         assert_eq!(steering.add(&id, "late"), Err("gone"));
     }
 

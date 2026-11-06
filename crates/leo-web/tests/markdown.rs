@@ -50,7 +50,6 @@ fn recording_in_the_browser_passes_its_tests() {
     run_node_tests("settings-route-state.test.js");
     run_node_tests("route-lifecycle.test.js");
     run_node_tests("menu-motion.test.js");
-    run_node_tests("audio-queue.test.js");
 }
 
 fn run_node_tests(file: &str) {

@@ -272,30 +272,6 @@ impl Library {
         serde_json::to_writer(&mut tmp, &selection)?;
         tmp.as_file().sync_all()?;
         tmp.persist(self.selection_path()?).map_err(|e| e.error)?;
-        self.remove_legacy()?;
-        Ok(())
-    }
-
-    fn remove_legacy(&self) -> Result<()> {
-        const MOST_LEGACY_FILES: usize = 64;
-        let old = self
-            .models
-            .parent()
-            .unwrap_or(&self.models)
-            .join("parakeet-tdt-0.6b-v3-int8");
-        if let Ok(meta) = std::fs::symlink_metadata(&old) {
-            if meta.is_dir() && !meta.file_type().is_symlink() {
-                let files = std::fs::read_dir(&old)?
-                    .take(MOST_LEGACY_FILES + 1)
-                    .collect::<std::io::Result<Vec<_>>>()?;
-                ensure!(files.len() <= MOST_LEGACY_FILES && files.iter().all(|e| e.file_type().is_ok_and(|t| t.is_file())),
-                    "The new model is ready, but the old speech folder contains unexpected files. Remove it in Storage.");
-                for file in files {
-                    std::fs::remove_file(file.path())?;
-                }
-                std::fs::remove_dir(old)?;
-            }
-        }
         Ok(())
     }
 
@@ -500,7 +476,6 @@ impl Library {
         self.change_verified(|verified| {
             verified.remove(&target);
         });
-        self.remove_legacy()?;
         Ok(())
     }
 

@@ -7,27 +7,17 @@ use axum::Json;
 
 use crate::{chats, storage, AppState};
 
-fn live_recording(state: &AppState) -> Option<String> {
-    state.recording.lock().ok().and_then(|held| {
-        held.as_ref()
-            .filter(|job| job.busy())
-            .map(|job| job.view().id)
-    })
-}
-
 async fn storage_now(state: &AppState) -> Result<serde_json::Value, StatusCode> {
     let graphs = Arc::clone(&state.graphs);
     let chats = state.chats.clone();
     let housekeeper = state.housekeeper.clone();
     let captions = Arc::clone(&state.captions);
     let vectors = Arc::clone(&state.vectors);
-    let recording = live_recording(state);
     let store = state.with_store(|store| Ok(store.read_snapshot())).await?;
     tokio::task::spawn_blocking(move || {
         let kept = storage::Kept {
             captions: &captions,
             vectors: &vectors,
-            recording,
         };
         let mut areas = storage::areas(&store, &graphs, &chats, chrono::Utc::now());
         areas.extend(storage::more_areas(&store, &chats, &kept));
@@ -63,7 +53,6 @@ pub(crate) async fn change_storage(
     let housekeeper = state.housekeeper.clone();
     let captions = Arc::clone(&state.captions);
     let vectors = Arc::clone(&state.vectors);
-    let recording = live_recording(&state);
     let calendar = Arc::clone(&state.calendar);
     let store = match state.with_store(|store| Ok(store.read_snapshot())).await {
         Ok(store) => store,
@@ -73,7 +62,6 @@ pub(crate) async fn change_storage(
         let kept = storage::Kept {
             captions: &captions,
             vectors: &vectors,
-            recording,
         };
         storage::act_on(&store, &graphs, &chats, &request, chrono::Utc::now())
             .or_else(|| storage::act_on_more(&store, &chats, &kept, &request))

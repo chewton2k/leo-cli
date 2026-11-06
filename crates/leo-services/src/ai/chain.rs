@@ -499,9 +499,6 @@ mod tests {
                 .clone()
                 .expect("transcribe called on an unavailable provider")
         }
-        fn max_bytes(&self) -> Option<u64> {
-            None
-        }
         fn available(&self) -> bool {
             self.available
         }

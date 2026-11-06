@@ -61,19 +61,6 @@ pub fn write_chain(doc: &mut DocumentMut, task: Task, chain: &[String]) {
     }
 }
 
-/// Load the config file for editing, creating it from the defaults first if it
-/// does not exist yet — a user who never ran `config edit` still gets a file
-/// with all the explanatory comments rather than a bare two lines.
-pub fn load_document() -> Result<(std::path::PathBuf, DocumentMut)> {
-    let (path, _created) = crate::config::Config::ensure_exists()?;
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    let doc = text
-        .parse::<DocumentMut>()
-        .with_context(|| format!("{} is not valid TOML", path.display()))?;
-    Ok((path, doc))
-}
-
 /// Write a document back, atomically enough that a crash mid-write cannot leave
 /// a truncated config: the new text lands in a sibling file first, then
 /// replaces the original in one rename.

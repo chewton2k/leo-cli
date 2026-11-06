@@ -2504,7 +2504,7 @@ test.describe('uploads', () => {
 
 test.describe('recording', () => {
   function stubRecorder(page, { noteId, local = true }) {
-    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false, levels: Array(200).fill(0.1), source: 'microphone' };
+    const seen = { started: null, points: [], stopped: false, paused: false, levels: Array(200).fill(0.1), source: 'microphone' };
     let polls = 0;
     const view = (over = {}) => ({ wants: seen.wants ?? (seen.started && seen.started.profile ? seen.started.profile.wants || '' : ''), id: 'rec-1', source: seen.source, state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), levels: seen.levels, note: null, error: null, ...over });
     page.route('**/api/record', async (route) => {
@@ -2517,11 +2517,6 @@ test.describe('recording', () => {
       if (!seen.stopped) return route.fulfill({ json: view() });
       polls += 1;
       return route.fulfill({ json: polls < 2 ? view({ state: 'writing', step: 'Writing the notes', steps: [1, 2] }) : view({ state: 'done', note: noteId }) });
-    });
-    page.route('**/api/record/rec-1/audio*', (route) => {
-      seen.audioBytes += route.request().postDataBuffer().length;
-      seen.posts += 1;
-      return route.fulfill({ json:{next_seq:Number(new URL(route.request().url()).searchParams.get('seq'))+1} });
     });
     page.route('**/api/record/rec-1/wants', (route) => {
       seen.wants = route.request().postDataJSON().text;
@@ -2565,8 +2560,6 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-transcript')).toBeVisible();
     await page.waitForTimeout(1500);
     await expect(page.locator('#rec-heard')).toHaveAttribute('open', '');
-    expect(seen.audioBytes).toBe(0);
-    expect(seen.posts).toBe(0);
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound', { timeout: 8000 });
     const drawn = await page.locator('#rec-wave').evaluate((canvas) => {
@@ -2646,7 +2639,6 @@ test.describe('recording', () => {
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
     expect(seen.started.source).toBe('screen');
-    expect(seen.audioBytes).toBe(0);
     await page.locator('[data-action="rec-stop"]').click();
     await expect(page).toHaveURL(new RegExp('#/n/' + made.id + '$'), { timeout: 8000 });
   });
@@ -2662,7 +2654,6 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound');
     expect(seen.started.source).toBe('screen');
-    expect(seen.audioBytes).toBe(0);
     seen.levels = [...Array(12).fill(0.1), ...Array(30).fill(0)];
     await expect(page.locator('#rec-hear')).toHaveText('No sound for a while: is something playing on the computer?', { timeout: 12000 });
     await expect(page.locator('#rec-hear')).toHaveClass(/silent/);
@@ -2689,7 +2680,6 @@ test.describe('recording', () => {
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
     expect(seen.started.source).toBe('nativecall');
-    expect(seen.audioBytes).toBe(0);
   });
 
   test('the class or meeting happening now names the recording and tells the AI who and what, without overwriting a typed title', async ({ page, context }) => {
@@ -3966,7 +3956,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await step.locator('summary').click();
   await expect(step.locator('li')).toHaveText(['Queues', 'Heaps']);
   await page.locator('[data-chat="close"]').click();
-  const job = { id: 'controls-failed', source: 'call', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded.; You: No sound was recorded.' };
+  const job = { id: 'controls-failed', source: 'nativecall', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded.; You: No sound was recorded.' };
   await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job, pending: [] } }));
   await page.route('**/api/record/controls-failed', route => route.fulfill({ json: job }));
   await page.goto('/#/record');
@@ -3976,7 +3966,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
 });
 
 test('a failed call has calm details and can be dismissed or deleted directly', async ({ page }) => {
-  let job = { id: 'failed-call-fixture', source: 'call', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded. Check your microphone.; You: No sound was recorded. Check your microphone.' };
+  let job = { id: 'failed-call-fixture', source: 'nativecall', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded. Check your microphone.; You: No sound was recorded. Check your microphone.' };
   let deletions = 0;
   await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job, pending: [] } }));
   await page.route('**/api/record/failed-call-fixture', route => {
@@ -3995,11 +3985,6 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await page.evaluate(() => sessionStorage.removeItem('leo-record-dismissed'));
   await page.reload();
   await expect(page.locator('.rec-failed-card')).toBeVisible();
-  await page.evaluate(async () => {
-    const queue = window.leoAudioQueue.indexed();
-    await queue.put({ id: 'failed-call-fixture', seq: 0, bytes: new ArrayBuffer(4) });
-    await queue.put({ id: 'keep-fixture', seq: 0, bytes: new ArrayBuffer(4) });
-  });
   await page.locator('[data-action="rec-discard"]').click();
   await page.locator('.scrim [data-action="close"]').click();
   expect(deletions).toBe(0);
@@ -4007,8 +3992,6 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await page.locator('[data-action="rec-discard-now"]').click();
   await expect(page.locator('.rec-idle')).toBeVisible();
   expect(deletions).toBe(1);
-  expect(await page.evaluate(() => window.leoAudioQueue.indexed().count('failed-call-fixture'))).toBe(0);
-  expect(await page.evaluate(() => window.leoAudioQueue.indexed().count('keep-fixture'))).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.reload();
   await expect(page.locator('.rec-idle')).toBeVisible();

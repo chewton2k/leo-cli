@@ -14,9 +14,6 @@ impl LocalSpeech {
 }
 
 impl TranscribeProvider for LocalSpeech {
-    fn max_bytes(&self) -> Option<u64> {
-        None
-    }
     fn name(&self) -> &str {
         &self.name
     }

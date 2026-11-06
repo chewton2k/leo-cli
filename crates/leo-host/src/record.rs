@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 
 use leo_services::ai::chat::Jotted;
 use leo_services::session::capture::Source;
-use leo_services::session::recorder::{self, Controls, Event, Input, Request};
+use leo_services::session::recorder::{self, Controls, Event, Request};
 use leo_web::record::{Heard, Listener, Listening, Recorded};
 
 pub fn listener() -> Listener {
@@ -24,10 +24,8 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
         recover: _,
         id,
         profile,
-        other_audio: _,
         call: _,
         finish_now,
-        audio,
         screen,
         directory,
         title,
@@ -44,10 +42,7 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
         points: Default::default(),
         wants,
     };
-    let input = match audio {
-        Some(rx) => Input::Fed(rx),
-        None => Input::Device(Source::from_env(screen)),
-    };
+    let input = Source::from_env(screen);
     let heard = RefCell::new(heard);
     let failed = RefCell::new(None);
     let finished = RefCell::new(None);
@@ -212,8 +207,6 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
         preview,
         id,
         profile,
-        audio,
-        other_audio,
         directory,
         title,
         stop,
@@ -223,16 +216,13 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
         wants,
         ..
     } = listening;
-    let tracks = [("You", audio), ("Others", other_audio)];
+    let tracks = ["You", "Others"];
     let (tx, rx) = std::sync::mpsc::channel();
     let mut dirs = Vec::new();
     let mut warnings = Vec::new();
     std::thread::scope(|scope| {
-        for (speaker, audio) in tracks {
-            let input = match audio {
-                Some(audio) => Input::Fed(audio),
-                None => Input::Device(Source::from_env(speaker == "Others")),
-            };
+        for speaker in tracks {
+            let input = Source::from_env(speaker == "Others");
             let tx = tx.clone();
             let id = id.clone();
             let profile = profile.clone();

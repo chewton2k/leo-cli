@@ -232,7 +232,6 @@ pub struct AgentCli {
     quiet_limit: Duration,
     total_limit: Duration,
     spent: Mutex<Option<Spent>>,
-    thread: Mutex<Option<String>>,
 }
 
 impl AgentCli {
@@ -258,7 +257,6 @@ impl AgentCli {
             quiet_limit: QUIET_LIMIT,
             total_limit: TOTAL_LIMIT,
             spent: Mutex::new(None),
-            thread: Mutex::new(None),
         }
     }
 
@@ -452,7 +450,6 @@ pub struct Heard {
     pub tokens: Option<(u64, u64)>,
     pub cache: (u64, u64),
     pub exceeded: bool,
-    pub thread: Option<String>,
 }
 
 pub fn codex_banner(stderr: &str) -> (Option<String>, Option<String>, Option<u64>) {
@@ -504,22 +501,6 @@ pub fn hear(line: &str, heard: &mut Heard, sink: Sink<'_>) -> bool {
         return false;
     };
     match event["type"].as_str() {
-        Some("thread.started") => {
-            heard.thread = event["thread_id"]
-                .as_str()
-                .filter(|id| {
-                    id.len() == 36
-                        && id.bytes().enumerate().all(|(i, b)| {
-                            if [8, 13, 18, 23].contains(&i) {
-                                b == b'-'
-                            } else {
-                                b.is_ascii_hexdigit()
-                            }
-                        })
-                })
-                .map(str::to_string);
-            false
-        }
         Some("item.completed") if event["item"]["type"] == "agent_message" => {
             if let Some(text) = event["item"]["text"].as_str() {
                 if !heard.answer.is_empty() {
@@ -803,10 +784,6 @@ impl Drop for ClaudeSession {
 }
 
 impl AgentCli {
-    pub(crate) fn last_thread(&self) -> Option<String> {
-        self.thread.lock().ok().and_then(|thread| thread.clone())
-    }
-
     pub fn is_claude(&self) -> bool {
         self.agent == Agent::ClaudeCode
     }
@@ -1113,9 +1090,6 @@ impl AgentCli {
         sink: Sink<'_>,
         stopped: &dyn Fn() -> bool,
     ) -> ProviderResult<String> {
-        if let Ok(mut thread) = self.thread.lock() {
-            *thread = None;
-        }
         let mut command = leo_core::children::quiet_command(program);
         command
             .args(args)
@@ -1203,11 +1177,6 @@ impl AgentCli {
                         break;
                     }
                     hear(&line, &mut heard, sink);
-                    if let Some(started) = &heard.thread {
-                        if let Ok(mut thread) = self.thread.lock() {
-                            *thread = Some(started.clone());
-                        }
-                    }
                 }
                 Ok(Ok(None)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Ok(Err(_)) => {
@@ -1481,33 +1450,6 @@ mod tests {
         assert!(!args.contains(&"--model".to_string()));
         assert_eq!(args.last().unwrap(), "-");
         assert_eq!(input, "You write notes.\n\n<transcript>hello</transcript>");
-    }
-
-    #[test]
-    fn codex_thread_events_track_only_explicit_valid_ids_without_showing_them() {
-        let mut heard = Heard::default();
-        let mut shown = String::new();
-        for id in [
-            "../../other",
-            "",
-            "maple",
-            "00000000-0000-0000-0000-00000000000g",
-        ] {
-            hear(
-                &serde_json::json!({"type":"thread.started","thread_id":id}).to_string(),
-                &mut heard,
-                &mut |text| shown.push_str(text),
-            );
-            assert!(heard.thread.is_none());
-        }
-        let id = "00000000-0000-0000-0000-000000000001";
-        hear(
-            &serde_json::json!({"type":"thread.started","thread_id":id}).to_string(),
-            &mut heard,
-            &mut |text| shown.push_str(text),
-        );
-        assert_eq!(heard.thread.as_deref(), Some(id));
-        assert!(shown.is_empty());
     }
 
     #[test]

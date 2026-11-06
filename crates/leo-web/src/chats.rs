@@ -247,79 +247,8 @@ fn when(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text).map_or_else(|_| Utc::now(), |t| t.with_timezone(&Utc))
 }
 
-const MOST_MIGRATED: usize = 64;
-
-static MIGRATED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
 pub(crate) fn db_of(dir: &Path) -> std::sync::Arc<crate::db::Db> {
-    let db = crate::db::for_chats(dir);
-    let missing: Vec<_> = MIGRATED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-        .into_iter()
-        .filter(|path| !path.exists())
-        .collect();
-    let mut done = MIGRATED.lock().unwrap_or_else(|e| e.into_inner());
-    done.retain(|path| !missing.contains(path));
-    if !done.iter().any(|d| d == dir) {
-        if done.len() >= MOST_MIGRATED {
-            done.remove(0);
-        }
-        done.push(dir.to_path_buf());
-        drop(done);
-        bring_in_files(dir, &db);
-    }
-    db
-}
-
-fn bring_in_files(dir: &Path, db: &crate::db::Db) {
-    if dir.file_name().is_none_or(|n| n != "chats") || !dir.is_dir() {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut chats = Vec::new();
-    let mut docs = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(id) = name.strip_suffix(".json").filter(|id| valid_id(id)) {
-            if let Some(chat) = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|t| serde_json::from_str::<Chat>(&t).ok())
-                .filter(|c| c.id == id)
-            {
-                chats.push(chat);
-            }
-        } else if name.ends_with(".files") && path.is_dir() {
-            docs.extend(crate::chat_files::from_folder(
-                &path,
-                name.trim_end_matches(".files"),
-            ));
-        }
-    }
-    let reviewed = crate::review::from_file(dir);
-    let saved = db.with(|c| {
-        let tx = c.transaction()?;
-        for chat in &chats {
-            if tx.query_row(
-                "SELECT COUNT(*) FROM chats WHERE id = ?1",
-                [&chat.id],
-                |r| r.get::<_, i64>(0),
-            )? == 0
-            {
-                write_in(&tx, chat)?;
-            }
-        }
-        crate::chat_files::insert_all(&tx, &docs)?;
-        crate::review::insert_all(&tx, &reviewed)?;
-        tx.commit()
-    });
-    if saved.is_ok() {
-        crate::db::put_aside(dir);
-    }
+    crate::db::for_chats(dir)
 }
 
 fn body_of(chat: &Chat) -> String {
