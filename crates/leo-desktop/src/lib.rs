@@ -113,6 +113,7 @@ pub fn run() {
                         let visible = window.is_visible().unwrap_or(true)
                             && !window.is_minimized().unwrap_or(false);
                         sync_visible(&window, visible, true);
+                        sync_fullscreen(&window, true);
                     }
                 })
                 // Tauri's own file-drop handler swallows the webview's drag events,
@@ -173,6 +174,7 @@ pub fn run() {
                     let visible = handle.is_visible().unwrap_or(true)
                         && !handle.is_minimized().unwrap_or(false);
                     set_visible(&handle, visible);
+                    sync_fullscreen(&handle, false);
                 }
             });
             #[cfg(target_os = "macos")]
@@ -283,6 +285,18 @@ pub(crate) fn show(app: &AppHandle) {
 
 fn set_visible(window: &tauri::WebviewWindow, visible: bool) {
     sync_visible(window, visible, false);
+}
+
+fn sync_fullscreen(window: &tauri::WebviewWindow, force: bool) {
+    static FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let full = window.is_fullscreen().unwrap_or(false);
+    if FULL.swap(full, std::sync::atomic::Ordering::Relaxed) != full || force {
+        let _ = window.eval(if full {
+            "document.documentElement.setAttribute('data-fullscreen', '')"
+        } else {
+            "document.documentElement.removeAttribute('data-fullscreen')"
+        });
+    }
 }
 
 fn sync_visible(window: &tauri::WebviewWindow, visible: bool, force: bool) {

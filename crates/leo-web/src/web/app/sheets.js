@@ -38,6 +38,11 @@ function trapSheetFocus(scrim) {
   });
 }
 
+function confirmSheet({ title, text, yes, action, data = '', danger = true, cancel = 'close' }) {
+  const lines = (Array.isArray(text) ? text : [text]).filter(Boolean).map((line) => `<p>${line}</p>`).join('');
+  return sheet(`<h3>${title}</h3>${lines}<div class="buttons"><button class="btn plain" data-action="${cancel}">Cancel</button><button class="btn ${danger ? 'danger' : 'primary'}" data-action="${action}"${data}>${yes}</button></div>`);
+}
+
 const SWIPE_CLOSE = 90;
 const SWIPE_FLICK = 0.6;
 
@@ -399,9 +404,7 @@ async function renameFolder() {
 
 function deleteFolderAsk(from = state.dir) {
   if (!from || typeof from !== 'string') return;
-  const box = sheet(`<h3>Move “${esc(folderLabel(from))}” to the trash?</h3>
-    <p>This folder, its subfolders and all their notes move to the trash. Undo brings them back.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-delete-now" data-from="${esc(from)}">Move to trash</button></div>`);
+  const box = confirmSheet({ title: `Move “${esc(folderLabel(from))}” to the trash?`, text: 'This folder, its subfolders and all their notes move to the trash. Undo brings them back.', yes: 'Move to trash', action: 'folder-delete-now', data: ` data-from="${esc(from)}"` });
   focusOnClose(box, { kind: 'folder', dir: from });
 }
 
@@ -472,8 +475,7 @@ async function confirmDelete(note = null, at = null) {
     if (!s) return back();
     note = s.note;
   }
-  const box = sheet(`<h3>Move “${esc(note.title)}” to the trash?</h3><p>You can restore it from Trash in Settings.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="delete-now" data-id="${esc(note.id)}">Move to trash</button></div>`);
+  const box = confirmSheet({ title: `Move “${esc(note.title)}” to the trash?`, text: 'You can restore it from Trash in Settings.', yes: 'Move to trash', action: 'delete-now', data: ` data-id="${esc(note.id)}"` });
   if (at) focusOnClose(box, { ...at });
   else box.returnFocus = document.activeElement;
 }
@@ -577,7 +579,7 @@ $('#search-input').addEventListener('input', (e) => {
 });
 
 function discardRecordingAsk(el) {
-  const box = sheet(`<h3>Delete this recording?</h3><p class="hint">Its saved audio will be permanently deleted from this device and your computer. Notes already written stay.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="rec-discard-now" data-id="${esc(el.dataset.id)}">Delete recording</button></div>`);
+  const box = confirmSheet({ title: 'Delete this recording?', text: 'Its saved audio will be permanently deleted from this device and your computer. Notes already written stay.', yes: 'Delete recording', action: 'rec-discard-now', data: ` data-id="${esc(el.dataset.id)}"` });
   box.returnFocus = el;
   box.querySelector('[data-action="close"]').focus();
 }

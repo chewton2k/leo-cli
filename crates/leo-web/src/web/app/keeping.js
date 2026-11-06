@@ -61,9 +61,7 @@ async function changeKeep(el) {
   const goes = count
     ? `${plural(count, noun)} older than that ${count === 1 ? 'is' : 'are'} deleted now, and others follow as they age. This cannot be undone, even if you choose a longer time afterwards.`
     : 'Nothing is old enough to be deleted now. From then on, each one is deleted as it reaches that age.';
-  const box = sheet(`<h3>Keep ${what} for ${esc(period)}?</h3>
-    <p>${esc(goes)}</p>
-    <div class="buttons"><button class="btn plain" data-action="keep-cancel">Cancel</button><button class="btn ${count ? 'danger' : 'primary'}" data-action="keep-now">${count ? `Delete ${esc(plural(count, noun))}` : `Keep for ${esc(period)}`}</button></div>`);
+  const box = confirmSheet({ title: `Keep ${what} for ${esc(period)}?`, text: esc(goes), yes: count ? `Delete ${esc(plural(count, noun))}` : `Keep for ${esc(period)}`, action: 'keep-now', danger: Boolean(count), cancel: 'keep-cancel' });
   box.returnFocus = app.querySelector(`select[data-keep="${field}"]`);
   box.querySelector('[data-action="keep-cancel"]').focus();
   trapSheetFocus(box);
@@ -102,9 +100,7 @@ async function draftsRetry() {
 function draftsDiscardAsk(el) {
   const count = saving.drafts().length;
   if (!count) return drawKeeping();
-  const box = sheet(`<h3>Discard ${esc(plural(count, 'unsaved edit'))}?</h3>
-    <p>Each note keeps what Leo last saved. The edits kept in this window are gone for good.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="drafts-discard">Discard</button></div>`);
+  const box = confirmSheet({ title: `Discard ${esc(plural(count, 'unsaved edit'))}?`, text: 'Each note keeps what Leo last saved. The edits kept in this window are gone for good.', yes: 'Discard', action: 'drafts-discard' });
   box.returnFocus = el;
   box.querySelector('[data-action="close"]').focus();
   trapSheetFocus(box);
@@ -149,10 +145,7 @@ async function tasksRestoreAsk(file) {
   }
   if (!tasks.length) return toast('That file has no tasks in it.', { bad: true });
   state.tasksRestore = tasks;
-  sheet(`<h3>Restore ${esc(plural(tasks.length, 'task'))}?</h3>
-    <p><b>${esc(file.name)}</b></p>
-    <p>Tasks that are not here come back, including ones you deleted since. A task you already have stays as it is unless the file's copy is newer, which then replaces yours.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="tasks-restore-go">Restore</button></div>`);
+  confirmSheet({ title: `Restore ${esc(plural(tasks.length, 'task'))}?`, text: [`<b>${esc(file.name)}</b>`, 'Tasks that are not here come back, including ones you deleted since. A task you already have stays as it is unless the file\'s copy is newer, which then replaces yours.'], yes: 'Restore', action: 'tasks-restore-go', danger: false });
 }
 
 async function tasksRestoreGo() {

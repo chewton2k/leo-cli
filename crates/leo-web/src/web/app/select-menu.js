@@ -1,4 +1,4 @@
-const SELECT_MENU_SCOPE = '.settings-section .select-control > select';
+const SELECT_MENU_SCOPE = '.select-control > select';
 let selectMenuIds = 0, selectMenuRefocus = null;
 
 function selectMenuKeyOf(select) {
@@ -58,9 +58,9 @@ function enhanceSelect(select) {
   }
 }
 
-function enhanceSelects(root = app) {
-  if (!document.body.classList.contains('on-settings') || matchMedia('(forced-colors: active)').matches) return;
-  for (const select of root.querySelectorAll(SELECT_MENU_SCOPE)) enhanceSelect(select);
+function enhanceSelects(root = document.body) {
+  if (matchMedia('(forced-colors: active)').matches) return;
+  for (const select of root.querySelectorAll(SELECT_MENU_SCOPE)) if (!select.closest('.scrim-gone')) enhanceSelect(select);
 }
 
 function keepSelectMenu(box, next) {
@@ -87,8 +87,9 @@ function openSelectMenu(button) {
     const on = option.selected;
     return `<div class="select-menu-option${on ? ' on' : ''}" role="option" id="${list.id}-${index}" data-index="${index}" aria-selected="${on}"${option.disabled ? ' aria-disabled="true"' : ''}><span>${esc(option.textContent)}</span>${on ? ICON.check : ''}</div>`;
   }).join('');
-  const room = innerHeight - button.getBoundingClientRect().bottom;
-  list.classList.toggle('up', room < Math.min(280, list.scrollHeight + 16) && button.getBoundingClientRect().top > room);
+  const bounds = button.closest('.sheet')?.getBoundingClientRect() || { top: 0, bottom: innerHeight };
+  const room = bounds.bottom - button.getBoundingClientRect().bottom;
+  list.classList.toggle('up', room < Math.min(280, list.scrollHeight + 16) && button.getBoundingClientRect().top - bounds.top > room);
   button.setAttribute('aria-expanded', 'true');
   unfold(list);
   list.tabIndex = -1;
@@ -97,7 +98,7 @@ function openSelectMenu(button) {
 }
 
 function closeSelectMenus(except) {
-  for (const list of app.querySelectorAll('.select-menu:not([hidden])')) {
+  for (const list of document.querySelectorAll('.select-menu:not([hidden])')) {
     if (list === except) continue;
     list.parentElement.querySelector(':scope > .select-menu-button')?.setAttribute('aria-expanded', 'false');
     fold(list);
@@ -152,35 +153,35 @@ function selectMenuKey(list, e) {
   }
 }
 
-app.addEventListener('click', (e) => {
-  const button = e.target.closest('.select-menu-button');
+document.addEventListener('click', (e) => {
+  const button = e.target.closest?.('.select-menu-button');
   if (button) {
     const list = button.parentElement.querySelector(':scope > .select-menu');
     if (button.getAttribute('aria-expanded') === 'true') closeSelectMenu(list, true); else openSelectMenu(button);
     return;
   }
-  const option = e.target.closest('.select-menu-option');
+  const option = e.target.closest?.('.select-menu-option');
   if (option) { pickSelectOption(option.closest('.select-menu'), option); return; }
   closeSelectMenus();
 });
-app.addEventListener('mousedown', (e) => {
+document.addEventListener('mousedown', (e) => {
   if (e.target.closest?.('.select-menu-button, .select-menu')) e.preventDefault();
 });
-app.addEventListener('mousemove', (e) => {
+document.addEventListener('mousemove', (e) => {
   const option = e.target.closest?.('.select-menu-option');
   if (option && !option.classList.contains('active')) activateSelectOption(option.closest('.select-menu'), option);
 });
-app.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', (e) => {
   const button = e.target.closest?.('.select-menu-button');
-  if (button && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); openSelectMenu(button); return; }
+  if (button && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); e.stopPropagation(); openSelectMenu(button); return; }
   const list = e.target.closest?.('.select-menu');
   if (list) selectMenuKey(list, e);
-});
-app.addEventListener('focusout', (e) => {
+}, true);
+document.addEventListener('focusout', (e) => {
   const list = e.target.closest?.('.select-menu');
   if (list && !list.parentElement.contains(e.relatedTarget)) closeSelectMenu(list, false);
 });
-app.addEventListener('change', (e) => {
+document.addEventListener('change', (e) => {
   if (e.target.dataset?.menu) syncSelectMenu(e.target);
 });
-new MutationObserver(() => enhanceSelects()).observe(app, { childList: true, subtree: true });
+new MutationObserver(() => enhanceSelects()).observe(document.body, { childList: true, subtree: true });

@@ -280,15 +280,18 @@ test.describe('forced colors', () => {
     await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
     const look = (selector) => page.locator(selector).first().evaluate((el) => { const cs = getComputedStyle(el); return { border: parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth), bg: cs.backgroundColor, color: cs.color }; });
     expect((await look('.card')).border, 'library cards have an edge').toBeGreaterThan(0);
-    await page.goto('/#/settings/general');
+    await page.goto('/#/settings/felix');
     await expect(page.locator('.segment.on').first()).toBeVisible();
     expect((await look('.set-card')).border, 'settings groups have an edge').toBeGreaterThan(0);
     expect((await look('.segment.on')).bg, 'a segmented choice shows which is selected').not.toBe((await look('.segment:not(.on)')).bg);
     expect((await look('.settings-link.on')).bg, 'the settings section list shows where you are').not.toBe((await look('.settings-link:not(.on)')).bg);
-    await page.locator('.set-card').first().evaluate((card) => card.insertAdjacentHTML('beforeend', '<div class="choice-cards" style="--count:2;--at:0"><span class="choice-ring"></span><label class="choice-pick on"><input type="radio" name="fc" checked><span class="choice-title">A</span></label><label class="choice-pick"><input type="radio" name="fc"><span class="choice-title">B</span></label></div>'));
-    const chosen = await look('.choice-pick.on');
-    expect(chosen.border + (await look('.choice-pick:not(.on)')).border, 'choice cards have edges').toBeGreaterThan(0);
-    expect(chosen.bg, 'the chosen card differs from the others').not.toBe((await look('.choice-pick:not(.on)')).bg);
+    for (const where of ['/#/settings/felix', '/#/settings/general']) {
+      await page.goto(where);
+      await expect(page.locator('.choice-pick.on').first()).toBeVisible();
+      const chosen = await look('.choice-pick.on');
+      expect(chosen.border + (await look('.choice-pick:not(.on)')).border, `choice cards have edges on ${where}`).toBeGreaterThan(0);
+    expect(chosen.bg, `the chosen card differs from the others on ${where}`).not.toBe((await look('.choice-pick:not(.on)')).bg);
+    }
   });
   test('the explorer shows the open place and the rail has edges', async ({ page }) => {
     await page.goto('/#/settings/general');
@@ -2287,6 +2290,7 @@ test.describe('uploads', () => {
     await input.setInputFiles({ name: 'lecture 1.txt', mimeType: 'text/plain', buffer: Buffer.from('One') });
     await expect(page.locator('#upload-together-row')).toBeHidden();
     await expect(page.locator('#upload-vision'), 'text files need no image note').toBeHidden();
+    await expect(page.locator('.sheet .note-fields #upload-dir ~ .select-menu-button'), 'the same field group and menu as Record').toBeVisible();
     await expect(page.locator('#upload-title')).toBeVisible();
     await expect(page.locator('#upload-go')).toHaveText('Make the note');
     await input.setInputFiles({ name: 'lecture 2.txt', mimeType: 'text/plain', buffer: Buffer.from('Two') });
@@ -2519,6 +2523,7 @@ test.describe('recording', () => {
     await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Records what this computer plays');
     await expect(page.locator('.rec-kind .choice-diagram > svg')).toHaveCount(3);
     await expect(page.locator('.rec-start .rec-tip'), 'the tip sits with Start').toBeVisible();
+    await expect(page.locator('.rec-card .note-fields #rec-dir ~ .select-menu-button'), 'the folder uses the shared select menu inside the shared field group').toBeVisible();
     await page.locator('.rec-kind', { hasText: 'Call' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
@@ -3578,7 +3583,8 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.locator('#rec-event').selectOption('');
   await expect(page.locator('#rec-event')).toHaveValue('');
   await page.emulateMedia({ forcedColors: 'active' });
-  await expect(page.locator('#rec-dir').locator('..').locator('svg')).toBeHidden();
+  await expect(page.locator('#rec-dir + svg')).toBeHidden();
+  await expect(page.locator('#rec-dir ~ .select-menu-button'), 'forced colours fall back to the native select').toBeHidden();
   expect(await page.locator('#rec-dir').evaluate(el => getComputedStyle(el).appearance)).toBe('auto');
   await page.emulateMedia({ forcedColors: 'none' });
   await page.goto('/#/calendar');

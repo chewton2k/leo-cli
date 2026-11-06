@@ -74,6 +74,16 @@ function choosePictures() {
   input.click();
 }
 
+function noteFields({ id, folders, here, most, before = '' }) {
+  const options = ['', ...folders].map((name) => `<option value="${esc(name)}"${name === here ? ' selected' : ''}>${esc(name ? folderLabel(name) + (name.includes('/') ? ` (${name})` : '') : 'Top level')}</option>`).join('');
+  return `<div class="note-fields">
+    <div class="field">${ICON.folder}<span class="select-control"><select id="${id}-dir" aria-label="Folder">${options}</select>${ICON.chevron}</span></div>${before}
+    <p class="note-fields-optional">Optional</p>
+    <label class="field">${ICON.note}<input id="${id}-title" placeholder="Title" aria-label="Title (optional)" autocomplete="off"></label>
+    <label class="field field-area"><textarea id="${id}-wants" rows="2" maxlength="${most}" aria-label="What you want from it (optional)" placeholder="What do you want from it? e.g. the main ideas, step by step"></textarea></label>
+  </div>`;
+}
+
 // The note a sheet opened on (files dropped on an open note can be added to it).
 let uploadNote = null;
 const addingToNote = () => Boolean(uploadNote) && $('#upload-where')?.value === 'add';
@@ -113,18 +123,14 @@ async function uploadSheet(files, into, { add = false } = {}) {
   } catch (e) {
     folders = [];
   }
-  const options = [{ name: '' }, ...folders].map((d) => `<option value="${esc(d.name)}"${d.name === here ? ' selected' : ''}>${esc(d.name ? folderLabel(d.name) + (d.name.includes('/') ? ` (${d.name})` : '') : 'Top level')}</option>`).join('');
   const kinds = [['PDF', 'pdf'], ['Word', 'doc'], ['PowerPoint', 'slides'], ['Text', 'text'], ['Photo', 'image']].map(([name, tone]) => `<span class="upload-kind" style="--tone:var(--tone-${tone})">${name}</span>`).join('');
   sheet(`<h3 id="upload-heading">Make a note from a file</h3>
     <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose, drop or paste files</span><span class="upload-kinds">${kinds}</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
     <div class="upload-list" id="upload-list"></div>
     <p class="hint upload-hint" id="upload-vision" hidden>Photos and scans need a writing AI that can see images.</p>
     ${where}
-    <label class="source-keep" id="upload-together-row" hidden><input type="checkbox" id="upload-together"> Make one note from all of them</label>
-    <label class="field">${ICON.folder}<span class="select-control"><select id="upload-dir" aria-label="Folder">${options}</select>${ICON.chevron}</span></label>
-    <p class="upload-optional">Optional</p>
-    <label class="field">${ICON.note}<input id="upload-title" placeholder="Title" aria-label="Title (optional)" autocomplete="off"></label>
-    <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" aria-label="What you want from it (optional)" placeholder="What do you want from it? e.g. the main ideas, step by step"></textarea></label>
+    <label class="source-keep" id="upload-together-row" hidden><span class="grow">Make one note from all of them</span>${settingsSwitch('id="upload-together"', false)}</label>
+    ${noteFields({ id: 'upload', folders: folders.map((d) => d.name), here, most: 2000 })}
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
   $('#upload-together').addEventListener('change', drawPicked);
   $('#upload-where')?.addEventListener('change', drawPicked);
