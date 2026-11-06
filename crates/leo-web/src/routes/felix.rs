@@ -483,9 +483,13 @@ pub(crate) fn verdict_in(text: &str) -> Option<&'static str> {
     }
 }
 
-fn judged(streamer: &chat::Streamer, asked: &str) -> (Option<&'static str>, Option<chat::Spent>) {
+fn judged(
+    streamer: &chat::Streamer,
+    asked: &str,
+    stopped: &dyn Fn() -> bool,
+) -> (Option<&'static str>, Option<chat::Spent>) {
     let user = format!("{asked}\n\nReply with one word: correct or incorrect.");
-    let Ok(reply) = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}, &|| false) else {
+    let Ok(reply) = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}, stopped) else {
         return (None, None);
     };
     let word = reply.text.trim().to_lowercase();
@@ -1186,7 +1190,7 @@ fn answer(
                     (structured, None)
                 } else {
                     let started = std::time::Instant::now();
-                    let result = judged(streamer, asked);
+                    let result = judged(streamer, asked, &|| tx.is_closed());
                     state.usage.record(
                         crate::usage::Purpose::StudyGrading,
                         result.1.as_ref(),

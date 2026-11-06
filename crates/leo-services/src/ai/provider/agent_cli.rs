@@ -1128,11 +1128,7 @@ impl AgentCli {
             std::thread::spawn(move || {
                 let result = stderr.map(process::output).unwrap_or_default();
                 if result.1 {
-                    if let Ok(mut child) = child.lock() {
-                        if let Some(child) = child.as_mut() {
-                            stop_all(child);
-                        }
-                    }
+                    process::signal(&child);
                 }
                 result
             })

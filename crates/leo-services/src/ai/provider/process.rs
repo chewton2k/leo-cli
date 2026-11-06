@@ -48,7 +48,7 @@ pub(crate) fn stop_writing() {
     children().stop();
 }
 
-fn signal(child: &Arc<ChildHandle>) {
+pub(crate) fn signal(child: &Arc<ChildHandle>) {
     let mut held = child.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(running) = held.as_mut() {
         child.kill(running);
