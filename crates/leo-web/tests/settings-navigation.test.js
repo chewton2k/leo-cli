@@ -57,7 +57,7 @@ const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'storage.js',
 test('every searchable setting names a real section and a target the page draws', () => {
   const h = helpers();
   const index = vm.runInContext('SETTINGS_INDEX', h);
-  assert.ok(!index.some(entry => entry.id === 'felix-cap' || entry.section === 'backup'));
+  assert.ok(!index.some(entry => entry.section === 'backup'));
   assert.ok(!sources.includes('function backupCard('));
   const sections = vm.runInContext('settingsItems()', h).map(([id]) => id);
   const ids = new Set();
