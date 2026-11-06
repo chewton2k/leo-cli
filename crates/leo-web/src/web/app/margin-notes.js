@@ -1,6 +1,6 @@
 const MARGIN_KINDS = ['add_margin_note', 'remove_margin_note'];
 const READ_PAUSE = { regular: 4000, slow: 8000 };
-const READ_RETRY_MS = 90000;
+const READ_GAP_SECONDS = 90;
 const READ_FACE_AFTER_MS = 200;
 const MARGIN_SETTLE_MS = 1400;
 const MARGIN_LAYOUT_KEY = 'leo-margin-layout';
@@ -823,7 +823,7 @@ async function marginRead(s) {
     const source = s.doc.source();
     const blocks = marginKit.changedBlocks(marginPage.baseline, source);
     if (!blocks.length) return;
-    marginPage.nextRead = Date.now() + READ_RETRY_MS;
+    marginPage.nextRead = Date.now() + (marginPrefs?.gap ?? READ_GAP_SECONDS) * 1000;
     marginShowReading(s, blocks);
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;
@@ -875,6 +875,16 @@ const MARGIN_DIAGRAMS = {
   marks: '<svg viewBox="0 0 120 52" aria-hidden="true"><path class="d-page" d="M26 8h68v36H26z"/><path class="d-text" d="M33 18h40M33 26h48M33 34h30"/><rect class="d-mark" x="76" y="16" width="5" height="5"/><rect class="d-mark" x="66" y="32" width="5" height="5"/></svg>',
 };
 
+function marginWait(seconds) {
+  return seconds < 120 ? `${seconds} sec` : `${seconds / 60} min`;
+}
+
+function felixRhythm(view) {
+  const pause = (READ_PAUSE[view.pace] || READ_PAUSE.regular) / 1000;
+  const limit = view.cap ? `up to ${view.cap} times a day` : 'with no daily limit';
+  return `After ${pause} sec of quiet, at most once every ${marginWait(view.gap)}, ${limit}. ${view.today} so far today.`;
+}
+
 function felixSettingsCards(view, page) {
   if (!view) return '<section class="set-card"><p class="hint">Felix’s settings are not available right now.</p></section>';
   const provider = page.tasks.find((task) => task.task === 'writing')?.provider || '';
@@ -884,7 +894,9 @@ function felixSettingsCards(view, page) {
     : `Reads along sends the note’s title and the text you change to ${esc(name)} after each pause, without a press each time. When you ask sends nothing until you ask.`;
   return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['ask', 'When you ask', `Select a passage, then choose Ask Felix or press ${marginAskKeys()}, type your question and send. Ordinary browsing or typing does not activate this mode.`], ['along', 'Reads along', 'He reads what changed after a pause and speaks only when it matters.']] })}<p class="hint">Applies to notes made from now on. Each note has its own menu above its title.</p></section>
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
-    <section class="set-card"><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['regular', 'Regular'], ['slow', 'Slow']] })}</div>
+    <section class="set-card felix-rhythm"><header><h3>How often he reads</h3></header><p class="hint" id="felix-rhythm" aria-live="polite">${esc(felixRhythm(view))}</p><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['regular', 'Regular'], ['slow', 'Slow']] })}</div>
+    <div class="set-row" data-find="felix-gap"><span class="set-label">Time between reads</span>${segmented({ label: 'Time between reads', field: 'data-margin-pref="gap"', current: String(view.gap), choices: view.gaps.map((gap) => [String(gap), marginWait(gap)]) })}</div>
+    <div class="set-row" data-find="felix-cap"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: String(view.cap), choices: view.caps.map((cap) => [String(cap), cap ? String(cap) : 'No limit']) })}</div>
     ${view.problem ? `<p class="set-note warn" role="status">${esc(view.problem)}</p>` : ''}</section>`;
 }
 
@@ -892,11 +904,13 @@ document.addEventListener('change', async (e) => {
   const field = e.target.closest?.('[data-margin-pref]');
   if (!field) return;
   const key = field.dataset.marginPref;
-  const value = field.value;
+  const value = key === 'cap' || key === 'gap' ? Number(field.value) : field.value;
   try {
     const view = await api('/api/margin', { method: 'POST', body: { [key]: value } });
     marginRemember(view);
     if (state.view === 'settings') state.margin = view;
+    const rhythm = $('#felix-rhythm');
+    if (rhythm) rhythm.textContent = felixRhythm(view);
   } catch (error) {
     fail(error);
   }

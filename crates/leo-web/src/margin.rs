@@ -25,10 +25,12 @@ pub const MOST_READ_CHARS: usize = 8_000;
 pub const BODY_BYTES: usize = 40_000;
 pub const READ_TOKENS: u32 = 220;
 pub const REPLY_TOKENS: u32 = 1_200;
-pub const READ_GAP: Duration = Duration::from_secs(90);
+pub const READ_GAPS: [u32; 4] = [30, 90, 180, 300];
+pub const READ_GAP: u32 = 90;
 pub const READ_LIMIT: Duration = Duration::from_secs(90);
 pub const SWEEP_EVERY: Duration = Duration::from_secs(60 * 60);
-pub const DAILY_CAPS: [u32; 3] = [20, 40, 80];
+pub const NO_CAP: u32 = 0;
+pub const DAILY_CAPS: [u32; 4] = [20, 40, 80, NO_CAP];
 pub const DAILY_CAP: u32 = 40;
 const CONTEXT_CHARS: usize = 3_000;
 const CONTEXT_THREADS: usize = 8;
@@ -68,6 +70,12 @@ pub struct Prefs {
     pub layout: String,
     pub pace: String,
     pub cap: u32,
+    #[serde(default = "read_gap")]
+    pub gap: u32,
+}
+
+fn read_gap() -> u32 {
+    READ_GAP
 }
 
 impl Default for Prefs {
@@ -78,6 +86,7 @@ impl Default for Prefs {
             layout: "both".into(),
             pace: "regular".into(),
             cap: DAILY_CAP,
+            gap: READ_GAP,
         }
     }
 }
@@ -390,7 +399,7 @@ pub fn spend_read(chats: &Path, cap: u32) -> bool {
         .with(|c| {
             let tx = c.transaction()?;
             let used = used_of(day_row(&tx)?, cap);
-            let spent = used < cap;
+            let spent = cap == NO_CAP || used < cap;
             let data = serde_json::json!([today(), if spent { used + 1 } else { used }]);
             tx.execute(
                 "INSERT INTO margin_state (key, data) VALUES ('day', ?1) ON CONFLICT(key) DO UPDATE SET data = excluded.data",
@@ -771,7 +780,7 @@ impl Reads {
             .is_ok_and(|inner| inner.edited.iter().any(|(n, v)| n == note && v == version))
     }
 
-    pub fn begin(self: &Arc<Self>, note: &str) -> Result<Reading, Refused> {
+    pub fn begin(self: &Arc<Self>, note: &str, gap: Duration) -> Result<Reading, Refused> {
         let mut inner = self.0.lock().map_err(|_| Refused::Busy)?;
         if inner.busy {
             return Err(Refused::Busy);
@@ -779,7 +788,7 @@ impl Reads {
         let soon = inner
             .last
             .iter()
-            .any(|(n, at)| n == note && at.elapsed() < READ_GAP);
+            .any(|(n, at)| n == note && at.elapsed() < gap);
         if soon {
             return Err(Refused::Soon);
         }
@@ -1031,11 +1040,12 @@ mod tests {
     #[test]
     fn nothing_overlaps_and_the_same_note_waits_its_turn() {
         let reads = Arc::new(Reads::default());
-        let reading = reads.begin("a").unwrap();
-        assert_eq!(reads.begin("b").err(), Some(Refused::Busy));
+        const GAP: Duration = Duration::from_secs(90);
+        let reading = reads.begin("a", GAP).unwrap();
+        assert_eq!(reads.begin("b", GAP).err(), Some(Refused::Busy));
         drop(reading);
-        assert_eq!(reads.begin("a").err(), Some(Refused::Soon));
-        assert!(reads.begin("b").is_ok());
+        assert_eq!(reads.begin("a", GAP).err(), Some(Refused::Soon));
+        assert!(reads.begin("b", GAP).is_ok());
     }
 
     #[test]
@@ -1053,6 +1063,26 @@ mod tests {
             reads.unseen(&format!("note {n}"), vec!["x".into()]);
         }
         assert!(reads.0.lock().unwrap().seen.len() <= REMEMBERED);
+    }
+
+    #[test]
+    fn the_gap_between_reads_is_the_one_chosen() {
+        let reads = Arc::new(Reads::default());
+        drop(reads.begin("a", Duration::ZERO).unwrap());
+        assert!(reads.begin("a", Duration::ZERO).is_ok());
+        assert_eq!(
+            reads.begin("a", Duration::from_secs(300)).err(),
+            Some(Refused::Soon)
+        );
+    }
+
+    #[test]
+    fn old_saved_prefs_keep_their_choices_and_gain_the_default_gap() {
+        let old =
+            r#"{"default_mode":"along","since":null,"layout":"marks","pace":"slow","cap":80}"#;
+        let prefs: Prefs = serde_json::from_str(old).unwrap();
+        assert_eq!((prefs.layout.as_str(), prefs.cap), ("marks", 80));
+        assert_eq!(prefs.gap, READ_GAP);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -50,11 +50,13 @@ pub(crate) struct PrefsBody {
     layout: Option<String>,
     pace: Option<String>,
     cap: Option<u32>,
+    gap: Option<u32>,
 }
 
 struct ReadFacts {
     along: bool,
     cap: u32,
+    gap: u32,
     full: bool,
 }
 
@@ -160,6 +162,8 @@ fn settings_view(state: &AppState) -> serde_json::Value {
         "pace": prefs.pace,
         "cap": prefs.cap,
         "caps": margin::DAILY_CAPS,
+        "gap": prefs.gap,
+        "gaps": margin::READ_GAPS,
         "today": margin::reads_today(&state.chats, prefs.cap),
         "problem": state.margin.problem(),
     })
@@ -200,6 +204,12 @@ fn changed(mut prefs: Prefs, body: PrefsBody) -> Option<Prefs> {
             return None;
         }
         prefs.cap = cap;
+    }
+    if let Some(gap) = body.gap {
+        if !margin::READ_GAPS.contains(&gap) {
+            return None;
+        }
+        prefs.gap = gap;
     }
     Some(prefs)
 }
@@ -273,10 +283,14 @@ pub(crate) async fn read(
         let id = id.clone();
         let created = note.created;
         let held = chats.clone();
-        let facts = blocking(move || ReadFacts {
-            along: margin::mode_of(&held, &id, created) == "along",
-            cap: margin::prefs(&held).cap,
-            full: margin::open_on(&held, &id).len() >= margin::MOST_OPEN,
+        let facts = blocking(move || {
+            let prefs = margin::prefs(&held);
+            ReadFacts {
+                along: margin::mode_of(&held, &id, created) == "along",
+                cap: prefs.cap,
+                gap: prefs.gap,
+                full: margin::open_on(&held, &id).len() >= margin::MOST_OPEN,
+            }
         })
         .await;
         match facts {
@@ -311,7 +325,10 @@ pub(crate) async fn read(
     let Some(writer) = state.toolless.clone() else {
         return failed(&state);
     };
-    let reading = match state.margin.begin(&id) {
+    let reading = match state
+        .margin
+        .begin(&id, Duration::from_secs(facts.gap.into()))
+    {
         Ok(reading) => reading,
         Err(Refused::Busy) => {
             return said(

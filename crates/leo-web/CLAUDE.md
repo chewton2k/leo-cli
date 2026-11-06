@@ -459,7 +459,7 @@ target. Check the page sequence after loading preferences.
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
   does: a stale version (409), a note not in `along` or not edited in this engine
   run (403, `Reads::edited` is set by the PATCH route, so browsing can never read),
-  a reply streaming (`Steering::any_open`), 90 s between reads of a note,
+  a reply streaming (`Steering::any_open`), the chosen gap between reads of a note,
   overlapping reads and the daily cap (429 with `why`). A useful comment adds no
   separate five-minute lockout. Reads can explain, connect ideas, ask a worthwhile
   question, correct a mistake or include one small Mermaid diagram.
@@ -481,9 +481,9 @@ target. Check the page sequence after loading preferences.
   escaped Markdown renderer, strict Mermaid rendering and inert SVG images. Settings says text
   stays here only for a loopback address and a model without `cloud` in its name
   (`ai::reads_stay_here`).
-- Daily cap: 40 (20, 40, 80). Every read starts a fresh process (`claude -p`,
+- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (30 s, 90 s, 3 min, 5 min; default 90 s, `Prefs.gap`) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
-  most 8,000 characters in and 220 tokens out. 90 s between reads means 40 reads
+  most 8,000 characters in and 220 tokens out. At the defaults, 40 reads
   take an hour of writing at least, and a day's worst case is about 90k input
   tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
   bounded when parsed.
@@ -1107,7 +1107,6 @@ Read-along completion distinguishes valid silence from malformed/provider failur
 keeps failed changes eligible, and guards request cleanup by note and request
 identity. Reading status and the explicit per-note menu sit above the title;
 compact anchors stay in a separate gutter, never a mascot over the passage.
-The Reads a day control is hidden; existing server-side budgets remain enforced.
 
 The explorer is the only folder listing: `#/` is an empty note workspace and
 legacy `#/f/<path>` links select/reveal an existing folder, then replace the hash

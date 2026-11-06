@@ -657,12 +657,26 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
   record('R15', { ...env(page), opening: distinct(opening), closing: distinct(closing), maxOpacityJump: jump, reversals, reducedIntermediateFrames: between.length });
 });
 
+test('Settings chooses how often Felix reads and says so in one sentence', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/settings/felix');
+  const rhythm = page.locator('#felix-rhythm');
+  await expect(rhythm).toContainText('at most once every 90 sec, up to 40 times a day');
+  await page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '3 min' }).click();
+  await expect(rhythm).toContainText('at most once every 3 min');
+  await page.locator('.segmented[aria-label="Reads a day"]').getByRole('radio', { name: 'No limit' }).click();
+  await expect(rhythm).toContainText('with no daily limit');
+  await page.reload();
+  await expect(page.locator('.segmented[aria-label="Reads a day"]').getByRole('radio', { name: 'No limit' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '3 min' })).toHaveAttribute('aria-checked', 'true');
+  await page.request.post('/api/margin', { data: { cap: 40, gap: 90 } });
+});
+
 test('R16 the When you ask copy in Settings describes the real activation', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/#/settings/felix');
   await expect(page.locator('.settings-section')).toContainText('When you ask');
   const text = await page.locator('.settings-section').innerText();
-  expect(text).not.toMatch(/Reads a day/i);
   const copy = await page.locator('.settings-section .set-card', { hasText: 'When you ask' }).first().innerText();
   expect(copy, 'names the passage selection').toMatch(/select(ing)? (a |the )?(passage|words|text)/i);
   expect(copy, 'names Ask Felix').toMatch(/Ask Felix/);

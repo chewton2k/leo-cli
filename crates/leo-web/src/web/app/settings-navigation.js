@@ -48,6 +48,8 @@ const SETTINGS_INDEX = [
   { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
   { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
   { section: 'felix', id: 'felix-pace', label: 'Reading pace', keywords: 'felix margin regular slow pause wait' },
+  { section: 'felix', id: 'felix-gap', label: 'Time between reads', keywords: 'felix margin often seconds minutes wait cooldown' },
+  { section: 'felix', id: 'felix-cap', label: 'Reads a day', keywords: 'felix margin often daily limit cap budget' },
   { section: 'calendar', id: 'calendar-connect', label: 'Connect a calendar', keywords: 'google ical ics outlook apple link secret address meetings classes' },
   { section: 'calendar', id: 'calendar-next', label: 'Next up', keywords: 'upcoming event check now refresh' },
   { section: 'storage', id: 'storage-keep', label: 'How long Leo keeps things', keywords: 'trash chats days delete retention' },
