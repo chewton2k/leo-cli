@@ -306,20 +306,26 @@
     }
 
     const KINDS = {
-      microphone: { title: 'Microphone', about: 'A lecture, a meeting, or your own voice' },
-      call: { title: 'Call', about: 'Your microphone and computer sound, on separate tracks' },
-      screen: { title: 'Screen', about: 'A video, a call, or anything playing' },
+      microphone: { title: 'Microphone', about: 'A lecture, meeting or your voice' },
+      screen: { title: 'Screen', about: 'Records what this computer plays' },
+      call: { title: 'Call', about: 'You and others, on two tracks' },
     };
+    const WAVE = [4, 9, 14, 7, 11, 16, 9, 5, 10, 13, 7, 4, 9, 12, 6];
 
-    function screenNote() { return 'Records what this computer plays'; }
+    function track(icon, y) {
+      const bars = WAVE.map((h, i) => `M${36 + i * 5} ${y - h / 2}v${h}`).join('');
+      return `${icon.replace('<svg ', `<svg x="12" y="${y - 8}" width="16" height="16" `)}<path class="d-wave" d="${bars}"/>`;
+    }
 
-    function kindChoices(local) {
-      const icon = { microphone: icons.mic, screen: icons.screen, call: icons.call || icons.mic };
+    function kindChoices() {
+      const art = {
+        microphone: track(icons.mic, 26),
+        screen: track(icons.screen, 26),
+        call: track(icons.mic, 16) + track(icons.screen, 36),
+      };
       return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen', 'call']
-        .map((kind, i) => {
-          return `<label class="rec-kind"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}>
-            <span class="rec-kind-body"><span class="rec-kind-icon">${icon[kind]}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
-        })
+        .map((kind, i) => `<label class="rec-kind"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}>
+            <span class="rec-kind-body choice-pick"><span class="choice-diagram" aria-hidden="true"><svg viewBox="0 0 120 52">${art[kind]}</svg></span><b class="choice-title">${KINDS[kind].title}</b><span class="sub choice-about">${esc(KINDS[kind].about)}</span></span></label>`)
         .join('')}</div>`;
     }
 
@@ -333,7 +339,7 @@
         ? `<label class="set-row"><span class="set-label">Calendar event</span><span class="select-control"><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></label>
           ${picked ? '<p class="set-note rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
         : '';
-      const connect = s.calendar && !s.calendar.connected ? '<p class="set-note">Name recordings after your classes and meetings: <a href="#/settings">connect a calendar in Settings</a>.</p>' : '';
+      const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes.</p>' : '';
       const recover = pending.length
         ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
         : '';
@@ -342,19 +348,20 @@
         ${recover ? `<section class="set-card"><header><h3>Not saved yet</h3></header>${recover}</section>` : ''}
         <section class="set-card rec-card">
           <header><h3>New recording</h3></header>
-          <p class="hint">leo writes down what is said as you go and turns it into a note when you stop.</p>
-          ${kindChoices(ov.local)}
+          ${kindChoices()}
+          <div class="rec-form">
           <label class="set-row"><span class="set-label">Folder</span><span class="select-control"><select id="rec-dir">${options}</select>${icons.chevron}</span></label>
-          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="set-input rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
+          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="set-input rec-title-input" placeholder="Optional" autocomplete="off"></label>
           ${event}
-          <label class="set-row column"><span class="set-label">What you want from the notes</span><textarea id="rec-wants" class="set-input" rows="2" maxlength="4000" placeholder="Optional. For example: focus on what will be on the exam, keep it short"></textarea></label>
+          <label class="set-row rec-wants-row"><span class="set-label">What you want</span><textarea id="rec-wants" class="set-input" rows="2" maxlength="4000" aria-label="What you want from the notes" placeholder="Optional, e.g. what will be on the exam"></textarea></label>
+          </div>
           ${connect}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
             <span class="rec-start-label">Start recording</span>
+            <p class="hint rec-tip">Keeps recording if you close the window. Open Leo from the menu bar to return.</p>
           </div>
         </section>
-        <p class="hint rec-tip">Recording continues when you close the window. Open Leo from the menu bar to return.</p>
       </div>`;
     }
 

@@ -86,7 +86,9 @@ function drawPicked() {
     .map((f, i) => `<div class="upload-file">${/^image\//.test(f.type) ? ICON.image : ICON.note}<span class="grow">${esc(f.name)}<span class="sub">${size(f.size)}</span></span><button class="icon-btn" data-action="upload-drop" data-i="${i}" aria-label="Remove ${esc(f.name)}">${ICON.close}</button></div>`)
     .join('');
   $('#upload-go').disabled = !picked.length;
-  $('#upload-pick-label').textContent = picked.length ? 'Add more files' : 'Choose files, or take photos';
+  $('#upload-pick-label').textContent = picked.length ? 'Add more files' : 'Choose, drop or paste files';
+  $('#upload-zone').classList.toggle('has-files', picked.length > 0);
+  $('#upload-vision').hidden = !picked.some((f) => /^image\//.test(f.type));
   const several = picked.length > 1;
   $('#upload-together-row').hidden = !several || adding;
   const together = adding || !several || $('#upload-together').checked;
@@ -103,7 +105,7 @@ async function uploadSheet(files, into, { add = false } = {}) {
   const here = creationDir(into);
   const open = state.view === 'note' && state.session && state.session.note && state.session.note.id ? state.session.note : null;
   uploadNote = open ? { id: open.id, title: open.title || 'Untitled' } : null;
-  const where = uploadNote ? `<div class="upload-where">${segmented({ label: 'Where it goes', choices: [['add', 'Add to this note'], ['new', 'New note']], current: add ? 'add' : 'new', field: 'id="upload-where"' })}<p class="hint">Adding puts what the AI writes at the end of “${esc(uploadNote.title)}”, under its own heading.</p></div>` : '';
+  const where = uploadNote ? `<div class="upload-where">${segmented({ label: 'Where it goes', choices: [['add', 'Add to this note'], ['new', 'New note']], current: add ? 'add' : 'new', field: 'id="upload-where"' })}</div>` : '';
   picked = files ? [...files] : [];
   let folders = [];
   try {
@@ -112,16 +114,17 @@ async function uploadSheet(files, into, { add = false } = {}) {
     folders = [];
   }
   const options = [{ name: '' }, ...folders].map((d) => `<option value="${esc(d.name)}"${d.name === here ? ' selected' : ''}>${esc(d.name ? folderLabel(d.name) + (d.name.includes('/') ? ` (${d.name})` : '') : 'Top level')}</option>`).join('');
+  const kinds = [['PDF', 'pdf'], ['Word', 'doc'], ['PowerPoint', 'slides'], ['Text', 'text'], ['Photo', 'image']].map(([name, tone]) => `<span class="upload-kind" style="--tone:var(--tone-${tone})">${name}</span>`).join('');
   sheet(`<h3 id="upload-heading">Make a note from a file</h3>
-    ${where}
-    <p>Slides, handouts, papers or worksheets as PDF, Word, PowerPoint or text, or photos and scans of pages. Your AI reads them and writes study notes.</p>
-    <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose files, or take photos</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
+    <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose, drop or paste files</span><span class="upload-kinds">${kinds}</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
     <div class="upload-list" id="upload-list"></div>
+    <p class="hint upload-hint" id="upload-vision" hidden>Photos and scans need a writing AI that can see images.</p>
+    ${where}
     <label class="source-keep" id="upload-together-row" hidden><input type="checkbox" id="upload-together"> Make one note from all of them</label>
     <label class="field">${ICON.folder}<span class="select-control"><select id="upload-dir" aria-label="Folder">${options}</select>${ICON.chevron}</span></label>
-    <label class="field">${ICON.note}<input id="upload-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
-    <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" placeholder="What do you want from it? (optional) e.g. the main ideas, explained step by step"></textarea></label>
-    <p class="hint upload-hint">You can also paste a picture here. Photos stay in the note, and pictures and diagrams in slides and documents are kept beside the text. Reading photos and scans needs an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
+    <p class="upload-optional">Optional</p>
+    <label class="field">${ICON.note}<input id="upload-title" placeholder="Title" aria-label="Title (optional)" autocomplete="off"></label>
+    <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" aria-label="What you want from it (optional)" placeholder="What do you want from it? e.g. the main ideas, step by step"></textarea></label>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
   $('#upload-together').addEventListener('change', drawPicked);
   $('#upload-where')?.addEventListener('change', drawPicked);

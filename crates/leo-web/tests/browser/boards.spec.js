@@ -129,6 +129,8 @@ test('a board shows columns of cards, and cards drag between columns and onto an
     await expect(page.locator('[data-card="cemail0001"] .kanban-card-title')).toHaveText('Email tutor <b>now</b>');
     await expect(page.locator('[data-card="cessay0001"] .kanban-priority.high')).toBeVisible();
     await expect(page.locator('[data-count-col="ktodo00001"]')).toHaveText('2');
+    const tall = async (id) => (await page.locator(`[data-card="${id}"]`).boundingBox()).height;
+    expect(await tall('cread00001'), 'a title-only card hugs its title').toBeLessThan(await tall('cessay0001') - 30);
 
     // Into another column, below the card already there.
     await drag(page, page.locator('[data-card="cread00001"]'), page.locator('[data-card="cemail0001"]'), { below: true });

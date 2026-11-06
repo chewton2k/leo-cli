@@ -212,7 +212,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       throw new Error(url);
     }
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
-    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else resetSetting(el);});
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="width-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else if(act==='width-pick') pickWidth(el); else resetSetting(el);});
     ${read('theme.js')}
     ${read('app/refresh.js')}
     ${read('app/trash.js')}
@@ -340,6 +340,11 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await themeReset.click();
       await expect(themeReset).toBeHidden();
       await expect(page.getByRole('button',{name:'Match device',exact:true})).toHaveAttribute('aria-pressed','true');
+      for(const [find,count] of [['theme',3],['felix-look',2],['note-width',3]]) await expect(page.locator(`[data-find="${find}"] .choice-cards button.choice-pick:has(.choice-diagram svg)`),`${find} is a row of picture cards`).toHaveCount(count);
+      await page.getByRole('button',{name:'Full width',exact:true}).click();
+      await expect(page.locator('html')).toHaveAttribute('data-note-width','full');
+      await page.getByRole('button',{name:'Reset Note width to default'}).click();
+      await expect(page.getByRole('button',{name:'Wide',exact:true})).toHaveAttribute('aria-pressed','true');
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
       await page.waitForTimeout(400);
       expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);
@@ -348,6 +353,8 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();
       await page.getByRole('link',{name:'Updates & about',exact:true}).click();
       await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
+      await expect(page.locator('[data-find="updates-check"] h3 .set-version')).toHaveText('1.2.3');
+      await expect(page.locator('[data-find="updates-about"] .set-path')).toHaveCount(2);
       const updateCard = await page.locator('#app-updates .set-card').first().elementHandle();
       await page.evaluate(()=>window.audit.status());
       expect(await updateCard.evaluate(el=>el.isConnected)).toBe(true);
