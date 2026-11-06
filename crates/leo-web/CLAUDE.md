@@ -805,30 +805,43 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   full-width `.field` named Board name) and a small preview of the three starting columns; Enter and Create board
   submit the same request, and Cancel leaves the boards untouched.
 
-- Page (redesigned 2026-11-06, the owner: "redesign the kanban boards"): one header
-  row holds the board name (edits in place, sized to its text), its ⋯ menu and, at the
-  right, the board tabs with count badges (a card dropped on a tab moves to that board,
-  with Undo; the tabs wrap under the name on a phone). Columns are quiet `--tint` lanes
-  only as tall as their cards, up to the window, then the card list scrolls inside
-  (dragging near its edge scrolls it). A compact head has the colour dot (`kanbanTone`:
-  to do blue, in progress amber, done green, blocked red, others by place), the name
-  (edits in place), the count, a + (`kanban-compose`) and ⋯. Cards show the title (three
-  lines at most), the muted subheading, two lines of the description when there is one
-  (`.kanban-has-text`) and the priority arrow; hover and focus rings. Add card is a quiet
-  row at the foot; an empty column shows a short dashed "Drag a card here" target; Add
-  column is a slim tile as tall as the tallest lane. + Add card's composer stays open for
-  the next card (adds are queued so fast typing loses nothing); ⋯ sheets for a column
-  (rename, move left/right, delete moving its cards) and the board (rename, add column,
-  delete with a second press, Undo). A card opens in a side panel beside the board like
-  a note (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board
-  redraws, a full-screen layer under 760 px): title, subheading, status and board (the
-  shared select menu), priority (`segmented`, `data-priority`), a borderless description
-  (autosave after 600 ms, on blur, and before Escape or × closes it), Delete with Undo.
+- Page (redesigned 2026-11-06, the owner: "like a nice and simple jira kanban board"):
+  the page fills the window and never scrolls itself. One header row (`kanbanHeadHtml`)
+  holds the board tabs with count badges, a + for New board, Add column and the board's
+  ⋯. The open board's tab is its name: `.kanban-title` edits in place inside it, so the
+  name shows once. A tab is one click; a card dropped on a tab moves to that board, with
+  Undo. `kanbanFit` shows whole tabs only, the open board's always among them, and puts
+  the rest under "n more" (`#kanban-switch`, the shared dropdown; the tabs move to `.kanban-over`,
+  and while a card is dragged they all show again and the row scrolls near its ends, so
+  every board stays a drop target).
+- Lanes all have one height, down to 20 px above the window's foot (`.kanban-layout`), with
+  0 or 50 cards; the card list scrolls inside its lane once it fills it (dragging near its
+  edge scrolls it) and Add card stays pinned under it at the foot. Lanes share the width
+  equally (`flex: 1 1 0`) and narrow to 224 px, the width at which four lanes still fit
+  a 1280 px window with the explorer open; past it the row scrolls sideways, with a fade on
+  the side where more lies (`kanbanFade`) and a thin bar in the bottom margin. Each lane is
+  tinted 12% of its colour over `--page` (`--lane`); text on it uses `--text` or `--lane-ink`,
+  and cards are solid (`--raised`, a step lighter in dark). `kanbanTone`: to do blue, in
+  progress amber, done green, blocked red, others by place; a column that would match or
+  look like a neighbour (`KANBAN_NEAR`) takes the next place hue. The head is the name
+  (edits in place) and count; ⋯ and a lane's Add card appear on hover and keyboard focus,
+  always on touch, and Add card always shows in an empty or full lane (`.kanban-full`).
+  Cards show the title (three lines at most), the muted subheading, two lines of the
+  description when there is one (`.kanban-has-text`) and the priority arrow top right. Add
+  card sits directly under the last card; its composer stays open for the next card (adds
+  are queued so fast typing loses nothing). A redraw keeps each lane's scroll. ⋯ sheets for
+  a column (rename, move left/right, delete moving its cards) and the board (rename, add
+  column, delete with a second press, Undo). Under 600 px lanes are 82vw and snap, and Add
+  column lives in the ⋯ sheet. A card opens in a side panel beside the board like a note
+  (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board redraws, a
+  full-screen layer under 760 px): title, subheading, status and board (the shared select
+  menu), priority (`segmented`, `data-priority`), a borderless description (autosave after
+  600 ms, on blur, and before Escape or × closes it), Delete with Undo.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
-  touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
-  placeholder moving through the lists; a copy follows the pointer; the board
-  scrolls sideways and the page vertically near edges; pointer capture is on `#app`
+  touch after a 300 ms hold (a swipe still scrolls). The real card is the placeholder
+  slot moving through the lists; a copy follows the pointer; the rows scroll sideways
+  and lanes vertically near edges; pointer capture is on `#app`
   (moving the card in the DOM would drop capture). It ends on pointerup, cancel,
   lost capture or a move with no button; Escape puts it back; the click after a
   drop is swallowed; leaving the page mid-drag cancels. Columns drag by their name

@@ -64,7 +64,7 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     ${read('app/motion.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/boards.js')}
-    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-compose':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
+    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     async function route(){closeSheet(true);const m=location.hash.match(/^#\\/boards\\/?(.*)$/);if(!m){leaveBoards();state={view:'other'};app.innerHTML='<p id="elsewhere">Elsewhere</p>';return;}await showBoards(decodeURIComponent(m[1]));}
@@ -123,17 +123,18 @@ test('a board shows columns of cards, and cards drag between columns and onto an
       await page.screenshot({ path: testInfo.outputPath(`boards-${theme}.png`) });
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
-    await expect(page.locator('.kanban-tab.on')).toContainText('Work');
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Work');
     await expect(page.locator('.kanban-col-name').first()).toHaveValue('To do');
     expect(await titles(page, 'ktodo00001')).toEqual(['Write essay', 'Read chapter 3']);
     await expect(page.locator('.kanban-card-sub').first()).toHaveText('History · due soon');
     await expect(page.locator('[data-card="cemail0001"] .kanban-card-title')).toHaveText('Email tutor <b>now</b>');
     await expect(page.locator('[data-card="cessay0001"] .kanban-priority.high')).toBeVisible();
     await expect(page.locator('[data-count-col="ktodo00001"]')).toHaveText('2');
-    const lanes = await page.locator('.kanban-col').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
-    expect(Math.max(...lanes), 'lanes are only as tall as their cards').toBeLessThan(400);
-    await expect(page.locator('.kanban-head > .kanban-title-row + .kanban-tabs'), 'title, menu and tabs share one header row').toHaveCount(1);
-    await expect(page.locator('.kanban-cards[data-col="kdone00001"]:empty'), 'an empty column shows its drop target').toBeVisible();
+    await expect(page.locator('.kanban-head > .kanban-tabs'), 'the tabs are the one header row').toHaveCount(1);
+    await expect(page.locator('.kanban-head [data-action="kanban-board-menu"]')).toHaveCount(1);
+    await expect(page.locator('.kanban-head [data-action="kanban-new-board"]')).toHaveCount(1);
+    await expect(page.locator('text=Drag a card here'), 'an empty lane holds no drop target').toHaveCount(0);
+    await expect(page.locator('.kanban-title'), 'the board name shows once, as its tab').toHaveCount(1);
     const tall = async (id) => (await page.locator(`[data-card="${id}"]`).boundingBox()).height;
     expect(await tall('cread00001'), 'a title-only card hugs its title').toBeLessThan(await tall('cessay0001') - 30);
 
@@ -257,7 +258,7 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
     await page.locator('[data-action="kanban-new-board"]').click();
     await page.locator('#kanban-board-name').fill('Job search');
     await page.locator('#kanban-board-name').press('Enter');
-    await expect(page.locator('.kanban-tab.on')).toContainText('Job search');
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Job search');
     await expect(page.locator('.kanban-col-name')).toHaveCount(3);
     await expect(page.locator('.kanban-card')).toHaveCount(0);
 
@@ -265,10 +266,10 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
     await page.locator('.scrim [data-kanban="delete"]').click();
     await expect(page.locator('.scrim [data-kanban="delete"]')).toContainText('Delete the board');
     await page.locator('.scrim [data-kanban="delete"]').click();
-    await expect(page.locator('.kanban-tab.on')).toContainText('Work');
-    await expect(page.locator('.kanban-tab')).toHaveCount(3);
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Work');
+    await expect(page.locator('.kanban-tab')).toHaveCount(2);
     await page.locator('.toast button').click();
-    await expect(page.locator('.kanban-tab.on')).toContainText('Job search');
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Job search');
   });
 });
 
@@ -316,7 +317,7 @@ test('a redraw keeps half-typed names and new cards, a failed delete says so, an
     await page.evaluate(() => { location.hash = '#/boards/bhome00001'; });
     await page.evaluate(() => { window.slow = 0; });
     await settled(page);
-    await expect(page.locator('.kanban-tab.on')).toContainText('Home');
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Home');
     expect(await page.evaluate(() => window.db.cards.find(c => c.title === 'Stays on Work')?.board)).toBe('bwork00001');
     await expect(page.locator('.kanban-card', { hasText: 'Stays on Work' })).toHaveCount(0);
   });
@@ -334,6 +335,185 @@ test('on a phone the columns scroll sideways inside the page, which never scroll
 });
 
 
+const lanes = page => page.locator('.kanban-col').evaluateAll(els => els.map(el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, bottom: r.bottom, height: r.height, color: getComputedStyle(el).backgroundColor }; }));
+const addColumns = (page, count) => page.evaluate(count => { const board = window.db.boards[0]; for (let i = 0; i < count; i++) board.columns.push({ id: 'kextra' + i + '00000', name: 'Extra ' + i }); }, count);
+const addCards = (page, column, count) => page.evaluate(([column, count]) => { for (let i = 0; i < count; i++) window.db.cards.push({ id: 'cfill' + column + i, board: 'bwork00001', column, title: 'Filler card ' + i, subheading: '', description: '', priority: '' }); }, [column, count]);
+const redraw = async page => { await page.evaluate(() => kanbanRefresh()); await settled(page); };
+
+test('every lane has one fixed height, down to the window, and only a full lane scrolls', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const first = await lanes(page);
+    expect(new Set(first.map(l => l.height)).size, 'lanes with 2, 1 and 0 cards match').toBe(1);
+    expect(800 - first[0].bottom, 'lanes stop a small margin above the window').toBe(20);
+    await addCards(page, 'ktodo00001', 50);
+    await redraw(page);
+    expect((await lanes(page)).map(l => l.height), 'fifty cards change no height').toEqual(first.map(l => l.height));
+    const page_ = await page.evaluate(() => [document.documentElement.scrollHeight, innerHeight]);
+    expect(page_[0], 'the page itself does not scroll').toBeLessThanOrEqual(page_[1]);
+
+    const list = page.locator('.kanban-cards[data-col="ktodo00001"]');
+    expect(await list.evaluate(el => el.scrollHeight > el.clientHeight), 'the full lane scrolls inside itself').toBe(true);
+    expect(await page.locator('.kanban-cards[data-col="kdoing0001"]').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(false);
+
+    const add = page.locator('[data-action="kanban-add-card"][data-col="ktodo00001"]');
+    expect(Math.round(first[0].bottom - (await add.boundingBox()).y - (await add.boundingBox()).height)).toBe(8);
+    await expect(add).toHaveCSS('opacity', '1');
+    const near = page.locator('[data-action="kanban-add-card"][data-col="kdoing0001"]');
+    const last = await page.locator('[data-card="cemail0001"]').boundingBox();
+    expect((await near.boundingBox()).y - last.y - last.height).toBeLessThan(12);
+    const none = page.locator('[data-action="kanban-add-card"][data-col="kdone00001"]');
+    expect((await none.boundingBox()).y - first[2].top, 'an empty lane keeps Add card near its top').toBeLessThan(70);
+    await expect(none).toHaveCSS('opacity', '1');
+
+    await add.click();
+    await page.locator('.kanban-composer textarea').fill('Newest');
+    await page.locator('.kanban-composer textarea').press('Enter');
+    await expect(page.locator('.kanban-card', { hasText: 'Newest' })).toBeInViewport();
+    await page.locator('.kanban-composer textarea').press('Escape');
+    const top = await list.evaluate(el => { el.scrollTop = 300; return el.scrollTop; });
+    await redraw(page);
+    expect(await list.evaluate(el => el.scrollTop)).toBe(top);
+
+    await list.evaluate(el => { el.scrollTop = 0; });
+    const card = await page.locator('[data-card="cessay0001"]').boundingBox();
+    const box = await list.boundingBox();
+    await page.mouse.move(card.x + 20, card.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(card.x + 24, box.y + box.height - 10, { steps: 6 });
+    await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+  });
+});
+
+test('sections have their own colour, cards sit solid on it, and text stays readable', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const ratio = page.evaluate(() => {
+      const rgb = text => { const box = document.createElement('i'); box.style.color = text; document.body.append(box); const c = getComputedStyle(box).color; box.remove(); const canvas = document.createElement('canvas').getContext('2d'); canvas.fillStyle = c; canvas.fillRect(0, 0, 1, 1); return [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3); };
+      const lin = v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+      const lum = c => .2126 * lin(c[0]) + .7152 * lin(c[1]) + .0722 * lin(c[2]);
+      window.contrast = (a, b) => { const [hi, lo] = [lum(rgb(a)), lum(rgb(b))].sort((x, y) => y - x); return (hi + .05) / (lo + .05); };
+    });
+    await ratio;
+    await addColumns(page, 9);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      await redraw(page);
+      const row = await lanes(page);
+      for (let i = 1; i < row.length; i++) expect(row[i].color, `lanes ${i - 1} and ${i} differ`).not.toBe(row[i - 1].color);
+      const checks = await page.evaluate(() => {
+        const out = [];
+        for (const lane of document.querySelectorAll('.kanban-col')) {
+          const ground = getComputedStyle(lane).backgroundColor;
+          out.push(contrast(getComputedStyle(lane.querySelector('.kanban-col-name')).color, ground), contrast(getComputedStyle(lane.querySelector('.kanban-count')).color, ground));
+        }
+        const card = document.querySelector('.kanban-card');
+        out.push(contrast(getComputedStyle(card).color, getComputedStyle(card).backgroundColor), contrast(getComputedStyle(card.querySelector('.kanban-card-sub')).color, getComputedStyle(card).backgroundColor));
+        return out;
+      });
+      for (const value of checks) expect(value, theme + ' contrast').toBeGreaterThanOrEqual(4.5);
+    }
+    await expect(page.locator('.kanban-col .kanban-dot'), 'the lane itself carries the colour').toHaveCount(0);
+    await page.evaluate(() => { window.db.boards[0].columns = ['Backlog', 'Research', 'Done', 'Later', 'Blocked', 'Review', 'Doing'].map((name, i) => ({ id: 'knamed' + i + '00000', name })); });
+    await redraw(page);
+    const tones = await page.locator('.kanban-col').evaluateAll(els => els.map(el => el.dataset.tone));
+    expect(tones.slice(0, 3), 'a section beside Done is not green-teal').toEqual(['todo', 'hue2', 'done']);
+    expect(tones.at(-1), 'two doing columns side by side differ').toMatch(/^hue/);
+  });
+});
+
+test('controls not needed at rest show on hover and keyboard focus', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.mouse.move(2, 2);
+    const menu = page.locator('[data-action="kanban-column-menu"][data-col="ktodo00001"]');
+    const add = page.locator('[data-action="kanban-add-card"][data-col="ktodo00001"]');
+    await expect(menu).toHaveCSS('opacity', '0');
+    await expect(add).toHaveCSS('opacity', '0');
+    await page.locator('.kanban-col').first().hover();
+    await expect(menu).toHaveCSS('opacity', '1');
+    await expect(add).toHaveCSS('opacity', '1');
+    await page.mouse.move(2, 2);
+    await page.locator('[data-card="cessay0001"]').focus();
+    await expect(menu).toHaveCSS('opacity', '1');
+  });
+});
+
+test('lanes share the whole width equally, narrow to a minimum, then the row scrolls', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const fits = async () => {
+      const row = await page.locator('.kanban-cols').boundingBox();
+      const all = await lanes(page);
+      expect(new Set(all.map(l => Math.round(l.width))).size, 'equal widths').toBe(1);
+      expect(Math.abs(all.at(-1).right - (row.x + row.width)), 'no leftover gap at the right').toBeLessThan(1);
+      expect(await page.locator('.kanban-cols').evaluate(el => el.scrollWidth > el.clientWidth + 1)).toBe(false);
+      return all[0].width;
+    };
+    const three = await fits();
+    await page.locator('[data-action="kanban-add-column"]').click();
+    await page.locator('.kanban-col').last().locator('.kanban-col-name').press('Enter');
+    await settled(page);
+    expect(await fits(), 'a new column narrows the others').toBeLessThan(three);
+
+    await addColumns(page, 8);
+    await redraw(page);
+    const all = await lanes(page);
+    expect(Math.round(all[0].width), 'lanes stop narrowing at the minimum').toBe(224);
+    const row = page.locator('.kanban-cols');
+    expect(await row.evaluate(el => el.scrollWidth > el.clientWidth), 'past the minimum the row scrolls').toBe(true);
+    await expect(row, 'and shows more lies to the right').toHaveClass(/kanban-fade-right/);
+    await row.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+    await expect(row).not.toHaveClass(/kanban-fade-right/);
+    await expect(row).toHaveClass(/kanban-fade-left/);
+    await expect(page.locator('[data-action="kanban-add-column"]'), 'twelve columns is the most').toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }, { width: 1400, height: 800 });
+});
+
+test('a board is one click away; tabs that do not fit go under More and still take drops', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await expect(page.locator('.kanban-more')).toBeHidden();
+    await page.locator('.kanban-tab[data-kanban-drop="bhome00001"]').click();
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Home');
+    await expect(page.locator('.kanban-tab.on')).toHaveAttribute('aria-current', 'page');
+
+    await page.locator('.kanban-title').fill('Home jobs');
+    await page.locator('.kanban-title').press('Enter');
+    await expect.poll(() => page.evaluate(() => window.db.boards[1].name)).toBe('Home jobs');
+
+    await page.evaluate(() => { for (let i = 0; i < 10; i++) window.db.boards.push({ id: 'blong' + i + '00000', name: 'A much longer board name number ' + i, columns: [{ id: 'klong' + i + '000000', name: 'To do' }] }); });
+    await page.evaluate(() => { location.hash = '#/boards/blong900000'; });
+    await expect(page.locator('.kanban-more')).toBeVisible();
+    const head = await page.locator('.kanban-head').boundingBox();
+    const shown = page.locator('.kanban-tab:visible');
+    for (const tab of await shown.all()) {
+      const box = await tab.boundingBox();
+      expect(box.x + box.width, 'whole tabs only').toBeLessThan(head.x + head.width);
+    }
+    await expect(page.locator('.kanban-tab.on .kanban-title'), 'the open board stays among them').toHaveValue(/number 9/);
+    await page.locator('#kanban-switch').selectOption('blong500000');
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue(/number 5/);
+
+    await page.evaluate(() => { location.hash = '#/boards/bwork00001'; });
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Work');
+    const far = page.locator('.kanban-tab[data-kanban-drop="blong900000"]');
+    await expect(far).toBeHidden();
+    const card = await page.locator('[data-card="cread00001"]').boundingBox();
+    await page.mouse.move(card.x + 20, card.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(card.x + 30, card.y + 20, { steps: 3 });
+    await expect(far).toBeAttached();
+    const nav = await page.locator('.kanban-tabs').boundingBox();
+    await page.mouse.move(nav.x + nav.width - 10, nav.y + nav.height / 2, { steps: 6 });
+    await expect.poll(async () => { const box = await far.boundingBox(); return box && box.x + box.width <= nav.x + nav.width + 1; }, { timeout: 10000 }).toBe(true);
+    const box = await far.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+    await page.mouse.up();
+    await settled(page);
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').board)).toBe('blong900000');
+    await expect(far).toBeHidden();
+  });
+});
+
 test('new board setup has a full-width named field and a readable column preview', async ({ browser },testInfo) => {
   await boardsFixture(browser,async page=>{
     for(const theme of ['light','dark']) for(const width of [1280,390]) {
@@ -347,8 +527,8 @@ test('new board setup has a full-width named field and a readable column preview
       await expect(sheet.locator('.kanban-start-column')).toHaveCount(3);
       for(const name of ['To do','In progress','Done'])await expect(sheet.getByText(name,{exact:true})).toBeVisible();
       for(const tone of ['todo','doing','done']) {
-        const color=await page.locator('.kanban-col[data-tone="'+tone+'"] .kanban-dot').evaluate(el=>getComputedStyle(el).backgroundColor);
-        await expect(sheet.locator('.kanban-start-column[data-tone="'+tone+'"] .kanban-dot')).toHaveCSS('background-color',color);
+        const color=await page.locator('.kanban-col[data-tone="'+tone+'"]').evaluate(el=>getComputedStyle(el).getPropertyValue('--tone'));
+        expect(await sheet.locator('.kanban-start-column[data-tone="'+tone+'"]').evaluate(el=>getComputedStyle(el).getPropertyValue('--tone'))).toBe(color);
       }
       await page.screenshot({path:testInfo.outputPath('new-board-'+theme+'-'+width+'.png'),animations:'disabled'});
       await field.fill('Coursework 文字');
@@ -361,7 +541,7 @@ test('new board setup has a full-width named field and a readable column preview
     await page.locator('[data-action="kanban-new-board"]').click();
     await page.locator('.sheet').getByRole('textbox',{name:'Board name',exact:true}).fill('Coursework 文字');
     await page.keyboard.press('Enter');
-    await expect(page.locator('.kanban-tab.on')).toContainText('Coursework 文字');
+    await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Coursework 文字');
     expect(await page.evaluate(()=>db.boards.at(-1).columns.map(c=>c.name))).toEqual(['To do','In progress','Done']);
   });
 });

@@ -21,15 +21,26 @@ const KANBAN_TONES = [
   [/\b(blocked|stuck|waiting|on hold)\b/i, 'blocked'],
   [/\b(to do|todo|tasks?|backlog|ideas?|next|planned|new)\b/i, 'todo'],
 ];
+const KANBAN_NEAR = ['todo hue0', 'done hue1', 'blocked hue2', 'hue1 hue3'];
 const kanban = { boards: [], board: null, cards: [], loaded: false, drag: null, suppressClick: false, redrawing: false, panel: null };
 
+const kanbanClash = (a, b) => a === b || KANBAN_NEAR.includes(`${a} ${b}`) || KANBAN_NEAR.includes(`${b} ${a}`);
+
 // A column's colour follows what its name means, so To do, In progress and Done read at a
-// glance; any other column takes a quiet hue by its place on the board.
+// glance; any other column, or one that would look like its neighbour, takes a hue by its
+// place on the board, so sections can always be told apart.
 function kanbanTone(column) {
-  const hit = KANBAN_TONES.find(([test]) => test.test(column.name));
-  if (hit) return hit[1];
-  const at = kanban.board ? kanban.board.columns.findIndex((c) => c.id === column.id) : 0;
-  return `hue${Math.max(0, at) % 4}`;
+  const columns = kanban.board.columns;
+  const meant = (c) => c && KANBAN_TONES.find(([test]) => test.test(c.name))?.[1];
+  let tone = '';
+  for (const [at, c] of columns.entries()) {
+    const left = tone;
+    const right = meant(columns[at + 1]);
+    const named = meant(c);
+    tone = named && !kanbanClash(named, left) ? named : [0, 1, 2, 3].map((i) => `hue${(at + i) % 4}`).find((hue) => !kanbanClash(hue, left) && !kanbanClash(hue, right));
+    if (c.id === column.id) break;
+  }
+  return tone;
 }
 
 function kanbanRemembered() {
@@ -100,19 +111,16 @@ function kanbanPriority(priority) {
 
 function kanbanCardHtml(card) {
   const preview = card.description ? `<div class="kanban-has-text">${esc(card.description.slice(0, 240))}</div>` : '';
-  const foot = card.priority ? `<div class="kanban-card-foot">${kanbanPriority(card.priority)}</div>` : '';
   const open = kanban.panel?.id === card.id;
-  return `<article class="kanban-card${open ? ' open' : ''}" tabindex="0" data-card="${esc(card.id)}" data-action="kanban-open-card" aria-roledescription="card" aria-label="${esc(card.title)}"${open ? ' aria-current="true"' : ''}><div class="kanban-card-title">${esc(card.title)}</div>${card.subheading ? `<div class="kanban-card-sub">${esc(card.subheading)}</div>` : ''}${preview}${foot}</article>`;
+  return `<article class="kanban-card${open ? ' open' : ''}" tabindex="0" data-card="${esc(card.id)}" data-action="kanban-open-card" aria-roledescription="card" aria-label="${esc(card.title)}"${open ? ' aria-current="true"' : ''}>${kanbanPriority(card.priority)}<div class="kanban-card-title">${esc(card.title)}</div>${card.subheading ? `<div class="kanban-card-sub">${esc(card.subheading)}</div>` : ''}${preview}</article>`;
 }
 
 function kanbanColumnHtml(column) {
   const cards = kanbanCardsIn(column.id);
   return `<section class="kanban-col" data-col="${esc(column.id)}" data-tone="${kanbanTone(column)}" aria-label="${esc(column.name)}">
     <header class="kanban-col-head" title="Drag to move this column">
-      <span class="kanban-dot" aria-hidden="true"></span>
-      <input class="kanban-col-name" data-kanban-name="${esc(column.id)}" value="${esc(column.name)}" maxlength="80" aria-label="Column name" spellcheck="false" autocomplete="off">
+      <input class="kanban-col-name" data-kanban-name="${esc(column.id)}" value="${esc(column.name)}" size="${column.name.length + 1}" maxlength="80" aria-label="Column name" spellcheck="false" autocomplete="off">
       <span class="badge kanban-count" data-count-col="${esc(column.id)}">${cards.length}</span>
-      <button class="icon-btn kanban-col-more" data-action="kanban-compose" data-col="${esc(column.id)}" aria-label="Add a card to ${esc(column.name)}" title="Add card">${ICON.plus}</button>
       <button class="icon-btn kanban-col-more" data-action="kanban-column-menu" data-col="${esc(column.id)}" aria-label="Options for ${esc(column.name)}" title="Column options">${ICON.more}</button>
     </header>
     <div class="kanban-cards" data-col="${esc(column.id)}">${cards.map(kanbanCardHtml).join('')}</div>
@@ -121,12 +129,66 @@ function kanbanColumnHtml(column) {
 }
 
 function kanbanTabsHtml() {
-  const here = kanban.board?.id;
+  const here = kanban.board;
   return kanban.boards.map((b) => {
-    const count = b.id === here ? kanban.cards.length : b.cards || 0;
-    return `<a class="kanban-tab${b.id === here ? ' on' : ''}" href="#/boards/${enc(b.id)}" data-kanban-drop="${esc(b.id)}"${b.id === here ? ' aria-current="page"' : ''}><span class="kanban-tab-name">${esc(b.name)}</span><span class="badge kanban-count" data-count-board="${esc(b.id)}">${count}</span></a>`;
-  }).join('') + `<button class="kanban-tab kanban-tab-new" data-action="kanban-new-board">${ICON.plus}<span>New board</span></button>`;
+    const on = b.id === here.id;
+    const count = `<span class="badge kanban-count" data-count-board="${esc(b.id)}">${on ? kanban.cards.length : b.cards || 0}</span>`;
+    if (on) return `<div class="kanban-tab on" data-kanban-drop="${esc(b.id)}" aria-current="page"><input class="kanban-title" data-kanban-name="board" value="${esc(here.name)}" size="${here.name.length + 1}" maxlength="80" aria-label="Board name" spellcheck="false" autocomplete="off">${count}</div>`;
+    return `<a class="kanban-tab" href="#/boards/${enc(b.id)}" data-kanban-drop="${esc(b.id)}"><span class="kanban-tab-name">${esc(b.name)}</span>${count}</a>`;
+  }).join('');
 }
+
+function kanbanHeadHtml() {
+  return `<header class="kanban-head">
+    <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
+    <label class="select-control kanban-more" hidden><select id="kanban-switch" aria-label="More boards"></select>${ICON.chevron}</label>
+    <button class="icon-btn kanban-tab-new" data-action="kanban-new-board" aria-label="New board" title="New board">${ICON.plus}</button>
+    ${kanban.board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="btn plain sm kanban-add-col" data-action="kanban-add-column" title="Add column">${ICON.plus}<span>Add column</span></button>` : ''}
+    <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
+  </header>`;
+}
+
+function kanbanFade(el) {
+  el.classList.toggle('kanban-fade-left', el.scrollLeft > 1);
+  el.classList.toggle('kanban-fade-right', el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+}
+
+function kanbanFit() {
+  const row = app.querySelector('.kanban-cols');
+  const nav = app.querySelector('.kanban-tabs');
+  const more = app.querySelector('.kanban-more');
+  const on = nav?.querySelector('.on');
+  if (!row || !more || !on) return;
+  const tabs = [...nav.children];
+  for (const tab of tabs) tab.classList.remove('kanban-over');
+  more.hidden = false;
+  nav.scrollLeft = 0;
+  more.hidden = nav.scrollWidth <= nav.clientWidth + more.offsetWidth + 6;
+  if (!more.hidden) {
+    let room = nav.clientWidth - on.offsetWidth;
+    const over = tabs.filter((tab) => {
+      if (tab === on) return false;
+      room -= tab.offsetWidth + 4;
+      return room < 0;
+    });
+    for (const tab of over) tab.classList.add('kanban-over');
+    const select = more.querySelector('select');
+    select.innerHTML = `<option value="" selected disabled hidden>${over.length} more</option>${over.map((tab) => {
+      const id = tab.dataset.kanbanDrop;
+      return `<option value="${esc(id)}">${esc(kanban.boards.find((b) => b.id === id).name)}</option>`;
+    }).join('')}`;
+    select.value = '';
+  }
+  kanbanFade(nav);
+  kanbanFade(row);
+  for (const list of row.querySelectorAll('.kanban-cards')) list.parentElement.classList.toggle('kanban-full', list.scrollHeight > list.clientHeight);
+}
+
+const kanbanSized = typeof ResizeObserver === 'function' ? new ResizeObserver(() => kanbanFit()) : null;
+
+document.addEventListener('scroll', (e) => {
+  if (e.target.matches?.('.kanban-cols, .kanban-tabs')) kanbanFade(e.target);
+}, true);
 
 function drawKanban() {
   if (state.view !== 'boards') return;
@@ -137,7 +199,8 @@ function drawKanban() {
     return;
   }
   const row = app.querySelector('.kanban-cols');
-  const scrolled = row ? row.scrollLeft : 0;
+  const scrolled = row?.dataset.board === board.id ? row.scrollLeft : 0;
+  const lists = new Map([...app.querySelectorAll('.kanban-cards')].map((list) => [list.dataset.col, list.scrollTop]));
   const active = app.contains(document.activeElement) ? document.activeElement : null;
   const focus = active?.dataset.card ? `[data-card="${CSS.escape(active.dataset.card)}"]` : active?.dataset.kanbanName ? `[data-kanban-name="${CSS.escape(active.dataset.kanbanName)}"]` : null;
   // A redraw keeps what is being typed: a board or column name, and an open Add card box.
@@ -150,27 +213,21 @@ function drawKanban() {
   if (!host) {
     app.innerHTML = '<div class="kanban-layout"><div class="kanban-board"></div><aside class="kanban-panel" id="kanban-panel" aria-label="Card details" hidden></aside></div>';
     host = app.querySelector('.kanban-board');
+    kanbanSized?.disconnect();
+    kanbanSized?.observe(host);
     kanban.panel?.flush();
     kanban.panel = null;
     document.body.classList.remove('kanban-panel-on');
   }
   kanban.redrawing = true;
   try {
-    host.innerHTML = `<div class="kanban-page">
-      <header class="kanban-head">
-        <div class="kanban-title-row">
-          <input class="kanban-title" data-kanban-name="board" value="${esc(board.name)}" size="${Math.max(4, board.name.length + 1)}" maxlength="80" aria-label="Board name" spellcheck="false" autocomplete="off">
-          <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
-        </div>
-        <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
-      </header>
-      <div class="kanban-cols">${board.columns.map(kanbanColumnHtml).join('')}${board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="kanban-add-col" data-action="kanban-add-column" title="Add column">${ICON.plus}<span>Add column</span></button>` : ''}</div>
-    </div>`;
+    host.innerHTML = `<div class="kanban-page">${kanbanHeadHtml()}<div class="kanban-cols" data-board="${esc(board.id)}">${board.columns.map(kanbanColumnHtml).join('')}</div></div>`;
   } finally {
     kanban.redrawing = false;
   }
   const next = app.querySelector('.kanban-cols');
   if (next) next.scrollLeft = scrolled;
+  for (const list of app.querySelectorAll('.kanban-cards')) list.scrollTop = lists.get(list.dataset.col) || 0;
   if (kanban.panel && !kanbanCard(kanban.panel.id)) kanbanClosePanel(false);
   else if (kanban.panel) kanbanPanelStatus();
   for (const open of composers) {
@@ -186,6 +243,7 @@ function drawKanban() {
     }
     again.focus({ preventScroll: true });
   }
+  kanbanFit();
 }
 
 function kanbanCounts() {
@@ -206,7 +264,10 @@ function kanbanSyncTab() {
   const tab = kanban.boards.find((b) => b.id === kanban.board?.id);
   if (tab) { tab.name = kanban.board.name; tab.columns = kanban.board.columns; tab.cards = kanban.cards.length; }
   const nav = app.querySelector('.kanban-tabs');
-  if (nav) nav.innerHTML = kanbanTabsHtml();
+  if (nav && !nav.contains(document.activeElement)) {
+    nav.innerHTML = kanbanTabsHtml();
+    kanbanFit();
+  }
 }
 
 async function kanbanNewBoard() {
@@ -262,11 +323,8 @@ async function kanbanRename(input) {
   try {
     if (column) {
       await kanbanSaveBoard({ columns: board.columns.map((c) => ({ id: c.id, name: c.id === key ? text : c.name })) });
-      const box = input.closest('.kanban-col');
-      if (box) {
-        box.setAttribute('aria-label', text);
-        box.dataset.tone = kanbanTone({ id: key, name: text });
-      }
+      input.closest('.kanban-col')?.setAttribute('aria-label', text);
+      for (const box of app.querySelectorAll('.kanban-col')) box.dataset.tone = kanbanTone(kanbanColumn(box.dataset.col));
       kanbanPanelStatus();
     } else {
       const saved = await kanbanSaveBoard({ name: text });
@@ -280,10 +338,11 @@ async function kanbanRename(input) {
 }
 
 document.addEventListener('input', (e) => {
-  if (e.target.matches?.('.kanban-title')) e.target.size = Math.max(4, e.target.value.length + 1);
+  if (e.target.matches?.('.kanban-title, .kanban-col-name')) e.target.size = e.target.value.length + 1;
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'kanban-switch' && e.target.value) go(`#/boards/${enc(e.target.value)}`);
   const input = e.target.closest?.('[data-kanban-name]');
   // A redraw removing a field being typed in fires its change first; the typing lives on
   // in the new field, so that change saves nothing.
@@ -299,7 +358,7 @@ async function kanbanAddColumn() {
   const made = kanban.board.columns.find((c) => !before.has(c.id));
   const input = made && app.querySelector(`[data-kanban-name="${CSS.escape(made.id)}"]`);
   if (input) {
-    input.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    input.closest('.kanban-col').scrollIntoView({ block: 'nearest', inline: 'nearest' });
     input.focus();
     input.select();
   }
@@ -438,8 +497,11 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
       if (kanbanCard(card.id)) return;
       kanban.cards.push(card);
       // Look the list up now: a redraw since the card was typed replaces it.
-      app.querySelector(`.kanban-cards[data-col="${CSS.escape(columnId)}"]`)?.insertAdjacentHTML('beforeend', kanbanCardHtml(card));
+      const list = app.querySelector(`.kanban-cards[data-col="${CSS.escape(columnId)}"]`);
+      list?.insertAdjacentHTML('beforeend', kanbanCardHtml(card));
+      if (list) list.scrollTop = list.scrollHeight;
       kanbanCounts();
+      kanbanFit();
     } catch (e) {
       if (e instanceof Locked) throw e;
       const open = app.querySelector(`.kanban-composer[data-composer="${CSS.escape(columnId)}"] textarea`);
@@ -692,6 +754,7 @@ function kanbanLift() {
   }
   ghost.classList.remove('kanban-placeholder');
   ghost.classList.add('kanban-ghost');
+  ghost.dataset.tone = d.item.dataset.tone || '';
   ghost.setAttribute('aria-hidden', 'true');
   ghost.inert = true;
   ghost.style.width = `${rect.width}px`;
@@ -702,6 +765,7 @@ function kanbanLift() {
   d.from = { parent: d.item.parentElement, next: d.item.nextElementSibling };
   d.item.classList.add('kanban-placeholder');
   document.body.classList.add('kanban-dragging');
+  kanbanFade(app.querySelector('.kanban-tabs'));
   try { app.setPointerCapture(d.pointer); } catch (e) {}
   kanbanFollow();
   d.frame = requestAnimationFrame(kanbanEdges);
@@ -734,23 +798,24 @@ function kanbanFollow() {
     const before = [...row.querySelectorAll('.kanban-col:not(.kanban-placeholder)')].find((c) => {
       const r = c.getBoundingClientRect();
       return d.x < r.left + r.width / 2;
-    }) || row.querySelector('.kanban-add-col');
+    }) || null;
     if (d.item.nextElementSibling !== before) row.insertBefore(d.item, before);
   }
 }
 
-// Near an edge the board scrolls sideways and the page up or down, so far columns are reachable.
+// Near an edge the row under the pointer, lanes or tabs, scrolls sideways and a lane up or
+// down, so far columns and other boards' tabs are reachable.
 function kanbanEdges() {
   const d = kanban.drag;
   if (!d || !d.live) return;
-  const row = app.querySelector('.kanban-cols');
   let moved = false;
-  if (row) {
+  for (const row of app.querySelectorAll('.kanban-cols, .kanban-tabs')) {
     const r = row.getBoundingClientRect();
+    if (d.y < r.top || d.y > r.bottom) continue;
     const step = d.x < r.left + KANBAN_EDGE ? -14 : d.x > r.right - KANBAN_EDGE ? 14 : 0;
     const before = row.scrollLeft;
     if (step) row.scrollLeft += step;
-    moved = row.scrollLeft !== before;
+    moved = moved || row.scrollLeft !== before;
   }
   const list = document.elementFromPoint(d.x, d.y)?.closest('.kanban-col')?.querySelector('.kanban-cards');
   if (list && d.kind === 'card') {
@@ -759,13 +824,6 @@ function kanbanEdges() {
     const before = list.scrollTop;
     if (step) list.scrollTop += step;
     moved = moved || list.scrollTop !== before;
-  }
-  const top = ($('#bar')?.getBoundingClientRect().bottom || 0) + KANBAN_EDGE;
-  const v = d.y < top ? -14 : d.y > innerHeight - KANBAN_EDGE ? 14 : 0;
-  if (v) {
-    const before = scrollY;
-    scrollBy(0, v);
-    moved = moved || scrollY !== before;
   }
   if (moved) kanbanFollow();
   d.frame = requestAnimationFrame(kanbanEdges);
@@ -783,6 +841,7 @@ function kanbanEnd() {
   d.ghost?.remove();
   d.item.classList.remove('kanban-placeholder');
   document.body.classList.remove('kanban-dragging');
+  kanbanFit();
   for (const tab of document.querySelectorAll('.kanban-tab.drop-on')) tab.classList.remove('drop-on');
   try { if (app.hasPointerCapture(d.pointer)) app.releasePointerCapture(d.pointer); } catch (e) {}
   kanban.suppressClick = true;

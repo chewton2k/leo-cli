@@ -389,7 +389,7 @@ test('a board keeps its cards in the columns they were dragged to', async ({ pag
   await expect(columns.nth(0).locator('.kanban-card')).toHaveCount(2);
   await composer.press('Escape');
 
-  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1).locator('.kanban-cards'));
+  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1));
   await expect(columns.nth(1).locator('.kanban-card')).toHaveText(['Lab report']);
   await expect(page.locator('.kanban-ghost')).toHaveCount(0);
   await expect(page.locator('.scrim')).toHaveCount(0);

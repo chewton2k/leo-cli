@@ -34,7 +34,6 @@ const actions = {
   'kanban-board-menu': () => kanbanBoardMenu(),
   'kanban-column-menu': (el) => kanbanColumnMenu(el.dataset.col),
   'kanban-add-card': (el) => kanbanComposer(el.dataset.col),
-  'kanban-compose': (el) => kanbanComposer(el.dataset.col),
   'kanban-add-column': () => kanbanAddColumn(),
   'kanban-open-card': (el) => kanbanCardPanel(el.dataset.card),
   'cal-pick': (el) => {
