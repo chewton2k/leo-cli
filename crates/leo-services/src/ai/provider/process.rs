@@ -328,8 +328,9 @@ mod tests {
         let pid = process.0.lock().unwrap().as_ref().unwrap().id();
         let other = child("sleep 30");
         let mut reused = process.0.lock().unwrap();
-        let old = reused.replace(other).unwrap();
+        let mut old = reused.replace(other).unwrap();
         assert_eq!(old.id(), pid);
+        let _ = old.wait();
         drop(reused);
         signal(&process.0);
         let mut held = process.0.lock().unwrap();
