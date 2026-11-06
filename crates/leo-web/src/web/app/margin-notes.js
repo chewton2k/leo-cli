@@ -282,7 +282,10 @@ function inkWords(box, text) {
 function marginAnswer(line, text, arriving = false) {
   const md = window.leoMarkdown;
   const html = md.render(text, { interactive: false, dir: marginPage.s?.note.directory || '' });
-  if (html !== `<p>${md.escape(text)}</p>`) {
+  const shape = document.createElement('div');
+  shape.innerHTML = html;
+  const only = shape.firstElementChild;
+  if (shape.childElementCount !== 1 || only.tagName !== 'P' || only.childElementCount) {
     line.classList.add('prose');
     line.innerHTML = html;
   } else if (arriving) inkWords(line, text);

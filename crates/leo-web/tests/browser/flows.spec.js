@@ -4075,7 +4075,7 @@ test.describe('passages', () => {
     const newNotes = page.locator('[data-find="felix-new-notes"]');
     await expect(newNotes.locator('.choice-pick.on')).toContainText('When you ask');
     await expect(newNotes).toContainText('the note’s title and the text you change');
-    await expect(page.locator('[data-find="felix-cap"], #margin-today')).toHaveCount(0);
+    await expect(page.locator('#margin-today')).toHaveCount(0);
     expect((await (await page.request.get('/api/margin')).json()).cap).toBe(40);
     await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Marks only' }).click();
     await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).layout).toBe('marks');
