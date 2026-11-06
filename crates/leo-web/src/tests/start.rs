@@ -39,7 +39,16 @@ async fn showing_the_window_reconciles_external_edits_before_the_watcher_deliver
         .await
         .unwrap();
     std::fs::write(notes.join("External.md"), "Outside edit").unwrap();
+    let covered =
+        |state: &crate::AppState| state.covered.load(std::sync::atomic::Ordering::Acquire);
+    crate::routes::activity::page_visible(
+        axum::extract::State(running.state.clone()),
+        axum::Json(serde_json::from_str(r#"{"visible":false}"#).unwrap()),
+    )
+    .await;
+    assert!(covered(&running.state));
     assert!(running.set_visible(true));
+    assert!(!covered(&running.state));
     let found = running
         .state
         .with_store(|store| Ok(store.notes.iter().any(|note| note.body == "Outside edit")))

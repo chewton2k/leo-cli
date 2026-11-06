@@ -53,7 +53,7 @@ use axum::{
 };
 use leo_core::store::Store;
 
-use crate::routes::activity::activity;
+use crate::routes::activity::{activity, page_visible};
 use crate::routes::assets::{
     app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recording_js, saving_js,
 };
@@ -173,6 +173,7 @@ pub struct Powers {
 struct AppState {
     visible: Arc<std::sync::atomic::AtomicBool>,
     shown: Arc<tokio::sync::Notify>,
+    covered: Arc<std::sync::atomic::AtomicBool>,
     refresh_requested: Arc<std::sync::atomic::AtomicBool>,
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
@@ -249,7 +250,7 @@ impl Activity {
 }
 
 fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
-    if !path.starts_with("/api/") {
+    if !path.starts_with("/api/") || path == "/api/visible" {
         return false;
     }
     let polling = path == "/api/activity"
@@ -292,7 +293,9 @@ async fn keep_graph_current(state: AppState) {
                 .read_store(move |store| Ok(margin::sweep_store(&chats, store)))
                 .await;
         }
-        if !state.visible.load(std::sync::atomic::Ordering::Acquire) {
+        if !state.visible.load(std::sync::atomic::Ordering::Acquire)
+            || state.covered.load(std::sync::atomic::Ordering::Acquire)
+        {
             let _ = tokio::time::timeout(margin::SWEEP_EVERY, state.shown.notified()).await;
             continue;
         }
@@ -508,6 +511,9 @@ impl Running {
             self.state
                 .refresh_requested
                 .store(true, std::sync::atomic::Ordering::Release);
+            self.state
+                .covered
+                .store(false, std::sync::atomic::Ordering::Release);
             self.state.shown.notify_one();
         }
         changed
@@ -601,6 +607,7 @@ pub(crate) async fn start_in(
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),
+        covered: Default::default(),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
             changes: Some(store_refresh::Changes::new(&notes)),
@@ -907,6 +914,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/import/{id}", get(import_status))
         .route("/api/activity", get(activity))
+        .route("/api/visible", post(page_visible))
         .route("/api/image", get(get_picture))
         .route(
             "/api/images",
