@@ -279,6 +279,7 @@ async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
     let mut read_at = None;
     let mut graphed_at = None;
+    let mut stuck = None;
     let mut swept_at = None;
     loop {
         tick.tick().await;
@@ -321,7 +322,12 @@ async fn keep_graph_current(state: AppState) {
             }
         }
         let idle = state.activity.idle();
-        if idle < graph::UPDATE_WHEN_IDLE || graphed_at == Some(seen) {
+        if idle < graph::UPDATE_WHEN_IDLE
+            || graphed_at == Some(seen)
+            || stuck.is_some_and(|(at, when): (_, std::time::Instant)| {
+                at == seen && when.elapsed() < graph::RETRY_AUTO_AFTER
+            })
+        {
             continue;
         }
         let Ok(sources) = state
@@ -331,8 +337,12 @@ async fn keep_graph_current(state: AppState) {
             continue;
         };
         let graphs = Arc::clone(&state.graphs);
-        let Ok(mut settled) = tokio::task::spawn_blocking(move || {
-            !graphs.update_if_due(sources.clone(), idle) && graphs.settled(&sources)
+        let Ok((mut settled, mut busy)) = tokio::task::spawn_blocking(move || {
+            let started = graphs.update_if_due(sources.clone(), idle);
+            (
+                !started && graphs.settled(&sources),
+                started || graphs.building().is_some(),
+            )
         })
         .await
         else {
@@ -351,14 +361,17 @@ async fn keep_graph_current(state: AppState) {
             };
             if !paths.is_empty() {
                 settled = false;
-                let _ = tokio::task::spawn_blocking(move || {
+                busy |= tokio::task::spawn_blocking(move || {
                     captions::caption_paths(&paths, &captions, &seer)
                 })
-                .await;
+                .await
+                .is_ok_and(|done| done > 0);
             }
         }
         if settled {
             graphed_at = Some(seen);
+        } else if !busy {
+            stuck = Some((seen, std::time::Instant::now()));
         }
     }
 }

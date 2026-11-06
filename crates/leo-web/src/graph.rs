@@ -32,7 +32,8 @@ pub fn should_update(
     idle: std::time::Duration,
     since_auto: Option<std::time::Duration>,
 ) -> bool {
-    let waited = status.state != "failed" || since_auto.is_none_or(|s| s >= RETRY_AUTO_AFTER);
+    let waited = (status.state != "failed" && status.message.is_none())
+        || since_auto.is_none_or(|s| s >= RETRY_AUTO_AFTER);
     status.state != "building"
         && status.built_at.is_some()
         && status.requests > 0
@@ -1340,6 +1341,15 @@ mod tests {
             "a failed try waits"
         );
         assert!(should_update(&failed, minutes(5), Some(minutes(11))));
+        let partly = Status {
+            message: Some("Some notes could not be read this time".into()),
+            ..ready.clone()
+        };
+        assert!(
+            !should_update(&partly, minutes(5), Some(minutes(3))),
+            "a build that left notes unread waits too"
+        );
+        assert!(should_update(&partly, minutes(5), Some(minutes(11))));
         assert!(
             should_update(&ready, minutes(5), Some(minutes(1))),
             "after a good update, new edits are picked up"
