@@ -177,9 +177,11 @@
       schedule();
     }
 
+    const onScreen = () => root.document.visibilityState !== 'hidden' && root.__LEO_VISIBLE__ !== false;
+
     function schedule() {
       clearTimeout(s.poll);
-      if (root.document.visibilityState === 'hidden' || root.__LEO_VISIBLE__ === false) return;
+      if (!onScreen()) return;
       if (s.view && (live(s.view) || s.view.state === 'writing')) s.poll = setTimeout(pollNow, POLL_EVERY);
     }
 
@@ -295,7 +297,7 @@
         label.textContent = words;
         label.className = `rec-hear ${paused ? 'paused' : state}`;
       }
-      s.raf = root.requestAnimationFrame(drawWave);
+      if (onScreen()) s.raf = root.requestAnimationFrame(drawWave);
     }
 
     function paintWaveNow() {
@@ -642,7 +644,9 @@
 
     function recordingVisibility() {
       clearTimeout(s.poll);
-      if (root.document.visibilityState !== 'hidden' && root.__LEO_VISIBLE__ !== false) pollNow();
+      if (!onScreen()) return;
+      pollNow();
+      paintWaveNow();
     }
     root.document.addEventListener('visibilitychange', recordingVisibility);
     root.addEventListener('leo-visibility', recordingVisibility);
