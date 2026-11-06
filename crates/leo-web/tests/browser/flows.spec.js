@@ -1458,7 +1458,7 @@ test.describe('Felix', () => {
     const chat = await page.locator('#chat').boundingBox();
     const bar = await page.locator('nav.actions').boundingBox();
     expect(bar.x + bar.width).toBeLessThanOrEqual(chat.x);
-    await page.locator('[data-action="move"]').click();
+    await page.locator('[data-action="note-tasks"]').click();
     const sheet = await page.locator('.sheet').boundingBox();
     const side = await page.locator('#side').boundingBox();
     expect(sheet.x + sheet.width).toBeLessThanOrEqual(chat.x);
