@@ -74,7 +74,7 @@ async function trashRestorePicked() {
   pulse($('.toast'));
   state.picked = new Set();
   state.selecting = false;
-  await showTrash();
+  await Promise.all([showTrash(), refreshSideTree()]);
 }
 
 app.addEventListener('change', (e) => {

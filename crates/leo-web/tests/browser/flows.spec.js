@@ -1714,7 +1714,7 @@ test.describe('folders', () => {
     await page.getByRole('menuitem', { name: 'New folder here' }).click();
     await expect(page.locator('.sheet h3')).toHaveText('New folder in week1');
     await page.locator('#folder-name').fill('lab');
-    await page.locator('[data-action="create-folder"]').click();
+    await page.locator('#folder-name').press('Enter');
     await expect(page).toHaveURL(/\/(?:#\/)?$/);
     await expect(row(`${top}/week1/lab`)).toHaveAttribute('aria-current', 'page');
     await page.reload();
@@ -1745,12 +1745,12 @@ test.describe('folders', () => {
     await page.goto('/');
     if (await page.locator('#side').isHidden()) {
       await page.locator('#menu').click();
-      await page.locator('.sheet [data-action="new-folder"]').click();
+      await page.locator(':is(.sheet, .popup-menu) [data-action="new-folder"]').click();
     } else {
       await page.locator('#side .side-group [data-action="new-folder"]').click();
     }
     await page.locator('#folder-name').fill(name);
-    await page.locator('[data-action="create-folder"]').click();
+    await page.locator('#folder-name').press('Enter');
     await expect(page).toHaveURL(/\/(?:#\/)?$/);
     await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="' + name + '"]')).toBeVisible();
     await expect(page.locator('.toast.bad')).toHaveCount(0);
@@ -2344,7 +2344,7 @@ test.describe('uploads', () => {
     await page.locator('#upload-input').setInputFiles({ name: 'board.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
     await page.locator('#upload-go').click();
     await expect(page.locator('.upload-error')).toContainText('cannot read images');
-    await expect(page.locator('.sheet [data-action="upload"]')).toBeVisible();
+    await expect(page.locator(':is(.sheet, .popup-menu) [data-action="upload"]')).toBeVisible();
   });
 });
 
@@ -2613,14 +2613,14 @@ test.describe('the kinds of bugs that reached people before', () => {
     await page.goto('/');
     if (await page.locator('#side').isHidden()) {
       await page.locator('#menu').click();
-      await page.locator('.sheet [data-action="new-folder"]').click();
+      await page.locator(':is(.sheet, .popup-menu) [data-action="new-folder"]').click();
     } else {
       await page.locator('#side .side-group [data-action="new-folder"]').click();
     }
     const folder = page.locator('#folder-name');
     await typeWithPauses(page, folder, 'week', ' three');
     await expect(folder).toHaveValue('week three');
-    await page.locator('.sheet [data-action="close"]').click();
+    await folder.press('Escape');
 
     await page.goto('/');
     await control(page, 'upload').click();
@@ -2846,7 +2846,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     await page.goto('/');
     if (await page.locator('#side').isHidden()) {
       await page.locator('#menu').click();
-      await page.locator('.sheet [data-action="new-folder"]').click();
+      await page.locator(':is(.sheet, .popup-menu) [data-action="new-folder"]').click();
     } else {
       await page.locator('#side .side-group [data-action="new-folder"]').click();
     }

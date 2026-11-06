@@ -19,7 +19,6 @@ async function sidebarFixture(browser, run) {
     const folders=[{name:'Course',notes:2},{name:'Course/Week 1',notes:1},{name:'Course/Week 1/Lab',notes:0},{name:'Personal',notes:1},...Array.from({length:50},(_,i)=>({name:'Reading '+i,notes:0}))];
     const folderLabel=dir=>dir.split('/').pop()||'Top level', folderHash=dir=>dir?'#/f/'+encodeURIComponent(dir):'#/', noteHash=id=>'#/n/'+encodeURIComponent(id);
     const closeSheet=()=>{}, go=hash=>{location.hash=hash;}, fail=error=>window.errors.push(error.message);
-    const slideHeight=(el,from,to,done)=>{if(done)done();};
     const stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
     const moves=[], enc=encodeURIComponent, toast=()=>{}, showLatest=async()=>{}, saving={unsaved:()=>false};
     const notes={
@@ -47,7 +46,7 @@ async function sidebarFixture(browser, run) {
     }
     ${read('app/refresh.js')}
     ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
-    ${core.slice(core.indexOf('const moving'), core.indexOf('function slideHeight'))}
+    ${core.slice(core.indexOf('const moving'), core.indexOf('function rel('))}
     const overlapOut=()=>{};
     ${read('app/motion.js')}
     ${read('app/popup-menu.js')}
@@ -359,6 +358,7 @@ test('explorer refresh keeps file rows and a click in progress intact', async ({
     await page.locator('.side-tree .side-row[data-dir="Course"]').click();
     const note=page.locator('.side-note[data-id="course-note"]');
     await expect(note).toBeVisible();
+    await expect.poll(()=>page.locator('.side-kids[data-kids="Course"]').evaluate(el=>el.getAnimations().length)).toBe(0);
     const kept=await note.elementHandle();
     const tree=await page.locator('.side-tree').elementHandle();
     const point=await note.boundingBox();
@@ -777,6 +777,97 @@ test('sidebar folding waits for the actual transition rather than a timer', asyn
     await body.evaluate(el=>{for(const run of el.getAnimations())if(run.transitionProperty==='--side')run.finish();});
     await expect(body).not.toHaveClass(/side-folding/);
     expect((await side.boundingBox()).width).toBe(284);
+  });
+});
+
+test('a folder slide survives a redraw, reverses from where it is, and never animates the list twice', async ({ browser }) => {
+  await sidebarFixture(browser, async (context, url) => {
+    const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(url);
+    const twist = page.locator('[data-action="side-twist"][data-dir="Course"]');
+    await twist.click();
+    const kids = page.locator('.side-kids[data-kids="Course"]');
+    await expect(kids).toBeVisible();
+    await expect.poll(() => kids.evaluate(el => el.getAnimations().length)).toBe(0);
+    const full = await kids.evaluate(el => el.scrollHeight);
+    expect(full).toBeGreaterThan(20);
+    await page.evaluate(() => {
+      document.querySelector('[data-action="side-twist"][data-dir="Course"]').click();
+      const el = document.querySelector('.side-kids[data-kids="Course"]');
+      el.getAnimations()[0].pause();
+    });
+    const middle = await kids.evaluate(el => {
+      const run = el.getAnimations()[0];
+      run.currentTime = run.effect.getTiming().duration / 2;
+      return el.getBoundingClientRect().height;
+    });
+    expect(middle).toBeGreaterThan(0);
+    expect(middle).toBeLessThan(full);
+    await page.evaluate(() => window.audit.draw());
+    await expect(kids).toHaveCount(1);
+    expect(await kids.evaluate(el => getComputedStyle(el).overflow), 'a redraw keeps the slide clipped').toBe('hidden');
+
+    const reversing = await page.evaluate(() => {
+      document.querySelector('[data-action="side-twist"][data-dir="Course"]').click();
+      const el = document.querySelector('.side-kids[data-kids="Course"]');
+      const run = el.getAnimations()[0];
+      run.pause();
+      return { start: el.getBoundingClientRect().height, end: run.effect.getKeyframes().at(-1).height };
+    });
+    expect(Math.abs(reversing.start - middle)).toBeLessThan(2);
+    expect(parseFloat(reversing.end)).toBe(full);
+    await kids.evaluate(el => el.getAnimations()[0].finish());
+    await expect.poll(() => kids.evaluate(el => el.getBoundingClientRect().height)).toBe(full);
+
+    await page.evaluate(() => {
+      document.querySelector('[data-action="side-twist"][data-dir="Course"]').click();
+      document.querySelector('.side-kids[data-kids="Course"]').getAnimations()[0].finish();
+    });
+    await expect(kids).toHaveCount(0);
+    const moving = await page.evaluate(() => [...document.querySelectorAll('.side-tree .side-folder, .side-tree .side-note')].filter(el => el.getAnimations().length).length);
+    expect(moving, 'closing does not slide the rows below a second time').toBe(0);
+  });
+});
+
+test('a popup menu with find filters as you type, and Enter takes the first match', async ({ browser }) => {
+  await sidebarFixture(browser, async (context, url) => {
+    const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(url);
+    await expect(page.locator('.side-note[data-id="root-note"]')).toBeVisible();
+    await page.evaluate(() => {
+      const owner = document.querySelector('.side-note');
+      popupMenu(owner, { label: 'Move', find: 'Find a folder', rows: ['Top level', 'Biology', 'History'].map((text) => ({ text, run: () => { window.picked = text; } })) });
+    });
+    const find = page.getByRole('textbox', { name: 'Find a folder' });
+    await expect(find).toBeFocused();
+    await find.fill('hist');
+    await expect(page.getByRole('menuitem')).toHaveText(['History']);
+    await find.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.picked)).toBe('History');
+    await expect(page.locator('.popup-menu')).toHaveCount(0);
+  });
+});
+
+test('inline edit keeps the field after a refused save, and Escape never saves', async ({ browser }) => {
+  await sidebarFixture(browser, async (context, url) => {
+    const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(url);
+    await expect(page.locator('.side-note[data-id="root-note"]')).toBeVisible();
+    await page.evaluate(() => {
+      window.saves = [];
+      inlineEdit({ left: 20, top: 200, width: 200, height: 30 }, { id: 'name', value: 'Old', label: 'Name', at: { kind: 'note', id: 'root-note' }, save: async (text) => { window.saves.push(text); return text !== 'Taken'; } });
+    });
+    const input = page.getByRole('textbox', { name: 'Name' });
+    await input.fill('Taken');
+    await input.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.saves)).toEqual(['Taken']);
+    await expect(input).toHaveValue('Taken');
+    await expect(input).toBeFocused();
+    await input.fill('Dropped');
+    await input.press('Escape');
+    await expect(input).toHaveCount(0);
+    expect(await page.evaluate(() => window.saves)).toEqual(['Taken']);
+    await expect(page.locator('.side-note[data-id="root-note"]')).toBeFocused();
   });
 });
 

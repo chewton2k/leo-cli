@@ -389,7 +389,14 @@ async function saveKey(account) {
 }
 
 function confirmRemoveKey(el) {
-  confirmSheet({ title: `Remove the ${esc(el.dataset.name)} key?`, text: `leo stops using ${esc(el.dataset.name)} until you add a key again.`, yes: 'Remove', action: 'remove-key-now', data: ` data-account="${esc(el.dataset.account)}"` });
+  const { name, account } = el.dataset;
+  popupMenu(el, {
+    label: `Remove the ${name} key`,
+    rows: [
+      { note: `leo stops using ${name} until you add a key again.` },
+      { text: 'Remove key', icon: ICON.trash, danger: true, run: () => changeSetting({ set: 'key', account, value: null }) },
+    ],
+  });
 }
 
 async function testAi(el) {
@@ -500,20 +507,20 @@ async function speechChange(change) {
   pollSpeech(mine, generation);
 }
 
+function speechDeleteMenu(el, name, note, change) {
+  popupMenu(el, { label: `Delete ${name}`, rows: [{ note }, { text: 'Delete', icon: ICON.trash, danger: true, run: () => speechChange(change) }] });
+}
+
 function changeSpeechModel(el) {
   if (el.dataset.verb === 'delete_file') {
     const file = (state.speech.extra_files || []).find((file) => file.name === el.dataset.model);
-    if (!file) return;
-    confirmSheet({ title: `Delete ${esc(file.name)}?`, text: 'This removes the model file from this computer.', yes: 'Delete', action: 'speech-delete', data: ` data-model="${esc(file.name)}" data-verb="delete_file"` });
+    if (file) speechDeleteMenu(el, file.name, 'This removes the model file from this computer.', { action: 'delete_file', id: file.name });
     return;
   }
   const model = state.speech.models.find((m) => m.id === el.dataset.model);
   if (!model) return;
   const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' };
-  if (change.action === 'delete') {
-    confirmSheet({ title: `Delete ${esc(model.name)}?`, text: 'The download is removed from this computer. Your notes stay.', yes: 'Delete', action: 'speech-delete', data: ` data-model="${esc(model.id)}"` });
-    return;
-  }
+  if (change.action === 'delete') return speechDeleteMenu(el, model.name, 'The download is removed from this computer. Your notes stay.', { action: 'delete', id: model.id });
   return speechChange(change);
 }
 
@@ -526,7 +533,6 @@ async function showUsage(trigger = null) {
   const opener = trigger?.closest?.('.scrim') ? $('#menu') : trigger || document.activeElement;
   const box = sheet('<header class="usage-head"><h3>Usage</h3><div class="usage-tools"><span aria-current="page">Limits</span><button type="button" class="btn plain sm" data-action="usage-refresh" disabled>Refresh</button><button type="button" class="btn plain sm" data-action="close">Close</button></div></header><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div>');
   box.returnFocus = opener;
-  trapSheetFocus(box);
   box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
   const mine = seq;

@@ -706,6 +706,7 @@ label.trash-row { cursor: pointer; }
 :is(.sheet, .sheet-gone) .list-row.danger, :is(.sheet, .sheet-gone) .list-row.danger svg { color: var(--danger); }
 :is(.sheet, .sheet-gone) .field { margin: 0 8px 10px; }
 :is(.sheet, .sheet-gone) .buttons { display: flex; gap: 8px; justify-content: flex-end; padding: 4px 8px; }
+:is(.sheet, .sheet-gone) > .buttons { position: sticky; bottom: 0; z-index: 1; background: var(--surface); }
 
 .toast, .toast-gone {
   position: fixed; left: var(--mid); bottom: calc(var(--bottom) + 96px); transform: translateX(-50%); z-index: 50;
@@ -1096,7 +1097,7 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 .side-twist.none { display: block; }
 :is(.side-explorer, #folders-sheet) .side-row { min-height: 30px; gap: 7px; font-size: 13.5px; border-radius: 5px; }
 :is(.side-explorer, #folders-sheet) .side-row svg { width: 16px; height: 16px; }
-.side-kids { position: relative; }
+.side-kids { position: relative; flex: none; }
 .side-kids::before { content: ''; position: absolute; top: 0; bottom: 0; left: calc(var(--depth, 0) * 14px + 11px); width: 2px; border-radius: 1px; background: color-mix(in srgb, var(--text) 8%, transparent); pointer-events: none; }
 @media (min-width: 1000px) {
   .side-pill { position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--raised); pointer-events: none; }
@@ -1125,7 +1126,12 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 :is(.popup-menu, .popup-menu-gone) svg { flex: none; width: 15px; height: 15px; color: var(--muted); }
 :is(.popup-menu, .popup-menu-gone) .danger, :is(.popup-menu, .popup-menu-gone) .danger svg { color: var(--danger); }
 :is(.popup-menu, .popup-menu-gone) hr { margin: 5px 0; border: 0; border-top: 1px solid var(--line); }
-:is(.popup-menu, .popup-menu-gone) p { margin: 0; padding: 6px 12px 4px; color: var(--muted); font-size: 12px; }
+:is(.popup-menu, .popup-menu-gone) p { max-width: 260px; margin: 0; padding: 6px 12px 4px; color: var(--muted); font-size: 12px; }
+.popup-menu input { width: 100%; box-sizing: border-box; margin-bottom: 5px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+.popup-menu input:focus { border-color: var(--accent); outline: none; }
+.popup-menu:has(input) { width: min(300px, calc(100vw - 16px)); box-sizing: border-box; overflow: hidden; }
+.popup-menu:has(input) .popup-rows { max-height: min(320px, calc(100dvh - 80px)); overflow-y: auto; }
+.inline-edit { position: fixed; z-index: 111; box-sizing: border-box; min-width: 120px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; outline: none; }
 .popup-menu button:not(:disabled):hover, .popup-menu button:focus-visible { background: var(--tint); outline: 2px solid var(--accent); outline-offset: -2px; }
 .sheet:has(#folders-sheet) { display: flex; flex-direction: column; width: min(600px, 100%); height: min(720px, 85dvh); overflow: hidden; }
 #folders-sheet { display: flex; flex: 1; flex-direction: column; min-height: 0; }
@@ -2424,7 +2430,7 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
     <nav class="crumbs" id="crumbs" aria-label="Folder"></nav>
     <button class="icon-btn chat-btn" id="chat-toggle" data-action="chat" aria-label="Ask Felix" title="Ask Felix"></button>
     <button class="icon-btn" id="search-toggle" data-action="toggle-search" aria-label="Search"></button>
-    <button class="icon-btn" id="menu" data-action="menu" aria-label="More"></button>
+    <button class="icon-btn" id="menu" data-action="menu" aria-haspopup="menu" aria-expanded="false" aria-label="More"></button>
   </div>
   <label class="search" id="search" hidden>
     <span id="search-icon"></span>

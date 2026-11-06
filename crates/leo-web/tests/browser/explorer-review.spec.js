@@ -28,8 +28,8 @@ async function options(page, row, label) {
 }
 async function moveChoices(page, row) {
   await options(page, row, 'Move');
-  await expect(page.locator('.sheet h3')).toContainText('Move');
-  return page.locator('.sheet [data-explorer-move]').evaluateAll(els => els.map(el => el.dataset.explorerMove));
+  await expect(page.getByRole('menu', { name: /^Move/ })).toBeVisible();
+  return (await page.getByRole('menuitem').allTextContents()).map(text => (text === 'Top level' ? '' : text));
 }
 async function menuFor(page, locator) {
   await locator.dispatchEvent('contextmenu', { clientX: 200, clientY: 300 });
@@ -38,7 +38,7 @@ async function menuFor(page, locator) {
 const items = (page) => page.getByRole('menuitem').allTextContents();
 async function folders(page) {
   await page.locator('#menu').click();
-  await page.locator('.sheet [data-action="folders"]').click();
+  await page.locator(':is(.sheet, .popup-menu) [data-action="folders"]').click();
   await expect(page.locator('#folders-sheet')).toBeVisible();
 }
 const noteDir = async (page, id) => (await (await page.request.get(`/api/notes/${id}`)).json()).directory;
@@ -152,7 +152,7 @@ test('context menu regions: blank tree is root, heading follows the scope, statu
   expect(await items(page)).toEqual(['New note here', 'New folder here']);
   await page.getByRole('menuitem', { name: 'New folder here', exact: true }).click();
   await page.locator('#folder-name').fill('Inner');
-  await page.locator('[data-action="create-folder"]').click();
+  await page.locator('#folder-name').press('Enter');
   await expect(folderRow(page, `${empty}/Inner`)).toBeVisible();
 });
 
@@ -178,26 +178,22 @@ test('note rename, move and trash sheets return focus to the logical row on desk
   await folderRow(page, dir).click();
   const row = noteRow(page, note.id);
   await options(page, row, 'Rename');
-  await page.locator('.sheet [data-action="close"]').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Escape');
   await expect(row).toBeFocused();
   await options(page, row, 'Rename');
   await page.getByRole('textbox', { name: 'Note name' }).fill(name());
-  await page.locator('#explorer-rename-save').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Enter');
   await expect(row).toBeFocused();
   await moveChoices(page, row);
   await page.keyboard.press('Escape');
   await expect(row).toBeFocused();
   await moveChoices(page, row);
-  await page.locator(`[data-explorer-move="${destination}"]`).click();
+  await page.getByRole('menuitem', { name: destination, exact: true }).click();
   await expect(page.locator('.toast')).toContainText('Moved');
   await expect(row).toHaveCount(0);
   await expect(folderRow(page, destination)).toBeFocused();
   await folderRow(page, destination).click();
   await options(page, noteRow(page, note.id), 'Move to trash');
-  await page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
-  await expect(noteRow(page, note.id)).toBeFocused();
-  await options(page, noteRow(page, note.id), 'Move to trash');
-  await page.locator('.sheet').getByRole('button', { name: 'Move to trash', exact: true }).click();
   await expect(noteRow(page, note.id)).toHaveCount(0);
   await expect(folderRow(page, destination)).toBeFocused();
 });
@@ -207,25 +203,21 @@ test('folder rename, move and trash sheets return focus to the logical row on de
   const destination = await createFolder(page);
   await page.goto('/#/');
   await options(page, folderRow(page, dir), 'Rename');
-  await page.locator('.sheet [data-action="close"]').click();
+  await page.getByRole('textbox', { name: 'Folder name' }).press('Escape');
   await expect(folderRow(page, dir)).toBeFocused();
   await options(page, folderRow(page, dir), 'Rename');
   const renamed = name();
   await page.getByRole('textbox', { name: 'Folder name' }).fill(renamed);
-  await page.locator('[data-action="folder-rename-save"]').click();
+  await page.getByRole('textbox', { name: 'Folder name' }).press('Enter');
   await expect(folderRow(page, renamed)).toBeFocused();
   await moveChoices(page, folderRow(page, renamed));
-  await page.locator(`[data-explorer-move="${destination}"]`).click();
+  await page.getByRole('menuitem', { name: destination, exact: true }).click();
   await expect(page.locator('.toast')).toContainText('Moved');
   await expect(folderRow(page, destination)).toBeFocused();
   await folderRow(page, destination).click();
   const inside = `${destination}/${renamed}`;
   await expect(folderRow(page, inside)).toBeVisible();
   await options(page, folderRow(page, inside), 'Move to trash');
-  await page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
-  await expect(folderRow(page, inside)).toBeFocused();
-  await options(page, folderRow(page, inside), 'Move to trash');
-  await page.locator('[data-action="folder-delete-now"]').click();
   await expect(folderRow(page, inside)).toHaveCount(0);
   await expect(folderRow(page, destination)).toBeFocused();
 });
@@ -239,22 +231,18 @@ test('compact nested sheets return to Folders with focus on the logical row', as
   await folderRow(page, dir, host).click();
   await expect(noteRow(page, note.id, host)).toBeVisible();
   await options(page, noteRow(page, note.id, host), 'Rename');
-  await page.locator('.sheet [data-action="close"]').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Escape');
   await expect(page.locator(host)).toBeVisible();
   await expect(noteRow(page, note.id, host)).toBeFocused();
   await options(page, noteRow(page, note.id, host), 'Rename');
   await page.getByRole('textbox', { name: 'Note name' }).fill(name());
-  await page.locator('#explorer-rename-save').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Enter');
   await expect(page.locator(host)).toBeVisible();
   await expect(noteRow(page, note.id, host)).toBeFocused();
   await options(page, folderRow(page, dir, host), 'Rename');
   const renamed = name();
   await page.getByRole('textbox', { name: 'Folder name' }).fill(renamed);
-  await page.locator('[data-action="folder-rename-save"]').click();
-  await expect(page.locator(host)).toBeVisible();
-  await expect(folderRow(page, renamed, host)).toBeFocused();
-  await options(page, folderRow(page, renamed, host), 'Move to trash');
-  await page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('textbox', { name: 'Folder name' }).press('Enter');
   await expect(page.locator(host)).toBeVisible();
   await expect(folderRow(page, renamed, host)).toBeFocused();
   await page.keyboard.press('Escape');
@@ -300,7 +288,7 @@ test('note titles keep slashes as text while folder names stay strict', async ({
   const title = 'Q3/Q4 plan \\ draft';
   await options(page, noteRow(page, note.id), 'Rename');
   await page.getByRole('textbox', { name: 'Note name' }).fill(title);
-  await page.locator('#explorer-rename-save').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Enter');
   await expect(page.locator('.toast')).toContainText('Renamed note');
   await expect(noteRow(page, note.id)).toHaveText(title);
   const saved = await (await page.request.get(`/api/notes/${note.id}`)).json();
@@ -311,7 +299,7 @@ test('note titles keep slashes as text while folder names stay strict', async ({
   await options(page, folderRow(page, dir), 'Rename');
   const input = page.getByRole('textbox', { name: 'Folder name' });
   await input.fill('a/b');
-  await page.locator('[data-action="folder-rename-save"]').click();
+  await page.getByRole('textbox', { name: 'Folder name' }).press('Enter');
   await expect(page.locator('.toast')).toContainText('cannot contain /');
   await expect(input).toHaveValue('a/b');
 });
@@ -321,10 +309,10 @@ test('compact More new folder shows the new folder revealed in Folders', async (
   await page.goto('/#/');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#menu').click();
-  await page.locator('.sheet [data-action="new-folder"]').click();
+  await page.locator(':is(.sheet, .popup-menu) [data-action="new-folder"]').click();
   const made = name();
   await page.locator('#folder-name').fill(made);
-  await page.locator('[data-action="create-folder"]').click();
+  await page.locator('#folder-name').press('Enter');
   await expect(page.locator('#folders-sheet')).toBeVisible();
   await expect(folderRow(page, made, '#folders-sheet')).toBeVisible();
   await expect(folderRow(page, made, '#folders-sheet')).toHaveAttribute('aria-current', 'page');

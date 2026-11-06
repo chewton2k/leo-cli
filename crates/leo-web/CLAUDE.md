@@ -147,7 +147,13 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
 - Folder, Title and What do you want: `noteFields()` (uploads.js), used by the upload
   sheet and the Record page.
 - Confirmations: `confirmSheet({ title, text, yes, action, data, danger, cancel })`
-  (sheets.js) for every "are you sure" sheet.
+  (sheets.js) for permanent losses. Moving a note or folder to the trash asks nothing and
+  offers Undo for 10 s. Removing a key or speech model is a two-row `popupMenu`.
+- Menus: `popupMenu(owner, { label, rows, point, find })` (popup-menu.js) is the one
+  dropdown: explorer, ⋯ menus, More from 600 px, and Move with `find`. A row's `next` swaps
+  the menu for a second step. `sheet()` itself focuses the first control and traps Tab.
+- Explorer rename and New folder use `inlineEdit` over the tree row (side.js). New folder
+  falls back to its sheet when the tree is hidden.
 - Empty pages: `empty(icon, title, text)`. Counts: `.badge`. Small uppercase section
   labels share one rule (`.side-group`, `.source-label`, `.quick-due-head`,
   `.chat-history-group`, `.pick-head`).

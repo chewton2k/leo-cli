@@ -268,7 +268,7 @@ function toast(message, { action, run, bad } = {}) {
   const el = document.createElement('div');
   el.className = 'toast' + (bad ? ' bad' : '');
   el.setAttribute('role', 'status');
-  const lasts = action ? 6000 : 3500;
+  const lasts = action ? 10000 : 3500;
   el.innerHTML = `<span>${esc(message)}</span>${action ? `<button>${esc(action)}</button><i class="toast-time" aria-hidden="true" style="animation-duration:${lasts}ms"></i>` : ''}`;
   if (action) {
     el.querySelector('button').addEventListener('click', () => {
@@ -314,7 +314,6 @@ function stopSlide(el) {
   run.onfinish = null;
   run.oncancel = null;
   run.cancel();
-  el.style.overflow = '';
 }
 
 function pulse(el, { lift = 1.04, ring = false } = {}) {
@@ -404,13 +403,11 @@ function slideHeight(el, from, to, then) {
     if (then) then();
     return;
   }
-  el.style.overflow = 'hidden';
   const leaving = to < from;
-  const run = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: leaving ? MOTION_MS * EXIT_SHARE : MOTION_MS, easing: leaving ? EASE_EXIT : EASE_OUT });
+  const run = el.animate([{ height: `${from}px`, overflow: 'hidden' }, { height: `${to}px`, overflow: 'hidden' }], { duration: leaving ? MOTION_MS * EXIT_SHARE : MOTION_MS, easing: leaving ? EASE_EXIT : EASE_OUT });
   moving.set(el, run);
   run.onfinish = () => {
     moving.delete(el);
-    el.style.overflow = '';
     if (then) then();
   };
 }
@@ -704,7 +701,7 @@ async function undoTrashMove(done) {
   try {
     const back = await api('/api/trash/restore', { method: 'POST', body: { ids: done.ids, dirs: done.dirs || [] } });
     toast(back.restored === done.ids.length ? 'Brought back' : `Brought back ${plural(back.restored, 'note')}`);
-    await loadSideFolders();
+    await refreshSideTree();
   } catch (e) { fail(e); }
 }
 

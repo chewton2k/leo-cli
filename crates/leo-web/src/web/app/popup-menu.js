@@ -15,47 +15,63 @@ function closePopup(focus = true) {
 function popupRow(row, index) {
   if (row.line) return '<hr>';
   if (row.note) return `<p>${esc(row.note)}</p>`;
-  return `<button type="button" role="menuitem" data-row="${index}"${row.danger ? ' class="danger"' : ''}${row.off ? ' disabled' : ''}>${row.icon || ''}<span>${esc(row.text)}</span></button>`;
+  const action = row.action ? ` data-action="${row.action}"${row.dir === undefined ? '' : ` data-dir="${esc(row.dir)}"`}` : '';
+  return `<button type="button" role="menuitem" data-row="${index}"${action}${row.danger ? ' class="danger"' : ''}${row.off ? ' disabled' : ''}>${row.icon || ''}<span class="grow">${esc(row.text)}</span>${row.after || ''}</button>`;
 }
 
-function popupMenu(owner, { label, rows, point = null }) {
+function popupMenu(owner, { label, rows, point = null, find = '' }) {
   closePopup(false);
   const box = document.createElement('div');
   box.className = 'popup-menu';
   box.setAttribute('role', 'menu');
   box.setAttribute('aria-label', label);
+  box.innerHTML = `${find ? `<input placeholder="${esc(find)}" aria-label="${esc(find)}" autocomplete="off" spellcheck="false">` : ''}<div class="popup-rows"></div>`;
+  const input = box.querySelector('input');
+  const list = box.querySelector('.popup-rows');
   document.body.appendChild(box);
   let shown = rows;
-  const draw = (list) => {
-    shown = list;
-    box.innerHTML = list.map(popupRow).join('');
-    const bounds = owner.getBoundingClientRect();
-    box.style.left = `${Math.max(8, Math.min(point?.x ?? bounds.right, innerWidth - box.offsetWidth - 8))}px`;
-    box.style.top = `${Math.max(8, Math.min(point?.y ?? bounds.bottom, innerHeight - box.offsetHeight - 8))}px`;
-    box.querySelector('button:not(:disabled)')?.focus();
+  const draw = (items) => {
+    shown = items;
+    list.innerHTML = items.map(popupRow).join('');
   };
+  const place = () => {
+    const bounds = owner.getBoundingClientRect();
+    box.style.left = `${Math.max(8, Math.min(point?.x ?? bounds.left, innerWidth - box.offsetWidth - 8))}px`;
+    box.style.top = `${Math.max(8, Math.min(point?.y ?? bounds.bottom + 4, innerHeight - box.offsetHeight - 8))}px`;
+  };
+  const first = () => (input || list.querySelector('button:not(:disabled)'))?.focus();
   if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'true');
   draw(rows);
+  place();
   popup = { box, owner };
   unfold(box, point || owner);
+  first();
+  input?.addEventListener('input', () => {
+    const wanted = input.value.trim().toLowerCase();
+    const found = rows.filter((row) => row.text.toLowerCase().includes(wanted));
+    draw(found.length ? found : [{ note: 'Nothing matches' }]);
+  });
   box.addEventListener('click', (e) => {
     const button = e.target.closest('[data-row]');
     if (!button || button.disabled) return;
     const row = shown[button.dataset.row];
-    if (row.next) { draw(row.next); return; }
+    if (row.next) { draw(row.next); place(); first(); return; }
     closePopup();
-    Promise.resolve().then(row.run).catch(fail);
+    if (row.run) Promise.resolve().then(row.run).catch(fail);
   });
   box.addEventListener('keydown', (e) => {
-    const buttons = [...box.querySelectorAll('button:not(:disabled)')];
-    const at = buttons.indexOf(document.activeElement);
+    const buttons = [...list.querySelectorAll('button:not(:disabled)')];
+    const stops = input ? [input, ...buttons] : buttons;
+    const at = stops.indexOf(document.activeElement);
+    const typing = e.target === input;
     let next;
-    if (e.key === 'ArrowDown') next = (at + 1) % buttons.length;
-    else if (e.key === 'ArrowUp') next = (at + buttons.length - 1) % buttons.length;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = buttons.length - 1;
+    if (e.key === 'Enter' && typing && !e.isComposing) { e.preventDefault(); buttons[0]?.click(); return; }
+    if (e.key === 'ArrowDown') next = (at + 1) % stops.length;
+    else if (e.key === 'ArrowUp') next = (at + stops.length - 1) % stops.length;
+    else if (e.key === 'Home' && !typing) next = 0;
+    else if (e.key === 'End' && !typing) next = stops.length - 1;
     else if (e.key === 'Escape' || e.key === 'Tab') { closePopup(); e.preventDefault(); e.stopPropagation(); return; }
-    if (next !== undefined) { e.preventDefault(); buttons[next].focus(); }
+    if (next !== undefined) { e.preventDefault(); stops[next]?.focus(); }
   });
 }
 

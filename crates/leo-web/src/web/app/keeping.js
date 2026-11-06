@@ -64,7 +64,6 @@ async function changeKeep(el) {
   const box = confirmSheet({ title: `Keep ${what} for ${esc(period)}?`, text: esc(goes), yes: count ? `Delete ${esc(plural(count, noun))}` : `Keep for ${esc(period)}`, action: 'keep-now', danger: Boolean(count), cancel: 'keep-cancel' });
   box.returnFocus = app.querySelector(`select[data-keep="${field}"]`);
   box.querySelector('[data-action="keep-cancel"]').focus();
-  trapSheetFocus(box);
   state.keepPending = { next, goes: count ? plural(count, noun) : '' };
 }
 
@@ -105,7 +104,6 @@ function draftsDiscardAsk(el) {
   const box = confirmSheet({ title: `Discard ${esc(plural(count, 'unsaved edit'))}?`, text: 'Each note keeps what Leo last saved. The edits kept in this window are gone for good.', yes: 'Discard', action: 'drafts-discard' });
   box.returnFocus = el;
   box.querySelector('[data-action="close"]').focus();
-  trapSheetFocus(box);
 }
 
 function draftsDiscard() {

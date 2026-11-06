@@ -386,11 +386,6 @@ async function kanbanSaveColumns(columns, moveTo = null) {
   return true;
 }
 
-function kanbanMenuPoint(owner) {
-  const bounds = owner.getBoundingClientRect();
-  return { x: bounds.left, y: bounds.bottom + 4 };
-}
-
 function kanbanEditName(selector) {
   const input = app.querySelector(selector);
   input?.focus();
@@ -418,7 +413,6 @@ function kanbanColumnMenu(owner) {
   };
   popupMenu(owner, {
     label: `Options for ${column.name}`,
-    point: kanbanMenuPoint(owner),
     rows: [
       { text: 'Rename', icon: KANBAN_ICON.pencil, run: () => kanbanEditName(`[data-kanban-name="${CSS.escape(id)}"]`) },
       { text: 'Move left', icon: ICON.back, off: at === 0, run: () => shift(-1) },
@@ -442,7 +436,6 @@ function kanbanBoardMenu(owner) {
   const count = kanban.cards.length;
   popupMenu(owner, {
     label: 'Board options',
-    point: kanbanMenuPoint(owner),
     rows: [
       { text: 'Rename board', icon: KANBAN_ICON.pencil, run: () => kanbanEditName('[data-kanban-name="board"]') },
       { text: 'Add column', icon: ICON.plus, off: board.columns.length >= KANBAN_MOST_COLUMNS, run: kanbanAddColumn },
