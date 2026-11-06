@@ -693,6 +693,75 @@ test('select all and undo keep checklists rendered and copy their complete Markd
   }, {body});
 });
 
+test('typing a list or checklist marker renders it at once and keeps the caret in the line', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea');
+    await page.keyboard.type('- ');
+    await expect(page.locator('#doc li')).toHaveCount(1);
+    await expect(area).toBeFocused();
+    await page.keyboard.type('[ ] ');
+    await expect(page.locator('#doc .task-item input[data-box]')).toHaveCount(1);
+    await page.keyboard.type('buy milk');
+    await expect(area).toHaveValue('buy milk');
+    expect(await page.evaluate(() => doc.source())).toBe('- [ ] buy milk');
+    await area.evaluate(el => el.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('#doc li')).toHaveCount(0);
+    await expect(area).toHaveValue('buy milk');
+  }, {body: 'Start'});
+});
+
+test('a checked task strikes only its own text, line by line', async ({ browser }) => {
+  const long = 'wrapped words '.repeat(40).trim();
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({width: 900, height: 800});
+    await page.goto(url);
+    const spans = page.locator('#doc .task.done > span');
+    await expect(spans).toHaveCount(3);
+    for (let i = 0; i < 3; i++) {
+      expect(await spans.nth(i).evaluate(el => getComputedStyle(el).textDecorationLine)).toBe('line-through');
+    }
+    const short = await spans.nth(0).evaluate(el => {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      return [el.getBoundingClientRect().width, r.getBoundingClientRect().width];
+    });
+    expect(Math.abs(short[0] - short[1])).toBeLessThan(2);
+    expect(await spans.nth(2).evaluate(el => el.textContent)).toBe('');
+  }, {body: `- [x] Short\n- [x] ${long}\n- [x]`});
+});
+
+test('selecting text in a task line never toggles its checkbox, wherever the drag ends', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    const box = page.locator('#doc input[data-box]');
+    const text = page.locator('#doc .task > span');
+    for (const editing of [false, true]) {
+      if (editing) await text.click();
+      const t = await text.boundingBox();
+      const b = await box.boundingBox();
+      await page.mouse.move(t.x + t.width - 4, t.y + t.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, {steps: 6});
+      await page.mouse.up();
+      await expect(box).not.toBeChecked();
+      await page.mouse.move(t.x + t.width - 4, t.y + t.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x - 2, b.y + b.height / 2, {steps: 6});
+      await page.mouse.up();
+      await expect(box).not.toBeChecked();
+    }
+    expect(await page.evaluate(() => doc.source())).toBe('- [ ] Select across this task text');
+    await box.click();
+    await expect(box).toBeChecked();
+  }, {body: '- [ ] Select across this task text'});
+});
+
 test('list text supports caret clicks, removing formatting, undo and navigation in both directions', async ({ browser }) => {
   const body = 'Before\n  - [x] Task text\n3. Number text\nAfter';
   await editorFixture(browser, async (context, url) => {

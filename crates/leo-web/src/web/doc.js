@@ -841,7 +841,7 @@
       if (index >= 0) edit(index, caret, reveal);
     }
 
-    function onInput() {
+    function onInput(e) {
       if (told) tell();
       const { area, start } = editing;
       editing.initialHeight = null;
@@ -852,6 +852,12 @@
       look(area);
       fit(area);
       changed();
+      const marker = ed.listPrefix(editing.prefix + area.value);
+      if (editing.kind === 'line' && !e.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker) && !marker.includes('\n')) {
+        const caret = editing.prefix.length + area.selectionStart;
+        stop();
+        editLine(start, caret);
+      }
     }
 
     function singleRow(area) {
@@ -1013,6 +1019,7 @@
     let dragStart = null;
     let dragAnchor = null;
     let sourcePress = null;
+    let downAt = null;
     const DRAG_CLICK_DISTANCE = 4;
 
     function onAreaPress(e) {
@@ -1085,6 +1092,7 @@
     document.addEventListener('pointercancel', onDragEnd);
 
     container.addEventListener('pointerdown', (e) => {
+      downAt = { x: e.clientX, y: e.clientY };
       pressed = true;
       extended = false;
       clearTimeout(release);
@@ -1130,6 +1138,7 @@
     function boxFor(e) {
       const direct = e.target.closest('input[data-box]');
       if (direct) return direct;
+      if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >= DRAG_CLICK_DISTANCE) return null;
       const item = e.target.closest('.task-item');
       const input = item && item.querySelector('input[data-box]');
       const text = item && item.querySelector('label.task > span');

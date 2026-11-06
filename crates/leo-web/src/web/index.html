@@ -495,8 +495,10 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .prose .task input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .prose .task input::after { transition: none; } }
 @media (forced-colors: active) { .prose .task input { appearance: auto; -webkit-appearance: auto; } .prose .task input::after { display: none; } }
-.prose .task > span { background: repeating-linear-gradient(to bottom, transparent 0, transparent calc(.52lh - .5px), var(--faint) calc(.52lh - .5px), var(--faint) calc(.52lh + .5px), transparent calc(.52lh + .5px), transparent 1lh) 0 0 / 0% 100% no-repeat; transition: background-size 180ms ease-out, color var(--t-press); }
-.prose .task.done > span { color: var(--muted); background-size: 100% 100%; }
+.prose .task > span { text-decoration: line-through 1px transparent; transition: text-decoration-color 180ms ease-out, color var(--t-press); }
+.prose .task.done > span { color: var(--muted); text-decoration-color: var(--faint); }
+@media (prefers-reduced-motion: reduce) { .prose .task > span { transition: color var(--t-press); } }
+@media (forced-colors: active) { .prose .task > span { text-decoration: none; } .prose .task.done > span { text-decoration: line-through; } }
 .prose .task.busy { opacity: .5; }
 .prose code { font: 0.88em/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace; background: var(--code-bg); padding: .15em .4em; border-radius: 6px; }
 .prose pre { background: var(--code-bg); border-radius: 12px; padding: 14px 16px; overflow-x: auto; }
@@ -530,7 +532,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .doc .blk .task input { width: 22px; height: 22px; margin: 2px 4px 0 -4px; padding: 0; }
 .doc .blk .task { gap: 8px; }
 .doc .blk .task > span { min-width: 0; min-height: 1.65em; flex: 0 1 auto; }
-.doc .blk .task > span:has(.line-edit) { flex: 1; background: none; }
+.doc .blk .task > span:has(.line-edit) { flex: 1; text-decoration: none; }
 .doc .blk .task.done .line-edit { text-decoration: line-through; text-decoration-color: var(--faint); }
 .doc .blk .placeholder { color: var(--faint); }
 .doc .line-edit {

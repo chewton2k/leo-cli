@@ -142,6 +142,13 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   `version` (FNV-1a); 409 → "<title> (conflict from leo)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
+  Typing a list or checklist marker plus its space (`- `, `1. `, `- [ ] `)
+  re-renders that line at once with the caret kept (not during IME composition);
+  headings already restyle live, and Backspace at the start of the text gives the
+  plain Markdown back. A checked task strikes only its text (`text-decoration`,
+  per wrapped line; an empty one shows none). A box toggles only from a click
+  that starts and ends within `DRAG_CLICK_DISTANCE` of one point, so selecting
+  text and releasing near the box never ticks it.
   Checkbox clicks update the live input and task style without redrawing the
   document. Finishing another edit resolves the clicked source line after shifts
   and preserves the checkbox’s viewport position and focus.
