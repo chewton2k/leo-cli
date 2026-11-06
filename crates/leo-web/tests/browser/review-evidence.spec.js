@@ -579,19 +579,56 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
   expect(closing.at(-1).hidden || !closing.at(-1).shown, 'and is gone afterwards').toBe(true);
   await expect(button).toBeFocused();
 
-  await watch();
-  await button.click();
-  await page.waitForTimeout(70);
-  await button.click();
-  await page.waitForTimeout(70);
-  await button.click();
-  await page.waitForTimeout(700);
-  const interrupted = await read();
-  const visible = interrupted.filter((f) => f.shown);
+  const reversals = await button.evaluate(button => {
+    const menu = document.querySelector('#margin-mode-menu');
+    const animate = menu.animate;
+    let run, play;
+    menu.animate = function (...args) {
+      run = animate.apply(this, args);
+      play = run.play;
+      run.play = function () { this.pause(); };
+      return run;
+    };
+    button.click();
+    const first = run;
+    const duration = first.effect.getTiming().duration;
+    const frame = () => {
+      const current = menu.getAnimations()[0];
+      const style = getComputedStyle(menu);
+      return { same: current === first, time: current?.currentTime, rate: current?.playbackRate, state: current?.playState, hidden: menu.hidden, opacity: Number(style.opacity), transform: style.transform, clip: style.clipPath };
+    };
+    first.currentTime = duration * 0.4;
+    const opening = frame();
+    button.click();
+    const reversedClosed = frame();
+    first.currentTime = duration * 0.2;
+    const closing = frame();
+    button.click();
+    const reversedOpen = frame();
+    first.currentTime = duration * 0.8;
+    const continued = frame();
+    menu.animate = animate;
+    run.play = play;
+    run.play();
+    return { duration, opening, reversedClosed, closing, reversedOpen, continued };
+  });
+  const pairs = [[reversals.opening, reversals.reversedClosed, -1], [reversals.closing, reversals.reversedOpen, 1]];
   let jump = 0;
-  for (let i = 1; i < visible.length; i++) jump = Math.max(jump, Math.abs(visible[i].opacity - visible[i - 1].opacity));
-  expect(jump, `reversing reverses from the current frame, no jump (${jump.toFixed(2)})`).toBeLessThanOrEqual(0.5);
-  expect(interrupted.at(-1).opacity).toBeGreaterThan(0.99);
+  for (const [before, after, rate] of pairs) {
+    expect(after.same, 'reversal keeps the same native animation').toBe(true);
+    expect(after.state, 'the probe controls the animation clock').toBe('paused');
+    expect(after.time, 'reversal preserves current time').toBeCloseTo(before.time, 2);
+    expect(after.rate, 'reversal changes direction').toBe(rate);
+    expect(after.hidden, 'reversal keeps the menu rendered').toBe(false);
+    expect(after.transform, 'reversal preserves the current position').toBe(before.transform);
+    expect(after.clip, 'reversal preserves the current reveal').toBe(before.clip);
+    jump = Math.max(jump, Math.abs(after.opacity - before.opacity));
+  }
+  expect(jump, 'reversal preserves opacity at the same native animation time').toBeLessThan(0.005);
+  expect(reversals.closing.opacity, 'closing advances towards hidden').toBeLessThan(reversals.reversedClosed.opacity);
+  expect(reversals.continued.opacity, 'reopening advances towards visible').toBeGreaterThan(reversals.reversedOpen.opacity);
+  await expect.poll(() => page.locator('#margin-mode-menu').evaluate(menu => menu.getAnimations().length)).toBe(0);
+  await expect(page.locator('#margin-mode-menu')).toBeVisible();
   await expect(button).toHaveAttribute('aria-expanded', 'true');
   expect(await page.getByRole('menu', { name: 'Note reading mode' }).count()).toBe(1);
   await page.keyboard.press('Escape');
@@ -617,7 +654,7 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
     await page.waitForTimeout(400);
   }
   await page.emulateMedia({ colorScheme: 'light' });
-  record('R15', { ...env(page), opening: distinct(opening), closing: distinct(closing), maxOpacityJump: jump, reducedIntermediateFrames: between.length });
+  record('R15', { ...env(page), opening: distinct(opening), closing: distinct(closing), maxOpacityJump: jump, reversals, reducedIntermediateFrames: between.length });
 });
 
 test('R16 the When you ask copy in Settings describes the real activation', async ({ page }) => {

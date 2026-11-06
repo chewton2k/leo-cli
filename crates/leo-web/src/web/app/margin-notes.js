@@ -279,18 +279,27 @@ function inkWords(box, text) {
   }
 }
 
+function marginAnswer(line, text, arriving = false) {
+  if (text.includes('```')) {
+    line.classList.add('prose');
+    line.innerHTML = window.leoMarkdown.render(text, { interactive: false, dir: marginPage.s?.note.directory || '' });
+  } else if (arriving) inkWords(line, text);
+  else line.textContent = text;
+}
+
 function marginElement(t) {
   const el = document.createElement('article');
   const more = `margin-more-${t.id}`;
   el.className = 'margin-note';
   el.dataset.id = t.id;
   el.setAttribute('aria-label', `Felix, about “${t.quote.slice(0, 80)}”`);
-  el.innerHTML = `<span class="margin-surface" aria-hidden="true"></span><button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}"></button><div class="margin-said"></div><div class="margin-more" id="${esc(more)}" hidden>
+  el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}"></button><div class="margin-said"></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
     <form class="margin-reply"><textarea rows="1" maxlength="1000" aria-label="Reply to Felix" placeholder="Reply"></textarea></form>
     <p class="margin-problem" role="status" hidden></p>
-    <div class="margin-acts"><button type="button" class="margin-add" data-margin-act="add">Add to note</button><button type="button" class="msg-act" data-margin-act="chat">Open in chat</button><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button></div></div>`;
+    <div class="margin-acts"><button type="button" class="margin-add" data-margin-act="add">Add to note</button><button type="button" class="msg-act" data-margin-act="chat">Open in chat</button><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button></div></div></div>`;
   marginPage.layer.appendChild(el);
   marginPage.els.set(t.id, el);
+  marginPage.observer?.observe(el);
   return el;
 }
 
@@ -302,22 +311,25 @@ function marginFill(el, t, arriving) {
     el.dataset.drawn = key;
     said.textContent = '';
     if (!open) {
-      const line = document.createElement('p');
+      const line = document.createElement('div');
       line.className = 'margin-felix';
-      if (arriving) inkWords(line, marginNow(t));
-      else line.textContent = marginNow(t);
+      marginAnswer(line, marginNow(t), arriving);
       said.append(line);
     } else {
       for (const message of t.messages || []) {
-        const line = document.createElement('p');
+        const line = document.createElement('div');
         line.className = message.from === 'felix' ? 'margin-felix' : 'margin-you';
-        line.textContent = message.text;
+        if (message.from === 'felix') marginAnswer(line, message.text);
+        else line.textContent = message.text;
         said.append(line);
       }
     }
   }
   const draft = t.id === 'draft';
-  $('.margin-more', el).hidden = !open;
+  const more = $('.margin-more', el);
+  if (open && !el.hasAttribute('data-open')) more.getBoundingClientRect();
+  more.inert = !open;
+  more.setAttribute('aria-hidden', String(!open));
   el.toggleAttribute('data-open', open);
   const toggle = $('.margin-toggle', el);
   toggle.setAttribute('aria-expanded', String(open));
@@ -353,7 +365,9 @@ function marginThreadPaths(id) {
 }
 
 function marginDropThread(id) {
-  marginPage.els.get(id)?.remove();
+  const el = marginPage.els.get(id);
+  if (el) marginPage.observer?.unobserve(el);
+  el?.remove();
   marginPage.els.delete(id);
   marginPage.marks.get(id)?.remove();
   marginPage.marks.delete(id);
@@ -571,7 +585,7 @@ function marginThread(id) {
 function marginOpen(id, focus = false) {
   marginPage.open = id;
   marginDraw();
-  if (focus) $('textarea', marginPage.els.get(id))?.focus();
+  if (focus) $('textarea', marginPage.els.get(id))?.focus({ preventScroll: true });
 }
 
 function marginClose() {

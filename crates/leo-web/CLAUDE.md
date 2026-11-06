@@ -459,8 +459,10 @@ target. Check the page sequence after loading preferences.
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
   does: a stale version (409), a note not in `along` or not edited in this engine
   run (403, `Reads::edited` is set by the PATCH route, so browsing can never read),
-  a reply streaming (`Steering::any_open`), 5 minutes after a read note on that note,
-  90 s between reads of a note, overlapping reads and the daily cap (429 with `why`).
+  a reply streaming (`Steering::any_open`), 90 s between reads of a note,
+  overlapping reads and the daily cap (429 with `why`). A useful comment adds no
+  separate five-minute lockout. Reads can explain, connect ideas, ask a worthwhile
+  question, correct a mistake or include one small Mermaid diagram.
   The cap is spent in one transaction after the read is claimed, so failures spend it
   too, and a broken day row counts as spent. Blocks already read are dropped. A failed
   read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
@@ -475,7 +477,8 @@ target. Check the page sequence after loading preferences.
   `Powers.toolless_chat` on the normal model. Note text sits between tags with a
   random suffix and the prompts say it is never instructions; thread messages are
   JSON records inside those tags, one per line, so stored text cannot close the block
-  or forge a turn. Model text is only ever set with `textContent`. Settings says text
+  or forge a turn. Plain messages use `textContent`; diagram answers use the existing
+  escaped Markdown renderer, strict Mermaid rendering and inert SVG images. Settings says text
   stays here only for a loopback address and a model without `cloud` in its name
   (`ai::reads_stay_here`).
 - Daily cap: 40 (20, 40, 80). Every read starts a fresh process (`claude -p`,
@@ -521,6 +524,9 @@ target. Check the page sequence after loading preferences.
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
   mascot on the text. Straight dotted underlines reveal in about 500 ms; there is
   no default tether. Reduced Motion stills the reveal and word arrivals.
+- Open replies have no card surface or boxed textarea outline. Their retained
+  controls expand/collapse over 240 ms, become inert/aria-hidden on close and snap
+  under Reduced Motion. Diagram size changes relayout the bounded thread stack.
 - Arrival keeps the dotted stroke pattern fixed and clips each line left to right
   over a shared 500 ms budget. Open, hover and keyboard focus use a solid accent
   underline and wash. The comment has no mascot; compact layouts reserve the full
@@ -1130,3 +1136,12 @@ Navigation serializes the departing save against the latest destination. A faile
 save retains the editor and address. Only a draft successfully persisted in this
 browser offers an explicit Leave, draft kept action, which rechecks session and
 persistence at activation; an in-memory-only draft cannot bypass the save.
+
+
+Text-input and virtual Enter (`beforeinput` newline/paragraph/line-break) share
+list continuation with keydown Enter. Shift+Enter and composition keep their own
+paths. Heading previews and menus use 260 ms motion, a taller hover peak, and
+outside clicks dismiss the heading list without swallowing the destination click.
+Chats history keeps its list mounted while the desktop column or compact overlay
+animates; collapsed content is inert, the toggle exposes its expanded state, and
+Escape cancelling delete confirmation stops later same-panel abort handlers.

@@ -108,3 +108,110 @@ test('chat history retains its delete control through confirmation and handles f
   await button.click();
   await expect(row).toHaveCount(0);
 });
+
+for (const layout of ['desktop', 'compact', 'source']) test(`Chats history ${layout} slides without replacing content and reverses from its current frame`, async ({ page }, testInfo) => {
+  await page.setViewportSize(layout === 'compact' ? { width: 390, height: 844 } : { width: 1600, height: 900 });
+  const chats = Array.from({ length: 40 }, (_, i) => ({ id: `motion-${i}`, title: `Saved conversation ${i}`, count: 2, updated_at: new Date().toISOString() }));
+  await page.route('**/api/chats', route => route.fulfill({ json: chats }));
+  await page.locator('#chat-toggle').click();
+  if (layout === 'source') {
+    await page.evaluate(() => { document.body.classList.add('with-source'); document.querySelector('#chat').style.width = '420px'; });
+    await expect(page.locator('#chat')).toHaveClass(/source-narrow/);
+  }
+  const toggle = page.locator('.chat-head .chat-history-toggle');
+  const history = page.locator('#chat-history');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toHaveAttribute('aria-controls', 'chat-history');
+  await expect(history).toBeHidden();
+  expect(await history.evaluate(el => el.inert)).toBe(true);
+  await page.locator('#chat-input').fill('Keep this question and its caret.');
+  await page.locator('#chat-input').evaluate(el => el.setSelectionRange(5, 13));
+  await page.evaluate(() => {
+    const panel = document.querySelector('#chat');
+    panel.addEventListener('click', event => {
+      if (!event.target.closest('[data-chat="history"]')) return;
+      const history = document.querySelector('#chat-history');
+      getComputedStyle(history).opacity;
+      window.historyMotion = history.getAnimations().filter(run => run.effect.getTiming().duration > 0);
+      for (const run of window.historyMotion) run.pause();
+    });
+  });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(history.locator('.chat-history-row')).toHaveCount(40);
+  const frames = await page.evaluate(() => {
+    const history = document.querySelector('#chat-history');
+    const main = document.querySelector('.chat-main');
+    return [0, .25, .5, .75, 1].map(part => {
+      for (const run of window.historyMotion) run.currentTime = run.effect.getTiming().duration * part;
+      const rect = history.getBoundingClientRect();
+      return { x: rect.x, width: rect.width, main: main.getBoundingClientRect().x, opacity: Number(getComputedStyle(history).opacity) };
+    });
+  });
+  expect(await page.evaluate(() => historyMotion.length), 'the toggle starts native motion').toBeGreaterThan(0);
+  expect(new Set(frames.map(frame => Math.round(frame.x))).size, 'history travels through intermediate positions').toBeGreaterThan(2);
+  expect(Math.max(...frames.map(frame => frame.width)) - Math.min(...frames.map(frame => frame.width)), 'text keeps its own width during the reveal').toBeLessThan(1);
+  if (layout === 'desktop') expect(Math.abs(frames.at(-1).main - frames[0].main)).toBeGreaterThan(100);
+  else expect(Math.abs(frames.at(-1).main - frames[0].main)).toBeLessThan(1);
+  expect(await page.locator('.chat-main').evaluate(el => el.inert)).toBe(layout !== 'desktop');
+  await page.evaluate(() => {
+    const list = document.querySelector('#chat-history-list');
+    list.scrollTop = 180;
+    window.historyRow = list.firstElementChild;
+    window.historyScroll = list.scrollTop;
+    for (const run of historyMotion) run.currentTime = run.effect.getTiming().duration * .5;
+  });
+  const before = await history.boundingBox();
+  const close = layout === 'desktop' ? toggle : history.locator('.chat-history-back');
+  await close.evaluate(el => { el.focus(); el.click(); });
+  const after = await history.boundingBox();
+  expect(Math.abs(after.x - before.x), 'reverse starts from the current position').toBeLessThan(2);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.evaluate(() => { for (const run of historyMotion) run.finish(); });
+  await expect(history).toBeHidden();
+  expect(await history.evaluate(el => el.inert)).toBe(true);
+  expect(await page.locator('.chat-main').evaluate(el => el.inert)).toBe(false);
+  await expect(toggle).toBeFocused();
+  await toggle.click();
+  await page.evaluate(() => { for (const run of historyMotion) run.finish(); });
+  await expect(history).toBeVisible();
+  expect(await history.evaluate(el => document.querySelector('#chat-history-list').firstElementChild === window.historyRow)).toBe(true);
+  expect(await history.locator('.chat-history-list').evaluate(el => el.scrollTop)).toBe(await page.evaluate(() => historyScroll));
+  await expect(page.locator('#chat-input')).toHaveValue('Keep this question and its caret.');
+  expect(await page.locator('#chat-input').evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([5, 13]);
+  await page.screenshot({ path: testInfo.outputPath(`chats-${layout}-open.png`) });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await close.evaluate(el => { el.focus(); el.click(); });
+  await expect(history).toBeHidden();
+  await toggle.click();
+  await expect(history).toBeVisible();
+  expect(await history.evaluate(el => el.getAnimations().filter(run => run.effect.getTiming().duration > 0).length)).toBe(0);
+});
+
+test('Escape on a pending history deletion leaves the streaming answer running', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.request.put('/api/chats/escape-history', { data: { title: 'Keep this saved conversation', mode: 'chat', messages: [{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Answer' }] } });
+  let release;
+  const waiting = new Promise(done => { release = done; });
+  await page.route('**/api/chat', async route => {
+    await waiting;
+    await route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: '{"t":"Finished answer."}\n{"done":true}\n' });
+  });
+  try {
+    await page.locator('#chat-toggle').click();
+    await page.locator('#chat-input').fill('Hold this answer while I inspect history.');
+    await page.locator('#chat-input').press('Enter');
+    await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Stop');
+    await page.locator('.chat-head .chat-history-toggle').click();
+    const button = page.locator('#chat-history .chat-history-x[data-id="escape-history"]');
+    await button.click();
+    await expect(button).toHaveClass(/sure/);
+    await page.keyboard.press('Escape');
+    await expect(button).not.toHaveClass(/sure/);
+    await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Stop');
+    await expect(page.locator('.chat-body')).not.toContainText('Stopped.');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Send');
+    await expect(page.locator('.chat-body')).toContainText('Stopped.');
+  } finally { release(); }
+});

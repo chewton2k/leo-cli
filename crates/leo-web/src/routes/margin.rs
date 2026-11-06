@@ -55,7 +55,6 @@ pub(crate) struct PrefsBody {
 struct ReadFacts {
     along: bool,
     cap: u32,
-    spoke_soon: bool,
     full: bool,
 }
 
@@ -277,9 +276,6 @@ pub(crate) async fn read(
         let facts = blocking(move || ReadFacts {
             along: margin::mode_of(&held, &id, created) == "along",
             cap: margin::prefs(&held).cap,
-            spoke_soon: margin::last_read_note(&held, &id).is_some_and(|at| {
-                Utc::now() - at < chrono::Duration::minutes(margin::NOTE_GAP_MINUTES)
-            }),
             full: margin::open_on(&held, &id).len() >= margin::MOST_OPEN,
         })
         .await;
@@ -307,13 +303,6 @@ pub(crate) async fn read(
             StatusCode::TOO_MANY_REQUESTS,
             "felix",
             "Felix is answering you.",
-        );
-    }
-    if facts.spoke_soon {
-        return said(
-            StatusCode::TOO_MANY_REQUESTS,
-            "soon",
-            "Felix spoke here a moment ago.",
         );
     }
     if facts.full {

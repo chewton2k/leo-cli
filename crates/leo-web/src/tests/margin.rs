@@ -351,7 +351,7 @@ async fn reads_wait_a_while_and_only_changed_blocks_reach_the_model() {
 }
 
 #[tokio::test]
-async fn a_note_that_just_spoke_keeps_quiet_for_a_few_minutes() {
+async fn a_recent_comment_does_not_add_a_five_minute_read_lockout() {
     let (engine, calls) = reading(SAYS).await;
     let (id, version) = engine.note("Spoke", PASSAGE).await;
     let held = margin::new_thread(
@@ -362,9 +362,25 @@ async fn a_note_that_just_spoke_keeps_quiet_for_a_few_minutes() {
         vec![margin::felix_says("Hm.")],
     );
     assert!(margin::put(&engine.chats(), &held));
-    let (status, why) = engine.read(&id, &version, &[PASSAGE]).await;
-    assert_eq!((status, why["why"].as_str()), (429, Some("soon")));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let (status, reply) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!(status, 200);
+    assert!(reply["note"].is_object());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_useful_diagram_survives_the_read_and_saved_thread() {
+    let text = "Chloroplasts make sugar; mitochondria release its energy.\n\n```mermaid\nflowchart TD\n Sun-->Sugar\n Sugar-->Energy\n```";
+    let answer = r#"{"quote":"just checks if it matches","text":"Chloroplasts make sugar; mitochondria release its energy.\n\n```mermaid\nflowchart TD\n Sun-->Sugar\n Sugar-->Energy\n```"}"#;
+    let (engine, calls) = reading(answer).await;
+    let (id, version) = engine.note("Diagram", PASSAGE).await;
+    let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!(status, 200);
+    assert_eq!(read["note"]["messages"][0]["text"], text);
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(view["threads"][0]["messages"][0]["text"], text);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     engine.stop().await;
 }
 

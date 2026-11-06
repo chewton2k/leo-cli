@@ -739,7 +739,7 @@
       </nav>
       <section class="chat-main">
       <header class="chat-head">
-        <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+        <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
         <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
         <div class="chat-menu">
@@ -1067,9 +1067,10 @@
         if (state.sidebar === null && !panel.hidden) {
           const on = sidebarOpen();
           const before = panel.classList.contains('with-history');
-          panel.classList.toggle('with-history', on);
-          if (on && !before) loadChats();
+          syncSidebar(on);
+          if (on && !before && !state.chats) loadChats();
         }
+        syncSidebar(panel.classList.contains('with-history'));
         historyResize.fit();
       });
       historySize.observe(panel);
@@ -1086,6 +1087,21 @@
       return false;
     }
 
+    function syncSidebar(on) {
+      const overlay = !wide() || sourceNarrow();
+      const button = panel.querySelector('.chat-history-toggle');
+      const main = panel.querySelector('.chat-main');
+      const back = !on && history.contains(document.activeElement);
+      const enter = on && overlay && main.contains(document.activeElement);
+      main.inert = on && overlay;
+      history.inert = !on;
+      history.setAttribute('aria-hidden', String(!on));
+      button.setAttribute('aria-expanded', String(on));
+      panel.classList.toggle('with-history', on);
+      if (back) button.focus({ preventScroll: true });
+      else if (enter) history.querySelector('.chat-history-back').focus({ preventScroll: true });
+    }
+
     function showSidebar(on) {
       state.sidebar = on;
       if (wide()) {
@@ -1095,10 +1111,12 @@
           state.sidebar = on;
         }
       }
-      panel.classList.toggle('with-history', on);
+      syncSidebar(on);
       historyResize.fit();
-      if (on) loadChats();
+      if (on && !state.chats) loadChats();
     }
+
+    syncSidebar(false);
 
     function stored() {
       return state.messages.filter((m) => !m.pending);
@@ -1338,7 +1356,7 @@
     panel.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !state.doomed) return;
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       state.doomed = null;
       syncChatDelete();
     });
@@ -2573,7 +2591,7 @@
         onToggle(false);
       }
       if (state.open) {
-        panel.classList.toggle('with-history', sidebarOpen());
+        syncSidebar(sidebarOpen());
         historyResize.fit();
         if (sidebarOpen()) loadChats();
         drawModes();
@@ -2584,7 +2602,10 @@
         loadReview();
         mood('wave', 1500);
         awake();
-        if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) input.focus();
+        if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) {
+          if (sidebarOpen() && (!wide() || sourceNarrow())) history.querySelector('.chat-history-back').focus({ preventScroll: true });
+          else input.focus();
+        }
       }
     }
 

@@ -576,3 +576,49 @@ test.describe('settings layout surface', () => {
     });
   });
 });
+
+test('margin replies expand as borderless retained controls and collapse out of the tab order', async ({ browser }) => {
+  await fixture(browser, async page => {
+    const note = page.locator('.margin-note[data-id="t1"]');
+    const more = note.locator('.margin-more');
+    await expect(more).toHaveAttribute('aria-hidden', 'true');
+    const values = await frames(page, 500, () => {
+      const el = document.querySelector('.margin-note[data-id="t1"] .margin-more');
+      return { height: el.getBoundingClientRect().height, opacity: Number(getComputedStyle(el).opacity) };
+    }, [[30, "marginOpen('t1', true)"]]);
+    expect(values.filter(frame => frame.opacity > .01 && frame.opacity < .99).length).toBeGreaterThan(1);
+    expect(values.at(-1).height).toBeGreaterThan(35);
+    await expect(note.locator('textarea')).toBeFocused();
+    expect(await note.locator('textarea').evaluate(el => getComputedStyle(el).outlineStyle)).toBe('none');
+    expect(await note.locator('.margin-surface').count()).toBe(0);
+    await page.waitForTimeout(800);
+    const closing = await frames(page, 500, () => {
+      const el = document.querySelector('.margin-note[data-id="t1"] .margin-more');
+      return { height: el.getBoundingClientRect().height, opacity: Number(getComputedStyle(el).opacity) };
+    }, [[30, 'marginClose()']]);
+    expect(closing.filter(frame => frame.height > 1 && frame.opacity > .01 && frame.opacity < .99).length).toBeGreaterThan(1);
+    expect(closing.at(-1).height).toBe(0);
+    expect(await more.evaluate(el => el.inert)).toBe(true);
+    await expect(more).toHaveAttribute('aria-hidden', 'true');
+  }, { threads: [THREADS.short], context: { recordVideo: { dir: path.join('/tmp/leo-margin-round3-video', test.info().project.name), size: { width: 1280, height: 800 } } } });
+});
+
+test('margin diagram answers reuse escaped Markdown figures instead of displaying source or active HTML', async ({ browser }) => {
+  const text = 'The two organelles do different jobs.\n\n```mermaid\nflowchart TD\n Sun-->Sugar\n Sugar-->Energy\n```\n\n<script>window.bad=true</script>';
+  const thread = { ...THREADS.short, messages: [{ from: 'felix', text }] };
+  await fixture(browser, async page => {
+    const answer = page.locator('.margin-note[data-id="t1"] .margin-felix');
+    await expect(answer.locator('figure.diagram .diagram-src code')).toContainText('Sun-->Sugar');
+    expect(await answer.locator('script').count()).toBe(0);
+    expect(await page.evaluate(() => window.bad)).toBeUndefined();
+    await page.evaluate(() => marginOpen('t1', true));
+    await expect(answer.locator('figure.diagram')).toHaveCount(1);
+    expect(await answer.locator('script').count()).toBe(0);
+    await page.evaluate(() => { window.leoTheme.dark = () => false; window.leoTheme.onChange = () => {}; });
+    await page.addScriptTag({ content: read('vendor/mermaid.min.js') });
+    await page.addScriptTag({ content: read('app/diagrams.js') });
+    await page.evaluate(() => watchDiagrams());
+    await expect(answer.locator('.diagram-art svg')).toHaveCount(1);
+    await expect(answer.locator('.diagram-art')).toContainText('Sugar');
+  }, { threads: [thread] });
+});

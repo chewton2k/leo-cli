@@ -29,3 +29,20 @@ test('history heading has no duplicate new-chat button and labels are escaped', 
   assert.match(html, /class="chat-delete-x"/); assert.match(html, /class="chat-delete-label"/);
   assert.match(html, /&lt;title&gt;/); assert.doesNotMatch(html, /<title>/);
 });
+
+test('Escape cancels a pending delete before another panel listener can stop an answer', () => {
+  const panel = new EventTarget();
+  let stopped = 0;
+  const context = { panel, input: {}, state: { doomed: 'one', busy: { abort: () => stopped++ } }, syncChatDelete() {} };
+  const start = source.indexOf("    panel.addEventListener('keydown', (e) => {", source.indexOf('    function spare(e)'));
+  const end = source.indexOf("    document.addEventListener('pointerdown', spare", start);
+  const busy = source.lastIndexOf("    panel.addEventListener('keydown', (e) => {");
+  vm.createContext(context);
+  vm.runInContext(source.slice(start, end) + source.slice(busy, source.indexOf('    return {', busy)), context);
+  const escape = () => { const event = new Event('keydown', { cancelable: true }); Object.defineProperty(event, 'key', { value: 'Escape' }); panel.dispatchEvent(event); return event; };
+  assert.equal(escape().defaultPrevented, true);
+  assert.equal(context.state.doomed, null);
+  assert.equal(stopped, 0);
+  escape();
+  assert.equal(stopped, 1);
+});
