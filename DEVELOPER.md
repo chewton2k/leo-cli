@@ -218,5 +218,3 @@ a second launch focuses the first, Felix answers, Quit exits within seconds.
 - Keep the audio file when a recording's transcription fails, so it can be
   retried.
 - Flashcards or a quiz generated from a note.
-- Two "leo manual" notes appear after a second computer joins a backup (each
-  computer installed its own). Harmless, but could be merged.

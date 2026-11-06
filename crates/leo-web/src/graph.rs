@@ -104,9 +104,7 @@ pub struct Source {
 pub fn sources(notes: &[Note]) -> Vec<Source> {
     notes
         .iter()
-        .filter(|n| {
-            !(n.title == leo_core::manual::MANUAL_TITLE && n.tags.iter().any(|t| t == "manual"))
-        })
+        .filter(|n| crate::chat::studied(n))
         .map(|n| Source {
             id: n.id.clone(),
             title: n.title.clone(),
@@ -1896,12 +1894,7 @@ mod tests {
             leo_core::store::Store::load_from(&tempfile::tempdir().unwrap().path().join("notes"))
                 .unwrap();
         store
-            .create_note(
-                leo_core::manual::MANUAL_TITLE,
-                "help",
-                vec!["manual".into()],
-                "",
-            )
+            .create_note(crate::chat::MANUAL_TITLE, "help", vec!["manual".into()], "")
             .unwrap();
         store.create_note("Graphs", "BFS", vec![], "cs130").unwrap();
         let list = sources(&store.notes);

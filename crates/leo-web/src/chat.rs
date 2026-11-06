@@ -257,8 +257,10 @@ struct Picked<'a> {
     focused: bool,
 }
 
+pub(crate) const MANUAL_TITLE: &str = "leo manual";
+
 pub(crate) fn studied(note: &Note) -> bool {
-    !(note.title == leo_core::manual::MANUAL_TITLE && note.tags.iter().any(|t| t == "manual"))
+    !(note.title == MANUAL_TITLE && note.tags.iter().any(|t| t == "manual"))
 }
 
 pub(crate) fn clip_turn(text: &str, most: usize) -> String {
@@ -1183,12 +1185,7 @@ mod tests {
             );
         }
         store
-            .create_note(
-                leo_core::manual::MANUAL_TITLE,
-                "queue queue queue",
-                vec!["manual".into()],
-                "",
-            )
+            .create_note(MANUAL_TITLE, "queue queue queue", vec!["manual".into()], "")
             .unwrap();
         (store, dir, ids)
     }
@@ -1240,7 +1237,7 @@ mod tests {
             .why
             .starts_with("connected (same method): Both take"));
         assert!(
-            !titles.contains(&leo_core::manual::MANUAL_TITLE),
+            !titles.contains(&MANUAL_TITLE),
             "the manual is never study material"
         );
         assert!(text.contains(
@@ -1289,7 +1286,7 @@ mod tests {
         assert!(
             !matches(&store, &cache, "queue", 8)
                 .iter()
-                .any(|n| n.title == leo_core::manual::MANUAL_TITLE),
+                .any(|n| n.title == MANUAL_TITLE),
             "the manual is never study material"
         );
     }

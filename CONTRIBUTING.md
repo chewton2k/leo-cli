@@ -112,8 +112,7 @@ Before opening a pull request:
 - [ ] `cargo test` passes, including any new tests for your change
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean
 - [ ] `cargo fmt --all` has been run
-- [ ] If the change is something a user would notice: the README and the manual note
-      (`crates/leo-core/src/manual.rs`) say so
+- [ ] If the change is something a user would notice: the README says so
 
 CI runs for pull requests and pushes to `main`; branch pushes do not duplicate
 the pull request run. Branches without a pull request can use Actions → CI →

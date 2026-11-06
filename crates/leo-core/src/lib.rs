@@ -7,7 +7,6 @@ pub mod children;
 pub mod diag;
 pub mod filename;
 pub mod keep;
-pub mod manual;
 pub mod notes;
 pub mod open;
 pub mod paths;

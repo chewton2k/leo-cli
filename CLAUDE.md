@@ -10,7 +10,7 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `manual`, `keep` (retention choices) | — |
+| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices) | — |
 | `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, sync policy), `health`, `providers` | core |
 | `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
 | `crates/leo-host` | `powers()` (the AI, speech, settings, recording housekeeping and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
@@ -105,16 +105,6 @@ Two rules there, both learned from tests that hung:
 
 Checks must stay cheap enough to run on startup: a key presence check, a PATH
 scan, or a loopback connect with a 300 ms timeout. Never a real request.
-
-### The manual note
-
-`manual.rs` creates one note on first run: a one-screen quickstart for the app
-(Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
-real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (24); deleting the
-manual survives the next launch, and a version bump rewrites the user's note.
-Tests: under 60 lines, names Settings, Felix, Record and ⌘F, and names no
-terminal command.
 
 ### Data model
 
