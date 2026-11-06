@@ -28,7 +28,7 @@ test('retired interview cards render a short notice without controls and keep St
   for (const kind of ['edit', 'create', 'quiz', 'add_task', 'update_board', 'margin_note']) assert.equal(C.retiredPractice({ kind }), false);
 });
 
-test('retired bookmarks and saved last places land in the library without touching stale practice keys', () => {
+test('retired bookmarks and saved last places land in the workspace without touching stale practice keys', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/events.js'), 'utf8');
   const start = source.indexOf("const LAST_PLACE_KEY ="), end = source.indexOf("window.addEventListener('hashchange'", start);
   for (const hash of ['#/interviews', '#/interviews/old-practice']) {

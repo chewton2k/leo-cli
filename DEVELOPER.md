@@ -1,6 +1,6 @@
 # leo — maintainer notes
 
-Private notes for working on and releasing leo. This file is gitignored; the
+Private notes for working on and releasing leo. This file is tracked; the
 public guide for contributors is CONTRIBUTING.md.
 
 ## Before every push
@@ -79,7 +79,7 @@ coverage and flake/retry rates before introducing a blocking percentage.
 
 ## Releasing
 
-Automatic. Push to `main`; when every CI job passes (tests on Linux and macOS,
+Automatic. Push to `main`; when every CI job passes (tests on macOS and Windows,
 lint, MSRV), `ci.yml` calls `release.yml`, which:
 
 1. runs `scripts/next-version.sh`: the last `v*` tag with patch + 1, or
@@ -109,8 +109,7 @@ env -i HOME=$T/home SHELL=/bin/zsh PATH=/usr/bin:/bin \
 $T/home/.local/bin/leo --version
 ```
 
-Update your own copy: `cargo install --path . --force --locked`, or the curl
-install (which gets the released version number).
+Update your own copy with `leo update`.
 
 **A broken release:** delete the release and its tag on GitHub (and locally with
 `git tag -d vX.Y.Z`), fix the problem, then release a new patch version. Don't
@@ -187,17 +186,13 @@ a second launch focuses the first, Felix answers, Quit exits within seconds.
   `MemoryStore`.
 - **Never resolve DNS in health checks.** `to_socket_addrs` has no timeout;
   `health::port_open` only connects to literal addresses and localhost.
-- **Git in the notes repository:** always pull with `--no-rebase` and say so
-  explicitly. Users' own git settings differ, and newer git refuses to combine
-  diverged histories unless told how. `directories.json` is deliberately not
-  tracked; notes merge by union (`.gitattributes`).
 - **A provider's `max_tokens` in config.toml replaces what leo asks for**, it
   does not cap it. Raising leo's own constants does nothing for a provider with
   its own setting.
 - **Anything user-facing that names a command must name a real one**, or
   `tests/wording.rs` fails.
-- **Two programs, one notes folder.** The app, another editor (Obsidian) and git
-  can all write at once. `Store.known` keeps a save from trashing notes it never had,
+- **Two programs, one notes folder.** The app and another editor (Obsidian)
+  can both write at once. `Store.known` keeps a save from trashing notes it never had,
   and the web server reloads from disk per request. Keep both if you touch
   saving or the server.
 - **Don't `cp` over a running binary on macOS**: the new copy gets killed.

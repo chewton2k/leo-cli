@@ -172,12 +172,12 @@ mod tests {
     }
 
     #[test]
-    fn a_session_file_from_an_older_version_still_loads() {
+    fn a_session_file_with_unknown_fields_still_loads() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("app-sessions.json");
         std::fs::write(
             &path,
-            r#"[{"secret":"abc","device":"Chrome on Mac","created_at":"2026-10-08T12:00:00Z","last_seen":"2026-10-08T12:00:00Z","site":"localhost"}]"#,
+            r#"[{"secret":"abc","created_at":"2026-10-08T12:00:00Z","last_seen":"2026-10-08T12:00:00Z","extra":"ignored"}]"#,
         )
         .unwrap();
         assert!(Sessions::load(&path).unwrap().check("abc", at(1)));
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn cookies_are_read_by_exact_name() {
-        let header = "leo_token=old; leo_session=abc; other=1";
+        let header = "leo_session=abc; other=1";
         assert_eq!(cookie_value(header, COOKIE), Some("abc"));
         assert_eq!(cookie_value("xleo_session=bad", COOKIE), None);
     }

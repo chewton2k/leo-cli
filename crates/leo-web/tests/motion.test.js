@@ -6,21 +6,6 @@ const vm = require('node:vm');
 const core = fs.readFileSync(path.resolve(__dirname, '../src/web/app/core.js'), 'utf8');
 const sheets = fs.readFileSync(path.resolve(__dirname, '../src/web/app/sheets.js'), 'utf8');
 
-test('removal motion finishes before removing content, and reduced motion skips the wait', async () => {
-  for (const reduced of [false, true]) {
-    let complete, removed = 0, animated = 0;
-    const element = { isConnected: true, remove: () => removed++, animate: () => { animated++; return { finished: new Promise(resolve => { complete = resolve; }) }; } };
-    const context = { stillMotion: () => reduced, MOTION_MS: 180, EASE_OUT: 'ease-out', app: {}, LIBRARY_ITEMS: '', libraryKey: () => '', flipList: (root, selector, key, change) => change() };
-    vm.createContext(context);
-    vm.runInContext(core.slice(core.indexOf('async function dismissContent'), core.indexOf('function stopSlide')), context);
-    const pending = context.dismissContent([element]);
-    assert.equal(animated, reduced ? 0 : 1);
-    if (!reduced) { assert.equal(removed, 0); complete(); }
-    await pending;
-    assert.equal(removed, 1);
-  }
-});
-
 test('note deletion preserves failures and never redirects another open note', async () => {
   for (const mode of ['success', 'error', 'navigate']) {
     let destroyed = 0, went = 0, failed = 0;

@@ -673,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_sessions_are_found_unless_saved_or_in_use_even_from_an_older_version() {
+    fn unfinished_sessions_are_found_unless_saved_or_in_use() {
         let tmp = tempfile::tempdir().unwrap();
         let a = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         let mut b = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
@@ -682,13 +682,6 @@ mod tests {
         let c = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         let _held = c.lock().unwrap();
         let older = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
-        let mut metadata = serde_json::to_value(&older.manifest).unwrap();
-        metadata["browser"] = serde_json::json!(true);
-        std::fs::write(
-            older.dir.join("session.json"),
-            serde_json::to_vec(&metadata).unwrap(),
-        )
-        .unwrap();
         let mut expected = vec![a.dir.clone(), older.dir.clone()];
         expected.sort();
         assert_eq!(Session::unfinished(tmp.path()), expected);

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(test)]
@@ -31,24 +30,6 @@ impl Captions {
 
     pub fn at(path: PathBuf) -> Captions {
         let db = crate::db::beside(&path);
-        let old: Option<BTreeMap<String, String>> = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok());
-        if let Some(old) = old {
-            let saved = db.with(|c| {
-                let tx = c.transaction()?;
-                for (key, caption) in &old {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO captions (key, caption) VALUES (?1, ?2)",
-                        [key, caption],
-                    )?;
-                }
-                tx.commit()
-            });
-            if saved.is_ok() {
-                crate::db::put_aside(&path);
-            }
-        }
         Captions { db }
     }
 

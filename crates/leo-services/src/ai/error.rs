@@ -24,14 +24,7 @@ impl fmt::Display for ProviderError {
 impl std::error::Error for ProviderError {}
 
 impl ProviderError {
-    /// Used by this module's tests and by the chain-status UI in the follow-on
-    /// TUI plan; the chain runner itself matches on the variants directly, so
-    /// these accessors are not called in the current binary.
-    #[allow(dead_code)]
-    pub fn is_retryable(&self) -> bool {
-        matches!(self, ProviderError::Retryable(_))
-    }
-
+    /// Used by this module's tests; the chain runner matches on the variants directly.
     #[allow(dead_code)]
     pub fn message(&self) -> &str {
         match self {
@@ -152,16 +145,28 @@ mod tests {
     fn credit_and_rate_limit_errors_are_retryable() {
         // 402 is the HF credits-exhausted case that today's hardcoded
         // fallback special-cases.
-        assert!(classify_status(402, "hf", "no credits").is_retryable());
-        assert!(classify_status(429, "groq", "slow down").is_retryable());
-        assert!(classify_status(408, "hf", "timeout").is_retryable());
+        assert!(matches!(
+            classify_status(402, "hf", "no credits"),
+            ProviderError::Retryable(_)
+        ));
+        assert!(matches!(
+            classify_status(429, "groq", "slow down"),
+            ProviderError::Retryable(_)
+        ));
+        assert!(matches!(
+            classify_status(408, "hf", "timeout"),
+            ProviderError::Retryable(_)
+        ));
     }
 
     #[test]
     fn server_errors_are_retryable() {
         for status in [500, 502, 503, 504] {
             assert!(
-                classify_status(status, "openrouter", "oops").is_retryable(),
+                matches!(
+                    classify_status(status, "openrouter", "oops"),
+                    ProviderError::Retryable(_)
+                ),
                 "{status} should be retryable"
             );
         }
@@ -171,10 +176,22 @@ mod tests {
     fn client_errors_are_fatal() {
         // A malformed request fails identically on every provider, so
         // advancing the chain would only hide the cause.
-        assert!(!classify_status(400, "openrouter", "bad request").is_retryable());
-        assert!(!classify_status(401, "openrouter", "bad key").is_retryable());
-        assert!(!classify_status(403, "openrouter", "forbidden").is_retryable());
-        assert!(!classify_status(404, "openrouter", "no model").is_retryable());
+        assert!(!matches!(
+            classify_status(400, "openrouter", "bad request"),
+            ProviderError::Retryable(_)
+        ));
+        assert!(!matches!(
+            classify_status(401, "openrouter", "bad key"),
+            ProviderError::Retryable(_)
+        ));
+        assert!(!matches!(
+            classify_status(403, "openrouter", "forbidden"),
+            ProviderError::Retryable(_)
+        ));
+        assert!(!matches!(
+            classify_status(404, "openrouter", "no model"),
+            ProviderError::Retryable(_)
+        ));
     }
 
     #[test]
@@ -189,7 +206,7 @@ mod tests {
     fn a_rejected_legacy_key_points_to_supported_writing_settings() {
         for name in ["openai", "gemini", "xai", "anthropic", "openrouter"] {
             let error = classify_status_with_key(401, name, "Invalid API key");
-            assert!(!error.is_retryable());
+            assert!(!matches!(error, ProviderError::Retryable(_)));
             assert!(error
                 .message()
                 .contains("Choose a supported AI for writing in Settings."));
@@ -205,7 +222,7 @@ mod tests {
             classify_status(400, "openai", "model `x` does not exist")
         );
         let busy = classify_status_with_key(429, "openrouter", "slow down");
-        assert!(busy.is_retryable());
+        assert!(matches!(busy, ProviderError::Retryable(_)));
         let mine = classify_status_with_key(401, "my-provider", "bad key");
         assert!(mine
             .message()

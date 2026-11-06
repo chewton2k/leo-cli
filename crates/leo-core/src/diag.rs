@@ -1,6 +1,6 @@
 //! Where background diagnostics go.
 //!
-//! Anything below the UI layer — a git auto-commit, a keychain that will not
+//! Anything below the UI layer — a keychain that will not
 //! answer, a malformed config, chunk progress during a long transcription —
 //! reports through here instead of writing to stderr itself.
 

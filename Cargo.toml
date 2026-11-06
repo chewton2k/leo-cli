@@ -78,7 +78,6 @@ tempfile.workspace = true
 [dev-dependencies]
 libc.workspace = true
 leo-services = { workspace = true, features = ["test-support"] }
-serde_json.workspace = true
 
 [profile.release]
 strip = true

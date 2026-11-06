@@ -1245,7 +1245,6 @@ test.describe('Felix', () => {
     const question = `Which structure does BFS use (${test.info().project.name})?`;
     await page.request.put(`/api/chats/${id}`, {
       data: {
-        mode: 'study',
         refs: [],
         messages: [
           { role: 'user', text: 'quiz me' },
@@ -1935,8 +1934,8 @@ test.describe('readability', () => {
       await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
-      await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
-      await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
+      await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
+      await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
       await page.goto('/');
       await page.locator('#chat-toggle').click();
       const history = page.locator('.chat-history');
@@ -2097,7 +2096,7 @@ test.describe('export and this browser', () => {
 
 test.describe('advanced settings', () => {
   test('chooses how long each kind of data is kept, asking before deleting sooner', async ({ page }) => {
-    await page.goto('/#/settings/storage');
+    await page.goto('/#/settings/keeping');
     await expect(page).toHaveURL(/#\/settings\/storage$/);
     await expect(page.getByRole('heading', { level: 1, name: 'Keeping' })).toBeVisible();
     await expect(page.locator('select[data-keep]')).toHaveCount(5);
@@ -2474,7 +2473,6 @@ test.describe('recording', () => {
     await page.goto('/#/record');
     await page.evaluate(() => {
       navigator.mediaDevices.getDisplayMedia = async () => { throw new Error('Browser capture must stay closed'); };
-      navigator.mediaDevices.getUserMedia = async () => { throw new Error('Browser capture must stay closed'); };
     });
     await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
@@ -2571,7 +2569,6 @@ test.describe('recording', () => {
       ? { status:400, json:{error:'Allow Leo in System Settings → Privacy & Security → Microphone.'} }
       : { json:{available:true,local:true,job:null} }));
     await page.goto('/#/record');
-    await page.evaluate(() => { navigator.mediaDevices.getUserMedia = async () => { throw new Error('Browser capture must stay closed'); }; });
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('.toast.bad')).toContainText('Allow Leo in System Settings');
     await expect(page.locator('[data-action="rec-start"]')).toBeEnabled();
@@ -2893,7 +2890,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     await call('POST', '/api/dirs', { path: `contract-moved-${tag}` });
     await call('POST', '/api/dirs/move', { from: `contract-moved-${tag}`, into: `contract-${tag}` });
     await call('POST', `/api/notes/${made.id}/suggestion`, { find: 'new', replace: 'newer' });
-    await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', mode: 'chat', messages: [{ role: 'user', text: 'hi' }] });
+    await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', messages: [{ role: 'user', text: 'hi' }] });
     for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/keep', '/api/speech', '/api/record']) {
       await call('GET', url);
     }
@@ -3273,7 +3270,7 @@ test.describe('switching models mid-chat', () => {
 test.describe('past chats', () => {
   test('chats are found by what was said in them, and opening one does not reorder them', async ({ page }) => {
     const tag = `${test.info().project.name}${Date.now().toString(36)}`;
-    const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, mode: 'chat', messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
+    const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
     await put(`chat-dij-${tag}`, `how does dijkstra${tag} relax edges`, `Shortest paths ${tag}`);
     await put(`chat-heap-${tag}`, `what is a heap${tag}`, `Heaps ${tag}`);
     await page.goto('/');
@@ -3541,7 +3538,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
       const wrap = el.closest('.select-control');
       const menu = wrap && wrap.classList.contains('has-menu') && wrap.querySelector(':scope > .select-menu-button');
       if (menu) {
-        const name = el.id || el.dataset.set || el.dataset.keep || el.dataset.library;
+        const name = el.id || el.dataset.set || el.dataset.keep;
         const icon = menu.querySelector('svg')?.getBoundingClientRect();
         const box = menu.getBoundingClientRect(), under = el.getBoundingClientRect();
         if (!icon) return [`${name}: menu missing chevron`];
@@ -3550,12 +3547,12 @@ test('dropdowns and nested disclosures share real icons and keep their native co
         return Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2) > 1 || icon.right > box.right - 4 || icon.left < box.left ? [`${name}: misaligned menu chevron`] : [];
       }
       const arrow = wrap && wrap.querySelector(':scope > svg[aria-hidden="true"]');
-      if (!arrow) return [`${el.id || el.dataset.set || el.dataset.keep || el.dataset.library}: missing chevron`];
+      if (!arrow) return [`${el.id || el.dataset.set || el.dataset.keep}: missing chevron`];
       const box = el.getBoundingClientRect();
       const icon = arrow.getBoundingClientRect();
       const style = getComputedStyle(el);
       return Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2) > 1 || icon.right > box.right - 4 || icon.left < box.left || parseFloat(style.paddingRight) < icon.width + 12
-        ? [`${el.id || el.dataset.set || el.dataset.keep || el.dataset.library}: misaligned chevron`]
+        ? [`${el.id || el.dataset.set || el.dataset.keep}: misaligned chevron`]
         : [];
     }));
     expect(issues).toEqual([]);
@@ -4741,7 +4738,7 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
   const folder = `Shelf ${tag}`;
   await page.request.post('/api/dirs', { data: { path: `Classes/${folder}` } });
-  await page.request.put(`/api/chats/quick-${tag}`, { data: { title: `Heap talk ${tag}`, mode: 'chat', messages: [{ role: 'user', text: `Heap talk ${tag}` }, { role: 'assistant', text: 'A heap keeps the smallest on top.' }] } });
+  await page.request.put(`/api/chats/quick-${tag}`, { data: { title: `Heap talk ${tag}`, messages: [{ role: 'user', text: `Heap talk ${tag}` }, { role: 'assistant', text: 'A heap keeps the smallest on top.' }] } });
   await page.goto('/');
   await page.keyboard.press('ControlOrMeta+f');
   const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
@@ -4856,7 +4853,7 @@ test('Back from Settings, Keeping or Trash returns to the note you were reading'
   await back();
   await expect.poll(at).toBe(`#/n/${note.id}`);
   await visit('#/settings');
-  await visit('#/settings/storage');
+  await visit('#/settings/keeping');
   await back();
   await expect.poll(at).toBe('#/settings');
   await back();
@@ -4944,29 +4941,6 @@ test('buttons keep room from the text and sections around them', async ({ page }
 
 
 
-
-test('leaving and returning flushes drafts without any retired backup request', async ({ page, context }) => {
-  const traffic = [];
-  context.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/backup')) traffic.push(request.method()); });
-  await page.goto('/#/calendar');
-  await expect(page.locator('.cal-page')).toBeVisible();
-  await page.goto('/#/');
-  await expect(page.locator('.workspace-empty')).toBeVisible();
-  await page.evaluate(() => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
-    document.dispatchEvent(new Event('visibilitychange'));
-    window.dispatchEvent(new PageTransitionEvent('pagehide'));
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
-    document.dispatchEvent(new Event('visibilitychange'));
-  });
-  await page.goto('/?leave-test=1');
-  await expect(page.locator('.workspace-empty')).toBeVisible();
-  expect(traffic).toEqual([]);
-  for (const url of ['/api/backup', '/api/backup/setup']) {
-    expect((await page.request.get(url)).status()).toBe(404);
-    expect((await page.request.post(url, { data: {} })).status()).toBe(404);
-  }
-});
 
 test('Usage opens from the rail with remaining limits inside a stable dialog', async ({ page }) => {
   await page.route(/\/api\/settings(?:\/usage)?$/, route => route.fulfill({ json: {

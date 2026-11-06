@@ -1,5 +1,4 @@
 mod auth;
-mod backup;
 mod boards;
 mod calendar;
 mod combine;

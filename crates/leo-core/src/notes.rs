@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use colored::Colorize;
 use serde::{Deserialize, Serialize};
 
 /// A single note.
@@ -65,7 +64,7 @@ impl Note {
             .collect()
     }
 
-    pub fn toggle_checkbox(&mut self, n: usize) -> Option<String> {
+    pub fn toggle_checkbox(&mut self, n: usize) -> Option<bool> {
         let mut seen = 0usize;
         let mut out = String::with_capacity(self.body.len());
         let mut result = None;
@@ -82,11 +81,7 @@ impl Note {
                     out.push_str(&line[..b.state]);
                     out.push(flipped);
                     out.push_str(&piece[b.state + 1..]);
-                    result = Some(if b.ticked {
-                        format!("{} {}", "☐".white(), b.text)
-                    } else {
-                        format!("{} {}", "☑".green(), b.text)
-                    });
+                    result = Some(!b.ticked);
                 }
                 None => out.push_str(piece),
             }

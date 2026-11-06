@@ -55,6 +55,9 @@ pub trait Housekeeper: Send + Sync {
     fn discard_recording(&self, _id: &str) -> anyhow::Result<()> {
         Ok(())
     }
+    fn expire_kept_audio(&self, _before: chrono::DateTime<chrono::Utc>) -> usize {
+        0
+    }
 }
 
 pub struct Listening {
@@ -148,6 +151,7 @@ impl RecordView {
 
 pub(crate) struct RecordJob {
     view: RecordView,
+    recovering: Option<String>,
     writing: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     finish_now: Arc<AtomicBool>,
@@ -174,6 +178,12 @@ impl Drop for Writing {
 impl RecordJob {
     pub(crate) fn view(&self) -> RecordView {
         self.view.clone()
+    }
+
+    pub(crate) fn session_id(&self) -> String {
+        self.recovering
+            .clone()
+            .unwrap_or_else(|| self.view.id.clone())
     }
 
     #[cfg(test)]
@@ -334,6 +344,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
             );
         }
         *held = Some(RecordJob {
+            recovering: body.recover.clone(),
             writing: Default::default(),
             view: RecordView {
                 id: id.clone(),
@@ -885,6 +896,39 @@ pub(crate) async fn finish_available(
     }
 }
 
+async fn discard_pending(state: AppState, id: String) -> Response {
+    let in_use = state
+        .recording
+        .lock()
+        .ok()
+        .is_some_and(|held| held.as_ref().is_some_and(|job| job.session_id() == id));
+    if in_use {
+        return error(
+            StatusCode::CONFLICT,
+            "This recording is being recovered. Wait for it to finish first.",
+        );
+    }
+    let Some(housekeeper) = state.housekeeper.clone() else {
+        return error(StatusCode::NOT_FOUND, "That recording is over.");
+    };
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+        if !housekeeper.pending_recordings()?.iter().any(|p| p.id == id) {
+            return Ok(false);
+        }
+        housekeeper.discard_recording(&id)?;
+        Ok(true)
+    })
+    .await;
+    match result {
+        Ok(Ok(true)) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Ok(Ok(false)) => error(StatusCode::NOT_FOUND, "That recording is over."),
+        _ => error(
+            StatusCode::CONFLICT,
+            "The recording could not be deleted. Try again.",
+        ),
+    }
+}
+
 pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     if state
         .discarded_recordings
@@ -893,22 +937,23 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
     {
         return Json(serde_json::json!({ "deleted": true })).into_response();
     }
-    let lease = match with_job(&state, &id, |job| {
+    let (lease, session) = match with_job(&state, &id, |job| {
         anyhow::ensure!(
             job.view.state == "failed",
             "Stop the recording and wait for it to finish first."
         );
-        Writing::take(job)
+        Ok((Writing::take(job)?, job.session_id()))
     }) {
-        Ok(Ok(lease)) => lease,
+        Ok(Ok(found)) => found,
         Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Err((StatusCode::NOT_FOUND, _)) => return discard_pending(state, id).await,
         Err((code, message)) => return error(code, message),
     };
     let housekeeper = state.housekeeper.clone();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let _lease = lease;
         if let Some(housekeeper) = housekeeper {
-            housekeeper.discard_recording(&id)?;
+            housekeeper.discard_recording(&session)?;
         }
         let mut held = state
             .recording

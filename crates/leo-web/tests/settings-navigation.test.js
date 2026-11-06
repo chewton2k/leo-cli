@@ -12,7 +12,6 @@ function helpers(listeners = {}) {
 test('all grouped Settings routes resolve, with Keeping and Trash under Data', () => {
   const h = helpers();
   for (const section of ['general', 'dictation', 'models', 'writing', 'calendar', 'keeping', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
-  assert.equal(h.settingsSection('storage'), 'keeping', 'old Storage links land on Keeping');
   assert.equal(h.settingsSection(''), 'dictation');
   assert.equal(h.settingsSection('../bad'), 'general');
   const html = h.settingsFrame('keeping', '<section>Keeping content</section>');
@@ -57,8 +56,6 @@ const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'keeping.js',
 test('every searchable setting names a real section and a target the page draws', () => {
   const h = helpers();
   const index = vm.runInContext('SETTINGS_INDEX', h);
-  assert.ok(!index.some(entry => entry.section === 'backup'));
-  assert.ok(!sources.includes('function backupCard('));
   const sections = vm.runInContext('settingsItems()', h).map(([id]) => id);
   const ids = new Set();
   for (const entry of index) {

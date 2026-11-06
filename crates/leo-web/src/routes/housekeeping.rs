@@ -28,6 +28,23 @@ pub(crate) async fn get_keep(
         .await
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct Shorter {
+    field: String,
+    days: Option<u32>,
+}
+
+pub(crate) async fn preview_keep(
+    State(state): State<AppState>,
+    Json(body): Json<Shorter>,
+) -> Response {
+    if !leo_core::keep::CHOICES.contains(&body.days) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let count = keeping::would_delete(&state, &body.field, body.days).await;
+    Json(serde_json::json!({ "count": count })).into_response()
+}
+
 pub(crate) async fn set_keep(
     State(state): State<AppState>,
     Json(keep): Json<leo_core::keep::Keep>,

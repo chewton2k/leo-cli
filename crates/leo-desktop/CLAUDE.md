@@ -11,7 +11,7 @@ a test, or leave it unset to see the user's own data.
 1. macOS: `PATH` = the login shell's PATH (`shell_path::login_path`, markers,
    3 s timeout, process group killed on timeout) merged with the current PATH and
    `usual_folders` (Homebrew, `/usr/local/bin`, `~/.local/bin`, `~/.cargo/bin`),
-   so Codex, Claude Code, Ollama, gh and git are found when Finder starts leo.
+   so Codex, Claude Code and Ollama are found when Finder starts leo.
 2. `leo_web::start` on `port::remembered` (`<config>/app-port`, default 47318,
    kept stable because localStorage and IndexedDB are per origin), with
    `fresh_token()`; the port actually used is remembered. A failure opens

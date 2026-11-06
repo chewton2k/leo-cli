@@ -54,7 +54,7 @@ class Felix:
         self.opener.open(f"{self.base}/?token={token}").read()
 
     def answer(self, prompt):
-        body = json.dumps({"messages": [{"role": "user", "text": prompt}], "mode": "chat"}).encode()
+        body = json.dumps({"messages": [{"role": "user", "text": prompt}]}).encode()
         request = urllib.request.Request(
             f"{self.base}/api/chat", data=body, headers={"content-type": "application/json"}
         )

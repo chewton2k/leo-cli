@@ -253,12 +253,6 @@ struct Picked<'a> {
     focused: bool,
 }
 
-pub(crate) const MANUAL_TITLE: &str = "leo manual";
-
-pub(crate) fn studied(note: &Note) -> bool {
-    !(note.title == MANUAL_TITLE && note.tags.iter().any(|t| t == "manual"))
-}
-
 pub(crate) fn clip_turn(text: &str, most: usize) -> String {
     let total = text.chars().count();
     if total <= most {
@@ -383,7 +377,6 @@ pub fn matches<'a>(store: &'a Store, cache: &Cache, question: &str, limit: usize
     let mut scored: Vec<(usize, &Note)> = store
         .notes
         .iter()
-        .filter(|note| studied(note))
         .filter_map(|note| {
             let score = match_score(note, cache.notes.get(&note.id), &words);
             (score > 0).then_some((score, note))
@@ -468,7 +461,7 @@ pub fn gather_seeing(
             }
         }
     }
-    let open_note = open.and_then(|id| store.notes.iter().find(|n| n.id == id && studied(n)));
+    let open_note = open.and_then(|id| store.notes.iter().find(|n| n.id == id));
     if let Some(note) = open_note {
         if have.insert(note.id.clone()) {
             picked.push(Picked {
@@ -484,7 +477,7 @@ pub fn gather_seeing(
         if picked.len() - explicit >= RECENT_NOTES {
             break;
         }
-        if let Some(note) = store.notes.iter().find(|n| &n.id == id && studied(n)) {
+        if let Some(note) = store.notes.iter().find(|n| &n.id == id) {
             if have.insert(note.id.clone()) {
                 picked.push(Picked {
                     note,
@@ -515,7 +508,7 @@ pub fn gather_seeing(
         if picked.len() - before_meaning >= MEANING_MATCHES {
             break;
         }
-        if let Some(note) = store.notes.iter().find(|n| &n.id == id && studied(n)) {
+        if let Some(note) = store.notes.iter().find(|n| &n.id == id) {
             if have.insert(note.id.clone()) {
                 found.push(note);
                 picked.push(Picked {
@@ -533,7 +526,6 @@ pub fn gather_seeing(
         }
         for (other, kind, why) in connected(store, cache, &note.id)
             .into_iter()
-            .filter(|(other, _, _)| studied(other))
             .take(NEIGHBOURS)
         {
             if have.insert(other.id.clone()) {
@@ -1169,9 +1161,6 @@ mod tests {
                     .clone(),
             );
         }
-        store
-            .create_note(MANUAL_TITLE, "queue queue queue", vec!["manual".into()], "")
-            .unwrap();
         (store, dir, ids)
     }
 
@@ -1221,10 +1210,6 @@ mod tests {
         assert!(sources[2]
             .why
             .starts_with("connected (same method): Both take"));
-        assert!(
-            !titles.contains(&MANUAL_TITLE),
-            "the manual is never study material"
-        );
         assert!(text.contains(
             "<note id=\"n1\" title=\"Graph traversals\" class=\"cs130\" included=\"open\">"
         ));
@@ -1268,12 +1253,6 @@ mod tests {
             Some(ids[0].as_str())
         );
         assert!(matches(&store, &cache, "", 8).is_empty());
-        assert!(
-            !matches(&store, &cache, "queue", 8)
-                .iter()
-                .any(|n| n.title == MANUAL_TITLE),
-            "the manual is never study material"
-        );
     }
 
     #[test]

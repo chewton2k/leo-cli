@@ -463,12 +463,14 @@ pub struct Running {
 struct Background {
     graph: tokio::task::JoinHandle<()>,
     idle: tokio::task::JoinHandle<()>,
+    expiry: tokio::task::JoinHandle<()>,
 }
 
 impl Background {
     fn stop(&self) {
         self.graph.abort();
         self.idle.abort();
+        self.expiry.abort();
     }
 }
 
@@ -628,7 +630,7 @@ pub(crate) async fn start_in(
         vectors,
     };
 
-    tokio::spawn({
+    let expiry = tokio::spawn({
         let state = state.clone();
         async move {
             let mut daily = tokio::time::interval(std::time::Duration::from_secs(86_400));
@@ -642,6 +644,7 @@ pub(crate) async fn start_in(
     let background = Background {
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
+        expiry,
     };
     let app = router(state.clone()).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
@@ -859,6 +862,10 @@ fn router(state: AppState) -> Router {
             axum::routing::delete(remove_chat_file),
         )
         .route("/api/keep", get(get_keep).post(set_keep))
+        .route(
+            "/api/keep/preview",
+            post(routes::housekeeping::preview_keep),
+        )
         .route("/api/export", get(export_zip))
         .route(
             "/api/chats/{id}",

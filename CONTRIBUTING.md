@@ -63,7 +63,7 @@ What each part covers:
 
 - **Unit tests** sit beside the code in each crate.
 - **`tests/e2e.rs`** runs the real `leo` binary against a throwaway `LEO_HOME`,
-  with a cleared environment and a PATH of system tools plus git.
+  with a cleared environment and a PATH of system tools.
 - **`tests/install_app.rs`** runs the app installers into a throwaway home directory.
 - **`tests/release.rs`** checks the scripts that pick and set the next
   version.

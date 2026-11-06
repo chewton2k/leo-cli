@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 pub const FILE: &str = "leo.db";
-pub const BEFORE: &str = ".before-database";
 const VERSION: i64 = 3;
 
 const SCHEMA: &str = "
@@ -276,12 +275,6 @@ pub fn for_chats(chats_dir: &Path) -> Arc<Db> {
     at(&data.join(FILE))
 }
 
-pub fn put_aside(path: &Path) {
-    let mut name = path.as_os_str().to_owned();
-    name.push(BEFORE);
-    let _ = std::fs::rename(path, PathBuf::from(name));
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -348,47 +341,6 @@ mod tests {
             .with(|c| c.query_row("PRAGMA user_version", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(version, VERSION);
-    }
-}
-
-#[cfg(test)]
-mod moving_in {
-    use crate::{captions, graph, vectors};
-
-    #[test]
-    fn json_files_from_before_the_database_are_brought_in_and_kept_aside() {
-        let tmp = tempfile::tempdir().unwrap();
-        let data = tmp.path();
-        std::fs::write(data.join("captions.json"), r#"{"k": "a heap drawing"}"#).unwrap();
-        std::fs::write(
-            data.join("graph.json"),
-            serde_json::json!({ "notes": { "n1": { "hash": "h", "summary": "heaps", "concepts": ["heap"] } }, "links": [], "built_at": "2026-10-01" }).to_string(),
-        )
-        .unwrap();
-        std::fs::write(
-            data.join("meaning.json"),
-            r#"{"notes": {"n1": {"hash": "h", "pieces": [[0, "AACAPwAAAAA="]]}}}"#,
-        )
-        .unwrap();
-
-        let seen = captions::Captions::for_notes(&data.join("notes"));
-        assert_eq!(seen.get("k").as_deref(), Some("a heap drawing"));
-        assert!(data.join("captions.json.before-database").is_file());
-
-        let graphs = graph::Graphs::for_notes(&data.join("notes"), None);
-        let cache = graphs.load();
-        assert_eq!(cache.notes["n1"].summary, "heaps");
-        assert_eq!(cache.built_at.as_deref(), Some("2026-10-01"));
-        assert!(data.join("graph.json.before-database").is_file());
-
-        let index = vectors::Vectors::for_notes(&data.join("notes"));
-        assert_eq!(index.len(), 1);
-        assert!(data.join("meaning.json.before-database").is_file());
-
-        assert!(
-            data.join(super::FILE).is_file(),
-            "everything lives in one database"
-        );
     }
 }
 

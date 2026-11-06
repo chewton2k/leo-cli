@@ -55,7 +55,7 @@ A recording is a `Session`: `<data>/leo/recordings/<stamp>/` with
 `session.json` (`Manifest`: title, append_to, dir, typed points, stopped,
 saved), a `lock` (pid + 5 s heartbeat; stale when old or the pid is dead), and
 segments. `capture::Capture` reads s16 PCM from `mic::Mic` (`Source::Microphone`,
-or `Source::Screen` for `record screen`: default output via the macOS 14.6+
+or `Source::Screen` for what the computer plays: default output via the macOS 14.6+
 process tap or Windows loopback, else BlackHole or `LEO_SCREEN_DEVICE`; see
 `mic::find_device`) (or `Source::Replay` from `LEO_FAKE_AUDIO` at `LEO_FAKE_SPEED`, or
 `Source::Synthetic` in tests) and `wav::Writer` writes `seg-NNNNN.part.wav`,
@@ -288,7 +288,7 @@ two calls and the answer in one turn, about 5 s.
 model in its `choice::WRITING` list and its lowest effort, for Study grading and
 other shared quick reviews. `Powers.quick` remains independent of the retired
 interview runtimes. Runtime downloads and pinning were removed on 2026-11-05;
-existing downloaded caches stay on disk; the Storage page that listed them was removed on 2026-11-05.
+existing downloaded caches stay on disk.
 
 ### What the agent CLIs may use
 

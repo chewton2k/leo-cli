@@ -354,6 +354,70 @@ fn native_recordings_can_be_recovered_without_reopening_capture() {
 }
 
 #[test]
+fn deleting_after_a_failed_recovery_or_from_the_waiting_list_removes_that_session() {
+    #[derive(Default)]
+    struct Kept(std::sync::Mutex<Vec<String>>);
+    impl crate::record::Housekeeper for Kept {
+        fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
+            Ok(["failed-native", "waiting-native"]
+                .into_iter()
+                .filter(|id| !self.0.lock().unwrap().iter().any(|gone| gone == id))
+                .map(|id| record::Pending {
+                    id: id.into(),
+                    title: None,
+                    directory: String::new(),
+                    source: record::Source::Microphone,
+                    profile: Default::default(),
+                    started: None,
+                })
+                .collect())
+        }
+        fn discard_recording(&self, id: &str) -> anyhow::Result<()> {
+            self.0.lock().unwrap().push(id.into());
+            Ok(())
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    let kept = Arc::new(Kept::default());
+    state.housekeeper = Some(kept.clone());
+    state.listener = Some(Arc::new(|_, _| anyhow::bail!("The model is missing.")));
+    let recovered = run(record::recover(
+        State(state.clone()),
+        Path("failed-native".into()),
+    ));
+    let job = json_of(recovered)["id"].as_str().unwrap().to_string();
+    assert_ne!(job, "failed-native");
+    recording_until(&state, |s| s == "failed");
+    assert_eq!(
+        run(record::discard(
+            State(state.clone()),
+            Path("failed-native".into())
+        ))
+        .status(),
+        StatusCode::CONFLICT,
+        "a session being recovered is not deleted from the waiting list"
+    );
+    assert_eq!(
+        run(record::discard(State(state.clone()), Path(job))).status(),
+        StatusCode::OK
+    );
+    assert_eq!(*kept.0.lock().unwrap(), ["failed-native"]);
+    assert_eq!(
+        run(record::discard(
+            State(state.clone()),
+            Path("waiting-native".into())
+        ))
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(*kept.0.lock().unwrap(), ["failed-native", "waiting-native"]);
+    assert_eq!(
+        run(record::discard(State(state), Path("unknown-0001".into()))).status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[test]
 fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_model() {
     struct Kept;
     impl crate::record::Housekeeper for Kept {

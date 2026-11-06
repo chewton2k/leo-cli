@@ -27,8 +27,7 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
   meaning vectors, note connections, calendar feeds, note-task metadata,
-  reading positions. Old caption, graph and meaning JSON files are brought
-  in on first open and renamed `*.before-database`. Writes touch only what changed.
+  reading positions. Writes touch only what changed.
 
 ## Serving and security
 
@@ -788,7 +787,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   sets `html[data-theme]`; the dark colours apply under
   `prefers-color-scheme: dark` unless `data-theme="light"`, and always with
   `data-theme="dark"`. Anything drawn in JavaScript asks `leoTheme.dark()` and
-  redraws on `leoTheme.onChange` (graph, map dots, Mermaid diagrams), never
+  redraws on `leoTheme.onChange` (Mermaid diagrams), never
   the media query directly. Print overrides with `:root:root` so a PDF is
   always light.
 
@@ -799,15 +798,26 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   of 7/30/90 days, 1 year or Forever for every row): Trash, Chats with Felix,
   Uploaded files, Recording transcripts, Unfinished recording audio; then Export
   notes (zip of notes, optional uploads, chats, trash; never config or keys).
-  Shortening a period asks first (`keep-now`/`keep-cancel`, Cancel puts the
-  select back); `#/settings/storage` is an alias of `#/settings/keeping`.
-  Forever deletes nothing. Expiry runs once when the engine starts (`start_in`)
-  and right after POST `/api/keep` (`keeping::expire_now`): uploads (files under
-  `<data>/attachments/<note-id>/` older than N days by modification time, empty
-  folders removed; the note is never touched), transcripts (folders in
+  Each row says what it is and what survives. Shortening a period asks first
+  with a count from POST `/api/keep/preview` (`keeping::would_delete`, deletes
+  nothing; `keep-now`/`keep-cancel`, Cancel puts the select back) and says the
+  deletion cannot be undone. One save runs at a time: the selects are disabled
+  while a preview or save is pending, and a failed save redraws the saved
+  values. Restore tasks is a real button; a zip or a file without task ids is
+  refused with what to pick instead. A card lists edits kept in this window
+  that could not be saved, with Try again and Discard (`saving.discardAll`); a
+  draft whose note is gone (404) is saved as a new note like a conflict.
+  Forever deletes nothing. Expiry runs when the engine starts (`start_in`),
+  once a day (held in `Background`, stopped with the engine) and right after
+  POST `/api/keep` (`keeping::expire_now`): uploads (files under
+  `<data>/attachments/<note-id>/` older than N days by modification time; the
+  folder and the note are never touched), transcripts (folders in
   `recording-sources/` by folder time) and unfinished audio
   (`record::Housekeeper::pending_recordings`, each with `Pending.started`, then
-  `discard_recording`; the recording job in use and locked sessions are skipped).
+  `discard_recording`, plus `expire_kept_audio` for saved sessions and old
+  `browser-audio` folders; the session in use, by `RecordJob::session_id`, and
+  locked sessions are skipped). DELETE `/api/record/{id}` also deletes a
+  waiting recording that has no job; the Record page offers it on each row.
   Every pass is bounded, never follows symlinks, stays in its folder and
   skips an item it cannot delete. Trash and chats expire as before.
   `Housekeeper` now lives in `record.rs` (pending and discard only).
@@ -841,13 +851,11 @@ Database handles are cached up to 32 paths; filesystem
 checks/open/close occur outside the database cache mutex. Point and screenshot
 workers retain their save guard through I/O and in-memory acknowledgement even if the HTTP client
 leaves. Recording warnings retain at most 40 entries of 2,000 Unicode characters.
-Keeping's expiry refuses linked recording and originals roots. Legacy writing CLI profiles appear only
-when saved data exists; metadata-only controls offer explicit confirmed cleanup
-without deleting credentials during provider migration.
+Keeping's expiry refuses linked recording and originals roots.
 
 Writing Settings offers Ollama, Codex and Claude Code. Removed AGY/Copilot
 choices and sign-in commands are unavailable; legacy saved profiles stay on disk
-untouched (the Storage page that listed them was removed). Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
+untouched. Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
 
 Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
@@ -1051,7 +1059,7 @@ Back returns to the previous note; only the explicit Keeping route selects Keepi
 
 `Powers.app_settings` supplies session-gated bounded JSON `/api/app` and
 `/api/health`; blocking native work runs off async tasks and outside the store
-lock. Retired backup endpoints return 404 and lifecycle events only flush drafts;
+lock. Lifecycle events only flush drafts;
 recording
 reserves `capture_activity` before creating a job; its lease prevents updater
 installation through the durable save.
@@ -1131,7 +1139,7 @@ remain in leo.db, unused and never purged or migrated away. Old interview-style
 chats open normally; their saved cards show a short retirement message. Old routes
 and remembered places fall back to the note workspace. Stale
 leo-interview-* localStorage keys stay untouched. Downloaded runtimes remain on
-disk, untouched, now that the Storage page is gone.
+disk, untouched.
 
 Read-along completion distinguishes valid silence from malformed/provider failure,
 keeps failed changes eligible, and guards request cleanup by note and request

@@ -335,7 +335,7 @@
         : '';
       const connect = s.calendar && !s.calendar.connected ? '<p class="set-note">Name recordings after your classes and meetings: <a href="#/settings">connect a calendar in Settings</a>.</p>' : '';
       const recover = pending.length
-        ? `<div class="rec-recover">${pending.map((p) => `<button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button>`).join('')}</div>`
+        ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
         : '';
       return `<div class="rec rec-idle">
         <div class="section-title">Record</div>
@@ -694,12 +694,13 @@
         pill();
       },
       async discard(id) {
-        if (!s.view || s.view.id !== id || s.view.state !== 'failed') throw shown('This recording is no longer on the error page. Refresh and try again.');
+        const waiting = !s.view && (s.overview?.pending || []).some((p) => p.id === id);
+        if (!waiting && (!s.view || s.view.id !== id || s.view.state !== 'failed')) throw shown('This recording is no longer on the error page. Refresh and try again.');
         clearTimeout(s.poll);
         await api(`/api/record/${id}`, { method: 'DELETE' });
-        s.dismissed = id;
-        try { root.sessionStorage.setItem('leo-record-dismissed', id); } catch (e) {}
-        if (s.view && s.view.id === id) {
+        if (!waiting) {
+          s.dismissed = id;
+          try { root.sessionStorage.setItem('leo-record-dismissed', id); } catch (e) {}
           s.view = null;
         }
         await refresh();

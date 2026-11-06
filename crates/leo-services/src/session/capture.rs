@@ -229,20 +229,6 @@ impl Capture {
         })
     }
 
-    pub fn fed(
-        dir: &Path,
-        first_index: u32,
-        segment_secs: u64,
-        rx: Receiver<Vec<i16>>,
-    ) -> Result<Capture> {
-        let feed = Feed::Device {
-            rx,
-            pending: VecDeque::new(),
-            problem: Arc::new(Mutex::new(None)),
-        };
-        Self::begin(dir, first_index, segment_secs, feed, None)
-    }
-
     pub fn dropped_samples(&self) -> u64 {
         self.mic
             .as_ref()
@@ -367,60 +353,6 @@ fn run(mut feed: Feed, mut writer: Writer, stop: &AtomicBool, pause: &AtomicBool
 mod tests {
     use super::*;
     use crate::session::wav;
-
-    #[test]
-    fn audio_sent_from_a_browser_is_kept_even_when_stop_follows_at_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut capture = Capture::fed(dir.path(), 0, 300, rx).unwrap();
-        for _ in 0..3 {
-            tx.send(vec![1000i16; RATE as usize]).unwrap();
-        }
-        capture.finish().unwrap();
-        assert_eq!(capture.recorded_samples(), 3 * RATE as u64);
-        assert!(capture.problem().is_none());
-    }
-
-    #[test]
-    fn the_sound_level_covers_only_what_arrived_since_the_last_look() {
-        let dir = tempfile::tempdir().unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let capture = Capture::fed(dir.path(), 0, 300, rx).unwrap();
-        let wait_for = |samples: u64| {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            while capture.recorded_samples() < samples {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "the audio never arrived"
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        };
-        let blocks = 3 * BLOCK;
-        tx.send(vec![0i16; blocks]).unwrap();
-        wait_for(blocks as u64);
-        assert_eq!(capture.level_since(0), 0.0);
-        tx.send(vec![16384i16; blocks]).unwrap();
-        wait_for(2 * blocks as u64);
-        let loud = capture.level_since(blocks as u64);
-        assert!((loud - 0.5).abs() < 0.01, "{loud}");
-        assert_eq!(
-            capture.level_since(capture.recorded_samples()),
-            0.0,
-            "nothing new, no sound"
-        );
-        capture.stop().unwrap();
-    }
-
-    #[test]
-    fn a_browser_that_never_sends_anything_is_not_a_crash() {
-        let dir = tempfile::tempdir().unwrap();
-        let (_tx, rx) = std::sync::mpsc::channel();
-        let capture = Capture::fed(dir.path(), 0, 300, rx).unwrap();
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(!capture.ended());
-        assert!(capture.stop().is_ok());
-    }
 
     #[test]
     #[ignore]

@@ -41,23 +41,26 @@ pub fn path_for(notes_dir: &Path) -> PathBuf {
 }
 
 pub fn load(notes_dir: &Path) -> Keep {
-    let read: Keep = std::fs::read_to_string(path_for(notes_dir))
+    let read: serde_json::Value = std::fs::read_to_string(path_for(notes_dir))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default();
-    let offered = |days: Option<u32>, otherwise: Option<u32>| {
-        if CHOICES.contains(&days) {
-            days
-        } else {
-            otherwise
-        }
+    let offered = |field: &str, otherwise: Option<u32>| match read.get(field) {
+        Some(serde_json::Value::Null) => None,
+        Some(days) => days
+            .as_u64()
+            .and_then(|days| u32::try_from(days).ok())
+            .map(Some)
+            .filter(|days| CHOICES.contains(days))
+            .unwrap_or(otherwise),
+        None => otherwise,
     };
     Keep {
-        trash_days: offered(read.trash_days, default_trash_days()),
-        chat_days: offered(read.chat_days, None),
-        upload_days: offered(read.upload_days, None),
-        transcript_days: offered(read.transcript_days, None),
-        audio_days: offered(read.audio_days, None),
+        trash_days: offered("trash_days", default_trash_days()),
+        chat_days: offered("chat_days", None),
+        upload_days: offered("upload_days", None),
+        transcript_days: offered("transcript_days", None),
+        audio_days: offered("audio_days", None),
     }
 }
 
@@ -187,6 +190,24 @@ mod tests {
         assert_eq!(load(&notes).upload_days, None);
         assert_eq!(load(&notes).transcript_days, None);
         assert_eq!(load(&notes).audio_days, None);
+    }
+
+    #[test]
+    fn one_unreadable_period_leaves_the_others_as_they_were_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        std::fs::create_dir(&notes).unwrap();
+        std::fs::write(
+            path_for(&notes),
+            r#"{"trash_days":null,"chat_days":90,"upload_days":"30","audio_days":-1}"#,
+        )
+        .unwrap();
+        let keep = load(&notes);
+        assert_eq!(keep.trash_days, None);
+        assert_eq!(keep.chat_days, Some(90));
+        assert_eq!(keep.upload_days, None);
+        assert_eq!(keep.transcript_days, None);
+        assert_eq!(keep.audio_days, None);
     }
 
     #[test]

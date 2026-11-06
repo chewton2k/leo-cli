@@ -228,10 +228,6 @@ pub struct NoteRef {
     pub folder: String,
 }
 
-fn is_manual(tags: &[String]) -> bool {
-    tags.iter().any(|t| t == "manual")
-}
-
 pub fn note_tasks(store: &Store, metas: &[Meta]) -> Vec<Listed> {
     let mut out = Vec::new();
     let mut by_note: BTreeMap<&str, Vec<&Meta>> = BTreeMap::new();
@@ -239,9 +235,6 @@ pub fn note_tasks(store: &Store, metas: &[Meta]) -> Vec<Listed> {
         by_note.entry(meta.note.as_str()).or_default().push(meta);
     }
     for note in &store.notes {
-        if is_manual(&note.tags) {
-            continue;
-        }
         let lines: Vec<&str> = note.body.lines().collect();
         let note_ref = NoteRef {
             id: note.id.clone(),

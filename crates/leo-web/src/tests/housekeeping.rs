@@ -33,6 +33,27 @@ fn keeping_choices_are_saved_and_applied_right_away() {
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
     assert_eq!(chats::list(&state.chats).len(), 1);
 
+    let preview = |field: &str, days: Option<u32>| {
+        let body = serde_json::from_value(serde_json::json!({ "field": field, "days": days }));
+        run(crate::routes::housekeeping::preview_keep(
+            State(state.clone()),
+            Json(body.unwrap()),
+        ))
+    };
+    assert_eq!(json_of(preview("chat_days", Some(30)))["count"], 1);
+    assert_eq!(json_of(preview("chat_days", Some(90)))["count"], 0);
+    assert_eq!(json_of(preview("chat_days", None))["count"], 0);
+    assert_eq!(json_of(preview("upload_days", Some(7)))["count"], 0);
+    assert_eq!(
+        preview("chat_days", Some(3)).status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        chats::list(&state.chats).len(),
+        1,
+        "a preview deletes nothing"
+    );
+
     let set = run(set_keep(
         State(state.clone()),
         Json(leo_core::keep::Keep {
@@ -61,7 +82,9 @@ fn a_shorter_upload_period_deletes_old_uploads_at_once_and_forever_deletes_nothi
     let file = folder.join("old.pdf");
     std::fs::write(&file, "x").unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
-    std::fs::File::open(&file)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&file)
         .unwrap()
         .set_modified(old)
         .unwrap();

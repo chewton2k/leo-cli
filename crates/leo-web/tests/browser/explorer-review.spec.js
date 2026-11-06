@@ -355,7 +355,7 @@ test('the rail has no Felix or Collapse all control and loaded folders never fla
       }
     }).observe(document.body, { childList: true, subtree: true, characterData: true, characterDataOldValue: true, attributes: true, attributeFilter: ['aria-busy'] });
   });
-  for (const section of ['general', 'appearance', 'storage', 'general']) {
+  for (const section of ['general', 'felix', 'keeping', 'general']) {
     await page.locator('#side [data-action="settings"]').click();
     await page.goto(`/#/settings/${section}`);
     await expect(page.locator('#app')).not.toBeEmpty();

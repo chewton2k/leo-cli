@@ -1,6 +1,6 @@
-//! The domain: notes, the store that keeps them on disk, and the one command
-//! vocabulary every front end speaks. Nothing here draws to a terminal or
-//! makes a network request, which is what keeps it testable on its own.
+//! The domain: notes, the store that keeps them on disk, and the retention
+//! choices in `keep`. Nothing here draws to a terminal or makes a network
+//! request, which is what keeps it testable on its own.
 
 pub mod attachments;
 pub mod children;

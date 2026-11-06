@@ -22,11 +22,11 @@ const STALE: &[(&str, &str)] = &[
     ("leo record", "Record in the leo app"),
     ("leo ask", "Ask Felix in the leo app"),
     ("leo pin", "the leo app"),
-    ("leo sync", "Settings, Backup"),
-    ("leo backup", "Settings, Backup"),
+    ("leo sync", "(removed)"),
+    ("leo backup", "(removed)"),
     ("leo trash", "Trash in the leo app"),
     ("leo help", "leo --help"),
-    (":backup", "Settings, Backup"),
+    (":backup", "(removed)"),
     (":settings", "Settings"),
     (":doctor", "Settings, Health"),
     (":record", "Record"),
@@ -34,7 +34,7 @@ const STALE: &[(&str, &str)] = &[
     ("/settings", "Settings"),
     ("/doctor", "Settings, Health"),
     ("/record", "Record"),
-    ("/backup", "Settings, Backup"),
+    ("/backup", "(removed)"),
     ("/ask", "Ask Felix"),
 ];
 

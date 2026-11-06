@@ -469,7 +469,6 @@ function explorerMenu(el, event = null) {
   box.innerHTML = rows.map(([action, label]) => `<button type="button" role="menuitem" data-explorer-action="${action}">${label}</button>`).join('');
   document.body.appendChild(box);
   if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'true');
-  addEventListener('scroll', (e) => { if (!box.contains(e.target)) closeExplorerMenu(false); }, { capture: true, once: true });
   const bounds = owner.getBoundingClientRect();
   box.style.left = `${Math.max(8, Math.min(event?.clientX ?? bounds.right, innerWidth - box.offsetWidth - 8))}px`;
   box.style.top = `${Math.max(8, Math.min(event?.clientY ?? bounds.bottom, innerHeight - box.offsetHeight - 8))}px`;

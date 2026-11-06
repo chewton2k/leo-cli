@@ -104,7 +104,6 @@ pub struct Source {
 pub fn sources(notes: &[Note]) -> Vec<Source> {
     notes
         .iter()
-        .filter(|n| crate::chat::studied(n))
         .map(|n| Source {
             id: n.id.clone(),
             title: n.title.clone(),
@@ -780,7 +779,6 @@ struct Job {
 }
 
 pub struct Graphs {
-    path: PathBuf,
     db: Arc<crate::db::Db>,
     writer: Option<Writer>,
     room: Option<crate::Room>,
@@ -830,7 +828,6 @@ impl Graphs {
     pub fn new(path: PathBuf, writer: Option<Writer>) -> Graphs {
         Graphs {
             db: crate::db::beside(&path),
-            path,
             writer,
             room: None,
             vectors: None,
@@ -850,24 +847,7 @@ impl Graphs {
         Graphs::new(base.join("graph.json"), writer)
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn bring_in_file(&self) {
-        let Some(old) = std::fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Cache>(&text).ok())
-        else {
-            return;
-        };
-        if self.write_all(&old, true).is_ok() {
-            crate::db::put_aside(&self.path);
-        }
-    }
-
     pub fn load(&self) -> Cache {
-        self.bring_in_file();
         self.db
             .with(|c| {
                 let mut cache = Cache::default();
@@ -1377,7 +1357,7 @@ mod tests {
             built_at: Some("2026-10-09T00:00:00Z".into()),
             ..Cache::default()
         };
-        std::fs::write(graphs.path(), serde_json::to_string(&cache).unwrap()).unwrap();
+        graphs.write_all(&cache, true).unwrap();
         assert!(!graphs.settled(&notes), "an unread note is waiting");
         assert!(graphs.update_if_due(notes.to_vec(), idle));
         assert!(!graphs.update_if_due(notes.to_vec(), idle), "one at a time");
@@ -1886,20 +1866,6 @@ mod tests {
             concept_label(&"x".repeat(200)).unwrap().chars().count(),
             CONCEPT_CHARS
         );
-    }
-
-    #[test]
-    fn the_manual_is_not_study_material() {
-        let mut store =
-            leo_core::store::Store::load_from(&tempfile::tempdir().unwrap().path().join("notes"))
-                .unwrap();
-        store
-            .create_note(crate::chat::MANUAL_TITLE, "help", vec!["manual".into()], "")
-            .unwrap();
-        store.create_note("Graphs", "BFS", vec![], "cs130").unwrap();
-        let list = sources(&store.notes);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].title, "Graphs");
     }
 
     #[test]

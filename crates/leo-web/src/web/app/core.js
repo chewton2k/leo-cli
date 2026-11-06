@@ -294,17 +294,6 @@ function stillMotion() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-async function dismissContent(elements) {
-  const live = Array.from(elements).filter(el => el.isConnected);
-  if (!stillMotion()) {
-    await Promise.all(live.map(el => el.animate([
-      { opacity: 1, transform: 'none' },
-      { opacity: 0, transform: 'translateY(6px) scale(.98)' },
-    ], { duration: MOTION_MS, easing: EASE_OUT }).finished.catch(() => {})));
-  }
-  for (const el of live) el.remove();
-}
-
 function stopSlide(el) {
   delete el.dataset.folding;
   const run = moving.get(el);
@@ -557,7 +546,7 @@ function goBack(hash) {
 }
 
 function back() {
-  if (state.view === 'keeping' && /^#\/settings\/(?:keeping|storage)(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
+  if (state.view === 'keeping' && /^#\/settings\/keeping(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
   if (state.view === 'note') return goBack('#/');
   goBack('#/');
@@ -668,7 +657,10 @@ const saving = window.leoSaving.create({
   storageError: () => toast('This browser cannot keep a draft. Keep the page open until your note says Saved.', { bad: true }),
   recovered: (count) => {
     toast(`Saving ${count} edit${count === 1 ? '' : 's'} that had not reached leo yet.`);
-    setTimeout(() => saving.retry(), 0);
+    setTimeout(() => saving.retry().then(() => {
+      const left = saving.drafts().length;
+      if (left) toast(`${plural(left, 'edit')} still could not be saved. Try again or discard ${left === 1 ? 'it' : 'them'} in Settings → Keeping.`, { bad: true });
+    }), 0);
   },
   created: (s, note) => {
     if (state.session === s) history.replaceState(history.state, '', noteHash(note.id));
@@ -750,7 +742,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
-    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause and sends them to your writing AI.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
+    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
     <div class="note-meta"><span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>

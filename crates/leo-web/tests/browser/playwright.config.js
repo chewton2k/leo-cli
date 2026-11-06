@@ -17,7 +17,7 @@ module.exports = defineConfig({
     baseURL: 'http://127.0.0.1:31831',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: { args: ['--host-resolver-rules=MAP leo-http.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
+    launchOptions: { args: ['--host-resolver-rules=MAP leo-http.test 127.0.0.1', '--no-proxy-server'] },
   },
   projects: [
     { name: 'desktop', use: { browserName: 'chromium' } },

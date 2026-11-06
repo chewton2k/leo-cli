@@ -867,18 +867,6 @@ impl Store {
         notes
     }
 
-    /// Find notes whose title contains the query (case-insensitive), newest first.
-    pub fn find_by_title(&self, query: &str) -> Vec<&Note> {
-        let q = query.to_lowercase();
-        let mut matches: Vec<&Note> = self
-            .notes
-            .iter()
-            .filter(|n| n.title.to_lowercase().contains(&q))
-            .collect();
-        matches.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
-        matches
-    }
-
     /// Find a note by full ID or unique prefix.
     pub fn find_note(&self, id_prefix: &str) -> Option<&Note> {
         let matches: Vec<&Note> = self
@@ -1016,15 +1004,6 @@ impl Store {
         self.undo.push(change);
     }
 
-    /// Whether there is anything to take back.
-    ///
-    /// Used by tests to assert that a no-op records nothing; the handler asks
-    /// [`Store::undo`] directly, since it needs the description anyway.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
-    }
-
     /// Take back the most recent change, returning what was done.
     ///
     /// `None` when there is nothing to undo, so the caller can say so rather
@@ -1137,13 +1116,13 @@ impl Store {
         tags
     }
 
-    /// Toggle the Nth checkbox in a note. Returns the new state text.
-    pub fn toggle_checkbox(&mut self, id_prefix: &str, n: usize) -> Option<String> {
+    /// Toggle the Nth checkbox in a note. Returns whether it is now ticked.
+    pub fn toggle_checkbox(&mut self, id_prefix: &str, n: usize) -> Option<bool> {
         let note = self.find_note_mut(id_prefix)?;
         let (id, title) = (note.id.clone(), note.title.clone());
-        let label = note.toggle_checkbox(n)?;
+        let ticked = note.toggle_checkbox(n)?;
         self.remember(Undoable::Toggled { id, n, title });
-        Some(label)
+        Some(ticked)
     }
 
     // ── Directory operations ───────────────────────────────────────────────
@@ -1520,8 +1499,15 @@ mod tests {
         // Untouched neighbours.
         assert!(store.dir_exists("cs162"));
         assert_eq!(store.notes.len(), 2);
-        assert!(store.find_by_title("Root note").len() == 1);
-        assert!(store.find_by_title("In cs162").len() == 1);
+        assert!(
+            store
+                .notes
+                .iter()
+                .filter(|n| n.title == "Root note")
+                .count()
+                == 1
+        );
+        assert!(store.notes.iter().filter(|n| n.title == "In cs162").count() == 1);
 
         // And it survives a reload: the files are gone from disk.
         store.save().unwrap();
@@ -1535,7 +1521,10 @@ mod tests {
         let (mut store, _d) = store_with_tree();
         assert_eq!(store.delete_dir_recursive("cs130/lec"), (2, 1));
         assert!(store.dir_exists("cs130"), "the parent must survive");
-        assert_eq!(store.find_by_title("In cs130").len(), 1);
+        assert_eq!(
+            store.notes.iter().filter(|n| n.title == "In cs130").count(),
+            1
+        );
     }
 
     /// "Delete everything" is not something any keypress should be able to mean.
@@ -1663,77 +1652,6 @@ mod tests {
         assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
     }
 
-    #[test]
-    fn saving_in_an_existing_git_repository_keeps_history_and_remote_untouched() {
-        let tmp = tempfile::tempdir().unwrap();
-        let notes = tmp.path().join("notes");
-        fs::create_dir(&notes).unwrap();
-        let git = |args: &[&str]| {
-            let output = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&notes)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            output.stdout
-        };
-        git(&["init", "-q"]);
-        git(&[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "commit",
-            "--allow-empty",
-            "-qm",
-            "Existing history",
-        ]);
-        let remote = tmp.path().join("remote.git");
-        let initialized = std::process::Command::new("git")
-            .args(["init", "--bare", "-q"])
-            .arg(&remote)
-            .output()
-            .unwrap();
-        assert!(initialized.status.success());
-        git(&["remote", "add", "origin", remote.to_str().unwrap()]);
-        let head = git(&["rev-parse", "HEAD"]);
-        let config = fs::read(notes.join(".git/config")).unwrap();
-        let mut store = Store::load_from(&notes).unwrap();
-        let id = store
-            .create_note("Kept", "Durable edit", vec![], "")
-            .unwrap()
-            .id
-            .clone();
-        store.save().unwrap();
-        assert_eq!(
-            Store::load_from(&notes)
-                .unwrap()
-                .find_note(&id)
-                .unwrap()
-                .body,
-            "Durable edit"
-        );
-        store.delete_note(&id);
-        store.save().unwrap();
-        assert_eq!(store.trashed().len(), 1);
-        store.undo().unwrap();
-        store.save().unwrap();
-        assert!(Store::load_from(&notes).unwrap().find_note(&id).is_some());
-        assert_eq!(git(&["rev-parse", "HEAD"]), head);
-        assert_eq!(fs::read(notes.join(".git/config")).unwrap(), config);
-        assert!(!notes.join(".gitignore").exists());
-        assert!(!notes.join(".gitattributes").exists());
-        assert!(!remote.join("refs/heads/main").exists());
-    }
-
     // ── undo ────────────────────────────────────────────────────────────────
 
     /// An empty store in a temporary directory.
@@ -1836,14 +1754,14 @@ mod tests {
         assert_eq!(store.notes.len(), 1);
         assert_eq!(store.undo().as_deref(), Some("Restored 2 notes"));
         assert!(store.find_note(&a).is_some() && store.find_note(&b).is_some());
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     #[test]
     fn deleting_nothing_records_nothing() {
         let (mut store, _d) = temp_store();
         assert_eq!(store.delete_notes(&["nope".to_string()]), 0);
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     /// A file leo cannot read is skipped, never deleted: it is the user's text,
@@ -2013,8 +1931,9 @@ mod tests {
         assert!(store.dir_exists("cs130/week1"));
         // And each note is back where it lived.
         let a = store
-            .find_by_title("A")
-            .first()
+            .notes
+            .iter()
+            .find(|n| n.title == "A")
             .map(|n| n.directory.clone());
         assert_eq!(a.as_deref(), Some("cs130"));
     }
@@ -2068,10 +1987,10 @@ mod tests {
             .clone();
 
         store.toggle_checkbox(&id, 1);
-        assert!(store.can_undo());
+        assert!(!store.undo.is_empty());
         store.undo();
         assert!(
-            !store.can_undo(),
+            store.undo.is_empty(),
             "undo pushed its own inverse onto the stack"
         );
     }
@@ -2095,13 +2014,13 @@ mod tests {
 
         store.undo();
         assert!(store.find_note(&a).is_some());
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     #[test]
     fn undoing_nothing_says_so_rather_than_doing_nothing_silently() {
         let (mut store, _d) = temp_store();
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
         assert!(store.undo().is_none());
     }
 
@@ -2112,7 +2031,7 @@ mod tests {
         let (mut store, _d) = temp_store();
         store.create_note("A", "a", vec![], "").unwrap();
         assert!(!store.delete_note("does-not-exist"));
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     #[test]
@@ -2120,7 +2039,7 @@ mod tests {
         let (mut store, _d) = temp_store();
         store.create_note("A", "a", vec![], "").unwrap();
         assert_eq!(store.delete_dir_recursive(""), (0, 0));
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     /// The stack is bounded, or a long session holds every note ever deleted.
@@ -2767,57 +2686,6 @@ mod tests {
 
         let ids: HashSet<String> = store.trashed().into_iter().map(|t| t.id).collect();
         assert_eq!(ids, HashSet::from([first, second]));
-    }
-
-    #[test]
-    fn renaming_legacy_note_files_preserves_existing_git_history() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("notes");
-        fs::create_dir_all(&dir).unwrap();
-        let note = Note::new("Graphs", "BFS", vec![], "");
-        fs::write(
-            dir.join(format!("{}.md", note.id)),
-            note_to_markdown(&note).unwrap(),
-        )
-        .unwrap();
-        let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&dir)
-                .output()
-                .unwrap();
-            assert!(out.status.success());
-            out.stdout
-        };
-        git(&["init", "-q"]);
-        git(&["add", "."]);
-        git(&[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "commit",
-            "-qm",
-            "Original names",
-        ]);
-        let head = git(&["rev-parse", "HEAD"]);
-
-        let store = Store::load_from(&dir).unwrap();
-        store.save().unwrap();
-
-        assert_eq!(note_files(&store), ["Graphs.md"]);
-        let status = std::process::Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        let dirty = String::from_utf8_lossy(&status.stdout);
-        assert!(!dirty.trim().is_empty(), "expected local filename changes");
-        assert_eq!(git(&["rev-parse", "HEAD"]), head);
     }
 
     fn parse(name: &str, text: &str) -> Note {

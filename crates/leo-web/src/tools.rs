@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use leo_core::notes::Note;
 use leo_core::store::Store;
 
-use crate::chat::{attribute, clip, connected, studied, SourceRef};
+use crate::chat::{attribute, clip, connected, SourceRef};
 use crate::graph::Cache;
 use crate::routes::notes::excerpt;
 
@@ -801,7 +801,7 @@ pub fn manual_for(access: Access) -> String {
         Access::Auto => WHEN_AUTO,
         Access::Read => WHEN_READ,
     };
-    let outside = "Your own web search, if you have it, is fine for outside or current facts: use it, and say which parts came from the web. For anything in the user's notes, use the tools below.";
+    let outside = "Your own web search, if you have it, is fine for outside or current facts: use it, and say which parts came from the web. If you cannot search, say so before answering from memory. For anything in the user's notes, use the tools below.";
     format!(
         "## Your tools\nLeo's tools are always available through this text protocol, even when your CLI tools are disabled. They are not native CLI tools: do not call them through your own tool/function system.\n{outside}\nReply with exactly one line and nothing else: <tool>{{\"name\":\"TOOL\",\"parameter\":\"value\"}}</tool>\nInside is one JSON object: name selects the tool and every value is a string. Optional parameters have ?; others are required. Escape newlines as \\n. A data parameter encodes JSON inside its string, e.g. \"data\":\"{{\\\"field\\\":\\\"value\\\"}}\".\nOne tool per reply. Leo returns <tool_result name=\"TOOL\">...</tool_result>; continue with another tool or answer. If a result starts \"That did not work:\", correct the call. {limits} Discovered notes use ids like n7; cite [n7].\n\n{}\n\n{TOOL_USE}\n{when}",
         tools.join("\n\n"),
@@ -864,7 +864,7 @@ pub fn guidance_for(access: Access) -> String {
         Access::Auto => WHEN_AUTO,
         Access::Read => WHEN_READ,
     };
-    let outside = "Your own web search, if you have it, is fine for outside or current facts: say which parts came from the web.";
+    let outside = "Your own web search, if you have it, is fine for outside or current facts: say which parts came from the web. If you cannot search, say so before answering from memory.";
     format!(
         "## Your tools\nCall Leo tools, batching independent reads. {outside} A result starting \"That did not work:\" explains how to correct the call. {limits} Discovered notes use ids like n7; cite [n7].\n{TOOL_USE}\n{when}"
     )
@@ -2325,7 +2325,7 @@ impl Desk {
                 }
                 let mut lines = Vec::new();
                 let mut found = Vec::new();
-                for hit in hits.iter().filter(|h| studied(h.note)).take(FOUND) {
+                for hit in hits.iter().take(FOUND) {
                     found.push(hit.note.title.clone());
                     let tag = self.tag(hit.note, &format!("found by searching for \"{query}\""));
                     let via = match &hit.why {
@@ -2439,7 +2439,6 @@ impl Desk {
                 let step = format!("Followed connections from “{}”", note.title);
                 let links: Vec<(&Note, String, String)> = connected(store, cache, &note.id)
                     .into_iter()
-                    .filter(|(other, _, _)| studied(other))
                     .take(CONNECTED)
                     .collect();
                 if links.is_empty() {

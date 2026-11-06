@@ -30,7 +30,7 @@ function environment({ draft = false } = {}) {
   return { context, windows, documents, sent, saved, places, rendered: () => rendered };
 }
 
-test('hide, departure and return save work and remember the note without backup traffic', async () => {
+test('hide, departure and return save work and remember the note', async () => {
   const e = environment({ draft: true });
   for (let i = 0; i < 3; i++) {
     e.context.document.visibilityState = 'hidden';
@@ -57,7 +57,7 @@ test('unsaved work retains the close warning and retry while a clean page closes
   }
 });
 
-test('navigation still flushes the departing draft before routing without backup traffic', async () => {
+test('navigation still flushes the departing draft before routing', async () => {
   const e = environment();
   const calls = [];
   const session = { doc: { stop: () => calls.push('stop'), destroy: () => calls.push('destroy') } };
@@ -75,11 +75,4 @@ test('returning to a note being edited keeps its draft and focus intact', () => 
   e.documents.visibilitychange();
   assert.equal(e.rendered(), 0);
   assert.deepEqual(e.sent, []);
-});
-
-test('startup and settings actions have no retired backup hooks', () => {
-  for (const name of ['events.js', 'app-settings.js', 'actions.js']) {
-    const script = fs.readFileSync(require('node:path').join(__dirname, '../src/web/app', name), 'utf8');
-    assert.doesNotMatch(script, /checkWebsiteBackup|setupBackup|\/api\/backup/);
-  }
 });

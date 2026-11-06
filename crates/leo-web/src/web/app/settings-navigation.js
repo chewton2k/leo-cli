@@ -57,7 +57,8 @@ const SETTINGS_INDEX = [
   { section: 'keeping', id: 'keeping-upload', label: 'Keep uploaded files', keywords: 'originals documents pdf days retention delete' },
   { section: 'keeping', id: 'keeping-transcript', label: 'Keep recording transcripts', keywords: 'recordings sources what was said days retention delete' },
   { section: 'keeping', id: 'keeping-audio', label: 'Keep unfinished recording audio', keywords: 'interrupted recordings recover days retention delete' },
-  { section: 'keeping', id: 'keeping-export', label: 'Export notes', keywords: 'zip download backup uploads chats trash' },
+  { section: 'keeping', id: 'keeping-export', label: 'Export notes', keywords: 'zip download backup uploads chats trash storage disk' },
+  { section: 'keeping', id: 'keeping-restore', label: 'Restore tasks', keywords: 'import tasks json bring back old computer' },
   { section: 'trash', id: 'trash-notes', label: 'Trash', keywords: 'deleted notes restore empty bin recover' },
   { section: 'health', id: 'health-checks', label: 'Health checks', keywords: 'doctor microphone permissions accessibility ready problems fix' },
   { section: 'updates', id: 'updates-check', label: 'Check for updates', keywords: 'new version download install restart' },
@@ -78,7 +79,6 @@ function settingsIcon(name) {
   return SETTINGS_ICON_PATHS[name] ? svg(SETTINGS_ICON_PATHS[name]) : ICON[name] || '';
 }
 function settingsSection(section) {
-  if (section === 'storage') section = 'keeping';
   if (!section) { try { section = localStorage.getItem('leo-settings-section') || 'general'; } catch (e) { section = 'general'; } }
   return settingsItems().some(([id]) => id === section) ? section : 'general';
 }

@@ -147,12 +147,16 @@ const actions = {
   },
   keeping: () => go('#/settings/keeping'),
   'keep-now': () => {
-    const next = state.keepPending;
+    const pending = state.keepPending;
     state.keepPending = null;
     closeSheet();
-    if (next) saveKeep(next).catch(fail);
+    if (pending) saveKeep(pending.next, pending.goes).catch(fail);
   },
   'keep-cancel': () => closeSheet(),
+  'tasks-restore-pick': () => $('#tasks-restore')?.click(),
+  'drafts-retry': () => draftsRetry().catch(fail),
+  'drafts-discard-ask': (el) => draftsDiscardAsk(el),
+  'drafts-discard': () => draftsDiscard(),
   'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,

@@ -72,12 +72,58 @@ fn discard_recording(root: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+fn real_dirs(root: &Path) -> Vec<std::path::PathBuf> {
+    if !std::fs::symlink_metadata(root).is_ok_and(|m| m.is_dir()) {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .take(MOST_RECORDINGS)
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| leo_core::paths::contained_path(root, Path::new(&e.file_name())).ok())
+        .collect()
+}
+
+fn expire_saved(root: &Path, before: chrono::DateTime<chrono::Utc>) -> usize {
+    real_dirs(root)
+        .into_iter()
+        .filter(|dir| !session::locked(dir))
+        .filter(|dir| {
+            session::Session::open(dir)
+                .is_ok_and(|s| s.manifest.saved && s.manifest.started < before)
+        })
+        .filter(|dir| std::fs::remove_dir_all(dir).is_ok())
+        .count()
+}
+
+fn expire_browser_audio(root: &Path, before: std::time::SystemTime) -> usize {
+    real_dirs(root)
+        .into_iter()
+        .filter(|dir| {
+            std::fs::symlink_metadata(dir)
+                .and_then(|m| m.modified())
+                .is_ok_and(|modified| modified < before)
+        })
+        .filter(|dir| std::fs::remove_dir_all(dir).is_ok())
+        .count()
+}
+
 impl Housekeeper for Housekeeping {
     fn pending_recordings(&self) -> Result<Vec<leo_web::record::Pending>> {
         crate::record::pending()
     }
     fn discard_recording(&self, id: &str) -> Result<()> {
         discard_recording(&session::root()?, id)
+    }
+    fn expire_kept_audio(&self, before: chrono::DateTime<chrono::Utc>) -> usize {
+        let saved = session::root().map_or(0, |root| expire_saved(&root, before));
+        let browser = leo_core::paths::data_dir().map_or(0, |data| {
+            expire_browser_audio(&data.join("browser-audio"), before.into())
+        });
+        saved + browser
     }
 }
 
@@ -103,6 +149,39 @@ mod tests {
         assert!(keep.exists());
         discard_recording(tmp.path(), "call-failed-01").unwrap();
         assert!(discard_recording(tmp.path(), "../outside").is_err());
+    }
+
+    #[test]
+    fn kept_audio_past_its_time_goes_and_everything_else_stays() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("recordings");
+        std::fs::create_dir(&sessions).unwrap();
+        let create = |id: &str, saved: bool, days: i64| {
+            let mut manifest = session::Manifest::new(None, None, "", false);
+            manifest.id = id.into();
+            manifest.saved = saved;
+            manifest.started = chrono::Utc::now() - chrono::Duration::days(days);
+            Session::create(&sessions, manifest).unwrap().dir
+        };
+        let old_saved = create("old-saved-01", true, 40);
+        let new_saved = create("new-saved-01", true, 2);
+        let old_pending = create("old-pending-01", false, 40);
+        let locked = create("old-locked-01", true, 40);
+        std::fs::write(locked.join("lock"), std::process::id().to_string()).unwrap();
+        let before = chrono::Utc::now() - chrono::Duration::days(30);
+        assert_eq!(expire_saved(&sessions, before), 1);
+        assert!(!old_saved.exists());
+        assert!(new_saved.exists() && old_pending.exists() && locked.exists());
+
+        let browser = tmp.path().join("browser-audio");
+        std::fs::create_dir_all(browser.join("left-behind")).unwrap();
+        std::fs::write(browser.join("left-behind/0.webm"), b"audio").unwrap();
+        let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        assert_eq!(expire_browser_audio(&browser, earlier), 0);
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        assert_eq!(expire_browser_audio(&browser, later), 1);
+        assert!(!browser.join("left-behind").exists());
+        assert_eq!(expire_browser_audio(&tmp.path().join("absent"), later), 0);
     }
 
     #[test]

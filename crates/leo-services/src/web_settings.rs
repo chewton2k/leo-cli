@@ -655,22 +655,12 @@ mod tests {
     }
 
     #[test]
-    fn retired_backup_settings_are_ignored_and_cannot_be_changed() {
+    fn a_settings_change_keeps_sections_it_does_not_know() {
         let legacy = "[chat]\nchain = [\"ollama\"]\n[sync]\nauto_push = \"when_idle\"\nidle_secs = 1\n[theme]\npreset = \"coral\"\n[calendar]\nkept = true\n";
         let (_d, path) = setup(legacy);
         let store = MemoryStore::default();
         let cfg = Config::parse_with_built_ins(legacy).unwrap();
         assert_eq!(cfg.chat.chain, ["ollama"]);
-        let page = describe(&cfg, &store, &Local::default(), &Default::default(), None);
-        assert!(page.get("backup").is_none());
-        assert!(apply(
-            &json!({"set": "auto_push", "value": "off"}),
-            &path,
-            &store,
-            &Local::default()
-        )
-        .is_err());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), legacy);
         apply(
             &json!({"set": "provider", "task": "writing", "value": "claude_code"}),
             &path,

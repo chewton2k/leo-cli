@@ -47,28 +47,51 @@ fn upload_note_id(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-pub fn expire_uploads(notes_dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
+fn old_uploads(notes_dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> Vec<PathBuf> {
     let Some(cutoff) = cutoff(days, now) else {
-        return 0;
+        return Vec::new();
     };
     let Ok(base) = leo_core::paths::contained_path(&data_dir(notes_dir), Path::new("attachments"))
     else {
-        return 0;
+        return Vec::new();
     };
-    let mut gone = 0;
+    let mut old = Vec::new();
     for dir in child_dirs(&base, upload_note_id) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.take(MOST_ENTRIES).flatten() {
             let path = entry.path();
-            let is_file = entry.file_type().is_ok_and(|t| t.is_file());
-            if is_file && older(&path, cutoff) && std::fs::remove_file(&path).is_ok() {
-                gone += 1;
+            if entry.file_type().is_ok_and(|t| t.is_file()) && older(&path, cutoff) {
+                old.push(path);
             }
         }
     }
-    gone
+    old
+}
+
+pub fn expire_uploads(notes_dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
+    old_uploads(notes_dir, days, now)
+        .into_iter()
+        .filter(|path| std::fs::remove_file(path).is_ok())
+        .count()
+}
+
+fn old_transcripts(
+    notes_dir: &Path,
+    days: Option<u32>,
+    now: DateTime<Utc>,
+    active: Option<&str>,
+) -> Vec<PathBuf> {
+    let Some(cutoff) = cutoff(days, now) else {
+        return Vec::new();
+    };
+    let root = leo_core::recording::root(notes_dir);
+    child_dirs(&root, leo_core::recording::valid_id)
+        .into_iter()
+        .filter(|dir| active.is_none() || dir.file_name().and_then(|n| n.to_str()) != active)
+        .filter(|dir| older(dir, cutoff))
+        .collect()
 }
 
 pub fn expire_transcripts(
@@ -77,15 +100,61 @@ pub fn expire_transcripts(
     now: DateTime<Utc>,
     active: Option<&str>,
 ) -> usize {
-    let Some(cutoff) = cutoff(days, now) else {
+    old_transcripts(notes_dir, days, now, active)
+        .into_iter()
+        .filter(|dir| std::fs::remove_dir_all(dir).is_ok())
+        .count()
+}
+
+pub(crate) async fn would_delete(state: &AppState, field: &str, days: Option<u32>) -> usize {
+    let Some(days) = days else {
         return 0;
     };
-    let root = leo_core::recording::root(notes_dir);
-    child_dirs(&root, leo_core::recording::valid_id)
-        .into_iter()
-        .filter(|dir| active.is_none() || dir.file_name().and_then(|n| n.to_str()) != active)
-        .filter(|dir| older(dir, cutoff) && std::fs::remove_dir_all(dir).is_ok())
-        .count()
+    let now = Utc::now();
+    let before = now - chrono::Duration::days(i64::from(days));
+    let chats_dir = state.chats.clone();
+    let field = field.to_string();
+    let housekeeper = state.housekeeper.clone();
+    let active = state
+        .recording
+        .lock()
+        .ok()
+        .and_then(|held| held.as_ref().map(|job| job.session_id()));
+    let Ok(notes_dir) = state.with_store(|store| Ok(store.notes_dir.clone())).await else {
+        return 0;
+    };
+    if field == "trash_days" {
+        return state
+            .with_store(move |store| {
+                Ok(store
+                    .trashed()
+                    .iter()
+                    .filter(|t| t.deleted_at < before)
+                    .count())
+            })
+            .await
+            .unwrap_or(0);
+    }
+    tokio::task::spawn_blocking(move || match field.as_str() {
+        "chat_days" => crate::chats::list(&chats_dir)
+            .iter()
+            .filter(|c| c.updated_at < before)
+            .count(),
+        "upload_days" => old_uploads(&notes_dir, Some(days), now).len(),
+        "transcript_days" => old_transcripts(&notes_dir, Some(days), now, active.as_deref()).len(),
+        "audio_days" => housekeeper
+            .and_then(|h| h.pending_recordings().ok())
+            .map_or(0, |pending| {
+                pending
+                    .iter()
+                    .filter(|p| p.started.is_some_and(|started| started < before))
+                    .filter(|p| active.as_deref() != Some(p.id.as_str()))
+                    .count()
+            }),
+        _ => 0,
+    })
+    .await
+    .unwrap_or(0)
 }
 
 pub fn expire_audio(
@@ -100,10 +169,11 @@ pub fn expire_audio(
     let Some(cutoff) = now.checked_sub_signed(chrono::Duration::days(i64::from(days))) else {
         return 0;
     };
+    let kept = housekeeper.expire_kept_audio(cutoff);
     let Ok(pending) = housekeeper.pending_recordings() else {
-        return 0;
+        return kept;
     };
-    pending
+    kept + pending
         .into_iter()
         .filter(|p| p.started.is_some_and(|started| started < cutoff))
         .filter(|p| active != Some(p.id.as_str()))
@@ -128,7 +198,7 @@ pub(crate) async fn expire_now(state: &AppState) {
         .recording
         .lock()
         .ok()
-        .and_then(|held| held.as_ref().map(|job| job.view().id));
+        .and_then(|held| held.as_ref().map(|job| job.session_id()));
     let _ = tokio::task::spawn_blocking(move || {
         let now = Utc::now();
         expire_uploads(&notes_dir, keep.upload_days, now);
