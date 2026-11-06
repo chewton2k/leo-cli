@@ -9,7 +9,25 @@ pub(crate) const MOST_LINE: usize = 2 * 1024 * 1024;
 pub(crate) const QUEUED_MESSAGES: usize = 8;
 const MOST_CHILDREN: usize = 64;
 
-type ChildHandle = Mutex<Option<Child>>;
+pub(crate) struct ChildHandle {
+    child: Mutex<Option<Child>>,
+    killed: AtomicBool,
+}
+
+impl std::ops::Deref for ChildHandle {
+    type Target = Mutex<Option<Child>>;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl ChildHandle {
+    fn kill(&self, child: &mut Child) {
+        if !self.killed.swap(true, Ordering::SeqCst) {
+            super::agent_cli::stop_all(child);
+        }
+    }
+}
 
 #[derive(Default)]
 struct Children {
@@ -31,9 +49,9 @@ pub(crate) fn stop_writing() {
 }
 
 fn signal(child: &Arc<ChildHandle>) {
-    let mut child = child.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(child) = child.as_mut() {
-        super::agent_cli::stop_all(child);
+    let mut held = child.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(running) = held.as_mut() {
+        child.kill(running);
     }
 }
 
@@ -107,7 +125,10 @@ impl Process {
     }
 
     fn tracked(child: Child, children: &Children) -> Self {
-        let process = Self(Arc::new(Mutex::new(Some(child))));
+        let process = Self(Arc::new(ChildHandle {
+            child: Mutex::new(Some(child)),
+            killed: AtomicBool::new(false),
+        }));
         children.track(&process.0);
         process
     }
@@ -115,7 +136,7 @@ impl Process {
     pub(crate) fn stop(&self) {
         let child = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(mut child) = child {
-            super::agent_cli::stop_all(&mut child);
+            self.0.kill(&mut child);
             let _ = child.wait();
             *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
         }
@@ -126,7 +147,7 @@ impl Drop for Process {
     fn drop(&mut self) {
         let child = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(mut child) = child {
-            super::agent_cli::stop_all(&mut child);
+            self.0.kill(&mut child);
             let _ = child.wait();
         }
     }
@@ -297,6 +318,25 @@ mod tests {
             .try_wait()
             .unwrap();
         assert!(status.is_some());
+    }
+
+    #[test]
+    fn a_reaped_child_is_never_signalled_again() {
+        let process = Process::new(child("sleep 30"));
+        process.stop();
+        assert!(process.0.killed.load(Ordering::SeqCst));
+        let pid = process.0.lock().unwrap().as_ref().unwrap().id();
+        let other = child("sleep 30");
+        let mut reused = process.0.lock().unwrap();
+        let old = reused.replace(other).unwrap();
+        assert_eq!(old.id(), pid);
+        drop(reused);
+        signal(&process.0);
+        let mut held = process.0.lock().unwrap();
+        let live = held.as_mut().unwrap();
+        assert!(live.try_wait().unwrap().is_none());
+        leo_core::children::stop_tree(live);
+        let _ = live.wait();
     }
 
     fn wait_for_exit(process: &Process) {
