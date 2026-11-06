@@ -510,13 +510,29 @@ mod tests {
         assert_eq!(vectors.known.lock().unwrap()[&id].pieces.len(), 3);
         assert!(vectors.stale(&store, 100).is_empty());
 
+        let ends = |vectors: &Vectors| {
+            let known = vectors.known.lock().unwrap();
+            let pieces = &known[&id].pieces;
+            (pieces[1].1.clone(), pieces[2].1.clone())
+        };
+        let before = ends(&vectors);
+        store.find_note_mut(&id).unwrap().body = format!("intro\n\n{}", body(&part("d")));
+        catch_up(&store, &vectors, &counting, 100);
+        assert_eq!(
+            *read.lock().unwrap(),
+            [3, 1, 1],
+            "pieces that only moved keep their vectors"
+        );
+        assert_eq!(ends(&vectors), before);
+        assert!(vectors.stale(&store, 100).is_empty());
+
         let vectors = Vectors::for_notes(&store.notes_dir);
         store.find_note_mut(&id).unwrap().body = format!("{}\n\n{}", part("a"), part("b"));
         catch_up(&store, &vectors, &counting, 100);
         assert_eq!(
             *read.lock().unwrap(),
-            [3, 1],
-            "a removed piece needs no reading"
+            [3, 1, 1, 1],
+            "only the first piece, which lost its intro, is read again"
         );
         assert_eq!(vectors.known.lock().unwrap()[&id].pieces.len(), 2);
         assert!(vectors.stale(&store, 100).is_empty());

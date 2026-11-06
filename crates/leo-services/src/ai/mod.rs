@@ -20,7 +20,11 @@ use crate::config::Config;
 pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
 
 pub fn tidy_rooms() {
-    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+    tidy_rooms_in(&std::env::temp_dir());
+}
+
+fn tidy_rooms_in(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
@@ -281,6 +285,38 @@ pub fn chat_streaming(
 #[cfg(test)]
 mod tests {
     use crate::config::provider::{ProviderConfig, ProviderKind};
+
+    #[test]
+    fn only_old_private_work_folders_are_swept_from_the_temp_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let aged = |name: &str, old: bool| {
+            let path = temp.path().join(name);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("prompt.txt"), "kept private").unwrap();
+            if old {
+                let mut open = std::fs::File::options();
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    open.write(true).custom_flags(0x0200_0000);
+                }
+                #[cfg(not(windows))]
+                open.read(true);
+                open.open(&path)
+                    .unwrap()
+                    .set_modified(
+                        std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400),
+                    )
+                    .unwrap();
+            }
+            path
+        };
+        let stale = [aged("leo-writing-old", true), aged("leo-usage-old", true)];
+        let kept = [aged("leo-writing-new", false), aged("someone-else", true)];
+        super::tidy_rooms_in(temp.path());
+        assert!(stale.iter().all(|path| !path.exists()));
+        assert!(kept.iter().all(|path| path.exists()));
+    }
 
     fn chained(first: &str) -> crate::config::Config {
         let mut cfg = crate::config::Config::default();
