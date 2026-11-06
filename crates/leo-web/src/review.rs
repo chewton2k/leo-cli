@@ -199,6 +199,7 @@ fn missed_cards(chat: &Chat, message: &serde_json::Value, now: DateTime<Utc>) ->
         .into_iter()
         .flatten()
         .filter(|q| q.get("given").is_some_and(|g| g.is_string()))
+        .filter(|q| q.get("predict").is_none())
         .filter(|q| match q.get("correct") {
             Some(serde_json::Value::Bool(right)) => !right,
             _ => q
@@ -348,7 +349,6 @@ mod tests {
             id,
             chats::Saving {
                 title: String::new(),
-                mode: "study".into(),
                 refs: vec![],
                 messages,
             },

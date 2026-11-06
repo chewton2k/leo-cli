@@ -265,10 +265,16 @@ actions, chat scope) were removed on 2026-10-10, the user's call: the "What do y
 want from the notes?" box replaces formats.
 
 Interview coding practice was removed by the user's decision on 2026-11-05.
-Felix keeps Chat and Study, including quizzes, study sessions and review. Legacy
-interview database tables and rows stay unused; old interview-style chats open
-as Chat and retired cards show a short removal message. Downloaded runtimes stay
+Felix keeps quizzes, study sessions and review. Legacy interview database tables
+and rows stay unused; old interview-style chats open normally and retired cards
+show a short removal message. Downloaded runtimes stay
 visible and removable through Storage's symlink-safe downloaded-files cleanup.
+
+Felix has no modes (2026-11-05, the user's call): one prompt, and he works out
+from each message whether to answer, teach or quiz. Lessons follow the method of
+LearnHarness (measure, plan, teach step by step, practise), written in leo's own
+words: LearnHarness is AGPL-3.0 and leo is MIT, so its code and prompt text must
+never be copied in. See crates/leo-web/CLAUDE.md.
 
 Storage scans use a read-only Store snapshot and blocking workers so filesystem
 walks and database compaction do not hold the notes lock. The Housekeeper lists

@@ -252,6 +252,11 @@ pub const SPECS: [Spec; 31] = [
                 required: false,
                 about: "yes when this is one step of a worked problem and more steps of the same idea follow; leave it out on the last step",
             },
+            Param {
+                name: "predict",
+                required: false,
+                about: "yes to have the user guess the next step before you teach it; free_response only, unmarked",
+            },
         ],
         returns: "Asked. End with one short sentence and await their answer. Math in question/options/answer uses $...$.",
         example: r#"<tool>{"name": "quiz", "kind": "multiple_choice", "question": "What does BFS use to pick the next node?", "options": "a stack | a queue | a heap", "answer": "a queue", "explain": "BFS explores the oldest node found first."}</tool>"#,
@@ -534,7 +539,7 @@ pub const SPECS: [Spec; 31] = [
     },
     Spec {
         name: "study_plan",
-        purpose: "Start a requested study/quiz session with 3-8 key ideas/problems (fewer for a quick check). Then quiz each idea by number until covered.",
+        purpose: "Start a requested lesson or study session with 3-8 key ideas/problems (fewer for a quick check). Then quiz each idea by number until covered.",
         params: &[Param {
             name: "ideas",
             required: true,
@@ -1469,6 +1474,8 @@ pub struct Quiz {
     pub idea: Option<usize>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub more: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub predict: bool,
 }
 
 pub const MOST_IDEAS: usize = 12;
@@ -1516,7 +1523,7 @@ fn clip_chars(text: &str, most: usize) -> String {
 
 pub const SESSION_DONE: &str = "That did not work: this study session is complete (every idea is covered, or it reached 20 questions). Do not ask another question. Write the recap now in one short paragraph: the specific progress the user demonstrated and one priority to practise next. No generic praise or repeated session transcript.";
 pub const PLANNED: &str =
-    "Planned. Ask the first question now with quiz, giving its \"idea\" number.";
+    "Planned. Go on now: ask with quiz, giving its \"idea\" number, or teach the first step and end with that quiz.";
 pub const ENDED: &str = "Ended. Write the recap in one short paragraph: the specific progress the user demonstrated and one priority to practise next. No generic praise or repeated session transcript. Ask nothing more.";
 
 pub fn plan_from(call: &Call) -> Result<Vec<String>, String> {
@@ -1573,6 +1580,13 @@ fn shuffled(mut options: Vec<String>) -> Vec<String> {
     options
 }
 
+fn said_yes(call: &Call, name: &str) -> bool {
+    matches!(
+        call.text(name).trim().to_lowercase().as_str(),
+        "yes" | "true" | "1"
+    )
+}
+
 pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
     let kind = call
         .text("kind")
@@ -1585,6 +1599,10 @@ pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
     let question = call.text("question").trim().to_string();
     let answer = call.text("answer").trim().to_string();
     let options = choices(&call.text("options"), 6);
+    let predict = said_yes(call, "predict");
+    if predict && kind != "free_response" {
+        return Err("a prediction must be a free_response question".into());
+    }
     if kind == "multiple_choice" {
         if options.len() < 2 {
             return Err("a multiple_choice quiz needs 2 to 6 options separated by |".into());
@@ -1618,10 +1636,8 @@ pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
             .trim_start_matches('#')
             .parse::<usize>()
             .ok(),
-        more: matches!(
-            call.text("more_parts").trim().to_lowercase().as_str(),
-            "yes" | "true" | "1"
-        ),
+        more: said_yes(call, "more_parts"),
+        predict,
     })
 }
 
@@ -2791,6 +2807,31 @@ mod tests {
         assert_eq!(quoted.text("title"), "Say \"yes\", true story");
         assert_eq!(quoted.text("date"), "2026-10-14");
         assert!(find_call("<tool>{\"name\": </tool>").unwrap().is_err());
+    }
+
+    #[test]
+    fn a_prediction_is_a_free_response_question() {
+        let predict = quiz_from(&call_of(
+            r#"{"name":"quiz","kind":"free_response","question":"What has to give?","answer":"The pointer","predict":"yes"}"#,
+        ))
+        .unwrap();
+        assert!(predict.predict);
+        assert_eq!(
+            serde_json::to_value(&predict).unwrap()["predict"],
+            serde_json::json!(true)
+        );
+        let plain = quiz_from(&call_of(
+            r#"{"name":"quiz","kind":"free_response","question":"Why?","answer":"Because"}"#,
+        ))
+        .unwrap();
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("predict")
+            .is_none());
+        assert!(quiz_from(&call_of(
+            r#"{"name":"quiz","kind":"fill_blank","question":"A ___","answer":"b","predict":"yes"}"#,
+        ))
+        .is_err());
     }
 
     #[test]

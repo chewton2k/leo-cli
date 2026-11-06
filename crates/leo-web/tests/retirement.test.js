@@ -7,14 +7,11 @@ const vm = require('node:vm');
 require('../src/web/chat.js');
 const C = globalThis.leoChat;
 
-test('remembered interview style falls back to Chat without losing saved messages', () => {
+test('a remembered interview chat opens without losing saved messages', () => {
   const messages = [{ role: 'assistant', text: 'Saved answer', proposals: [{ kind: 'interview_test' }] }];
   const cached = JSON.stringify({ id: 'retired-chat', mode: 'interview', messages, refs: [] });
   const storage = { getItem: () => cached, setItem: () => assert.fail('reading old state must not rewrite it') };
-  assert.equal(C.modeOf('interview'), 'chat');
-  assert.equal(C.load(storage).mode, 'chat');
   assert.deepEqual(C.load(storage).messages, messages);
-  assert.deepEqual(C.MODES.map(m => m.id), ['chat', 'study']);
 });
 
 test('retired interview cards render a short notice without controls and keep Study cards separate', () => {

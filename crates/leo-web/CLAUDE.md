@@ -291,7 +291,7 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
 
 - Warm sessions (`warm.rs`): up to three recent conversations, sharing a
   480,000-character context ceiling. Switching chats keeps eligible sessions;
-  same-chat history/style/access/config mismatches replace only that chat.
+  same-chat history/access/config mismatches replace only that chat.
   Settings changes clear all sessions. Sessions expire after ten idle minutes,
   and deletion releases that chat. Eviction and process cleanup happen outside
   the slot mutex and away from async request workers. Only unchanged history plus the last reply/new message can
@@ -327,7 +327,33 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   opening fence's own length), says how many characters
   are left out and tells Felix to ask for the rest as a file.
 
-- Styles (`MODES`): chat and study. Study marks critically (a right
+- One Felix, no modes (2026-11-05, the user's call: "let the agent decide"):
+  `HELPING` tells him to work out from each message whether to answer, teach
+  or test, and an open note alone never starts a session; `LEARNING` holds the
+  rules for both. Tools were never gated by style. The `chats.mode` column
+  stays for old rows and is kept as it was on save (new rows say `chat`); request
+  and saved `mode` fields are ignored. `.chat-switch` keeps only the who-answered
+  line. Review shows on the empty chat only when questions are due.
+- Lessons and practice borrow LearnHarness's method, in our own words only
+  (AGPL-3.0 against leo's MIT; never paste its prompts or code). A lesson finds
+  where understanding stops (ordinary quiz cards before any plan), plans the
+  shortest dependency-ordered route (`study_plan`), teaches one reasoning step
+  per reply (prediction, then teaching, then a check card in the same reply) and
+  ends when the goal seems obvious. Practice runs each idea through recall, then
+  telling it from its look-alike, then combining, with `more_parts` keeping the
+  idea open; hints go one rung at a time; retests use a new situation. A
+  prediction is `quiz` with `predict: yes`: free_response only, shown as Predict,
+  never marked (`quizSay` says so, the request sends `mark: false`), never scored,
+  not counted in `session.asked` and never a missed question in review. Other
+  cards offer How sure (`SURE`: sure, think, guess; pick before answering, since
+  a choice submits at once) and Add your thinking (up to `MOST_THINKING`, a
+  separate `think:i:k` draft). Both go to `/api/quiz/mark` (`confidence` is
+  validated, `thinking` bounded and sealed) and to Felix inside the answer line
+  (`aside`), which must stay one line: `send` folds held results by taking their
+  first three lines. A right guess leaves its idea open for one retest. A typed
+  "I do not know" needs no button: it is marked as a miss and Felix treats it as
+  a gap.
+- Quizzes. Marking is critical (a right
   result by wrong reasoning is `[[incorrect]]`), asks about the reasoning
   step by step, mostly free response and fill-in, and treats subjective
   material as criteria and trade-offs. Practice cards (`quiz`, `ask_user`)
@@ -348,7 +374,7 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   please." A new question card clears Next question on every told card, so an
   old button cannot ask a second question later. Next question shows as a slim `.msg-next` divider (the `chat-switch`
   pill), not a user bubble, and a card-only reply draws no empty paragraph.
-  Study's style starts from the open/attached material without being set up,
+  Felix starts from the open/attached material without being set up,
   asks for self-contained questions that test one important idea, climbs from
   understanding to use to transfer, adapts to right/wrong answers, and stops
   after marking or answering a question about an answer. If the quick check is
@@ -417,13 +443,11 @@ reader, seer, meaning, web, room, speech, toolless, toolless_chat).
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
   “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
-  attribute says the connected notes are read too), a style button
-  (`#chat-mode-btn`, a `.chat-popup` menu with the Chat and Study
-  `menuitemradio`s and, while a note is attached, `Stop reading this note`,
-  which is what the old context bar's × did; Arrow keys, Home/End, Escape back
-  to the button) and New/Close. Felix's words (greeting, answers) use
+  attribute says the connected notes are read too), while a note is attached a
+  `Stop reading this note` icon button (`data-chat="drop"`, focus moves to the
+  input) and New/Close. Felix's words (greeting, answers) use
   `--voice`; the user's messages stay sans in a `--field` bubble. The greeting
-  and starters arrive once per chat and style (`data-hello` key): words fade
+  and starters arrive once per chat (`data-hello` key): words fade
   in (`.word`, `word-in` .5 s opacity and colour, no blur, nothing moves),
   starters are pills that appear together after it. `draw(stick, live)` no
   longer replaces the transcript on every streamed chunk: `settle(from, to)`
@@ -847,7 +871,7 @@ Settings shows token/cache counts, unreported/estimated usage, tool failures/reu
 reads, and median/p95 timing from at most 64 samples per category. Native agents
 may make additional internal requests; these are not subscription-balance estimates.
 
-A hidden check resolving conflicting Study verdicts is authoritative for the card
+A hidden check resolving conflicting quiz verdicts is authoritative for the card
 and its hidden history marker; the streamed explanation stays intact. An invalid
 check leaves the answer ungraded, and the inconsistent warm session is released.
 
@@ -1099,13 +1123,13 @@ ISO datetimes as one date/time before removing them from the title.
 ## Retired interview practice (2026-11-05)
 
 Interview coding practice, its style, tools, workspaces and runtime downloads were
-removed by user decision. Chat and Study retain quiz and ask_user cards, marking,
+removed by user decision. Felix retains quiz and ask_user cards, marking,
 study sessions and review. Shared progress meters, meterBar, source-more, Mermaid,
 KaTeX, margin notes and board tools remain independent of the retired feature.
 
 Legacy interviews, interview_keys and interview_problem_undo tables and their rows
 remain in leo.db, unused and never purged or migrated away. Old interview-style
-chats open as Chat; their saved cards show a short retirement message. Old routes,
-remembered places and style fall back to the note workspace or Chat. Stale
+chats open normally; their saved cards show a short retirement message. Old routes
+and remembered places fall back to the note workspace. Stale
 leo-interview-* localStorage keys stay untouched. Downloaded runtimes remain in
 Storage's Other downloaded model files with the existing symlink/path protections.

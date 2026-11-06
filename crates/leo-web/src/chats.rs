@@ -21,8 +21,6 @@ pub struct Chat {
     pub id: String,
     pub title: String,
     #[serde(default)]
-    pub mode: String,
-    #[serde(default)]
     pub refs: Vec<Ref>,
     #[serde(default)]
     pub messages: Vec<serde_json::Value>,
@@ -50,7 +48,6 @@ impl Chat {
             title: self.title.clone(),
             named: self.named,
             about: self.about.clone(),
-            mode: crate::chat::mode_of(Some(&self.mode)).into(),
             count: self.messages.len(),
             updated_at: self.updated_at,
         }
@@ -67,7 +64,6 @@ pub struct Summary {
     pub title: String,
     pub named: bool,
     pub about: String,
-    pub mode: String,
     pub count: usize,
     pub updated_at: DateTime<Utc>,
 }
@@ -76,8 +72,6 @@ pub struct Summary {
 pub struct Saving {
     #[serde(default)]
     pub title: String,
-    #[serde(default)]
-    pub mode: String,
     #[serde(default)]
     pub refs: Vec<Ref>,
     #[serde(default)]
@@ -337,11 +331,10 @@ fn json<T: Serialize + ?Sized>(value: &T) -> String {
 fn write_in(c: &rusqlite::Connection, chat: &Chat) -> rusqlite::Result<()> {
     c.execute(
         "INSERT OR REPLACE INTO chats (id, title, mode, refs, messages, named, about, memory, count, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         VALUES (?1, ?2, coalesce((SELECT mode FROM chats WHERE id = ?1), 'chat'), ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             chat.id,
             chat.title,
-            chat.mode,
             json(&chat.refs),
             json(&chat.messages),
             chat.named,
@@ -365,21 +358,20 @@ fn chat_of(row: &rusqlite::Row) -> rusqlite::Result<Chat> {
     Ok(Chat {
         id: text(0)?,
         title: text(1)?,
-        mode: crate::chat::mode_of(Some(&text(2)?)).into(),
-        refs: serde_json::from_str(&text(3)?).unwrap_or_default(),
-        messages: serde_json::from_str(&text(4)?).unwrap_or_default(),
-        named: row.get(5)?,
-        about: text(6)?,
+        refs: serde_json::from_str(&text(2)?).unwrap_or_default(),
+        messages: serde_json::from_str(&text(3)?).unwrap_or_default(),
+        named: row.get(4)?,
+        about: text(5)?,
         memory: row
-            .get::<_, Option<String>>(7)?
+            .get::<_, Option<String>>(6)?
             .and_then(|m| serde_json::from_str(&m).ok()),
-        created_at: when(&text(8)?),
-        updated_at: when(&text(9)?),
+        created_at: when(&text(7)?),
+        updated_at: when(&text(8)?),
     })
 }
 
 const CHAT_COLUMNS: &str =
-    "id, title, mode, refs, messages, named, about, memory, created_at, updated_at";
+    "id, title, refs, messages, named, about, memory, created_at, updated_at";
 
 fn load_in(c: &rusqlite::Connection, id: &str) -> rusqlite::Result<Option<Chat>> {
     use rusqlite::OptionalExtension;
@@ -404,9 +396,8 @@ fn summary_of(row: &rusqlite::Row) -> rusqlite::Result<Summary> {
         title: row.get(1)?,
         named: row.get(2)?,
         about: row.get(3)?,
-        mode: crate::chat::mode_of(Some(&row.get::<_, String>(4)?)).into(),
-        count: row.get::<_, i64>(5)? as usize,
-        updated_at: when(&row.get::<_, String>(6)?),
+        count: row.get::<_, i64>(4)? as usize,
+        updated_at: when(&row.get::<_, String>(5)?),
     })
 }
 
@@ -414,7 +405,7 @@ pub fn list(dir: &Path) -> Vec<Summary> {
     db_of(dir)
         .with(|c| {
             let mut found = c.prepare(
-                "SELECT id, title, named, about, mode, count, updated_at FROM chats ORDER BY updated_at DESC, id",
+                "SELECT id, title, named, about, count, updated_at FROM chats ORDER BY updated_at DESC, id",
             )?;
             let rows = found.query_map([], summary_of)?;
             rows.collect()
@@ -436,7 +427,7 @@ pub fn search(dir: &Path, query: &str) -> Vec<Summary> {
     db_of(dir)
         .with(|c| {
             let mut found = c.prepare(
-                "SELECT c.id, c.title, c.named, c.about, c.mode, c.count, c.updated_at
+                "SELECT c.id, c.title, c.named, c.about, c.count, c.updated_at
                  FROM chats_text t JOIN chats c ON c.id = t.id
                  WHERE chats_text MATCH ?1 ORDER BY bm25(chats_text, 0.0, 4.0, 1.0), c.updated_at DESC LIMIT 100",
             )?;
@@ -481,7 +472,6 @@ pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<
             title: kept_name.unwrap_or_else(|| title_of(&saving.title, &refs, &messages)),
             about: about_of(&messages),
             memory,
-            mode: crate::chat::mode_of(Some(&saving.mode)).into(),
             refs,
             messages,
             created_at,
@@ -591,7 +581,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retired_interview_chats_open_as_chat_without_rewriting_the_saved_data() {
+    fn chats_saved_under_a_retired_style_still_open_without_rewriting_the_saved_data() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("chats");
         let now = Utc::now();
@@ -605,7 +595,6 @@ mod tests {
                 &id,
                 Saving {
                     title: "Saved practice".into(),
-                    mode: mode.into(),
                     refs: vec![],
                     messages: messages.clone(),
                 },
@@ -621,23 +610,21 @@ mod tests {
                     Ok(())
                 })
                 .unwrap();
-            let expected = if mode == "interview" { "chat" } else { mode };
             let loaded = load(&dir, &id).unwrap();
-            assert_eq!(loaded.mode, expected);
             assert_eq!(loaded.messages, messages);
-            assert_eq!(loaded.summary().mode, expected);
-            assert_eq!(
-                list(&dir).into_iter().find(|s| s.id == id).unwrap().mode,
-                expected
-            );
-            assert_eq!(
-                search(&dir, "practice")
-                    .into_iter()
-                    .find(|s| s.id == id)
-                    .unwrap()
-                    .mode,
-                expected
-            );
+            save(
+                &dir,
+                &id,
+                Saving {
+                    title: "Saved practice".into(),
+                    refs: vec![],
+                    messages: messages.clone(),
+                },
+                now,
+            )
+            .unwrap();
+            assert!(list(&dir).iter().any(|s| s.id == id));
+            assert!(search(&dir, "practice").iter().any(|s| s.id == id));
             assert_eq!(
                 db_of(&dir)
                     .with(|c| c
@@ -661,7 +648,6 @@ mod tests {
             "chat-order-0001",
             Saving {
                 title: String::new(),
-                mode: "chat".into(),
                 refs: vec![],
                 messages: one.clone(),
             },
@@ -673,17 +659,15 @@ mod tests {
             "chat-order-0001",
             Saving {
                 title: String::new(),
-                mode: "study".into(),
                 refs: vec![],
                 messages: one.clone(),
             },
             later,
         )
         .unwrap();
-        assert_eq!(switched.mode, "study");
         assert_eq!(
             switched.updated_at, early,
-            "switching style is not activity"
+            "saving an unchanged chat is not activity"
         );
         let mut two = one;
         two.push(serde_json::json!({ "role": "assistant", "text": "hello" }));
@@ -692,7 +676,6 @@ mod tests {
             "chat-order-0001",
             Saving {
                 title: String::new(),
-                mode: "study".into(),
                 refs: vec![],
                 messages: two,
             },
@@ -713,7 +696,6 @@ mod tests {
     fn saving(messages: Vec<serde_json::Value>) -> Saving {
         Saving {
             title: String::new(),
-            mode: "chat".into(),
             refs: vec![],
             messages,
         }
@@ -870,7 +852,6 @@ mod tests {
             "chat-aaaa-1",
             Saving {
                 title: String::new(),
-                mode: "study".into(),
                 refs: vec![Ref {
                     id: "n1".into(),
                     title: "Heaps".into(),
@@ -889,7 +870,6 @@ mod tests {
             "chat-bbbb-2",
             Saving {
                 title: String::new(),
-                mode: "chat".into(),
                 refs: vec![],
                 messages: vec![],
             },
@@ -901,7 +881,6 @@ mod tests {
             "chat-aaaa-1",
             Saving {
                 title: String::new(),
-                mode: "study".into(),
                 refs: first.refs.clone(),
                 messages: vec![
                     said("user", "quiz me on heaps"),
@@ -935,7 +914,6 @@ mod tests {
         let dir = tmp.path().join("chats");
         let empty = || Saving {
             title: String::new(),
-            mode: String::new(),
             refs: vec![],
             messages: vec![said("user", "hi")],
         };
@@ -966,7 +944,6 @@ mod tests {
                 bad,
                 Saving {
                     title: String::new(),
-                    mode: String::new(),
                     refs: vec![],
                     messages: vec![]
                 },
@@ -985,7 +962,6 @@ mod tests {
             "chat-long-123",
             Saving {
                 title: long,
-                mode: String::new(),
                 refs: vec![],
                 messages,
             },

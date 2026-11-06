@@ -333,7 +333,7 @@ body.on-library main { padding-bottom: max(calc(var(--bottom) + 110px), var(--do
 .library-views [data-action="library-view"] { gap: 8px; }
 .library-views [data-action="library-view"] > span { display: block; line-height: 1; }
 .library-views .on { background: var(--raised); color: var(--text); }
-.library-views, .segmented, [role="tablist"], .settings-nav, .kanban-tabs, .chat-menu, #side { -webkit-user-select: none; user-select: none; }
+.library-views, .segmented, [role="tablist"], .settings-nav, .kanban-tabs, #side { -webkit-user-select: none; user-select: none; }
 .library-tools svg { width: 16px; height: 16px; flex: none; }
 .library-choice select { height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 13.5px; font-weight: 600; cursor: pointer; max-width: 160px; }
 .library-choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1194,18 +1194,7 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-name b { font-size: 16px; }
 .chat-name span { font-size: 12.5px; color: var(--muted); }
 .chat-context { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-menu { position: relative; flex: none; }
-.chat-pill { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 8px 0 12px; border: 0; border-radius: 999px; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
-.chat-pill:hover, .chat-pill[aria-expanded="true"] { background: var(--field); color: var(--text); }
-.chat-pill svg { width: 14px; height: 14px; opacity: .7; transform: rotate(90deg); }
-.chat-popup { position: absolute; z-index: 6; right: 0; top: calc(100% + 6px); min-width: 190px; padding: 4px; border-radius: 12px; background: var(--field); box-shadow: var(--shadow); }
-.chat-popup[hidden] { display: none; }
-.chat-popup button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; border: 0; background: none; text-align: left; padding: 8px 10px; border-radius: 8px; font-size: 14px; color: var(--text); }
-.chat-popup button:hover { background: var(--field-hi); }
-.chat-popup button svg { width: 16px; height: 16px; flex: none; color: var(--accent); visibility: hidden; }
-.chat-popup button.on svg { visibility: visible; }
-.chat-popup button.chat-leave { color: var(--muted); }
-.chat-popup button[hidden] { display: none; }
+.chat-head .icon-btn[hidden] { display: none; }
 .chat-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 6px; display: flex; flex-direction: column; gap: 14px; }
 .chat-hello { margin: auto 0; padding: 10px 2px 20px; }
 .chat-hello-text { margin: 0 0 16px; font-family: var(--voice); font-size: 16.5px; line-height: 1.5; max-width: 34em; }
@@ -2325,6 +2314,14 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 .cite .cite-at { margin-left: 5px; font-weight: 500; opacity: .75; }
 .passage-list { max-height: min(56vh, 520px); }
 .passage-text { flex: 1; min-width: 0; font-size: 15px; line-height: 1.6; padding: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.quiz-sure { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.quiz-sure-pick { min-height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; }
+.quiz-sure-pick:hover:not(:disabled) { color: var(--text); }
+.quiz-sure-pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.quiz-sure .quiz-hint-ask { margin: 0 0 0 4px; }
+.quiz-thinking { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 14px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.quiz-thinking:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.quiz-own { font-size: 13px; color: var(--muted); white-space: pre-wrap; }
 .quiz-hint-ask { justify-self: start; margin-top: -4px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--accent); cursor: pointer; }
 .quiz-hint-ask:hover { text-decoration: underline; }
 .quiz-hint { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-size: 14.5px; }
@@ -2333,7 +2330,7 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 .quiz-hint > :last-child { margin-bottom: 0; }
 
 @media (forced-colors: active) {
-  .card, .folder, .set-card, .panel, .store-item, .kanban-card, .kanban-col, .kanban-tab, .tasks-window, .tasks-pill, .activity, .cal-item, .cal-side.peek, .source-pane, .proposal-old, .proposal-new, .starter, .toast, .choice-pick, .library-views, .segmented, .settings-search, .settings-result, .rec-kind-body, .chat-history, .chat-popup, .chat-attach-menu, .chat-access-menu, .select-menu, .picker-menu, .sheet, .scrim .quick-leo, .margin-add { border: 1px solid CanvasText; }
+  .card, .folder, .set-card, .panel, .store-item, .kanban-card, .kanban-col, .kanban-tab, .tasks-window, .tasks-pill, .activity, .cal-item, .cal-side.peek, .source-pane, .proposal-old, .proposal-new, .starter, .toast, .choice-pick, .library-views, .segmented, .settings-search, .settings-result, .rec-kind-body, .chat-history, .chat-attach-menu, .chat-access-menu, .select-menu, .picker-menu, .sheet, .scrim .quick-leo, .margin-add { border: 1px solid CanvasText; }
   .settings-section .segmented, .settings-section .library-views { border: 1px solid CanvasText; }
   .chat { border-left: 1px solid CanvasText; }
   .settings-nav { border-right: 1px solid CanvasText; }
