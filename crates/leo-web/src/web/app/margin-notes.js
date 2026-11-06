@@ -7,8 +7,8 @@ const MARGIN_LAYOUT_KEY = 'leo-margin-layout';
 const GLOW_MS = 2200;
 const NO_COMMENT_MS = 4000;
 const WIPE_MS = 500;
-const MENU_MS = 170;
-const MENU_SLIDE = [{ clipPath: 'inset(0 0 100% 0)', opacity: 0, transform: 'translateY(-4px)' }, { clipPath: 'inset(0 0 0 0)', opacity: 1, transform: 'none' }];
+const MENU_MS = MOTION_MS;
+const MENU_SLIDE = [{ clipPath: 'inset(0 0 100% 0)', opacity: 0, transform: `scale(${POP_FROM})` }, { clipPath: 'inset(0 0 0 0)', opacity: 1, transform: 'none' }];
 const MOST_ASKED = 600;
 const marginKit = window.leoMargin;
 const LEAST_ASKED = 3;
@@ -135,7 +135,9 @@ function marginMenuSlide(menu, open) {
   }
   if (!run) {
     if (open === !menu.hidden) return;
-    run = menu.animate(MENU_SLIDE, { duration: MENU_MS, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'both' });
+    menu.hidden = false;
+    menu.style.transformOrigin = popEdge(menu, $('#margin-mode')).origin;
+    run = menu.animate(MENU_SLIDE, { duration: MENU_MS, easing: EASE_OUT, fill: 'both' });
     run.pause();
     run.currentTime = open ? 0 : MENU_MS;
     marginPage.slide = run;
@@ -148,7 +150,7 @@ function marginMenuSlide(menu, open) {
     };
   }
   menu.hidden = false;
-  run.playbackRate = open ? 1 : -1;
+  run.playbackRate = open ? 1 : -1 / EXIT_SHARE;
   run.play();
 }
 
@@ -209,7 +211,11 @@ function marginControl() {
   button.disabled = marginPage.changing;
   button.dataset.mode = marginPage.mode;
   const icon = $('#margin-mode-icon');
-  if (icon) icon.innerHTML = along ? ICON.pen : ICON.chat;
+  if (icon && icon.dataset.along !== String(along)) {
+    const paint = () => { icon.innerHTML = along ? ICON.pen : ICON.chat; icon.dataset.along = String(along); };
+    if (icon.dataset.along) iconSwap(icon, paint);
+    else paint();
+  }
   $('#margin-mode-label').textContent = along ? 'Reads along' : 'When you ask';
   button.title = along ? 'Reads changes after a pause. The text goes to your writing AI.' : `Select a passage, then choose Ask Felix or press ${marginAskKeys()}.`;
   for (const option of menu.querySelectorAll('[data-margin-mode]')) {

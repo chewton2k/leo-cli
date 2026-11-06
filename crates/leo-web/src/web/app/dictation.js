@@ -45,6 +45,7 @@ async function dictationChange(change, mine = seq) {
     result.classList.remove('flash');
     void result.offsetWidth;
     result.classList.add('flash');
+    pulse(result);
     clearTimeout(dictationSavedTimer);
     dictationSavedTimer = setTimeout(() => { if (result.isConnected) result.textContent = ''; }, 2000);
   }

@@ -612,7 +612,7 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
     run.play();
     return { duration, opening, reversedClosed, closing, reversedOpen, continued };
   });
-  const pairs = [[reversals.opening, reversals.reversedClosed, -1], [reversals.closing, reversals.reversedOpen, 1]];
+  const pairs = [[reversals.opening, reversals.reversedClosed, -1.25], [reversals.closing, reversals.reversedOpen, 1]];
   let jump = 0;
   for (const [before, after, rate] of pairs) {
     expect(after.same, 'reversal keeps the same native animation').toBe(true);

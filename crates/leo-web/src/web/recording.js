@@ -194,6 +194,7 @@
         if (s.container && s.container.isConnected) go(noteHash(view.note), { replace: true });
         else if (noteReady) noteReady();
         toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
+        root.leoMotion?.pulse(root.document.querySelector('.toast'));
       }
       draw();
       pill();
@@ -498,14 +499,26 @@
       const old = box.querySelector('#rec-transcript');
       if (old) s.follow = old.scrollTop + old.clientHeight >= old.scrollHeight - 24;
       const form = idleForm(box);
-      if (!v || v.state === 'done') box.innerHTML = drawIdle(folders, here);
-      else if (live(v)) {
-        box.innerHTML = drawLive();
-        s.heard = '';
-        paintWaveNow();
-      }
-      else if (v.state === 'writing') box.innerHTML = drawWriting();
-      else box.innerHTML = drawFailed();
+      const motion = root.leoMotion;
+      const page = !v || v.state === 'done' ? 'idle' : live(v) ? 'live' : v.state === 'writing' ? 'writing' : 'failed';
+      const moved = s.page && s.page !== page;
+      const paused = page === 'live' && s.paused !== undefined && s.paused !== (v.state === 'paused');
+      if (moved) motion?.overlapOut(box);
+      s.page = page;
+      s.paused = page === 'live' ? v.state === 'paused' : undefined;
+      const paint = () => {
+        if (page === 'idle') box.innerHTML = drawIdle(folders, here);
+        else if (page === 'live') {
+          box.innerHTML = drawLive();
+          s.heard = '';
+          paintWaveNow();
+        }
+        else if (page === 'writing') box.innerHTML = drawWriting();
+        else box.innerHTML = drawFailed();
+      };
+      if (paused && motion) motion.iconSwap(box, paint, '.rec-round.plain svg');
+      else paint();
+      if (moved) motion?.cascade(box, 'settling');
       const heard = box.querySelector('#rec-heard');
       if (heard) {
         heard.addEventListener('toggle', () => {

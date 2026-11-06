@@ -91,7 +91,8 @@ function openSelectMenu(button) {
   const room = bounds.bottom - button.getBoundingClientRect().bottom;
   list.classList.toggle('up', room < Math.min(280, list.scrollHeight + 16) && button.getBoundingClientRect().top - bounds.top > room);
   button.setAttribute('aria-expanded', 'true');
-  unfold(list);
+  unfold(list, button);
+  cascade(list);
   list.tabIndex = -1;
   list.focus({ preventScroll: true });
   activateSelectOption(list, list.querySelector('.select-menu-option.on') || selectMenuOptions(list)[0]);

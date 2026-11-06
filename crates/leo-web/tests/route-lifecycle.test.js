@@ -51,3 +51,19 @@ test('the active route still handles missing notes and connection errors', async
     assert.equal(context.app.innerHTML, kind === 'offline' ? 'offline' : 'new draft');
   }
 });
+
+test('arriving on a page keeps a sheet opened there and closes one left from before', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/app/events.js'), 'utf8');
+  const closed = [];
+  const context = { location: { hash: '#/search/x' }, closeSheet: (now) => closed.push(now), drawn: {}, window: { scrollTo() {} }, render: async () => {}, $: () => open };
+  let open = { openedOn: '#/search/x' };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('async function route('), source.indexOf('const activity =')), context);
+  await context.route(true);
+  assert.deepEqual(closed, []);
+  await context.route();
+  assert.deepEqual(closed, [true]);
+  open = { openedOn: '#/n/before' };
+  await context.route(true);
+  assert.deepEqual(closed, [true, true]);
+});

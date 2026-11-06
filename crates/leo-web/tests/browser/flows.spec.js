@@ -389,7 +389,7 @@ test('a board keeps its cards in the columns they were dragged to', async ({ pag
   await expect(columns.nth(0).locator('.kanban-card')).toHaveCount(2);
   await composer.press('Escape');
 
-  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1).locator('.kanban-cards'));
+  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1));
   await expect(columns.nth(1).locator('.kanban-card')).toHaveText(['Lab report']);
   await expect(page.locator('.kanban-ghost')).toHaveCount(0);
   await expect(page.locator('.scrim')).toHaveCount(0);
@@ -2134,7 +2134,7 @@ test.describe('advanced settings', () => {
     await page.request.delete(`/api/notes/${note.id}`);
     await page.goto('/#/');
     await page.goto('/#/trash');
-    await expect(page.locator('.hint')).toContainText('stay here for 7 days');
+    await expect(page.locator('#app .hint')).toContainText('stay here for 7 days');
     await page.request.post('/api/keep', { data: { trash_days: 30, chat_days: null } });
   });
 
@@ -3907,6 +3907,7 @@ test.describe('passages', () => {
     await page.keyboard.press('ControlOrMeta+Shift+e');
     await expect(page.locator('.margin-note[data-id="draft"] textarea')).toBeFocused();
     expect(await box()).toEqual(first);
+    await page.locator('.margin-note[data-id="draft"]').evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((run) => run.finished)));
     await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('.margin-note')).toHaveCount(0);
     expect(await box()).toEqual(first);

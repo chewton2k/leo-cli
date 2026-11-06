@@ -16,6 +16,7 @@ function sheet(html, { modal = false } = {}) {
   closeSheet(true);
   const scrim = document.createElement('div');
   scrim.foldersReturn = foldersReturn;
+  scrim.openedOn = location.hash;
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
   scrim.addEventListener('click', (e) => {
@@ -24,6 +25,31 @@ function sheet(html, { modal = false } = {}) {
   document.body.appendChild(scrim);
   if (!modal) swipeToClose(scrim.querySelector('.sheet'));
   return scrim;
+}
+
+function ghostOf(el) {
+  const ghost = el.cloneNode(true);
+  const typed = el.querySelectorAll('input, textarea, select');
+  ghost.querySelectorAll('input, textarea, select').forEach((field, i) => {
+    if (typed[i] && field.type !== 'file') field.value = typed[i].value;
+  });
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.inert = true;
+  for (const part of [ghost, ...ghost.querySelectorAll('*')]) {
+    for (const { name } of [...part.attributes]) if (name === 'id' || name.startsWith('data-')) part.removeAttribute(name);
+  }
+  return ghost;
+}
+
+function overlapOut(el) {
+  if (!el?.isConnected || stillMotion() || typeof el.animate !== 'function') return;
+  const { left, top, width, height } = el.getBoundingClientRect();
+  if (!width || !height) return;
+  const ghost = ghostOf(el);
+  ghost.classList.add('overlap-gone');
+  Object.assign(ghost.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
+  document.body.appendChild(ghost);
+  ghost.animate({ opacity: [1, 0] }, { duration: ICON_MS, easing: EASE_OUT, fill: 'forwards' }).onfinish = () => ghost.remove();
 }
 
 function trapSheetFocus(scrim) {
@@ -63,7 +89,8 @@ function swipeToClose(panel) {
     if (!start) return;
     const moved = e.touches[0].clientY - start.y;
     if (moved <= 0) {
-      panel.style.transform = '';
+      panel.style.transition = 'none';
+      panel.style.transform = stillMotion() ? '' : `translateY(${rubber(moved)}px)`;
       start.moved = 0;
       return;
     }
@@ -77,15 +104,15 @@ function swipeToClose(panel) {
     const { moved, at } = start;
     const speed = moved / Math.max(1, performance.now() - at);
     if (moved > SWIPE_CLOSE || (moved > 24 && speed > SWIPE_FLICK)) {
-      panel.style.transition = 'transform .18s ease-in';
+      panel.style.transition = `transform ${LEAVE_MS}ms ${EASE_EXIT}`;
       panel.style.transform = 'translateY(110%)';
       start = null;
-      setTimeout(closeSheet, 170);
+      setTimeout(closeSheet, LEAVE_MS - 10);
       return;
     }
-    panel.style.transition = 'transform .2s ease-out';
+    panel.style.transition = `transform ${OPEN_MS}ms ${EASE_OUT}`;
     panel.style.transform = '';
-    setTimeout(reset, 210);
+    setTimeout(reset, OPEN_MS + 10);
   };
   panel.addEventListener('touchend', finish);
   panel.addEventListener('touchcancel', reset);
@@ -100,19 +127,10 @@ function closeSheet(now = false) {
   if (tree) side.sheetScroll = tree.scrollTop;
   if (open && now) open.remove();
   else if (open) {
-    const ghost = open.cloneNode(true);
-    const typed = open.querySelectorAll('input, textarea, select');
-    ghost.querySelectorAll('input, textarea, select').forEach((el, i) => {
-      if (typed[i]) el.value = typed[i].value;
-    });
+    const ghost = ghostOf(open);
     ghost.classList.replace('scrim', 'scrim-gone');
     const inner = ghost.querySelector('.sheet');
     if (inner) inner.classList.replace('sheet', 'sheet-gone');
-    ghost.setAttribute('aria-hidden', 'true');
-    ghost.inert = true;
-    for (const el of [ghost, ...ghost.querySelectorAll('*')]) {
-      for (const { name } of [...el.attributes]) if (name === 'id' || name.startsWith('data-')) el.removeAttribute(name);
-    }
     const scrolled = open.querySelector('.sheet');
     open.replaceWith(ghost);
     if (inner && scrolled) inner.scrollTop = scrolled.scrollTop;
@@ -153,6 +171,7 @@ function quickLeo() {
   </div>`);
   const input = inQuick('#quick-input');
   input.addEventListener('input', () => {
+    inQuick('#quick-results')?.classList.remove('rows-in');
     quick.at = 0;
     quick.picked = null;
     drawQuick();
@@ -172,6 +191,7 @@ function quickLeo() {
     }
   });
   drawQuick();
+  cascade(inQuick('#quick-results'));
   input.focus();
   loadQuickDue().catch(() => {});
   api('/api/folders').then((all) => { quick.folders = (all || []).map((f) => f.name); drawQuick(); }).catch(() => {});
@@ -506,6 +526,7 @@ async function restore(id, open) {
     loadSideFolders();
     if (open) return go(noteHash(note.id));
     toast(`Restored “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
+    pulse($('.toast'));
     if (state.view === 'trash') showTrash();
   } catch (e) {
     fail(e);

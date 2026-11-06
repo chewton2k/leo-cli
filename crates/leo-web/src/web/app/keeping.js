@@ -70,6 +70,7 @@ async function changeKeep(el) {
 
 async function saveKeep(next, goes = '') {
   if (state.keepBusy) return;
+  const changed = Object.keys(next).find((key) => state.keep?.[key] !== next[key]);
   state.keepBusy = true;
   drawKeeping();
   try {
@@ -79,6 +80,7 @@ async function saveKeep(next, goes = '') {
     state.keepBusy = false;
     if (state.view === 'keeping') drawKeeping();
   }
+  pulse(app.querySelector(`select[data-keep="${changed}"]`)?.closest('.select-control'));
 }
 
 function keepDrafts() {
@@ -155,6 +157,7 @@ async function tasksRestoreGo() {
   if (!tasks) return;
   const done = await api('/api/tasks/import', { method: 'POST', body: { tasks } });
   toast(done.added ? `Restored ${plural(done.added, 'task')}${done.kept ? ` · ${done.kept} already here` : ''}` : 'Every task in that file is already here');
+  pulse($('.toast'));
   loadTasksWindow().catch(() => {});
 }
 

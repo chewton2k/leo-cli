@@ -20,7 +20,7 @@ async function sidebarFixture(browser, run) {
     const folderLabel=dir=>dir.split('/').pop()||'Top level', folderHash=dir=>dir?'#/f/'+encodeURIComponent(dir):'#/', noteHash=id=>'#/n/'+encodeURIComponent(id);
     const closeSheet=()=>{}, go=hash=>{location.hash=hash;}, fail=error=>window.errors.push(error.message);
     const slideHeight=(el,from,to,done)=>{if(done)done();};
-    const MOTION_MS=180, stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
     const moves=[], enc=encodeURIComponent, toast=()=>{}, showLatest=async()=>{}, saving={unsaved:()=>false};
     const notes={
       '':[{id:'root-note',title:'Welcome',directory:''}],
@@ -46,7 +46,9 @@ async function sidebarFixture(browser, run) {
       return result;
     }
     ${read('app/refresh.js')}
-    const EASE_OUT='ease-out';
+    ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
+    ${core.slice(core.indexOf('const moving'), core.indexOf('function slideHeight'))}
+    const overlapOut=()=>{};
     ${read('app/motion.js')}
     ${read('app/side.js')}
     ${drag}

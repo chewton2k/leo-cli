@@ -285,14 +285,26 @@ function toast(message, { action, run, bad } = {}) {
   }, lasts);
 }
 
-const LEAVE_MS = 150;
+const LEAVE_MS = 160;
 const MOTION_MS = 180;
+const OPEN_MS = 200;
+const DRAWER_MS = 240;
+const PULSE_MS = 320;
+const ICON_MS = 140;
+const EXIT_SHARE = .8;
+const POP_FROM = .95;
+const POP_OPEN = 'inset(-24px)';
+const CASCADE_MS = 30 * 5 + MOTION_MS + 30;
 const EASE_OUT = 'cubic-bezier(.2, .8, .2, 1)';
-const moving = new WeakMap();
+const EASE_MOVE = 'cubic-bezier(.45, 0, .15, 1)';
+const EASE_EXIT = 'cubic-bezier(.4, 0, 1, 1)';
 
 function stillMotion() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
+
+const moving = new WeakMap();
+const popEdges = new WeakMap();
 
 function stopSlide(el) {
   delete el.dataset.folding;
@@ -305,6 +317,87 @@ function stopSlide(el) {
   el.style.overflow = '';
 }
 
+function pulse(el, { lift = 1.04, ring = false } = {}) {
+  if (!el || stillMotion() || typeof el.animate !== 'function') return null;
+  const frames = ring
+    ? { boxShadow: ['0 0 0 0 transparent', '0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent)', '0 0 0 5px transparent'] }
+    : { scale: [1, lift, 1] };
+  return el.animate(frames, { duration: PULSE_MS, easing: EASE_MOVE });
+}
+
+function cascade(el, kind = 'rows-in') {
+  if (!el || stillMotion()) return;
+  el.classList.add(kind);
+  setTimeout(() => el.classList.remove(kind), CASCADE_MS);
+}
+
+function rubber(over, reach = 24) {
+  return Math.sign(over) * reach * (1 - 1 / (1 + Math.abs(over) / reach));
+}
+
+const pastEdge = (at, low, high) => (stillMotion() ? at : at < low ? low + rubber(at - low) : at > high ? high + rubber(at - high) : at);
+
+function iconSwap(host, change, part = 'svg') {
+  const old = host?.querySelector(part);
+  if (!old || stillMotion() || typeof old.animate !== 'function') return change();
+  const box = old.getBoundingClientRect();
+  const ghost = old.cloneNode(true);
+  ghost.setAttribute('aria-hidden', 'true');
+  Object.assign(ghost.style, { position: 'fixed', zIndex: 1000, left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`, margin: 0, pointerEvents: 'none', color: getComputedStyle(old).color });
+  document.body.appendChild(ghost);
+  const result = change();
+  const out = { opacity: [1, 0], filter: ['blur(0)', 'blur(2px)'], scale: [1, .85] };
+  ghost.animate(out, { duration: ICON_MS * EXIT_SHARE, easing: EASE_EXIT, fill: 'forwards' }).onfinish = () => ghost.remove();
+  host.querySelector(part)?.animate({ opacity: [0, 1], filter: ['blur(2px)', 'blur(0)'], scale: [.85, 1] }, { duration: ICON_MS, easing: EASE_OUT });
+  return result;
+}
+
+function popEdge(menu, from) {
+  const box = menu.getBoundingClientRect();
+  const at = from.getBoundingClientRect ? from.getBoundingClientRect() : { left: from.x, right: from.x, top: from.y, bottom: from.y };
+  const x = Math.max(0, Math.min(box.width, (at.left + at.right) / 2 - box.left));
+  const y = Math.max(0, Math.min(box.height, (at.top + at.bottom) / 2 - box.top));
+  return { origin: `${x}px ${y}px`, up: y > box.height / 2 };
+}
+
+const popShut = (edge) => (edge.up ? 'inset(100% 0 0 0)' : 'inset(0 0 100% 0)');
+
+function unfold(menu, from = null) {
+  stopSlide(menu);
+  menu.hidden = false;
+  if (stillMotion()) return;
+  const edge = from ? popEdge(menu, from) : { origin: '50% 0', up: false };
+  popEdges.set(menu, edge);
+  menu.style.transformOrigin = edge.origin;
+  const run = menu.animate([{ clipPath: popShut(edge), transform: `scale(${POP_FROM})` }, { clipPath: POP_OPEN, transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
+  moving.set(menu, run);
+  run.onfinish = () => moving.delete(menu);
+}
+
+function fold(menu, then = null) {
+  if (menu.hidden || menu.dataset.folding) {
+    if (then && menu.hidden) then();
+    return;
+  }
+  stopSlide(menu);
+  if (stillMotion()) {
+    menu.hidden = true;
+    if (then) then();
+    return;
+  }
+  menu.dataset.folding = '1';
+  const edge = popEdges.get(menu) || { up: false };
+  const run = menu.animate([{ clipPath: POP_OPEN, opacity: 1, transform: 'none' }, { clipPath: popShut(edge), opacity: 0, transform: `scale(${POP_FROM})` }], { duration: MOTION_MS * EXIT_SHARE, easing: EASE_EXIT });
+  moving.set(menu, run);
+  run.onfinish = () => {
+    moving.delete(menu);
+    delete menu.dataset.folding;
+    menu.hidden = true;
+    if (then) then();
+  };
+  run.oncancel = () => delete menu.dataset.folding;
+}
+
 function slideHeight(el, from, to, then) {
   stopSlide(el);
   if (stillMotion() || Math.abs(from - to) < 1) {
@@ -312,40 +405,14 @@ function slideHeight(el, from, to, then) {
     return;
   }
   el.style.overflow = 'hidden';
-  const run = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: MOTION_MS, easing: EASE_OUT });
+  const leaving = to < from;
+  const run = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: leaving ? MOTION_MS * EXIT_SHARE : MOTION_MS, easing: leaving ? EASE_EXIT : EASE_OUT });
   moving.set(el, run);
   run.onfinish = () => {
     moving.delete(el);
     el.style.overflow = '';
     if (then) then();
   };
-}
-
-function unfold(menu) {
-  stopSlide(menu);
-  menu.hidden = false;
-  if (stillMotion()) return;
-  const run = menu.animate([{ clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-4px)' }, { clipPath: 'inset(0 0 0 0)', transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
-  moving.set(menu, run);
-  run.onfinish = () => moving.delete(menu);
-}
-
-function fold(menu) {
-  if (menu.hidden || menu.dataset.folding) return;
-  stopSlide(menu);
-  if (stillMotion()) {
-    menu.hidden = true;
-    return;
-  }
-  menu.dataset.folding = '1';
-  const run = menu.animate([{ clipPath: 'inset(0 0 0 0)', opacity: 1 }, { clipPath: 'inset(0 0 100% 0)', opacity: 0 }], { duration: 140, easing: 'cubic-bezier(.4, 0, 1, 1)' });
-  moving.set(menu, run);
-  run.onfinish = () => {
-    moving.delete(menu);
-    delete menu.dataset.folding;
-    menu.hidden = true;
-  };
-  run.oncancel = () => delete menu.dataset.folding;
 }
 
 function rel(iso) {
@@ -825,6 +892,7 @@ async function showSearch(query) {
   app.innerHTML = results.length
     ? `<div class="section-title">${count}</div><div class="cards">${draw(results.slice(0, SEARCH_STEP))}</div>${results.length > SEARCH_STEP ? '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>' : ''}`
     : empty(ICON.search, 'Nothing found', `No note mentions “${query}”.`);
+  cascade($('.cards'));
   let shown = SEARCH_STEP;
   if (moreWatch) moreWatch.disconnect();
   const sentinel = $('#more-notes');

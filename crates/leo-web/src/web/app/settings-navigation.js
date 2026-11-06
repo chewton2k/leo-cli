@@ -116,7 +116,9 @@ function paintSettingsSearch() {
   const results = settingsResults();
   const input = nav.querySelector('#settings-search');
   const box = nav.querySelector('.settings-results');
+  const opening = box && results.open && !box.firstElementChild;
   if (box && box.innerHTML !== results.html) box.innerHTML = results.html;
+  if (opening) cascade(box.firstElementChild);
   nav.toggleAttribute('data-searching', Boolean(settingsFind.query.trim()));
   if (!input) return;
   if (input.value !== settingsFind.query) input.value = settingsFind.query;
@@ -168,9 +170,8 @@ function arriveAtSetting(target) {
   target.scrollIntoView({ block: 'center' });
   target.focus({ preventScroll: true });
   target.classList.remove('found', 'found-still');
-  void target.offsetWidth;
   target.classList.add(still ? 'found-still' : 'found');
-  if (!still) target.addEventListener('animationend', () => target.classList.remove('found'), { once: true });
+  pulse(target, { ring: true });
   target.addEventListener('blur', () => target.classList.remove('found', 'found-still'), { once: true });
 }
 document.addEventListener('input', (e) => {
@@ -223,6 +224,7 @@ function settingsFrame(section, content) {
   // Callers assign the frame to the page right away; once they have, bring the current
   // section into view in the phone strip, where the list scrolls sideways.
   if (typeof queueMicrotask === 'function') queueMicrotask(revealSettingsLink);
+  if (arrive && shown) overlapOut(shown);
   const lean = arrive && shown && from >= 0 && to >= 0 ? (to > from ? ' style="--arrive-from:6px"' : ' style="--arrive-from:-6px"') : '';
   return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"${settingsFind.query.trim() ? ' data-searching' : ''}>${search}<div class="settings-lists"><div class="settings-sections"><span class="settings-nav-pill" aria-hidden="true"></span>${nav}</div><div class="settings-results" id="settings-results">${found.html}</div></div></nav><div class="settings-section${arrive ? ' arrive' : ''}" data-settings-section="${esc(section)}"${lean}><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
 }
@@ -236,7 +238,7 @@ function placeSettingsPill(nav, on) {
   pill.style.height = `${on.offsetHeight}px`;
   pill.classList.add('placed');
   if (!from || Math.abs(from.top - on.offsetTop) < 1 || stillMotion()) return;
-  pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+  pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: DRAWER_MS, easing: EASE_MOVE });
 }
 
 const settingsRevealed = new WeakMap();
@@ -246,6 +248,12 @@ function revealSettingsLink() {
   if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;
   settingsRevealed.set(nav, on.getAttribute('href'));
   if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+}
+
+const KNOB_STRETCH = 1.12;
+function knobStretch(knob, pseudoElement) {
+  if (!knob || stillMotion() || typeof knob.animate !== 'function') return;
+  knob.animate({ scale: ['1 1', `${KNOB_STRETCH} 1`, '1 1'] }, { duration: DRAWER_MS, easing: EASE_MOVE, pseudoElement });
 }
 
 // An iOS-style switch. It stays a real checkbox, so change handlers, forms and tests keep working.
@@ -285,6 +293,7 @@ function syncSegmented(box, from = null) {
     void pill.offsetWidth;
     pill.style.transition = '';
   }
+  if (Number(box.style.getPropertyValue('--at')) !== at) knobStretch(pill);
   box.style.setProperty('--at', at);
 }
 function pickSegment(el) {
@@ -335,9 +344,11 @@ function syncChoiceCards(box, from = null) {
     void ring.offsetWidth;
     ring.style.transition = '';
   }
+  if (Number(box.style.getPropertyValue('--at')) !== at) knobStretch(ring);
   box.style.setProperty('--at', at);
 }
 document.addEventListener('change', (e) => {
+  if (e.target.matches?.('.switch')) knobStretch(e.target, '::before');
   const radio = e.target.closest?.('.choice-pick input[type="radio"]');
   const box = radio?.closest('.choice-cards');
   if (!box) return;

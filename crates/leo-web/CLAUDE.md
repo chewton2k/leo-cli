@@ -153,8 +153,50 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   `.chat-history-group`, `.pick-head`).
 - Kept on purpose: the speech-model filters (five wrapping filters, `library-views`),
   the model picker (a menu of models with effort chips), the margin-mode menu (its own
-  interrupted-motion and keyboard tests) and chat.js's attach and access menus (chat.js
-  is a separate script without the app's helpers).
+  interrupted-motion and keyboard tests) and chat.js's attach and access menus (their
+  rows are richer than a list; they move through `leoMotion`).
+
+## Motion rules (2026-11-06, the owner's list; the single place for these)
+
+Quick and caused: nothing moves without a reason, nothing bounces on everyday UI (Felix
+the mascot is a character and keeps his springs), nothing tweens while held. Every
+scripted animation is skipped under `stillMotion()`; CSS motion sits under
+`prefers-reduced-motion: no-preference` or the global reduce rule.
+
+- Tokens (`index.html`) and their script twins (`app/core.js`): `--ease-arrive` /
+  `EASE_OUT` for entrances, `--ease-move` / `EASE_MOVE` for things that stay on screen and
+  change position, `--ease-exit` / `EASE_EXIT` for exits, `--ease-drawer` for the chat panel.
+  Durations `--t-press` 100, `--t-follow` / `MOTION_MS` 180, `--t-open` / `OPEN_MS` 200,
+  `--t-drawer` / `DRAWER_MS` 240. An exit is its entrance × 0.8 (`--t-*-out`, `EXIT_SHARE`,
+  `LEAVE_MS`). Drop-downs run 150 to 250 ms. A symmetric position change is a move, not an exit.
+- chat.js, doc.js, recording.js and pane-resize.js are separate scripts: they reach the
+  helpers through `window.leoMotion` (set in motion.js, absent in some fixtures, so each
+  call has a plain fallback); doc.js reads the curve from the CSS token.
+- Press: everything pressable scales to .97 with the individual `scale` property (one grouped
+  rule at the end of the style block), never draggable rows, `.actions` tooltips or disabled controls.
+- Knobs: `knobStretch(el, pseudo)` stretches 12% along the travel, peaking mid-move, on `scale`, so
+  the position transition is untouched and it ends at exactly 1 (switch, segmented pill, choice ring).
+- Popovers: `unfold(menu, from)` / `fold(menu, then)`. `from` is the trigger element or a pointer
+  `{x, y}`; `popEdge` puts the origin at the nearest point of the menu, upward menus reveal and close
+  from their bottom edge. They start at .95 and keep the clip reveal; a click during the entrance lands
+  on what is drawn. The margin menu and the outline run their own reversible animations with the same
+  values. A closing context menu takes `.explorer-menu-gone` and `aria-hidden`, so lookups see one menu.
+- Stagger: `cascade(list)` staggers direct children by 30 ms (capped at 150) on first arrival only,
+  never on a re-render; `cascade(el, 'settling')` and the CSS for sheets, `.settings-section.arrive`,
+  the chat panel and margin replies bring inner groups in 30 and 60 ms apart. Board lanes and cards
+  only fade: transforms there would count as overflow in `kanbanFit`.
+- Moves: `flipList`, `pillGlide`, `settle`. `settle` follows an arc (x and y on different progress,
+  `arcPoints`) and lifts onto a fixed carrier when an ancestor clips (`clippedBy`), so a drop
+  passes lane and row bounds. `flyInto(ghost, target)` carries a card into another board's tab, or
+  "n more" when that tab went back into the overflow; it pulses on landing.
+- Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
+- Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
+  and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
+  looks up by class right after a change scopes to `#app`.
+- Colour: selection colour arrives with the thumb (`.segment`, `.switch`) or as a wipe (`.tab-wipe`);
+  never on hover. `iconSwap(host, change, part)` crossfades one icon into another with blur and scale.
+- Rubber band: `rubber(over, reach)` and `pastEdge(at, low, high)` resist a pull past a limit without
+  overshoot (sheet swipe upward, pane and chat grips, board and calendar ghosts past the page).
 
 ## Notes, editing and browsing
 
@@ -805,30 +847,43 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   full-width `.field` named Board name) and a small preview of the three starting columns; Enter and Create board
   submit the same request, and Cancel leaves the boards untouched.
 
-- Page (redesigned 2026-11-06, the owner: "redesign the kanban boards"): one header
-  row holds the board name (edits in place, sized to its text), its ⋯ menu and, at the
-  right, the board tabs with count badges (a card dropped on a tab moves to that board,
-  with Undo; the tabs wrap under the name on a phone). Columns are quiet `--tint` lanes
-  only as tall as their cards, up to the window, then the card list scrolls inside
-  (dragging near its edge scrolls it). A compact head has the colour dot (`kanbanTone`:
-  to do blue, in progress amber, done green, blocked red, others by place), the name
-  (edits in place), the count, a + (`kanban-compose`) and ⋯. Cards show the title (three
-  lines at most), the muted subheading, two lines of the description when there is one
-  (`.kanban-has-text`) and the priority arrow; hover and focus rings. Add card is a quiet
-  row at the foot; an empty column shows a short dashed "Drag a card here" target; Add
-  column is a slim tile as tall as the tallest lane. + Add card's composer stays open for
-  the next card (adds are queued so fast typing loses nothing); ⋯ sheets for a column
-  (rename, move left/right, delete moving its cards) and the board (rename, add column,
-  delete with a second press, Undo). A card opens in a side panel beside the board like
-  a note (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board
-  redraws, a full-screen layer under 760 px): title, subheading, status and board (the
-  shared select menu), priority (`segmented`, `data-priority`), a borderless description
-  (autosave after 600 ms, on blur, and before Escape or × closes it), Delete with Undo.
+- Page (redesigned 2026-11-06, the owner: "like a nice and simple jira kanban board"):
+  the page fills the window and never scrolls itself. One header row (`kanbanHeadHtml`)
+  holds the board tabs with count badges, a + for New board, Add column and the board's
+  ⋯. The open board's tab is its name: `.kanban-title` edits in place inside it, so the
+  name shows once. A tab is one click; a card dropped on a tab moves to that board, with
+  Undo. `kanbanFit` shows whole tabs only, the open board's always among them, and puts
+  the rest under "n more" (`#kanban-switch`, the shared dropdown; the tabs move to `.kanban-over`,
+  and while a card is dragged they all show again and the row scrolls near its ends, so
+  every board stays a drop target).
+- Lanes all have one height, down to 20 px above the window's foot (`.kanban-layout`), with
+  0 or 50 cards; the card list scrolls inside its lane once it fills it (dragging near its
+  edge scrolls it) and Add card stays pinned under it at the foot. Lanes share the width
+  equally (`flex: 1 1 0`) and narrow to 224 px, the width at which four lanes still fit
+  a 1280 px window with the explorer open; past it the row scrolls sideways, with a fade on
+  the side where more lies (`kanbanFade`) and a thin bar in the bottom margin. Each lane is
+  tinted 12% of its colour over `--page` (`--lane`); text on it uses `--text` or `--lane-ink`,
+  and cards are solid (`--raised`, a step lighter in dark). `kanbanTone`: to do blue, in
+  progress amber, done green, blocked red, others by place; a column that would match or
+  look like a neighbour (`KANBAN_NEAR`) takes the next place hue. The head is the name
+  (edits in place) and count; ⋯ and a lane's Add card appear on hover and keyboard focus,
+  always on touch, and Add card always shows in an empty or full lane (`.kanban-full`).
+  Cards show the title (three lines at most), the muted subheading, two lines of the
+  description when there is one (`.kanban-has-text`) and the priority arrow top right. Add
+  card sits directly under the last card; its composer stays open for the next card (adds
+  are queued so fast typing loses nothing). A redraw keeps each lane's scroll. ⋯ sheets for
+  a column (rename, move left/right, delete moving its cards) and the board (rename, add
+  column, delete with a second press, Undo). Under 600 px lanes are 82vw and snap, and Add
+  column lives in the ⋯ sheet. A card opens in a side panel beside the board like a note
+  (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board redraws, a
+  full-screen layer under 760 px): title, subheading, status and board (the shared select
+  menu), priority (`segmented`, `data-priority`), a borderless description (autosave after
+  600 ms, on blur, and before Escape or × closes it), Delete with Undo.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
-  touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
-  placeholder moving through the lists; a copy follows the pointer; the board
-  scrolls sideways and the page vertically near edges; pointer capture is on `#app`
+  touch after a 300 ms hold (a swipe still scrolls). The real card is the placeholder
+  slot moving through the lists; a copy follows the pointer; the rows scroll sideways
+  and lanes vertically near edges; pointer capture is on `#app`
   (moving the card in the DOM would drop capture). It ends on pointerup, cancel,
   lost capture or a move with no button; Escape puts it back; the click after a
   drop is swallowed; leaving the page mid-drag cancels. Columns drag by their name
@@ -1004,7 +1059,7 @@ Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Moti
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
 The wide rail is vertically centred in the reading viewport, including short
-notes. Its dropdown reveals and retracts with a 180 ms clip/translate animation,
+notes. Its dropdown reveals over 240 ms and retracts over 192 ms from its toggle,
 reverses from its current frame on repeated clicks, and snaps with Reduced Motion.
 Preview updates never redraw the editor, and destroy removes the rail and tooltip. Note
 width preferences still cap the reading column. Headings stay on one line with
@@ -1109,9 +1164,8 @@ sets the route if needed and `seekSettingsTarget` waits (MutationObserver on
 `#app`, 2.5 s, then falls back to the page heading) until `[data-find]` exists
 inside that section's own element, so the placeholder-then-content double draw
 cannot lose it; then it waits for the arrival animation, scrolls the target to
-the centre, focuses it (`tabindex=-1`) and pulses it once: a 650 ms opacity pulse
-on `::after` in `--accent`; Reduced Motion skips the pulse and shows an outline
-until blur. Routes stay `#/settings/<section>`; Keeping
+the centre, focuses it (`tabindex=-1`) and rings it once with `pulse(target, { ring: true })`;
+Reduced Motion skips the pulse and shows an outline until blur. Routes stay `#/settings/<section>`; Keeping
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
@@ -1150,6 +1204,8 @@ recording
 reserves `capture_activity` before creating a job; its lease prevents updater
 installation through the durable save.
 
+Arriving on a page closes sheets left from before but keeps one opened on the new
+address (`scrim.openedOn`): input can run ahead of the queued `hashchange`.
 Router completion and error handling check a render generation and the current
 hash. Late missing-note/offline failures cannot redirect, toast or overwrite a
 newer page, including a return to the same route. Cancelling a menu animation
@@ -1264,7 +1320,7 @@ persistence at activation; an in-memory-only draft cannot bypass the save.
 
 Text-input and virtual Enter (`beforeinput` newline/paragraph/line-break) share
 list continuation with keydown Enter. Shift+Enter and composition keep their own
-paths. Heading previews and menus use 260 ms motion, a taller hover peak, and
+paths. Heading previews and menus use 240 ms motion (192 ms out), a taller hover peak, and
 outside clicks dismiss the heading list without swallowing the destination click.
 Chats history keeps its list mounted while the desktop column or compact overlay
 animates; collapsed content is inert, the toggle exposes its expanded state, and

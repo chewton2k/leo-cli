@@ -110,7 +110,7 @@ test('choice cards are real radios in a group, with a hidden field that fires ch
   const radios = ['both', 'right', 'none'].map((value, i) => ({ value, checked: i === 1 }));
   const picks = radios.map(radio => ({ classList: { on: false, toggle(_, on) { this.on = on; }, contains() { return this.on; } }, querySelector: () => radio }));
   const set = {}, field = { value: 'right', heard: [], dispatchEvent(e) { this.heard.push([e.type, e.bubbles]); } }, ring = { style: {}, offsetWidth: 0 };
-  const box = { querySelectorAll: () => picks, querySelector: selector => (selector.includes('hidden') ? field : ring), style: { setProperty: (key, value) => { set[key] = value; } } };
+  const box = { querySelectorAll: () => picks, querySelector: selector => (selector.includes('hidden') ? field : ring), style: { getPropertyValue: (key) => set[key], setProperty: (key, value) => { set[key] = value; } } };
   h.syncChoiceCards(box);
   assert.equal(set['--at'], 1);
   field.value = 'none';
