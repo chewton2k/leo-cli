@@ -50,6 +50,7 @@ async function sidebarFixture(browser, run) {
     ${core.slice(core.indexOf('const moving'), core.indexOf('function slideHeight'))}
     const overlapOut=()=>{};
     ${read('app/motion.js')}
+    ${read('app/popup-menu.js')}
     ${read('app/side.js')}
     ${drag}
     const folderClick=typeof openFolder==='function'?${open}:el=>twistFolder(el.dataset.dir,el);
