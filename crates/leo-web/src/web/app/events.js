@@ -134,7 +134,11 @@ window.addEventListener(
 );
 
 let toldVisibleAt = Date.now();
-const tellVisible = () => api('/api/visible', { method: 'POST', body: { visible: document.visibilityState !== 'hidden', at: ++toldVisibleAt } }).catch(() => {});
+const tellVisible = () => {
+  try {
+    navigator.sendBeacon('/api/visible', new Blob([JSON.stringify({ visible: document.visibilityState !== 'hidden', at: ++toldVisibleAt })], { type: 'application/json' }));
+  } catch (e) {}
+};
 document.addEventListener('visibilitychange', tellVisible);
 setTimeout(tellVisible, 0);
 

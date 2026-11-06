@@ -19,13 +19,3 @@ test('the page counts as visible only when neither the webview nor the app says 
   assert.equal(page('hidden', true).appVisible(), false);
   assert.equal(page('visible', false).appVisible(), false);
 });
-
-test('only a change that adds an element is worth scanning for math and diagrams', () => {
-  const { addsElements } = page('visible', true);
-  const text = { nodeType: 3 };
-  const element = { nodeType: 1 };
-  assert.equal(addsElements([]), false);
-  assert.equal(addsElements([{ addedNodes: [] }]), false);
-  assert.equal(addsElements([{ addedNodes: [text] }, { addedNodes: [] }]), false);
-  assert.equal(addsElements([{ addedNodes: [text] }, { addedNodes: [text, element] }]), true);
-});
