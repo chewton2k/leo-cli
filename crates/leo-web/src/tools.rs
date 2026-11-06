@@ -2175,7 +2175,7 @@ impl Desk {
             .iter()
             .collect();
         Done {
-            step: format!("Read part {part} of {parts} of {name}"),
+            step: format!("Read part {part} of {parts} of “{name}”"),
             result: format!(
                 "<document name=\"{}\" part=\"{part}\" of=\"{parts}\">\n{piece}\n</document>",
                 attribute(name)
@@ -2771,7 +2771,7 @@ mod tests {
         assert!(first
             .result
             .starts_with("<document name=\"paper.pdf\" part=\"1\" of=\"2\">\naaa"));
-        assert_eq!(first.step, "Read part 1 of 2 of paper.pdf");
+        assert_eq!(first.step, "Read part 1 of 2 of “paper.pdf”");
         let second = read(serde_json::json!({ "document": "PAPER.pdf", "part": "2" }));
         assert!(
             second.result.contains("part=\"2\" of=\"2\">\nbbbbb") && !second.result.contains("aaa")

@@ -685,6 +685,8 @@ test('a finished trace says what was opened, used and changed in one line', () =
   assert.equal(C.traceSummary([step('read_document', 'Read “a.pdf”')], [], 0), 'Opened 1 source');
   assert.equal(C.traceSummary([step('search_notes', 'Searched')], [], 2), 'Searched your notes · made 2 changes');
   assert.equal(C.traceSummary([step('search_chats', 'Searched')], [], 0), 'Searched your chats');
+  assert.equal(C.traceSummary([step('read_document', 'Read part 1 of 3 of “a.pdf”'), step('read_document', 'Read part 2 of 3 of “a.pdf”')], [], 0), 'Opened 1 source');
+  assert.equal(C.traceSummary([step('read_transcript', 'Looked for “x” in the recording of “T”'), step('read_transcript', 'Looked for “y” in the recording of “T”'), step('open_note', 'Opened “A”')], ['T'], 0), 'Opened 2 notes, used 1');
   assert.equal(C.traceSummary([step('calculate', 'Worked it out')], [], 0), '1 step');
   assert.equal(C.traceSummary([{ ...step('open_note', 'Looked for “x”'), failed: true }, step('search_notes', 'Searched')], [], 0), 'Searched your notes');
 });

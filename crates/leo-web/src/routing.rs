@@ -38,9 +38,8 @@ const GREETINGS: [&str; 8] = [
     "okay",
     "got it",
 ];
-const THEIRS: [&str; 19] = [
+const THEIRS: [&str; 18] = [
     "my",
-    "i",
     "note",
     "notes",
     "due",
@@ -59,7 +58,7 @@ const THEIRS: [&str; 19] = [
     "today",
     "tomorrow",
 ];
-const DEEPER: [&str; 40] = [
+const DEEPER: [&str; 47] = [
     "why",
     "explain",
     "teach",
@@ -100,6 +99,13 @@ const DEEPER: [&str; 40] = [
     "difference",
     "pros",
     "mean",
+    "wrong",
+    "right",
+    "correct",
+    "mistake",
+    "error",
+    "bug",
+    "contradict",
 ];
 
 pub struct Asked<'a> {
@@ -209,6 +215,14 @@ mod tests {
             "find my essay and rewrite the intro",
             "open my bio note and remove the second section",
             "where does glycolysis happen",
+            "where did i go wrong",
+            "did i get this right",
+            "when do i use a heap over a bst",
+            "which method do i use for this integral",
+            "do i need a visa for japan",
+            "is there a mistake in my proof",
+            "find the bug in my code",
+            "which of my notes contradict each other",
             "wann ist meine prüfung",
             "",
             "show $x^2$",

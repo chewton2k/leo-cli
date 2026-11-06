@@ -154,8 +154,8 @@ fn lighter_in(cfg: &Config) -> bool {
     };
     cfg.chat
         .chain
-        .iter()
-        .any(|name| tier(cfg, name) != tier(&quick, name))
+        .first()
+        .is_some_and(|name| tier(cfg, name) != tier(&quick, name))
 }
 
 pub fn lighter_model_exists() -> bool {
@@ -427,6 +427,10 @@ mod tests {
         cfg.providers.insert("claude_code".into(), chosen);
         assert!(!lighter_in(&cfg));
         cfg.chat.chain = vec!["ollama".into()];
+        assert!(!lighter_in(&cfg));
+        cfg.chat.chain = vec!["ollama".into(), "codex".into()];
+        cfg.providers
+            .insert("codex".into(), Config::built_in_provider("codex").unwrap());
         assert!(!lighter_in(&cfg));
     }
 

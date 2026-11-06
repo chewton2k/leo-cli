@@ -140,7 +140,7 @@
     const opened = new Set();
     for (const step of worked) {
       if (!OPENING_TOOLS.has(step.tool)) continue;
-      opened.add(/“(.+?)”/.exec(step.text)?.[1] || step.text);
+      opened.add(/.*“(.+?)”/.exec(step.text)?.[1] || step.text);
     }
     const noun = worked.some((step) => step.tool === 'read_document') ? 'source' : 'note';
     const used = usedTitles.filter((title) => opened.has(title)).length;
@@ -1714,8 +1714,8 @@
       const m = list[i];
       const out = [];
       if (m.role === 'assistant' && writer(m)) {
-        const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x));
-        if (before && writer(before) !== writer(m) && !before.spent.auto && !m.spent.auto) out.push(`Now answered by ${writer(m)}, with everything said so far`);
+        const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x) && !x.spent.auto);
+        if (before && writer(before) !== writer(m) && !m.spent.auto) out.push(`Now answered by ${writer(m)}, with everything said so far`);
       }
       return out.map((t) => `<div class="chat-switch">${escape(t)}</div>`).join('');
     }

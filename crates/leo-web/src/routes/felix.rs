@@ -953,7 +953,7 @@ fn read_original(
         }
         if hits.is_empty() {
             return Ok(tools::Done {
-                step: format!("Looked for “{}” in {name}", chat::clip(&find, 40)),
+                step: format!("Looked for “{}” in “{name}”", chat::clip(&find, 40)),
                 result: format!("Nothing in {name} mentions \"{}\".", chat::clip(&find, 80)),
                 proposal: None,
                 found: Vec::new(),
@@ -984,7 +984,7 @@ fn read_original(
             })
             .collect();
         return Ok(tools::Done {
-            step: format!("Looked for “{}” in {name}", chat::clip(&find, 40)),
+            step: format!("Looked for “{}” in “{name}”", chat::clip(&find, 40)),
             result: format!(
                 "<file id=\"{tag}\" name=\"{}\" find=\"{}\">\n{}\n</file>\n{cite}",
                 chat::attribute(&name),
@@ -1025,7 +1025,7 @@ fn read_original(
     }
     Ok(tools::Done {
         step: if total > 1 {
-            format!("Read part {part} of {total} of {name}")
+            format!("Read part {part} of {total} of “{name}”")
         } else {
             step
         },
