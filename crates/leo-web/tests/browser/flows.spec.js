@@ -2256,6 +2256,7 @@ test.describe('uploads', () => {
     await expect(sheet.locator('#upload-go')).toHaveText('Make 2 notes');
     await expect(sheet.locator('#upload-dir')).toBeVisible();
     await sheet.locator('.upload-where [data-value="add"]').click();
+    await expect(sheet.locator('#upload-vision'), 'a picture brings the image note').toBeVisible();
     await sheet.locator('#upload-wants').fill('just the proofs');
     await sheet.locator('#upload-go').click();
     await expect(page.locator('.toast')).toContainText('Added to');
@@ -2285,6 +2286,7 @@ test.describe('uploads', () => {
     const input = page.locator('#upload-input');
     await input.setInputFiles({ name: 'lecture 1.txt', mimeType: 'text/plain', buffer: Buffer.from('One') });
     await expect(page.locator('#upload-together-row')).toBeHidden();
+    await expect(page.locator('#upload-vision'), 'text files need no image note').toBeHidden();
     await expect(page.locator('#upload-title')).toBeVisible();
     await expect(page.locator('#upload-go')).toHaveText('Make the note');
     await input.setInputFiles({ name: 'lecture 2.txt', mimeType: 'text/plain', buffer: Buffer.from('Two') });
@@ -2515,6 +2517,8 @@ test.describe('recording', () => {
     await page.goto('/#/record');
     await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen', 'Call']);
     await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Records what this computer plays');
+    await expect(page.locator('.rec-kind .choice-diagram > svg')).toHaveCount(3);
+    await expect(page.locator('.rec-start .rec-tip'), 'the tip sits with Start').toBeVisible();
     await page.locator('.rec-kind', { hasText: 'Call' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
@@ -2554,7 +2558,7 @@ test.describe('recording', () => {
     await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null, pending: [] } }));
     await page.route('**/api/calendar', (route) => route.fulfill({ json: { connected: false, calendars: [], events: [] } }));
     await page.goto('/#/record');
-    await expect(page.locator('.rec-idle a[href="#/settings"]')).toContainText('connect a calendar in Settings');
+    await expect(page.locator('.rec-idle a[href="#/settings/calendar"]')).toHaveText('Connect a calendar');
     await expect(page.locator('#rec-event')).toHaveCount(0);
     await page.unroute('**/api/calendar');
     await page.route('**/api/calendar', (route) => route.fulfill({ status: 500, json: { error: 'The calendars could not be read.' } }));
@@ -3986,6 +3990,8 @@ test.describe('passages', () => {
     const newNotes = page.locator('[data-find="felix-new-notes"]');
     await expect(newNotes.locator('.choice-pick.on')).toContainText('When you ask');
     await expect(newNotes).toContainText('the note’s title and the text you change');
+    await expect(newNotes.locator('p.hint'), 'one line: the privacy statement').toHaveCount(1);
+    await expect(newNotes.locator('.choice-about')).toHaveCount(2);
     await expect(page.locator('#margin-today')).toHaveCount(0);
     expect((await (await page.request.get('/api/margin')).json()).cap).toBe(40);
     await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Marks only' }).click();

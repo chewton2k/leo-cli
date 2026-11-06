@@ -308,18 +308,25 @@ document.addEventListener('keydown', (e) => {
 });
 
 let choiceCardsMade = 0;
-function choiceCards({ label, choices, current, field = '' }) {
+function choiceCards({ label, choices, current, field = '', action = '', key = '', columns = 0 }) {
   const name = `choice-${++choiceCardsMade}`;
   const index = Math.max(0, choices.findIndex(([value]) => String(value) === String(current)));
-  const cards = choices.map(([value, title, about = '', diagram = ''], i) => `<label class="choice-pick${i === index ? ' on' : ''}">${diagram ? `<span class="choice-diagram" aria-hidden="true">${diagram}</span>` : ''}<input type="radio" name="${name}" value="${esc(value)}"${i === index ? ' checked' : ''}><span class="choice-title">${esc(title)}</span>${about ? `<span class="choice-about">${esc(about)}</span>` : ''}</label>`).join('');
+  const cards = choices.map(([value, title, about = '', diagram = ''], i) => {
+    const on = i === index;
+    const art = diagram ? `<span class="choice-diagram" aria-hidden="true">${diagram}</span>` : '';
+    const words = `<span class="choice-title">${esc(title)}</span>${about ? `<span class="choice-about">${esc(about)}</span>` : ''}`;
+    return action
+      ? `<button type="button" class="choice-pick${on ? ' on' : ''}" data-action="${action}" data-${key}="${esc(value)}" aria-pressed="${on}">${art}${words}</button>`
+      : `<label class="choice-pick${on ? ' on' : ''}">${art}<input type="radio" name="${name}" value="${esc(value)}"${on ? ' checked' : ''}>${words}</label>`;
+  }).join('');
   const hidden = field ? `<input type="hidden" ${field} value="${esc(current ?? '')}">` : '';
-  return `<div class="choice-cards" role="radiogroup" aria-label="${esc(label)}" style="--count:${choices.length};--at:${index}">${hidden}<span class="choice-ring" aria-hidden="true"></span>${cards}</div>`;
+  return `<div class="choice-cards" role="${action ? 'group' : 'radiogroup'}" aria-label="${esc(label)}" style="--count:${columns || choices.length};--at:${index}">${hidden}<span class="choice-ring" aria-hidden="true"></span>${cards}</div>`;
 }
 function syncChoiceCards(box, from = null) {
   const picks = [...box.querySelectorAll('.choice-pick')];
   const field = box.querySelector('input[type="hidden"]');
   if (field) for (const pick of picks) pick.querySelector('input').checked = pick.querySelector('input').value === field.value;
-  picks.forEach((pick) => pick.classList.toggle('on', pick.querySelector('input').checked));
+  for (const pick of picks) if (pick.querySelector('input')) pick.classList.toggle('on', pick.querySelector('input').checked);
   const at = Math.max(0, picks.findIndex((pick) => pick.classList.contains('on')));
   const ring = box.querySelector('.choice-ring');
   if (from !== null && from !== at && ring) {

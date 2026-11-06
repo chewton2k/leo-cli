@@ -172,7 +172,11 @@ test('sidebar and page header rows align across desktop layouts', async ({ brows
       expect(Math.abs(head.y+head.height-bar.y-bar.height),JSON.stringify({width,theme,mac,top,mini})).toBeLessThanOrEqual(1);
       const toggle=await page.locator('.side-fold').boundingBox();
       expect(toggle.y).toBeGreaterThanOrEqual(top);
-      expect(toggle.y+toggle.height).toBeLessThanOrEqual(head.y+head.height);
+      if(mac) {
+        expect(toggle.y,'the toggle sits below the macOS window buttons').toBeGreaterThanOrEqual(top+44);
+        const first=await page.locator('.side-rail .side-row').first().boundingBox();
+        expect(first.y,'the rail starts below the toggle').toBeGreaterThanOrEqual(toggle.y+toggle.height);
+      } else expect(toggle.y+toggle.height).toBeLessThanOrEqual(head.y+head.height);
       const row=await page.locator('.bar-row').boundingBox();
       expect(row.height).toBeGreaterThanOrEqual(40);
       if(mac)expect(toggle.x).toBeLessThan(52);

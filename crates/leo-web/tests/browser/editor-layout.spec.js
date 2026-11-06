@@ -856,7 +856,7 @@ test('heading rail previews magnify nearby bars without opening the whole outlin
   const body = '# Overview\nA **clear** introduction.\n## Details 😀\nA <script>literal</script> preview.\n### Empty\n# Last\nFinal section.';
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.setViewportSize({ width: 2000, height: 900 });
     await page.goto(url);
     const rail = page.getByRole('button', { name: /Jump to heading:/ });
     const preview = page.getByRole('tooltip');
@@ -892,10 +892,41 @@ test('heading rail previews magnify nearby bars without opening the whole outlin
   }, { body });
 });
 
+test('the heading rail and its preview never cover the note text, whatever the width', async ({ browser }) => {
+  const body = ['# One', 'Text '.repeat(80), '## Two', 'More '.repeat(80), '# Three', 'End'].join('\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const width of [960, 1300, 2000]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(url);
+      const ticks = page.locator('.outline-ticks [data-tick]');
+      await expect(ticks).toHaveCount(3);
+      for (let i = 0; i < 3; i++) {
+        await ticks.nth(i).hover();
+        await expect(ticks.nth(i)).toHaveAttribute('data-distance', '0');
+        await page.waitForTimeout(320);
+        const seen = await page.evaluate(() => {
+          const text = document.querySelector('#doc').getBoundingClientRect();
+          const bars = [...document.querySelectorAll('.outline-ticks [data-tick]')].map((span) => { const r = span.getBoundingClientRect(); return r.left + parseFloat(getComputedStyle(span, '::after').width) * (r.width / span.offsetWidth); });
+          const tip = document.querySelector('.outline-preview');
+          const box = tip && !tip.hidden ? tip.getBoundingClientRect() : null;
+          return { left: text.left, right: text.right, bar: Math.max(...bars), tip: box && [box.left, box.right] };
+        });
+        expect(seen.bar, `ticks clear the text at ${width}px`).toBeLessThanOrEqual(seen.left - 6);
+        if (width === 2000) expect(seen.tip, 'a wide window still previews the heading').not.toBeNull();
+        if (!seen.tip) continue;
+        expect(seen.tip[1] <= seen.left || seen.tip[0] >= seen.right, `the preview opens beside the text at ${width}px`).toBe(true);
+        expect(seen.tip[0]).toBeGreaterThanOrEqual(0);
+        expect(seen.tip[1]).toBeLessThanOrEqual(width);
+      }
+    }
+  }, { body });
+});
+
 test('heading previews preserve edits, refresh body text, and release their elements on destroy', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.setViewportSize({ width: 2000, height: 900 });
     await page.goto(url);
     await page.locator('#doc .blk').nth(1).click();
     const editor = page.locator('#doc textarea');
@@ -918,7 +949,7 @@ test('heading rail keeps every marker reachable in a short viewport and tracks r
   const body = Array.from({ length: 300 }, (_, i) => `## Section ${i + 1}\nSome reading material.`).join('\n\n');
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 500 });
+    await page.setViewportSize({ width: 2000, height: 500 });
     await page.goto(url);
     const rail = page.locator('.outline-ticks');
     await expect(rail.locator('[data-tick]')).toHaveCount(300);
@@ -946,7 +977,7 @@ for (const interaction of ['touch', 'disclosure', 'escape']) {
   test('heading rail handles ' + interaction + ' without a prior keyboard selection', async ({ browser }) => {
     await editorFixture(browser, async (context, url) => {
       const page = await context.newPage();
-      await page.setViewportSize({ width: 1600, height: 900 });
+      await page.setViewportSize({ width: 2000, height: 900 });
       await page.goto(url);
       if (interaction === 'touch') {
         await page.locator('.outline-ticks [data-tick]').nth(2).tap();

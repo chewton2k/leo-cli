@@ -134,7 +134,7 @@ function drawKanban() {
   const board = kanban.board;
   if (!board) {
     kanbanClosePanel(false);
-    app.innerHTML = `<div class="kanban-page kanban-none">${empty(ICON.board, 'Keep track of your work', 'A board has columns like To do, In progress and Done. Add a card for each task and drag it along as the work moves.')}<button class="btn primary" data-action="kanban-new-board">${ICON.plus}<span>New board</span></button></div>`;
+    app.innerHTML = `<div class="kanban-page kanban-none">${empty(ICON.board, 'No boards yet', 'Columns like To do, In progress and Done. Drag a card along as the work moves.')}<button class="btn primary" data-action="kanban-new-board">${ICON.plus}<span>New board</span></button></div>`;
     return;
   }
   const row = app.querySelector('.kanban-cols');

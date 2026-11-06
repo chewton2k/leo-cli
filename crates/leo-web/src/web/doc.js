@@ -265,7 +265,8 @@
         else tick.dataset.distance = String(Math.min(3, Math.abs(i - index)));
       }
       const row = index === null ? null : outlineRows[index];
-      outlineShowPreview(Boolean(row));
+      const room = row ? outlineRoom() : null;
+      outlineShowPreview(Boolean(room));
       if (!row) return;
       if (outlineWide) closeOutline();
       const title = md.plain(row.text);
@@ -280,12 +281,26 @@
       const text = md.plain(excerpt);
       outlinePreview.innerHTML = `<strong>${md.escape(title)}</strong>${text ? `<span>${md.escape(text)}</span>` : ''}`;
       outlineTicks.setAttribute('aria-label', `Jump to heading: ${title}`);
+      if (!room) return;
+      outlinePreview.style.left = `${room.left}px`;
+      outlinePreview.style.width = `${room.width}px`;
       outlinePreview.style.top = '0px';
       const tick = outlineTicks.children[index].getBoundingClientRect();
       const rect = outline.getBoundingClientRect();
       const height = outlinePreview.getBoundingClientRect().height;
       const top = Math.max(0, Math.min(tick.top + tick.height / 2 - rect.top - height / 2, root.innerHeight - rect.top - height - 12));
       outlinePreview.style.top = `${top}px`;
+    }
+
+    function outlineRoom() {
+      const rail = outline.getBoundingClientRect();
+      const text = container.getBoundingClientRect();
+      const end = Math.min(root.innerWidth, outline.parentElement.getBoundingClientRect().right) - 12;
+      const before = text.left - rail.right - 24;
+      const after = end - text.right - 12;
+      if (before >= 220) return { left: rail.width + 12, width: Math.min(280, before) };
+      if (after >= 220) return { left: text.right + 12 - rail.left, width: Math.min(280, after) };
+      return null;
     }
 
     function outlinePointer(y) {

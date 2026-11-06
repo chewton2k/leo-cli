@@ -237,17 +237,35 @@ function codingPlans(page, selectable = true) {
 
 const APPEARANCE_DEFAULTS = { theme: 'system', felix: 'cute', width: 'wide' };
 const THEME_LABELS = { system: 'Match device', light: 'Light', dark: 'Dark' };
-const THEME_ICONS = { system: 'device', light: 'sun', dark: 'moon' };
+
+const THEME_SURFACES = {
+  light: { ground: '#f2f1ec', page: '#f9f8f5', head: '#1c1c1a', line: '#d9d8d3', side: '#e3e2dc' },
+  dark: { ground: '#141413', page: '#1f1f1e', head: '#ecebe7', line: '#3a3a38', side: '#2a2a28' },
+};
+function themeScene(look) {
+  const c = THEME_SURFACES[look];
+  return `<rect width="120" height="52" fill="${c.ground}"/><rect x="7" y="10" width="15" height="3" rx="1.5" fill="${c.side}"/><rect x="7" y="17" width="11" height="3" rx="1.5" fill="${c.side}"/><rect x="7" y="24" width="13" height="3" rx="1.5" fill="${c.side}"/><rect x="29" y="5" width="96" height="52" rx="5" fill="${c.page}"/><rect x="40" y="14" width="30" height="4" rx="2" fill="${c.head}"/><rect x="40" y="24" width="64" height="3" rx="1.5" fill="${c.line}"/><rect x="40" y="31" width="56" height="3" rx="1.5" fill="${c.line}"/><rect x="40" y="38" width="42" height="3" rx="1.5" fill="${c.line}"/>`;
+}
+const THEME_DIAGRAMS = {
+  system: `<svg viewBox="0 0 120 52">${themeScene('light')}<svg x="60" width="60" height="52" viewBox="60 0 60 52">${themeScene('dark')}</svg></svg>`,
+  light: `<svg viewBox="0 0 120 52">${themeScene('light')}</svg>`,
+  dark: `<svg viewBox="0 0 120 52">${themeScene('dark')}</svg>`,
+};
+const WIDTH_COLUMNS = { comfortable: 44, wide: 70, full: 108 };
+function widthDiagram(width) {
+  const w = WIDTH_COLUMNS[width], x = (120 - w) / 2, line = (share) => Math.round((w - 12) * share);
+  return `<svg viewBox="0 0 120 52"><path class="d-page" d="M${x} 6h${w}v46H${x}z"/><path class="d-head" d="M${x + 6} 15h${line(0.45)}"/><path class="d-text" d="M${x + 6} 24h${line(1)}M${x + 6} 31h${line(0.9)}M${x + 6} 38h${line(0.65)}"/></svg>`;
+}
 
 function themeCard() {
   const now = window.leoTheme.choice();
   const felixNow = window.leoTheme.felix();
-  return `<section class="set-card">
+  const widthNow = window.leoTheme.noteWidth();
+  return `<section class="set-card appearance">
       <header><h3>Appearance</h3></header>
-      <div class="set-row" data-find="theme"><span class="set-label">Theme${settingReset('Theme', 'theme', now !== APPEARANCE_DEFAULTS.theme)}</span>${segmented({ label: 'Theme', action: 'theme-pick', key: 'theme', current: now, choices: window.leoTheme.CHOICES.map((choice) => [choice, THEME_LABELS[choice], ICON[THEME_ICONS[choice]]]) })}</div>
-      <div class="set-row" data-find="felix-look"><span class="set-label">Felix${settingReset('Felix', 'felix', felixNow !== APPEARANCE_DEFAULTS.felix)}</span>${segmented({ label: 'Felix', action: 'felix-pick', key: 'felix', current: felixNow, choices: [['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => [kind, label, felix.felix(22, `felix-preview ${kind}-look`)]) })}</div>
-      <div class="set-row" data-find="note-width"><span class="set-label">Note width${settingReset('Note width', 'width', window.leoTheme.noteWidth() !== APPEARANCE_DEFAULTS.width)}</span>${segmented({ label: 'Note width', action: 'width-pick', key: 'width', current: window.leoTheme.noteWidth(), choices: window.leoTheme.WIDTHS.map((width) => [width, WIDTH_LABELS[width], svg(WIDTH_ICONS[width])]) })}</div>
-      <p class="hint">Kept on this computer. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
+      <div class="set-row column" data-find="theme"><span class="set-label">Theme${settingReset('Theme', 'theme', now !== APPEARANCE_DEFAULTS.theme)}</span>${choiceCards({ label: 'Theme', action: 'theme-pick', key: 'theme', current: now, choices: window.leoTheme.CHOICES.map((choice) => [choice, THEME_LABELS[choice], '', THEME_DIAGRAMS[choice]]) })}</div>
+      <div class="set-row column" data-find="felix-look"><span class="set-label">Felix${settingReset('Felix', 'felix', felixNow !== APPEARANCE_DEFAULTS.felix)}</span>${choiceCards({ label: 'Felix', action: 'felix-pick', key: 'felix', current: felixNow, columns: 3, choices: [['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => [kind, label, '', `<svg viewBox="0 0 120 52">${felix.felix(40, `felix-preview ${kind}-look`).replace('<svg ', '<svg x="40" y="10" ')}</svg>`]) })}</div>
+      <div class="set-row column" data-find="note-width"><span class="set-label">Note width${settingReset('Note width', 'width', widthNow !== APPEARANCE_DEFAULTS.width)}</span>${choiceCards({ label: 'Note width', action: 'width-pick', key: 'width', current: widthNow, choices: window.leoTheme.WIDTHS.map((width) => [width, WIDTH_LABELS[width], '', widthDiagram(width)]) })}</div>
     </section>`;
 }
 
@@ -270,17 +288,12 @@ function pickTheme(el) {
     button.setAttribute('aria-pressed', String(on));
   }
   // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
-  const box = document.querySelector('[data-action="theme-pick"]')?.closest('.segmented');
-  if (box) syncSegmented(box);
+  const box = document.querySelector('[data-action="theme-pick"]')?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
   syncAppearanceResets();
 }
 
 const WIDTH_LABELS = { comfortable: 'Comfortable', wide: 'Wide', full: 'Full width' };
-const WIDTH_ICONS = {
-  comfortable: '<rect x="7" y="4" width="10" height="16" rx="1.5"/><path d="M9.5 8.5h5M9.5 12h5M9.5 15.5h3"/>',
-  wide: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M7 8.5h10M7 12h10M7 15.5h6"/>',
-  full: '<rect x="2" y="4" width="20" height="16" rx="1.5"/><path d="M5 8.5h14M5 12h14M5 15.5h9"/>',
-};
 
 function pickWidth(el) {
   window.leoTheme.setNoteWidth(el.dataset.width);
@@ -290,8 +303,8 @@ function pickWidth(el) {
     button.setAttribute('aria-pressed', String(on));
   }
   // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
-  const box = document.querySelector('[data-action="width-pick"]')?.closest('.segmented');
-  if (box) syncSegmented(box);
+  const box = document.querySelector('[data-action="width-pick"]')?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
   syncAppearanceResets();
 }
 
@@ -303,8 +316,8 @@ function pickFelix(el) {
     button.setAttribute('aria-pressed', String(on));
   }
   // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
-  const box = document.querySelector('[data-action="felix-pick"]')?.closest('.segmented');
-  if (box) syncSegmented(box);
+  const box = document.querySelector('[data-action="felix-pick"]')?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
   syncAppearanceResets();
 }
 

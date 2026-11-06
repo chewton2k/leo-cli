@@ -111,6 +111,11 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
 - `api()` treats an empty body as `null`; every success is JSON or a bodiless
   204 (a browser test sweeps the API).
 
+- In the macOS app (`html[data-app="mac"]`) the window buttons cover the top
+  44 px of the first 86 px: the sidebar toggle sits below them, level with the
+  explorer header, the rail starts under it, and a folded sidebar pads the toolbar
+  to 86 px (2026-11-06; `sidebar.spec.js` measures it).
+
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`
   (Felix and/or the original pane), `--mid`. Fixed things (toolbar, select
   bar, toasts, FABs, `#dock`, the map) use them so nothing covers anything.
@@ -565,8 +570,11 @@ target. Check the page sequence after loading preferences.
   underline and wash. The comment has no mascot; compact layouts reserve the full
   24 px (44 px touch) anchor gutter before the first comment arrives.
   The mode menu reverses its current animation on interrupted toggles, closes on
-  Tab or focus leaving it, and snaps under Reduced Motion. Settings describes the
-  selection → Ask Felix / shortcut → question → Send activation sequence.
+  Tab or focus leaving it, and snaps under Reduced Motion. Settings → Felix → New
+  notes start is one privacy sentence (Reads along sends the note's title and the
+  text you change to the named writing AI, and says so when it runs on this
+  computer) and two cards with one line each; When you ask names the selection and
+  the real shortcut (2026-11-06, the owner: too many words).
 - Overlay: `.margin-layer` sits outside `#doc`. Rendered block measurements and
   keyed thread elements preserve the caret and reply field. Read completion
   checks both session and request identity, so an old request cannot clear newer
@@ -576,6 +584,13 @@ target. Check the page sequence after loading preferences.
   one flow in flows.spec.js joins the page to the real routes.
 
 ## Uploads, originals, recording
+
+- Upload sheet (2026-11-06, the owner: redesign it): the drop zone comes first
+  ("Choose, drop or paste files" with PDF / Word / PowerPoint / Text / Photo chips;
+  a slim Add more files bar once files are picked), then the files, the Add/New
+  switch, the folder, and Title and What do you want under one "Optional" caption.
+  The only other line, that photos and scans need a writing AI that can see images,
+  appears only while a picture is picked (the page cannot tell which AI sees).
 
 - Uploads: POST `/api/import` runs the `Importer` on a thread; "What do you
   want from it?" goes in `<what_the_user_wants>`. Several files make a note
@@ -622,6 +637,11 @@ target. Check the page sequence after loading preferences.
   Housekeeper's `pending_recordings` supplies retained native sessions; recovery
   starts in Writing state and supports Finish available, and anything the
   Housekeeper does not list is not found.
+  The idle page (2026-11-06) shows Microphone, Screen and Call as one row of
+  `.choice-pick` cards with a track diagram each (one waveform, or two for Call)
+  over the same `rec-kind` radios, Folder, Title and What you want as one aligned
+  form with short placeholders, the calendar hint as one linked line, and the
+  "keeps recording if you close the window" tip under Start.
 
 - Screenshots (the user's call): paste a PNG/JPEG/GIF/WebP into Your notes while
   recording instead of a browser screen picker. The existing snapshot endpoint
@@ -763,7 +783,10 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   Columns share one height and fill the width (flex 1, at least 260 px; Add column is a
   small + tile), cards are roomier, and each column takes a quiet colour from its name
   (`kanbanTone`: to do blue, in progress amber, done green, blocked red, others by
-  place) shown as a dot, its count and a 3% tint. No help line under the board.
+  place) shown as a dot and a 3% tint; the column count is a plain muted number.
+  No help line under the board. Cards hug their content (no minimum height), the
+  selected tab has the segment pill's small shadow, New board is a ghost tab and
+  Add column a solid tile, so nothing on the page has a dashed border.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
@@ -786,9 +809,13 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
 
 - Theme (2026-10-14, the user's request): Settings → Appearance picks Match
   this device, Light or Dark, kept per browser in `leo-theme`. Theme, Felix and
-  Note width are segmented controls (icons `device`, `sun`, `moon`; Felix pictures
-  with `felix-preview cute-look` / `demon-look`, which the mood code skips and
-  which look the same whatever mode is on). Each has a row reset (`settingReset`,
+  Note width are rows of picture cards (2026-11-06, the owner's screenshots:
+  `choiceCards` with `action`/`key`, so the buttons keep `theme-pick`,
+  `felix-pick`, `width-pick` and `aria-pressed`): Theme previews are inline SVG in
+  fixed light and dark surfaces (Match device is split), Felix shows
+  `felix-preview cute-look` / `demon-look` (the mood code skips them), Note width
+  a miniature page per width; Felix's two cards sit in a three-column grid so
+  every row lines up. No footnote. Each has a row reset (`settingReset`,
   a small icon button that shows only while the value differs from
   `APPEARANCE_DEFAULTS`: Match device, Cute, Wide; `data-action="setting-reset"`,
   named "Reset <setting> to default"). Add one only where the default is real. `/theme.js`
@@ -799,6 +826,15 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   redraws on `leoTheme.onChange` (Mermaid diagrams), never
   the media query directly. Print overrides with `:root:root` so a PDF is
   always light.
+
+- Updates & about (2026-11-06, the owner: clean it up): the version sits beside
+  the Updates title; one status row has the state, when it was last checked and
+  Check now (Download or Restart when they apply); two switches; one hint that
+  updates wait for recording and dictation, then Leo reopens. About Leo lists the
+  notes and speech-model folders as rows whose path is truncated in the middle
+  (selectable, full path on hover; the app has no reveal or copy action), the
+  unsigned-copy warning as a compact amber notice, `leo update` and
+  `leo uninstall` as two rows, and Release notes in the card header.
 
 - Keeping (`keeping.rs`, `app/keeping.js`; 2026-11-05, the user's call, replacing
   the Storage page, its `/api/storage` routes, areas and `Housekeeper` actions;
@@ -920,8 +956,13 @@ It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
 the user's call: notes sit in the middle), the note is centred between two 48 px
 gutters and the left one holds a tick per heading (`.outline-ticks`, longer for
 higher levels, the current one in the accent). Hovering or focusing the rail
-magnifies nearby bars and previews the heading and a bounded plain-text excerpt
-(up to 24 lines / 800 UTF-16 units, escaped); clicking or Enter/Space jumps there.
+magnifies nearby bars (they stay inside the 48 px gutter, at least 6 px from the
+text) and previews the heading and a bounded plain-text excerpt (up to 24 lines /
+800 UTF-16 units, escaped); clicking or Enter/Space jumps there. The preview opens
+only into free space, between the rail and the text or right of the text (over the
+margin), when 220 px fit (`outlineRoom`); with no room it stays hidden and the
+disclosure below the rail lists the headings (2026-11-06, the owner's screenshot of
+a narrow window).
 Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Motion
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
