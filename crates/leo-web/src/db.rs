@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS vectors (
     at INTEGER NOT NULL,
     hash TEXT NOT NULL,
     v BLOB NOT NULL,
+    piece TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (note, at)
 );
 CREATE TABLE IF NOT EXISTS graph_notes (
@@ -172,6 +173,14 @@ impl Db {
             tx.execute_batch(
                 "ALTER TABLE note_tasks ADD COLUMN description TEXT NOT NULL DEFAULT '';",
             )?;
+        }
+        let has_piece: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('vectors') WHERE name = 'piece')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_piece {
+            tx.execute_batch("ALTER TABLE vectors ADD COLUMN piece TEXT NOT NULL DEFAULT '';")?;
         }
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
@@ -395,6 +404,31 @@ mod moving_in {
 #[cfg(test)]
 mod task_descriptions {
     use super::*;
+
+    #[test]
+    fn existing_vectors_gain_an_empty_piece_mark_without_losing_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE vectors (note TEXT NOT NULL, at INTEGER NOT NULL, hash TEXT NOT NULL, v BLOB NOT NULL, PRIMARY KEY (note, at));
+             INSERT INTO vectors VALUES ('note-one', 0, 'abc', x'00');",
+        )
+        .unwrap();
+        drop(old);
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            db.with(|c| {
+                let row: (String, String) =
+                    c.query_row("SELECT hash, piece FROM vectors", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?;
+                assert_eq!(row, ("abc".into(), "".into()));
+                Ok(())
+            })
+            .unwrap();
+        }
+    }
 
     #[test]
     fn existing_checkbox_settings_gain_empty_descriptions_without_losing_data() {
