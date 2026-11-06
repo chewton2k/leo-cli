@@ -53,7 +53,6 @@ for (const [name, hash, mask] of [
   ['search', '#/search/queue', []],
   ['trash', '#/trash', []],
   ['settings', '#/settings', []],
-  ['storage', '#/settings/storage', ['.store-big', '.store-size', '.store-key-size', '.store-bar', '.store-count']],
   ['record', '#/record', []],
 ]) {
   test(`${name} looks the same`, async ({ page }) => {

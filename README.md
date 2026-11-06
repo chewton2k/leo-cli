@@ -69,8 +69,8 @@ On first launch, allow microphone access for recording and Accessibility access
 for pasting dictation into other apps. Download a speech model in Settings →
 Speech models. The previous speech model cannot be reused; Leo removes its old
 folder after a new model is verified and ready. Previous cloud speech choices
-fall back to local speech, and their stored speech keys are removed. Writing AI
-and calendar credentials are kept.
+fall back to local speech. Stored keys, writing AI sign-ins and calendar
+credentials stay in leo's credentials file.
 
 Two migration cases are not automatic yet:
 

@@ -1,6 +1,6 @@
 const TASK_TITLE = { writing: 'AI for writing', speech: 'AI for speech' };
 const TASK_USE = {
-  writing: 'Turns recordings into notes, answers @leo questions, powers Felix and note connections.',
+  writing: 'Turns recordings into notes, powers Felix and note connections.',
   speech: 'Turns what was said into text while you record.',
 };
 
@@ -9,7 +9,7 @@ async function showSettings(section) {
   // Trash is a page of notes rather than a setting, so a bare #/settings never reopens it.
   if (section === 'trash') return showTrash();
   try { localStorage.setItem('leo-settings-section', section); } catch (e) {}
-  if (section === 'storage') return showStorage();
+  if (section === 'keeping') return showKeeping();
   const mine = ++seq;
   state = { view: 'settings', dir: '', section };
   scheduleAppStatus(appPollGeneration);

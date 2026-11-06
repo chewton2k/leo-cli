@@ -74,28 +74,6 @@ impl Captions {
         });
     }
 
-    pub fn path(&self) -> &Path {
-        self.db.path()
-    }
-
-    pub fn bytes(&self) -> u64 {
-        self.db
-            .with(|c| {
-                c.query_row(
-                    "SELECT coalesce(SUM(length(key) + length(caption)), 0) FROM captions",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map_or(0, |n| n.max(0) as u64)
-    }
-
-    pub fn clear(&self) -> bool {
-        self.db
-            .with(|c| c.execute("DELETE FROM captions", []))
-            .is_ok_and(|n| n > 0)
-    }
-
     pub fn len(&self) -> usize {
         self.db
             .with(|c| c.query_row("SELECT COUNT(*) FROM captions", [], |r| r.get::<_, i64>(0)))

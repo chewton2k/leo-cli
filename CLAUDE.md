@@ -10,10 +10,10 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `manual`, `action/` (`Line`/`Kind` output lines and front matter) | — |
-| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, theme data), `listen`, `health`, `providers` | core |
+| `crates/leo-core` | `notes`, `store` (+ undo), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices) | — |
+| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials), `health`, `providers` | core |
 | `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
-| `crates/leo-host` | `powers()` (the AI, speech, settings, storage and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
+| `crates/leo-host` | `powers()` (the AI, speech, settings, recording housekeeping and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
 | `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, services, host, web |
 | root `leo` | `main.rs` and `cli/`: `leo` opens the app, `leo update`, `leo uninstall`, `--version` | core, services |
 
@@ -92,23 +92,12 @@ Two rules there, both learned from tests that hung:
 Checks must stay cheap enough to run on startup: a key presence check, a PATH
 scan, or a loopback connect with a 300 ms timeout. Never a real request.
 
-### The manual note
-
-`manual.rs` creates one note on first run: a one-screen quickstart for the app
-(Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
-real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (24); deleting the
-manual survives the next launch, and a version bump rewrites the user's note.
-Tests: under 60 lines, names Settings, Felix, Record and ⌘F, and names no
-terminal command.
-
 ### Data model
 
 Notes are stored as one Markdown file per note, with YAML frontmatter, under
 the platform data directory (`<data_dir>/leo/notes/`). `store.rs` derives a
 note's `directory` from its path on disk, and `directories.json` tracks empty
-directories. A legacy `notes.json` is migrated automatically on first read
-(`migrate_from_json`, `store.rs:455`). Each `Note` has `id` (UUID v4), `title`,
+directories. Each `Note` has `id` (UUID v4), `title`,
 `body` (Markdown), `tags`, `directory` (empty string = root), `created_at`, and
 `updated_at`.
 
@@ -118,20 +107,14 @@ settings and credentials are excluded from note exports.
 ### Recent additions worth knowing
 
 - `leo_services::doctor::scan` (sections leo/notes/AI/recording;
-  network/mic probes behind `Probe`), formatted once by `doctor::report`; plan 4
-  is shown in Settings → Health.
+  network/mic probes behind `Probe`), plan 4 is shown in Settings → Health.
 - Recording loop: `leo_services::session::recorder` (`record`, `resume`,
-  `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio; browser-fed audio remains for
-  old recovery journals. Pauses are cut by `listen::cut_pauses` before
-  the final transcription.
+  `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio.
 - `Store::unreadable`: files that failed to parse; `save` never deletes them.
 - Trash: `save` moves any note file that vanished (and was not just moved:
   its id is not live) to `<notes>/.trash/<same relative path>`, mtime = when
   deleted. `tidy_trash` (load and save) drops live ids and ones past
   `TRASH_DAYS` (30). The Trash page restores and empties.
-- Editor: `leo_core::editor` (EDITOR, VISUAL, then nano, then vi; flags split,
-  quotes kept together, a setting that is an existing file is one program; on
-  Windows the program is found through `paths::find`, so `code.cmd` runs).
 - Updates: `leo_services::update::available()` reads the latest tag from the
   `releases/latest` redirect (not the API: rate limits), cached a day in
   `<config>/update-check.json`, failures cached too; `LEO_NO_UPDATE_CHECK=1`
@@ -164,8 +147,7 @@ settings and credentials are excluded from note exports.
   Returning to the native window forces a check before serving cached reads.
 - Never slice strings by byte offsets computed from lengths: use char indices
   or `str::get`.
-- `listen::microphone_peak` has a deadline (3 s past the sample); tests must
-  never call the probe (`recording(.., false)`).
+- Tests must never run the microphone probe (`recording(.., false)`).
 - Install: `install.sh` downloads the latest GitHub release. Releases are
   automatic: `ci.yml` calls `release.yml` after every job passes on a push to
   main; `scripts/next-version.sh` picks the version (patch + 1, or Cargo.toml's
@@ -179,8 +161,8 @@ settings and credentials are excluded from note exports.
   under `models_dir()/speech`, selected in `<config>/speech-model.json`.
   `leo-services::speech` verifies downloads, isolates native transcribe-cpp
   0.4.0 in a supervised child, prioritizes dictation and pins the model during
-  recording. Cloud speech configurations/aliases migrate locally and their
-  stored keys are retired through SecretStore; calendar/writing data stays.
+  recording. Cloud speech choices fall back to local speech; any keys
+  already stored stay in leo's credentials file.
 - Dictation preferences/text rules live in `leo-services::dictation`; desktop
   owns global shortcuts, permissions, in-memory capture, transactional paste
   and a bundled nonactivating popup. Writing AI runs on dictations only when
@@ -201,9 +183,8 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   new slot); the Calendar page is a Notion-style Day/Week/Month screen beside
   the explorer: see crates/leo-web/CLAUDE.md.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
-  search and note connections cover it): no `#tag` in `new` (split_new returns (dir,
-  title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips
-  on the web. Tags already in files are kept and still searchable with `#word`
+  search and note connections cover it): no tag column, completion, Tags page or
+  chips on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian), and leo's own markers (`manual`, `listen`) stay.
 - Felix in the margin (2026-11-04, the user's call): threads in `leo.db`, never
   note files or git; read-along is off by default. Reads use `Powers.toolless`
@@ -221,12 +202,20 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   idle compaction).
 - Keeping: `leo_core::keep` (`<data>/keep.json`, beside notes, not synced):
   `trash_days` (7/30/90/365/None=forever, default 30) drives `tidy_trash`;
-  `chat_days` (30/90/365/None, default forever) drives `chats::tidy` in leo-web.
-  Trash messages use `keep::kept_for`.
+  one shared choice list (7, 30, 90, 365 days, forever);
+  `chat_days`, `upload_days`, `transcript_days` and `audio_days` (default forever)
+  drive the expiry in `crates/leo-web/src/keeping.rs`. Settings → Data → Keeping
+  (`#/settings/keeping`; `#/settings/storage` is an alias) shows the five rows
+  and the zip export. `keep::describe` words a choice.
+- Cut-down (2026-11-05, the user's call): the Storage page is replaced by
+  Keeping; Felix has no web search or page opening; the legacy fallbacks and
+  one-time migrations are gone (`notes.json`, old tasks and chats, the direct
+  Anthropic wire, `codex exec`, the sign-in device list, AGY/Copilot cleanup,
+  stored cloud speech key retirement).
 
 Recording sources live in `leo-core::recording` (`Archive`, and `Profile {context,
 wants}`: calendar-event details and what the user wants from the notes), shared by
-both front ends. Saved recording session IDs make new notes and appends idempotent;
+the app. Saved recording session IDs make new notes and appends idempotent;
 retain sources before saving the note, then commit the session after the note is
 durable. Default AI gap-filling and merging of typed points always stay, whatever
 the user asks for. Note workflows (folder defaults, note formats, vocabulary, saved
@@ -237,7 +226,7 @@ Interview coding practice was removed by the user's decision on 2026-11-05.
 Felix keeps quizzes, study sessions and review. Legacy interview database tables
 and rows stay unused; old interview-style chats open normally and retired cards
 show a short removal message. Downloaded runtimes stay
-visible and removable through Storage's symlink-safe downloaded-files cleanup.
+on disk, untouched.
 
 Felix has no modes (2026-11-05, the user's call): one prompt, and he works out
 from each message whether to answer, teach or quiz. Lessons follow the method of
@@ -245,20 +234,17 @@ LearnHarness (measure, plan, teach step by step, practise), written in leo's own
 words: LearnHarness is AGPL-3.0 and leo is MIT, so its code and prompt text must
 never be copied in. See crates/leo-web/CLAUDE.md.
 
-Storage scans use a read-only Store snapshot and blocking workers so filesystem
-walks and database compaction do not hold the notes lock. The Housekeeper lists
-both config and data folder settings, the application and
-model downloads; cache removal refuses symlinks and active partial downloads.
+Keeping scans use a read-only Store snapshot and blocking workers so filesystem
+walks do not hold the notes lock. The `Housekeeper` in `crates/leo-web/src/record.rs`
+only lists and discards unfinished recordings.
 
-Security cleanup: note roots refuse symlinks, folder scans have depth bounds, legacy
-migration uses contained paths and atomic writes, and displayed short IDs use
+Security cleanup: note roots refuse symlinks, folder scans have depth bounds, and displayed short IDs use
 Unicode characters. Credential updates use a bounded writer plus a cross-process private lock;
 use `secret::default_store()` (private file by default, optional keychain), never a
-backend directly. Legacy AGY/Copilot profiles contain private sign-in state, stay outside
-notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
+backend directly. `.superpowers/` stays local
 and must never be staged or committed.
 
-Settings uses grouped `#/settings/<section>` routes in a sidebar with icons (a rounded panel set apart from the explorer; panel and section are centered together), preserving Storage's route; Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
+Settings uses grouped `#/settings/<section>` routes in a sidebar with icons (a rounded panel set apart from the explorer; panel and section are centered together), `#/settings/storage` stays as an alias of Keeping; Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
 `leo_web::app_settings::AppApi` bridges native preferences, permission requests,
 Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.

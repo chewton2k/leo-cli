@@ -41,27 +41,6 @@ fn valid_doc(id: &str) -> bool {
     id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-pub(crate) struct Imported {
-    chat: String,
-    doc: Stored,
-}
-
-pub(crate) fn from_folder(folder: &Path, chat: &str) -> Vec<Imported> {
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
-        .filter_map(|text| serde_json::from_str::<Stored>(&text).ok())
-        .filter(|doc| valid_doc(&doc.id) && valid_id(chat))
-        .map(|doc| Imported {
-            chat: chat.to_string(),
-            doc,
-        })
-        .collect()
-}
-
 fn insert(c: &rusqlite::Connection, chat: &str, doc: &Stored) -> rusqlite::Result<usize> {
     c.execute(
         "INSERT OR IGNORE INTO chat_docs (id, chat, name, added_at, text) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -73,13 +52,6 @@ fn insert(c: &rusqlite::Connection, chat: &str, doc: &Stored) -> rusqlite::Resul
             doc.text
         ],
     )
-}
-
-pub(crate) fn insert_all(c: &rusqlite::Connection, docs: &[Imported]) -> rusqlite::Result<()> {
-    for item in docs {
-        insert(c, &item.chat, &item.doc)?;
-    }
-    Ok(())
 }
 
 fn stored(dir: &Path, chat: &str) -> Vec<(Stored, u64)> {

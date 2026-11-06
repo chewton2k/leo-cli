@@ -17,20 +17,15 @@ pub const RETIRED: &[&str] = &[
     "groq",
     "hf",
     "local_whisper_server",
+    "whisper_cpp",
+    "openai_whisper",
+    "gemini_speech",
+    "xai_speech",
 ];
 
 const RETIRED_CHAT: &[&str] = &["openai", "anthropic", "openrouter", "gemini", "xai"];
 
-const KNOWN_KINDS: &[&str] = &[
-    "openai",
-    "openai_transcribe",
-    "groq",
-    "whisper_cpp",
-    "chat_audio",
-    "parakeet",
-    "claude_code",
-    "codex",
-];
+const KNOWN_KINDS: &[&str] = &["openai", "parakeet", "claude_code", "codex"];
 
 fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
     match (field, value) {
@@ -39,7 +34,6 @@ fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
             ("openai", Some("gpt-4o-mini"))
                 | ("gemini", Some("gemini-2.5-flash" | "gemini-2.0-flash"))
                 | ("xai", Some("grok-3-mini"))
-                | ("openai_whisper", Some("whisper-1"))
                 | (
                     "anthropic",
                     Some("claude-haiku-4-5" | "claude-haiku-4-5-20251001")
@@ -48,9 +42,6 @@ fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
                 | ("claude_code", Some("sonnet"))
         ),
         ("max_tokens", v) => provider != "ollama" && matches!(v.as_integer(), Some(4096 | 8192)),
-        ("kind", v) => v.as_str() == Some("groq"),
-        ("bin", v) => v.as_str() == Some("whisper-cli"),
-        ("model_path", v) => v.as_str() == Some("~/.leo/models/ggml-base.en.bin"),
         _ => false,
     }
 }
@@ -72,14 +63,11 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
         .map(|providers| {
             providers
                 .iter()
-                .filter(|(name, block)| {
-                    matches!(
-                        block.get("kind").and_then(Item::as_str),
-                        Some("agy" | "copilot")
-                    ) || super::speech_migration::retired(
-                        name,
-                        block.get("kind").and_then(Item::as_str),
-                    )
+                .filter(|(_, block)| {
+                    block
+                        .get("kind")
+                        .and_then(Item::as_str)
+                        .is_some_and(|kind| !KNOWN_KINDS.contains(&kind))
                 })
                 .map(|(name, _)| name.to_string())
                 .collect()
@@ -102,7 +90,6 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
             .filter(|n| {
                 !RETIRED.contains(&n.as_str())
                     && !removed.contains(n.as_str())
-                    && !super::speech_migration::retired(n, None)
                     && (task != Task::Chat || !RETIRED_CHAT.contains(&n.as_str()))
             })
             .cloned()
@@ -117,7 +104,7 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
     }
 
     let Some(providers) = doc.get_mut("providers").and_then(Item::as_table_like_mut) else {
-        return replace_old_engine(doc) || changed;
+        return changed;
     };
     let names: Vec<String> = providers.iter().map(|(k, _)| k.to_string()).collect();
     for name in names {
@@ -127,19 +114,7 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
             .and_then(|k| k.as_str())
             .map(str::to_string);
         let unusable_kind = kind.as_deref().is_some_and(|k| !KNOWN_KINDS.contains(&k));
-        let own_program = providers
-            .get(&name)
-            .and_then(|b| b.get("bin"))
-            .and_then(|b| b.as_str())
-            .is_some_and(|b| b != "whisper-cli");
-        let old_engine = (kind.as_deref() == Some("whisper_cpp")
-            || (kind.is_none() && name == "whisper_cpp"))
-            && !own_program;
-        if RETIRED.contains(&name.as_str())
-            || unusable_kind
-            || old_engine
-            || super::speech_migration::retired(&name, kind.as_deref())
-        {
+        if RETIRED.contains(&name.as_str()) || unusable_kind {
             providers.remove(&name);
             changed = true;
             continue;
@@ -170,38 +145,6 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
     }
     if providers.is_empty() {
         doc.remove("providers");
-    }
-    changed |= replace_old_engine(doc);
-    changed
-}
-
-fn replace_old_engine(doc: &mut DocumentMut) -> bool {
-    let defined = doc
-        .get("providers")
-        .and_then(|p| p.get("whisper_cpp"))
-        .is_some();
-    if defined {
-        return false;
-    }
-    let mut changed = false;
-    for task in [Task::Chat, Task::Transcribe] {
-        let before = edit::read_chain(doc, task);
-        if !before.iter().any(|n| n == "whisper_cpp") {
-            continue;
-        }
-        let mut after: Vec<String> = Vec::new();
-        for name in before {
-            let name = if name == "whisper_cpp" {
-                "parakeet".to_string()
-            } else {
-                name
-            };
-            if !after.contains(&name) {
-                after.push(name);
-            }
-        }
-        edit::write_chain(doc, task, &after);
-        changed = true;
     }
     changed
 }
@@ -325,11 +268,6 @@ model = "claude-opus-5-5"
 base_url = "http://10.0.0.5:11434/v1"
 max_tokens = 16000
 
-[providers.whisper_cpp]
-kind = "whisper_cpp"
-bin = "/opt/whisper/main"
-model_path = "/models/ggml-large-v3-turbo.bin"
-
 [providers.mine]
 kind = "openai"
 base_url = "https://example.com/v1"
@@ -348,12 +286,6 @@ model = "house-model"
         let ollama = cfg.provider("ollama").unwrap();
         assert_eq!(ollama.base_url.as_deref(), Some("http://10.0.0.5:11434/v1"));
         assert_eq!(ollama.max_tokens, Some(16000));
-        let whisper = cfg.provider("whisper_cpp").unwrap();
-        assert_eq!(whisper.bin.as_deref(), Some("/opt/whisper/main"));
-        assert_eq!(
-            whisper.model_path.as_deref(),
-            Some("/models/ggml-large-v3-turbo.bin")
-        );
         assert_eq!(
             cfg.provider("mine").unwrap().model.as_deref(),
             Some("house-model")

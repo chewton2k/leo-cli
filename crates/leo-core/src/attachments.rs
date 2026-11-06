@@ -255,36 +255,6 @@ pub fn pictures_in(line: &str) -> Vec<(std::ops::Range<usize>, Shown)> {
     out
 }
 
-pub fn placeholder(shown: &Shown) -> String {
-    let name = if shown.alt.is_empty() {
-        shown.target.rsplit('/').next().unwrap_or(&shown.target)
-    } else {
-        &shown.alt
-    };
-    format!("[image: {name}]")
-}
-
-pub fn with_placeholders(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            let found = pictures_in(line);
-            if found.is_empty() {
-                return line.to_string();
-            }
-            let mut out = String::new();
-            let mut at = 0;
-            for (range, shown) in found {
-                out.push_str(&line[at..range.start]);
-                out.push_str(&placeholder(&shown));
-                at = range.end;
-            }
-            out.push_str(&line[at..]);
-            out
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,11 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn the_terminal_shows_a_placeholder_where_a_picture_is() {
-        assert_eq!(
-            with_placeholders("Before ![Heap diagram](attachments/heap.png) after\n![](a/b/tree.jpg)\n![[board.png|300]]\nplain ![not closed"),
-            "Before [image: Heap diagram] after\n[image: tree.jpg]\n[image: board.png]\nplain ![not closed"
-        );
+    fn text_without_pictures_has_none() {
         assert_eq!(pictures_in("no pictures! here").len(), 0);
     }
 }

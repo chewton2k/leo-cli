@@ -241,79 +241,8 @@ fn when(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text).map_or_else(|_| Utc::now(), |t| t.with_timezone(&Utc))
 }
 
-const MOST_MIGRATED: usize = 64;
-
-static MIGRATED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
 pub(crate) fn db_of(dir: &Path) -> std::sync::Arc<crate::db::Db> {
-    let db = crate::db::for_chats(dir);
-    let missing: Vec<_> = MIGRATED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-        .into_iter()
-        .filter(|path| !path.exists())
-        .collect();
-    let mut done = MIGRATED.lock().unwrap_or_else(|e| e.into_inner());
-    done.retain(|path| !missing.contains(path));
-    if !done.iter().any(|d| d == dir) {
-        if done.len() >= MOST_MIGRATED {
-            done.remove(0);
-        }
-        done.push(dir.to_path_buf());
-        drop(done);
-        bring_in_files(dir, &db);
-    }
-    db
-}
-
-fn bring_in_files(dir: &Path, db: &crate::db::Db) {
-    if dir.file_name().is_none_or(|n| n != "chats") || !dir.is_dir() {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut chats = Vec::new();
-    let mut docs = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(id) = name.strip_suffix(".json").filter(|id| valid_id(id)) {
-            if let Some(chat) = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|t| serde_json::from_str::<Chat>(&t).ok())
-                .filter(|c| c.id == id)
-            {
-                chats.push(chat);
-            }
-        } else if name.ends_with(".files") && path.is_dir() {
-            docs.extend(crate::chat_files::from_folder(
-                &path,
-                name.trim_end_matches(".files"),
-            ));
-        }
-    }
-    let reviewed = crate::review::from_file(dir);
-    let saved = db.with(|c| {
-        let tx = c.transaction()?;
-        for chat in &chats {
-            if tx.query_row(
-                "SELECT COUNT(*) FROM chats WHERE id = ?1",
-                [&chat.id],
-                |r| r.get::<_, i64>(0),
-            )? == 0
-            {
-                write_in(&tx, chat)?;
-            }
-        }
-        crate::chat_files::insert_all(&tx, &docs)?;
-        crate::review::insert_all(&tx, &reviewed)?;
-        tx.commit()
-    });
-    if saved.is_ok() {
-        crate::db::put_aside(dir);
-    }
+    crate::db::for_chats(dir)
 }
 
 fn body_of(chat: &Chat) -> String {
@@ -506,50 +435,6 @@ pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
             Ok(true)
         })
         .unwrap_or(false)
-}
-
-pub fn remembered(dir: &Path) -> Vec<(String, String, usize, u64)> {
-    db_of(dir)
-        .with(|c| {
-            let mut found = c.prepare(
-                "SELECT id, title, memory FROM chats WHERE memory IS NOT NULL ORDER BY updated_at DESC, id",
-            )?;
-            let rows = found.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-            })?;
-            let rows: Vec<(String, String, String)> = rows.collect::<rusqlite::Result<_>>()?;
-            Ok(rows
-                .into_iter()
-                .filter_map(|(id, title, memory)| {
-                    let memory: Memory = serde_json::from_str(&memory).ok()?;
-                    Some((id, title, memory.upto, serde_json::to_vec(&memory).ok()?.len() as u64))
-                })
-                .collect())
-        })
-        .unwrap_or_default()
-}
-
-pub fn forget_memory(dir: &Path, id: &str) -> bool {
-    db_of(dir)
-        .with(|c| {
-            c.execute(
-                "UPDATE chats SET memory = NULL WHERE id = ?1 AND memory IS NOT NULL",
-                [id],
-            )
-        })
-        .is_ok_and(|n| n > 0)
-}
-
-pub fn bytes_of(dir: &Path, id: &str) -> u64 {
-    db_of(dir)
-        .with(|c| {
-            c.query_row(
-                "SELECT length(CAST(messages AS BLOB)) + length(CAST(refs AS BLOB)) + length(CAST(title AS BLOB)) + coalesce(length(CAST(memory AS BLOB)), 0) FROM chats WHERE id = ?1",
-                [id],
-                |r| r.get::<_, i64>(0),
-            )
-        })
-        .map_or(0, |n| n.max(0) as u64)
 }
 
 pub fn tidy(dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {

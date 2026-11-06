@@ -482,6 +482,7 @@ pub fn db_of(chats: &Path) -> std::sync::Arc<crate::db::Db> {
     crate::chats::db_of(chats)
 }
 
+#[cfg(test)]
 pub fn tasks_dir(chats: &Path) -> std::path::PathBuf {
     chats
         .parent()
@@ -557,58 +558,7 @@ fn write_file(chats: &Path, task: &Task) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn migrate(chats: &Path) {
-    if checked_dir(chats).is_err() {
-        return;
-    }
-    let db = db_of(chats);
-    let old: Vec<String> = db
-        .with(|c| {
-            let mut statement = c.prepare("SELECT data FROM tasks LIMIT ?1")?;
-            let rows = statement.query_map([MOST_TASKS as i64], |r| r.get::<_, String>(0))?;
-            Ok(rows.flatten().collect::<Vec<_>>())
-        })
-        .unwrap_or_default();
-    if old.is_empty() {
-        return;
-    }
-    let mut migrated = Vec::new();
-    for text in &old {
-        let Ok(task) = serde_json::from_str::<Task>(text) else {
-            continue;
-        };
-        if !valid_id(&task.id) {
-            continue;
-        }
-        let Ok(path) = task_path(chats, &format!("{}.json", task.id)) else {
-            continue;
-        };
-        if path.exists() {
-            let Some(found) = read_file(chats, &path).filter(|found| found.id == task.id) else {
-                continue;
-            };
-            if found.updated_at < task.updated_at && write_file(chats, &task).is_err() {
-                continue;
-            }
-        } else if write_file(chats, &task).is_err() {
-            continue;
-        }
-        migrated.push((task.id, text));
-    }
-    let _ = db.with(|c| -> rusqlite::Result<()> {
-        let tx = c.transaction()?;
-        for (id, data) in migrated {
-            tx.execute(
-                "DELETE FROM tasks WHERE id = ?1 AND data = ?2",
-                rusqlite::params![id, data],
-            )?;
-        }
-        tx.commit()
-    });
-}
-
 fn read_all(chats: &Path) -> Vec<Task> {
-    migrate(chats);
     let Ok(dir) = checked_dir(chats) else {
         return Vec::new();
     };
@@ -629,24 +579,6 @@ fn read_all(chats: &Path) -> Vec<Task> {
     out
 }
 
-pub fn storage_entries(chats: &Path) -> Vec<Task> {
-    read_all(chats)
-}
-
-pub fn erase_deleted(chats: &Path) -> anyhow::Result<usize> {
-    let mut gone = 0;
-    for task in read_all(chats).into_iter().filter(|t| t.deleted) {
-        let Ok(path) = task_path(chats, &format!("{}.json", task.id)) else {
-            continue;
-        };
-        if read_file(chats, &path).is_some_and(|t| t.deleted && t.updated_at == task.updated_at) {
-            std::fs::remove_file(path).map_err(|_| anyhow::anyhow!("A deleted task file could not be erased. Check that Leo can write to its notes folder, then try again."))?;
-            gone += 1;
-        }
-    }
-    Ok(gone)
-}
-
 pub fn load_all(chats: &Path) -> Vec<Task> {
     read_all(chats)
         .into_iter()
@@ -659,7 +591,6 @@ pub fn load(chats: &Path, id: &str) -> Option<Task> {
     if !valid_id(id) {
         return None;
     }
-    migrate(chats);
     let path = task_path(chats, &format!("{id}.json")).ok()?;
     read_file(chats, &path).filter(|t| !t.deleted && t.id == id)
 }
@@ -669,7 +600,6 @@ pub fn count(chats: &Path) -> usize {
 }
 
 pub fn put(chats: &Path, task: &Task) -> anyhow::Result<()> {
-    migrate(chats);
     write_file(chats, task)
 }
 
@@ -680,15 +610,6 @@ pub fn remove(chats: &Path, id: &str) -> bool {
     task.deleted = true;
     task.updated_at = Utc::now();
     write_file(chats, &task).is_ok()
-}
-
-pub fn remove_done(chats: &Path) -> usize {
-    let done: Vec<String> = load_all(chats)
-        .into_iter()
-        .filter(|t| t.done)
-        .map(|t| t.id)
-        .collect();
-    done.iter().filter(|id| remove(chats, id)).count()
 }
 
 pub fn metas(chats: &Path) -> Vec<Meta> {
@@ -899,114 +820,6 @@ mod tests {
         back.updated_at = Utc::now() + chrono::Duration::seconds(10);
         put(&chats, &back).unwrap();
         assert_eq!(load_all(&chats).len(), 1);
-    }
-
-    #[test]
-    fn migration_keeps_legacy_tasks_when_existing_files_cannot_be_read() {
-        for corrupt in [false, true] {
-            let dir = tempfile::tempdir().unwrap();
-            let chats = dir.path().join("chats");
-            let task = plain("task-0009", "Keep this", Utc::now());
-            db_of(&chats)
-                .with(|c| {
-                    c.execute(
-                        "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3)",
-                        rusqlite::params![
-                            task.id,
-                            task.updated_at.to_rfc3339(),
-                            serde_json::to_string(&task).unwrap()
-                        ],
-                    )
-                })
-                .unwrap();
-            let folder = tasks_dir(&chats);
-            std::fs::create_dir_all(&folder).unwrap();
-            let path = folder.join("task-0009.json");
-            if corrupt {
-                std::fs::write(&path, "broken").unwrap();
-            } else {
-                std::fs::create_dir(&path).unwrap();
-            }
-            migrate(&chats);
-            let count: i64 = db_of(&chats)
-                .with(|c| c.query_row("SELECT count(*) FROM tasks", [], |r| r.get(0)))
-                .unwrap();
-            assert_eq!(count, 1);
-            if corrupt {
-                std::fs::remove_file(path).unwrap();
-            } else {
-                std::fs::remove_dir(path).unwrap();
-            }
-            assert_eq!(load(&chats, &task.id), Some(task));
-        }
-    }
-
-    #[test]
-    fn migration_preserves_the_newest_task_in_both_orders_including_deletions() {
-        for database_newer in [false, true] {
-            for deleted in [false, true] {
-                let dir = tempfile::tempdir().unwrap();
-                let chats = dir.path().join("chats");
-                let older = plain("task-0010", "Earlier task", Utc::now());
-                let mut newer = older.clone();
-                newer.title = "Newer task".into();
-                newer.description = "Keep this detail".into();
-                newer.deleted = deleted;
-                newer.updated_at += chrono::Duration::seconds(5);
-                let (database, file) = if database_newer {
-                    (&newer, &older)
-                } else {
-                    (&older, &newer)
-                };
-                write_file(&chats, file).unwrap();
-                db_of(&chats)
-                    .with(|c| {
-                        c.execute(
-                            "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3)",
-                            rusqlite::params![
-                                database.id,
-                                database.updated_at.to_rfc3339(),
-                                serde_json::to_string(database).unwrap()
-                            ],
-                        )
-                    })
-                    .unwrap();
-                migrate(&chats);
-                assert_eq!(
-                    read_file(&chats, &tasks_dir(&chats).join("task-0010.json")),
-                    Some(newer)
-                );
-                let count: i64 = db_of(&chats)
-                    .with(|c| c.query_row("SELECT count(*) FROM tasks", [], |r| r.get(0)))
-                    .unwrap();
-                assert_eq!(count, 0);
-            }
-        }
-    }
-
-    #[test]
-    fn tasks_kept_in_the_database_move_into_files_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let chats = dir.path().join("chats");
-        let task = plain("task-0009", "From before", Utc::now());
-        db_of(&chats)
-            .with(|c| {
-                c.execute(
-                    "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![
-                        task.id,
-                        task.updated_at.to_rfc3339(),
-                        serde_json::to_string(&task).unwrap()
-                    ],
-                )
-            })
-            .unwrap();
-        assert_eq!(load_all(&chats), vec![task.clone()]);
-        assert!(dir.path().join("notes/.leo/tasks/task-0009.json").exists());
-        let left: i64 = db_of(&chats)
-            .with(|c| c.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0)))
-            .unwrap();
-        assert_eq!(left, 0);
     }
 
     #[test]

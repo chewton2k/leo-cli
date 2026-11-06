@@ -1014,11 +1014,11 @@ fn the_tool_follows_each_access_mode_and_offers_undo() {
         name: "add_margin_note".into(),
         args: serde_json::json!({ "note": "Passage note", "quote": quote, "text": "Hash it first." }),
     };
-    assert!(tools::manual_for(false, Access::Ask).contains("add_margin_note"));
-    assert!(tools::manual_for(false, Access::Auto).contains("add_margin_note"));
-    assert!(!tools::manual_for(false, Access::Read).contains("add_margin_note"));
+    assert!(tools::manual_for(Access::Ask).contains("add_margin_note"));
+    assert!(tools::manual_for(Access::Auto).contains("add_margin_note"));
+    assert!(!tools::manual_for(Access::Read).contains("add_margin_note"));
     let native = |access| {
-        tools::native_specs(false, access)
+        tools::native_specs(access)
             .iter()
             .any(|spec| spec.name == "add_margin_note")
     };
@@ -1159,7 +1159,7 @@ fn a_thread_on_a_trashed_note_exports_only_with_the_trash() {
 }
 
 #[test]
-fn exports_and_storage_cover_margin_threads() {
+fn exports_cover_margin_threads() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
     let chats = crate::chats::dir_for(&store.notes_dir);
@@ -1191,23 +1191,4 @@ fn exports_and_storage_cover_margin_threads() {
     zip.set_position(0);
     let mut archive = zip::ZipArchive::new(zip).unwrap();
     assert!(archive.by_name("leo/margin.json").is_ok());
-
-    let captions = crate::captions::Captions::for_notes(&store.notes_dir);
-    let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
-    let kept = crate::storage::Kept {
-        captions: &captions,
-        vectors: &vectors,
-        recording: None,
-    };
-    let areas = crate::storage::more_areas(&store, &chats, &kept);
-    assert!(areas.iter().any(|a| a.id == "margin"));
-    let request = crate::storage::Request {
-        area: "margin".into(),
-        action: "delete-all".into(),
-        items: Vec::new(),
-    };
-    crate::storage::act_on_more(&store, &chats, &kept, &request)
-        .unwrap()
-        .unwrap();
-    assert!(margin::every(&chats).is_empty());
 }

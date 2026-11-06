@@ -7,10 +7,10 @@ them unless the user says otherwise.
 
 ## The project in one paragraph
 
-`leo` is a note app in Rust: a terminal UI and a website (`leo serve`) over
+`leo` is a note app in Rust: a Tauri desktop app (macOS and Windows) over
 Markdown notes, with Felix, an AI study buddy. Cargo workspace, layered:
 `leo-core` (notes, store) ← `leo-services` (AI providers, config, recording)
-← `leo-tui` and `leo-web` (core only) ← root `leo` binary. Never add an upward
+← `leo-web` (core only) ← `leo-host` ← `leo-desktop`, and the root `leo` binary. Never add an upward
 dependency. The website's page is plain JS in `crates/leo-web/src/web/`, served
 with a strict CSP (no inline script).
 
@@ -102,7 +102,7 @@ builds the binary the browser tests use.
   - Any credential file is 0600 and written atomically.
   - Keys are accepted only over secure requests.
 - **Network:**
-  - Fetch only addresses the user or a vetted search returned.
+  - Fetch only addresses the user gave.
   - Block local and private hosts, including names that resolve to them.
   - Set timeouts everywhere.
 - **The server:**

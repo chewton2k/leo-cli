@@ -10,31 +10,22 @@ so they cannot drift on which errors are fatal. The streaming chain also takes a
 answer, and without discarding it a fallback would glue half of one reply to all
 of another.
 
-`:ask` runs on a worker and writes back through `PreExpanded`, an `Ai` impl that
-returns the answer already in hand. Note the distinction from `ReadyNote`, whose
-`expand_prompts` deliberately echoes its input for the listen path — using that
-one here streamed the answer to the screen and then discarded it on save.
-
 ### AI pipeline
 
 `record` → `session::mic` (cpal, built in) captures 16 kHz mono →
-`ai::transcribe()` runs the `[transcribe]` chain (the selected local model on this
-computer), chunking only for providers that declare a `max_bytes()` limit the
-file exceeds → `ai::structure_notes()` runs the `[chat]` chain (whatever
-/settings chose) → note saved.
+`ai::transcribe_outcome()` runs the `[transcribe]` chain (the selected local model
+on this computer) → `ai::long::structure_recording` runs the `[chat]` chain
+(whatever /settings chose) → note saved.
 
 Each chain skips unavailable providers silently, advances past retryable
 errors (402/408/429/5xx, refused connections), and aborts on fatal ones
 (400/401/403/404) so a bad request is not retried against every provider.
-Every degradation it did take is printed once, so a silent downgrade is never
+Every degradation it did take is reported, so a silent downgrade is never
 invisible.
 
-The four functions in `ai/mod.rs` (`transcribe`, `structure_notes`,
-`structure_notes_append`, `expand_prompt`) are the only entry points callers
-use; nothing above `ai/` knows about providers. `transcribe_outcome` and
-`chat_outcome` are the same calls without the printing, for the TUI — an
-`eprintln!` would smear ink across the alternate screen, so it turns
-degradations into status-line events instead.
+`ai/mod.rs` holds the entry points callers use (`transcribe_outcome`,
+`chat_outcome`, `chat_streaming`, `quick_outcome`, `open_session`, ...); nothing
+above `ai/` knows about providers.
 
 ### The note prompts
 
@@ -55,8 +46,7 @@ under `## Your points, as you wrote them`. Long recordings send each part the po
 during it (`long::points_for`: every point to exactly one part); only a
 fallback with no AI answer lists them, as a plain `## Key points`. Replies go through `clean_reply` (outer code fence, "Here are your
 notes:", "Let me know…") and `split_title_body` (strips "Title:", `#`, bold,
-quotes). An answered `@leo` line becomes `**Q:** question` with the answer
-under it (`ai::answer_each`). A reply that hits `max_tokens` is kept and warned
+quotes). A reply that hits `max_tokens` is kept and warned
 about; a provider's configured `max_tokens` overrides what leo requests.
 
 ### Recording sessions (`session/`)
@@ -80,8 +70,7 @@ order. `recover_parts` seals a crash's `.part.wav` and clears `.err` for retry.
 request per group plus a title/summary request; every failure falls back to
 the raw transcript, so it cannot fail. `Session::finish` deletes the folder
 unless a segment failed (then `saved: true` keeps the audio). Unfinished
-sessions are resumed by the TUI at start (`App::resume_interrupted`,
-`App.recordings` is None in tests) and by `leo record` before recording.
+sessions are resumed by the app (`recorder::resume`).
 `session/stress.rs` simulates 3 h and (ignored) 24 h with a flaky provider and
 a crash copy.
 
@@ -97,11 +86,12 @@ turns the device off (tests, e2e, CI).
 ### Model configuration
 
 Writing choices are Ollama, Codex and Claude Code. Speech is local only. The
-legacy `parakeet` provider name now calls `ai/provider/local_speech.rs`; old
-cloud speech names and custom aliases migrate to it before deserialization.
-The old speech implementations and sherpa-onnx are absent. Literal legacy
-provider kinds remain parseable for migration, never construct a cloud
-transcriber. An explicit `whisper_cpp` binary remains for existing test fakes.
+`parakeet` provider name calls `ai/provider/local_speech.rs`. Provider kinds are
+`openai` (Ollama and other OpenAI-compatible servers), `parakeet`, `claude_code`
+and `codex`. Loading a saved config removes (`config/tidy.rs`, before
+deserialization) any provider block of another kind, such as the old cloud
+speech kinds, `whisper_cpp`, `agy` and `copilot`, drops chain entries that named
+them and falls back to the local defaults; a leftover `[theme]` table is ignored.
 
 `speech/catalog.json` is the pinned catalog; `catalog.rs` exposes its 29 curated
 ASR models, languages, checksums, benchmark speeds and accuracy. Accuracy uses
@@ -113,8 +103,7 @@ size/mtime stamps in `<config>/speech-verified.json` (hashing on every launch he
 the first dictation back 1.6 s before its microphone opened), downloads at most two models into owned temporary files,
 checks cancellation while awaiting the network, and promotes atomically.
 Linked paths and hard-linked models are refused. Selection/deletion/promotion
-use a private file lock. The previous ONNX folder is removed after a
-verified download or activation. An empty selected ID means the user deleted
+use a private file lock. An empty selected ID means the user deleted
 the current model.
 
 `speech/engine.rs` admits eight jobs, gives dictation priority between audio
@@ -155,10 +144,7 @@ use CPU. The Rust binding and native sys crate are both pinned to exactly
 0.4.0: pre-1.0 native patch versions are not ABI-compatible. The outer actor
 keeps filesystem/native work outside application mutexes.
 
-`config/speech_migration.rs` retires cloud speech accounts through the supplied
-SecretStore before old provider blocks are rewritten; unrelated calendar and
-custom writing accounts remain. `Config::load` uses `secret::default_store()`;
-`load_from` stays free of credential access for tests. Settings offers no speech
+`Config::load` and `load_from` never touch credentials. Settings offers no speech
 key controls. Calendar secrets still use the private credentials file by default
 or the optional keychain with `LEO_USE_KEYCHAIN=1`; tests use MemoryStore.
 
@@ -175,12 +161,6 @@ in a fresh private `leo-writing-*` temp dir (0700, deleted after; a shared fixed
 --include-partial-messages --verbose`; `read_stream` sinks `text_delta`s and
 treats a `result` with `is_error` as a failure); Codex has no partial text, so
 its stdout is the answer in one piece.
-
-AGY and Copilot support is removed. Loading a saved config removes their named
-entries and custom aliases before deserialization while preserving supported
-writing choices. Existing private profile data is kept; Storage
-shows metadata and explicit clearing only when legacy profiles exist. Cleanup
-retains its cross-process lock and never follows links or exports credentials.
 
 All writing CLI launches, native sessions, capability probes and usage polling
 clear inherited credentials, provider/routing overrides and runtime startup hooks.
@@ -201,9 +181,8 @@ fall back to recent local Codex `token_count` rate-limit events without starting
 app-server. This read-only fallback scans bounded recent folders and file tails,
 rejects links, preserves the event timestamp and never exposes conversation text;
 an older event cannot replace newer saved usage. Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
-age past `STALE_AFTER`, a window past its reset reads 0%); the TUI re-asks
-Codex every `task::USAGE_EVERY` (60 s) while Settings is open
-(`App.check_usage`, a no-op fn in tests); doctor adds `<name> limits` with
+age past `STALE_AFTER`, a window past its reset reads 0%); the Usage action in
+Settings asks Codex; doctor adds `<name> limits` with
 reset times. Never `--bare` (it skips the
 OAuth login). Usable = program on PATH (`locate`, `.cmd` on Windows); failures
 are retryable and name the sign-in step; settings shows a sign-in fact row,
@@ -281,7 +260,7 @@ fail, so only listed ones are passed; cached per program).
 Claude Code use the agent budget (three parts at once); Ollama uses the smaller
 local budget (one part). Context/output limits bound actual part sizes. Long
 recordings and uploads share this calculation and report progress from the
-calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
+calling thread. Note synthesis/gap-filling stay unchanged.
 
 ### Claude Code gets leo's tools natively (`ai/provider/mcp.rs`)
 
@@ -309,7 +288,7 @@ two calls and the answer in one turn, about 5 s.
 model in its `choice::WRITING` list and its lowest effort, for Study grading and
 other shared quick reviews. `Powers.quick` remains independent of the retired
 interview runtimes. Runtime downloads and pinning were removed on 2026-11-05;
-existing downloaded caches remain removable through Storage's safe generic cleanup.
+existing downloaded caches stay on disk; the Storage page that listed them was removed on 2026-11-05.
 
 ### What the agent CLIs may use
 
@@ -377,24 +356,13 @@ Ollama uses OpenAI-compatible native tool calls when its model supports them;
 Claude Code uses the loopback MCP bridge, and Codex native sessions require the
 isolation capability checks below. Every call
 goes through Leo's validated `Turn.call`; malformed arguments receive a repair
-message, never execution. A provider that cannot open a native session falls back
-to the shared text protocol. Legacy API parsers/cache accounting remain internal
-compatibility code and are not additional Writing choices. Tests use local fake
-servers, never paid APIs.
+message, never execution. Claude Code that cannot open a native session falls back
+to the shared text protocol. A Codex whose app-server cannot start (an old
+version that cannot isolate native sessions) is skipped for native sessions, so
+Felix answers through the same text protocol; the `codex exec` resume and
+stateless Codex sessions are gone.
+Tests use local fake servers, never paid APIs.
 
-Without isolated app-server support, capable Codex versions use `codex_exec`:
-one captured exec UUID, stable private working directory and 0600 instructions,
-with only new material passed to `exec resume`. Every launch retains both ignore
-flags, disabled tools and the read-only sandbox. Personal skill instructions are
-excluded; Leo's shared reply style remains. Cumulative resumed usage is converted
-to per-request deltas. A mismatched/missing thread poisons the session before any
-text is shown. Unsupported CLIs retain the bounded isolated ephemeral fallback.
-The signed-in Codex home is used only by the CLI for authentication and temporary
-rollouts; runtime databases/logs are redirected to the private working directory.
-On Unix, child-only umask 0077 protects rollouts from creation. Drop removes only
-verified files for UUIDs this session created, never another conversation or the
-user's Codex database; an abrupt OS/process kill can leave private rollout files.
-Trusted instructions replace the default coding prompt with `model_instructions_file`.
 Session turns check cancellation before more requests or tools; writing CLI output
 is polled through bounded queues and stopped children are killed and reaped.
 Native tool budgets and a final no-tools request bound models that ignore limits.
@@ -410,8 +378,8 @@ unit length, queries prefixed with `QUERY`. Files pinned to a Hugging Face
 commit with SHA-256s (`MODEL_MANIFEST`), kept in
 `models_dir()/bge-small-en-v1.5`, loaded on demand (`model()`) and unloaded
 after 60 seconds idle once callers release their model handles. `leo update`
-fetches it (`ensure_meaning_model`), and `leo serve` fetches it quietly in
-the background when missing (`web_felix::meaning`). `LEO_INSTALL_NO_MODEL`
+fetches it (`ensure_meaning_model`), and the app fetches it quietly in
+the background when missing (`leo_host::felix::meaning`). `LEO_INSTALL_NO_MODEL`
 or `LEO_NO_MEANING_MODEL` turns that off (e2e and Playwright set them);
 `LEO_MEANING_URL` / `LEO_MEANING_MANIFEST` point tests at file:// stand-ins.
 Doctor's notes section says whether it is ready. The real-model test is
@@ -430,8 +398,7 @@ restated last) while keeping transcript repair, knowledge gap-filling and point
 merging. `web::fetch_public` is the one https fetch for addresses the user gives
 (calendar links): public hosts only, capped size.
 
-Browser-fed manifests are recovered through their browser journal, never by the
-terminal startup scan. Simultaneous tracks allocate session folders with exclusive
+Simultaneous tracks allocate session folders with exclusive
 `create_dir`; metadata uses unique synced temporary files so track startup cannot
 share a directory or race on a fixed temporary name.
 
@@ -440,12 +407,11 @@ share a directory or race on a fixed temporary name.
 
 Native Codex sessions and live usage polling require app-server help to advertise
 both `--ignore-user-config` and `--ignore-rules`, and pass both flags. Unsupported
-versions use the existing isolated text tools and previously saved usage; never
+versions give an update-Codex error for writing and keep previously saved usage; never
 start an app-server that could load the user's MCP servers, hooks or rules.
 Feature discovery is bounded and fails closed, including the shell control and
 hooks. CLI probes, native turns and text runs share a process-group watchdog that
 covers stdin, stdout EOF, exit and pipe joins; native queues and output are bounded.
-Older CLIs without isolated exec resume retain the stateless text fallback, which may add latency.
 Claude's loopback MCP bridge caps active connections at eight, closes registered
 sockets on drop, checks shutdown during pending calls, and bounds writes, batches
 and requests per connection. Request reads preserve partial bodies across polling
@@ -475,8 +441,8 @@ Recording capture uses bounded queues; shutdown signals cancellation without
 waiting indefinitely for an active transcription call. Session lock heartbeats
 stop/join on drop, and temporary write-up WAVs are guarded. Verified downloads use
 owned temporary paths, connection/total deadlines and checksum checks; extraction
-has a process deadline. Downloaded models/toolchains remain disk caches until the
-user clears them in Storage; there is no automatic LRU quota.
+has a process deadline. Downloaded models/toolchains remain disk caches that leo never
+expires; there is no automatic LRU quota.
 
 Synthetic capture regressions exercise twelve segment rolls and check every
 segment's sample count/overlap using short segment intervals. They avoid processing
@@ -488,7 +454,7 @@ are dropped immediately after spawn so EOF remains meaningful; the existing
 output cap and whole-process watchdog cover both streams. A present CLI that
 fails this check reports unverified safety controls, never a missing installation.
 
-Leo serve also uses the existing quick-model configuration for long-chat memory;
+Leo also uses the existing quick-model configuration for long-chat memory;
 chat titles are local. The root wiring meters writing/quick/summary outcomes before
 string-only writer callbacks discard token metadata. Foreground Felix turns and
 hidden grading are metered in leo-web, without recording prompt or reply contents.

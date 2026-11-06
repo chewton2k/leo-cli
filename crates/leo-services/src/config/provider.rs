@@ -7,11 +7,6 @@ use serde::{Deserialize, Serialize};
 pub enum ProviderKind {
     /// OpenAI-compatible chat completions: OpenRouter, Ollama, LM Studio, vLLM.
     Openai,
-    #[serde(rename = "openai_transcribe", alias = "groq")]
-    Transcriptions,
-    /// Local whisper.cpp binary.
-    WhisperCpp,
-    ChatAudio,
     Parakeet,
     ClaudeCode,
     Codex,
@@ -33,12 +28,8 @@ pub struct ProviderConfig {
     pub key_env: Option<String>,
     #[serde(default)]
     pub max_tokens: Option<u32>,
-    /// whisper_cpp only: binary name or path.
     #[serde(default)]
     pub bin: Option<String>,
-    /// whisper_cpp only: path to the ggml model file.
-    #[serde(default)]
-    pub model_path: Option<String>,
     #[serde(default)]
     pub key_from: Option<String>,
     #[serde(default)]
@@ -68,7 +59,6 @@ impl ProviderConfig {
         self.key_env = self.key_env.take().or(built_in.key_env);
         self.max_tokens = self.max_tokens.or(built_in.max_tokens);
         self.bin = self.bin.take().or(built_in.bin);
-        self.model_path = self.model_path.take().or(built_in.model_path);
         self.key_from = self.key_from.take().or(built_in.key_from);
         self.path = self.path.take().or(built_in.path);
         self.reasoning = self.reasoning.or(built_in.reasoning);

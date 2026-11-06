@@ -207,8 +207,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       if(url==='/api/dictation') return {settings:{custom_words:[],shortcut:'Option+Space'},recent:[]};
       if(url==='/api/health') return {sections:[{title:'This app',checks:[{name:'Speech model',state:'missing',fix:'Choose a model.',section:'models'}]}]};
       if(url==='/api/app') { appStatusReads++; return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}}; }
-      if(url==='/api/storage') return {total:0,total_label:'0 B',areas:[]};
-      if(url==='/api/keep') return {trash_choices:[],chat_choices:[],trash_days:30};
+      if(url==='/api/keep') return {choices:[{days:7,label:'7 days'},{days:30,label:'30 days'},{days:90,label:'90 days'},{days:365,label:'a year'},{days:null,label:'forever'}],trash_days:30,chat_days:null,upload_days:90,transcript_days:null,audio_days:null};
       if(url==='/api/trash') return [];
       throw new Error(url);
     }
@@ -222,13 +221,13 @@ test('Settings sections keep drafts and selections across redraws in both themes
     ${read('app/select-menu.js')}
     ${read('app/sheets.js').slice(read('app/sheets.js').indexOf('function trapSheetFocus('), read('app/sheets.js').indexOf('const SWIPE_CLOSE'))}
     ${read('app/settings.js')}
-    ${read('app/storage.js')}
+    ${read('app/keeping.js')}
     ${read('app/dictation.js')}
     ${read('app/app-settings.js')}
     ${read('app/onboarding.js')}
     const route=()=>showSettings(location.hash.split('/')[2] || 'general').catch(fail);
     window.addEventListener('hashchange',route); route();
-    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,storage:()=>drawStorage(state.storage),reads:()=>appStatusReads};`;
+    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,reads:()=>appStatusReads};`;
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
@@ -352,15 +351,12 @@ test('Settings sections keep drafts and selections across redraws in both themes
       const updateCard = await page.locator('#app-updates .set-card').first().elementHandle();
       await page.evaluate(()=>window.audit.status());
       expect(await updateCard.evaluate(el=>el.isConnected)).toBe(true);
-      await page.getByRole('link',{name:'Storage',exact:true}).click();
-      await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
-      await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
-      await expect(page.locator('#crumbs [aria-current="page"]')).toHaveText('Storage');
-      const storageBar = await page.locator('.store-bar').elementHandle();
-      await storageBar.evaluate(el=>{window.storageListeners=0;const add=el.addEventListener;el.addEventListener=function(...args){window.storageListeners++;return add.apply(this,args);};});
-      await page.evaluate(()=>{audit.storage();audit.storage();});
-      expect(await storageBar.evaluate(el=>el.isConnected)).toBe(true);
-      expect(await page.evaluate(()=>window.storageListeners)).toBe(0);
+      await page.getByRole('link',{name:'Keeping',exact:true}).click();
+      await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/keeping');
+      await expect(page.getByRole('heading',{level:1,name:'Keeping'})).toBeVisible();
+      await expect(page.locator('#crumbs [aria-current="page"]')).toHaveText('Keeping');
+      await expect(page.locator('select[data-keep]')).toHaveCount(5);
+      await expect(page.locator('select[data-keep="upload_days"]')).toHaveValue('90');
       await page.getByRole('link',{name:'Trash',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
       await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
@@ -549,13 +545,11 @@ test('setup groups permissions with live checkmarks, then offers speech models a
   } finally {await context.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
 
-test('page toolbars share geometry and storage categories stay compact', async ({ page }) => {
+test('page toolbars share geometry', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
-  await page.setContent('<header class="bar"><div class="bar-row"><button class="icon-btn">‹</button><nav class="crumbs">Settings / Storage</nav><button class="icon-btn">…</button></div></header><main class="settings-section"><div class="settings" id="areas"></div></main>');
+  await page.setContent('<header class="bar"><div class="bar-row"><button class="icon-btn">‹</button><nav class="crumbs">Settings / Keeping</nav><button class="icon-btn">…</button></div></header><main class="settings-section"></main>');
   await page.addStyleTag({ content: css });
-  await page.addScriptTag({ content: `let state={}; const app=document.querySelector('main'), esc=String, enc=encodeURIComponent, ICON={chevron:'<svg></svg>'}; ${fs.readFileSync(path.join(web, 'app/storage.js'), 'utf8')} document.querySelector('#areas').innerHTML=storageAreas([{id:'notes',title:'Notes',size:'378 KB',about:'Notes on disk',path:'/notes',items:[],actions:[]},{id:'trash',title:'Trash',size:'2.2 KB',about:'Deleted notes',path:'/trash',items:[{id:'one',name:'One',size:'2.2 KB'}],actions:[]}],new Set());` });
-  await expect(page.locator('.store-area > summary')).toHaveCount(2);
   for (const width of [2000, 1200, 390]) {
     await page.setViewportSize({ width, height: 850 });
     let baseline;
@@ -565,13 +559,6 @@ test('page toolbars share geometry and storage categories stay compact', async (
       if (!baseline) baseline = box;
       expect(box).toEqual(baseline);
       expect(box.width).toBeLessThanOrEqual(760);
-    }
-    for (const summary of await page.locator('.store-area > summary').all()) {
-      const box = await summary.boundingBox();
-      const card = await summary.locator('..').boundingBox();
-      expect(card.height - box.height).toBeLessThanOrEqual(2);
-      expect(box.height).toBeGreaterThanOrEqual(44);
-      expect(box.height).toBeLessThanOrEqual(72);
     }
   }
 });

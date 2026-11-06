@@ -132,7 +132,6 @@ const actions = {
   'quick-leo': () => quickLeo(),
   'quick-run': (el) => quickGo(Number(el.dataset.at)),
   'quick-done': (el) => quickDone(el),
-  'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {
     const dir = creationDir(el.dataset.dir);
     closeSheet(true);
@@ -146,11 +145,7 @@ const actions = {
     closeSheet();
     go('#/settings');
   },
-  storage: () => go('#/settings/storage'),
-  'storage-act': storageAsk,
-  'storage-more': storageMore,
-  'storage-open-chat': storageOpenChat,
-  'storage-go': () => storageGo().catch(fail),
+  keeping: () => go('#/settings/keeping'),
   'keep-now': () => {
     const next = state.keepPending;
     state.keepPending = null;
@@ -158,6 +153,7 @@ const actions = {
     if (next) saveKeep(next).catch(fail);
   },
   'keep-cancel': () => closeSheet(),
+  'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,
   'remove-key-now': (el) => {
@@ -184,7 +180,6 @@ const actions = {
     activity.folded = !activity.folded;
     drawActivity();
   },
-  'rec-rejoin': () => recorder.rejoin().catch(fail),
   'rec-point': () => recorder.point(),
   'rec-dismiss': () => recorder.dismiss(),
   'rec-discard': (el) => discardRecordingAsk(el),

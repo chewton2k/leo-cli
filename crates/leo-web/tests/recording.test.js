@@ -1,17 +1,15 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-require('../src/web/recorder.js');
 require('../src/web/recording.js');
 
-const R = globalThis.leoRecorder;
 const L = globalThis.leoRecording;
 
 test('background recording levels stay bounded without a mounted waveform', () => {
   const source = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
   const start = source.indexOf('    function feedFromServer(view)');
   const end = source.indexOf('    function advance(now)', start);
-  const state = { mine: false, queue: [], lastFed: 0, fedUpTo: 0 };
+  const state = { queue: [], lastFed: 0, fedUpTo: 0 };
   const feed = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return feedFromServer;})()`, {
     s: state, freshLevels: L.freshLevels, loudness: L.loudness, spread: L.spread, SERVER_STEP_MS: 250, WAVE_STEP_MS: 60, MOST_LEVEL_QUEUE: 40,
   });
@@ -23,99 +21,16 @@ test('background recording levels stay bounded without a mounted waveform', () =
   assert.equal(state.fedUpTo, 4000);
 });
 
-test('every browser capture is pulled through a silent output and call metering hears both tracks', () => {
-  for (const call of [false, true]) {
-    const edges = [];
-    const make = (name) => ({ name, connect(to, ...ports) { edges.push([name, to.name, ...ports]); } });
-    const analyser = make('analyser');
-    const output = make('silent');
-    output.gain = { value: 1 };
-    const context = {
-      destination: make('destination'),
-      createMediaStreamSource: (stream) => make(stream),
-      createAnalyser: () => analyser,
-      createChannelMerger: (count) => { assert.equal(count, 2); return make('merger'); },
-      createGain: () => output,
-    };
-    assert.equal(L.connectCapture(context, 'shared', call ? 'mic' : null, make('worklet')), analyser);
-    assert.equal(output.gain.value, 0, 'captured sound must never play back into the call');
-    assert.ok(edges.some(([from, to]) => from === 'worklet' && to === 'silent'));
-    assert.ok(edges.some(([from, to]) => from === 'silent' && to === 'destination'));
-    if (call) {
-      assert.ok(edges.some(([from, to, out, input]) => from === 'mic' && to === 'merger' && out === 0 && input === 0));
-      assert.ok(edges.some(([from, to, out, input]) => from === 'shared' && to === 'merger' && out === 0 && input === 1));
-      assert.ok(edges.some(([from, to]) => from === 'merger' && to === 'analyser'));
-      assert.ok(edges.some(([from, to]) => from === 'merger' && to === 'worklet'));
-    }
-  }
-});
-
-test('48 kHz audio becomes 16 kHz: three samples in, one out, averaged', () => {
-  const down = new R.Downsampler(48000);
-  const out = down.push([Float32Array.from([0.3, 0.3, 0.3, -0.6, -0.6, -0.6])]);
-  assert.deepEqual(out, [Math.round(0.3 * 32767), Math.round(-0.6 * 32768)]);
-});
-
-test('44.1 kHz audio keeps the right length over a second, across uneven blocks', () => {
-  const down = new R.Downsampler(44100);
-  let made = 0;
-  for (let i = 0; i < 44100; i += 128) made += down.push([new Float32Array(Math.min(128, 44100 - i))]).length;
-  assert.ok(Math.abs(made - 16000) <= 1, `made ${made}`);
-});
-
-test('stereo is mixed to mono and loud input is clipped, not wrapped', () => {
-  const down = new R.Downsampler(16000);
-  assert.deepEqual(down.push([Float32Array.from([1, 2]), Float32Array.from([0, 2])]), [16384, 32767]);
-  assert.deepEqual(new R.Downsampler(16000).push([Float32Array.from([-3])]), [-32768]);
-});
-
-test('samples go to leo as little-endian 16-bit, in order', () => {
-  const bytes = L.bytesOf(L.join([Int16Array.from([1, -2]), Int16Array.from([258])]));
-  assert.deepEqual([...bytes], [1, 0, 0xfe, 0xff, 2, 1]);
-});
-
-test('audio waiting for a connection is capped by dropping the oldest, never the newest', () => {
-  const held = [new Int16Array(10), new Int16Array(10), Int16Array.from([7])];
-  assert.equal(L.trimHeld(held, 15), 10);
-  assert.equal(held.length, 2);
-  assert.equal(held[1][0], 7);
-  const one = [new Int16Array(50)];
-  assert.equal(L.trimHeld(one, 10), 0);
-});
-
 test('the clock reads like a timer', () => {
   assert.equal(L.clock(0), '0:00');
   assert.equal(L.clock(65.9), '1:05');
   assert.equal(L.clock(3723), '1:02:03');
 });
 
-test('the microphone needs a secure page, and each refusal says what to do', () => {
-  const ok = { isSecureContext: true, mediaDevices: { getUserMedia() {} }, AudioWorkletNode: function () {} };
-  assert.equal(L.micReady(ok), 'ok');
-  assert.equal(L.micReady({ ...ok, isSecureContext: false }), 'insecure');
-  assert.equal(L.micReady({ ...ok, mediaDevices: undefined }), 'unsupported');
-  assert.match(L.micProblem('insecure'), /this computer/);
-  assert.match(L.micProblem({ name: 'NotAllowedError' }), /Allow it/);
-  assert.match(L.micProblem({ name: 'NotFoundError' }), /No microphone/);
-  assert.match(L.micProblem({ name: 'Weird', message: 'boom' }), /boom/);
-});
-
 test('the state line says what is happening, with steps while writing', () => {
   assert.equal(L.stateWord({ state: 'recording' }), 'Recording');
   assert.equal(L.stateWord({ state: 'writing', step: 'Writing the notes', steps: [1, 3] }), 'Writing the notes 1/3');
   assert.equal(L.stateWord({ state: 'writing', step: 'Transcribing the recording', steps: null }), 'Transcribing the recording');
-});
-
-test('a tab or screen can be shared only where the browser offers it, and refusals say what to do', () => {
-  const full = { isSecureContext: true, mediaDevices: { getUserMedia() {}, getDisplayMedia() {} }, AudioWorkletNode: function () {} };
-  assert.equal(L.canShareSound(full), true);
-  assert.equal(L.canShareSound({ ...full, mediaDevices: { getUserMedia() {} } }), false, 'phones have no getDisplayMedia');
-  assert.equal(L.canShareSound({ ...full, isSecureContext: false }), false);
-  assert.match(L.sharingProblem('no-audio'), /Share tab audio/);
-  assert.match(L.sharingProblem('unsupported'), /Chrome or Edge/);
-  assert.match(L.sharingProblem({ name: 'NotAllowedError' }), /Nothing was shared/);
-  assert.equal(L.fedByBrowser('tab'), true);
-  assert.equal(L.fedByBrowser('screen'), false);
 });
 
 test('loudness follows how loud it sounds, not raw amplitude', () => {
@@ -138,7 +53,6 @@ test('the wave says when sound is heard, and what to check when it is not', () =
   assert.equal(L.hearing(Array(30).fill(0), 250), 'silent');
   assert.equal(L.hearingWords('sound', 'browser', false), 'Hearing sound');
   assert.match(L.hearingWords('silent', 'browser', false), /microphone/);
-  assert.match(L.hearingWords('silent', 'tab', false), /Share tab audio/);
   assert.match(L.hearingWords('silent', 'screen', false), /playing on the computer/);
   assert.match(L.hearingWords('sound', 'browser', true), /Paused/);
 });
@@ -171,19 +85,6 @@ test('two choices: the microphone here, or the screen, wherever that can work', 
   assert.equal(L.sourceFor('screen', { local: false, canShare: false }), 'screen', 'a phone cannot record its screen');
 });
 
-test('call worklet keeps microphone and system tracks separate and flushes a short tail', () => {
-  const vm=require('node:vm'); const fs=require('node:fs'); let Recorder;
-  const sent=[];
-  class Processor { constructor() { this.port={postMessage:(message) => sent.push(message)}; } }
-  const sandbox={sampleRate:16000,AudioWorkletProcessor:Processor,registerProcessor:(_,cls) => { Recorder=cls; }};
-  vm.runInNewContext(fs.readFileSync(require.resolve('../src/web/recorder.js'),'utf8'),sandbox);
-  const recorder=new Recorder({processorOptions:{dual:true}});
-  recorder.process([[Float32Array.from([0.5,0]),Float32Array.from([0,-0.5])]]);
-  assert.equal(sent.length,0);
-  recorder.port.onmessage({data:{flush:true}});
-  assert.deepEqual([...new Int16Array(sent[0].samples)],[16384,0,0,-16384]); assert.equal(sent[1].flushed,true);
-});
-
 test('empty-call failures have a calm explanation and keep technical details separate', () => {
   const silent = 'No sound was recorded. Check that the browser may use the microphone.';
   const failure = L.failureOf({ error: `Others: ${silent}; You: ${silent}`, warnings: ['Recovered audio from the last interrupted recording.'] });
@@ -199,7 +100,7 @@ test('failed recordings offer deletion and dismissal on their own page', () => {
   const start = source.indexOf('    function drawFailed()');
   const end = source.indexOf('    let folders', start);
   const draw = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return drawFailed;})()`, {
-    s: { view: { id: 'failed-01', source: 'call', secs: 0, error: '<unsafe>', warnings: [] } },
+    s: { view: { id: 'failed-01', source: 'nativecall', secs: 0, error: '<unsafe>', warnings: [] } },
     failureOf: L.failureOf, clock: L.clock, esc: (s) => String(s).replaceAll('<', '&lt;'),
     felix: { felix: () => '' }, icons: { mic: '', trash: '' },
   });

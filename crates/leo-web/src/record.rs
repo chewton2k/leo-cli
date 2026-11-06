@@ -1,12 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use axum::{
-    body::Bytes,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -16,46 +14,26 @@ use serde::{Deserialize, Serialize};
 use crate::routes::notes::{directory as valid_directory, save};
 use crate::{store_now, AppState};
 
-pub const FORGOTTEN_AFTER: Duration = Duration::from_secs(60);
 pub const MOST_POINTS: usize = 200;
 pub const MOST_TRANSCRIPT_CHARS: usize = 200_000;
-pub const AUDIO_BYTES: usize = 4 * 1024 * 1024;
 pub const LEVELS_KEPT: usize = 48;
 const DISCARDS_KEPT: usize = 1000;
 const WAIT_FOR_WRITES: Duration = Duration::from_secs(5);
-const AUDIO_CHUNKS: usize = 64;
 const MOST_WARNINGS: usize = 40;
 const WARNING_CHARS: usize = 2_000;
 const SLIDE_TEXT_CHARS: usize = 6500;
-const WAIT_FOR_AUDIO: Duration = Duration::from_secs(10);
-const AUDIO_BACKLOG: &str =
-    "Recording is not keeping up. Stop it, then recover its saved audio on the Recording page.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
-    Browser,
-    Tab,
-    Call,
     Nativecall,
     Microphone,
     Screen,
 }
 
 impl Source {
-    pub fn fed_by_browser(self) -> bool {
-        matches!(self, Source::Browser | Source::Tab | Source::Call)
-    }
-
-    pub fn on_this_computer(self) -> bool {
-        matches!(
-            self,
-            Source::Microphone | Source::Screen | Source::Nativecall
-        )
-    }
-
     pub fn is_sound(self) -> bool {
-        matches!(self, Source::Tab | Source::Screen)
+        self == Source::Screen
     }
 }
 
@@ -66,6 +44,17 @@ pub struct Pending {
     pub directory: String,
     pub source: Source,
     pub profile: leo_core::recording::Profile,
+    #[serde(default)]
+    pub started: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub trait Housekeeper: Send + Sync {
+    fn pending_recordings(&self) -> anyhow::Result<Vec<Pending>> {
+        Ok(Vec::new())
+    }
+    fn discard_recording(&self, _id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 pub struct Listening {
@@ -73,8 +62,6 @@ pub struct Listening {
     pub recover: Option<String>,
     pub id: String,
     pub profile: leo_core::recording::Profile,
-    pub audio: Option<Receiver<Vec<i16>>>,
-    pub other_audio: Option<Receiver<Vec<i16>>>,
     pub call: bool,
     pub screen: bool,
     pub directory: String,
@@ -122,7 +109,6 @@ pub type Listener = Arc<dyn Fn(Listening, &mut dyn FnMut(Heard)) -> Result<Recor
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RecordView {
-    pub next_seq: u64,
     pub id: String,
     pub source: Source,
     pub state: &'static str,
@@ -162,18 +148,12 @@ impl RecordView {
 
 pub(crate) struct RecordJob {
     view: RecordView,
-    journal: Option<(std::path::PathBuf, crate::record_journal::Journal)>,
-    next_seq: u64,
     writing: Arc<AtomicBool>,
-    delivery_failed: Arc<AtomicBool>,
-    audio: Option<SyncSender<Vec<i16>>>,
-    other_audio: Option<SyncSender<Vec<i16>>>,
     stop: Arc<AtomicBool>,
     finish_now: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     points: Arc<Mutex<Vec<(u64, String)>>>,
     wants: Arc<Mutex<Option<String>>>,
-    seen: Instant,
 }
 
 struct Writing(Arc<AtomicBool>);
@@ -243,10 +223,7 @@ fn with_job<R>(
         .lock()
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "leo hit a problem."))?;
     match held.as_mut() {
-        Some(job) if job.view.id == id => {
-            job.seen = Instant::now();
-            Ok(work(job))
-        }
+        Some(job) if job.view.id == id => Ok(work(job)),
         _ => Err((StatusCode::NOT_FOUND, "That recording is over.")),
     }
 }
@@ -259,11 +236,6 @@ fn change(recordings: &Recordings, id: &str, work: impl FnOnce(&mut RecordJob)) 
     }
 }
 
-pub fn decode(bytes: &[u8]) -> Vec<i16> {
-    let (pairs, _) = bytes.as_chunks::<2>();
-    pairs.iter().map(|pair| i16::from_le_bytes(*pair)).collect()
-}
-
 fn keep_tail(text: String) -> String {
     let count = text.chars().count();
     if count <= MOST_TRANSCRIPT_CHARS {
@@ -273,18 +245,7 @@ fn keep_tail(text: String) -> String {
 }
 
 pub(crate) async fn overview(State(state): State<AppState>) -> Response {
-    let mut pending = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
-        Ok(notes) => tokio::task::spawn_blocking(move || crate::record_journal::pending(&notes))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
-    let mut pending = pending
-        .drain(..)
-        .map(|p| serde_json::to_value(p).unwrap_or_default())
-        .collect::<Vec<_>>();
+    let mut pending = Vec::new();
     if let Some(housekeeper) = state.housekeeper.clone() {
         if let Ok(Ok(saved)) =
             tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await
@@ -334,16 +295,12 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
     let checked = state
         .with_store({
             let directory = directory.clone();
-            move |store| {
-                valid_directory(store, &directory)?;
-                Ok(store.notes_dir.clone())
-            }
+            move |store| valid_directory(store, &directory)
         })
         .await;
-    let notes = match checked {
-        Ok(notes) => notes,
-        Err(code) => return error(code, "Check the folder before recording."),
-    };
+    if let Err(code) = checked {
+        return error(code, "Check the folder before recording.");
+    }
     let profile = match body.profile.clone().unwrap_or_default().checked() {
         Ok(profile) => profile,
         Err(e) => return error(StatusCode::BAD_REQUEST, &e.to_string()),
@@ -362,37 +319,6 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
     let finish_now = Arc::new(AtomicBool::new(false));
     let points: Arc<Mutex<Vec<(u64, String)>>> = Default::default();
     let wants: Arc<Mutex<Option<String>>> = Default::default();
-    let (sender, audio) = if body.source.fed_by_browser() {
-        let (tx, rx) = std::sync::mpsc::sync_channel(AUDIO_CHUNKS);
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
-    let (other_sender, other_audio) = if body.source == Source::Call {
-        let (tx, rx) = std::sync::mpsc::sync_channel(AUDIO_CHUNKS);
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
-    let journal = if body.source.fed_by_browser() {
-        let meta = crate::record_journal::Journal {
-            id: id.clone(),
-            directory: directory.clone(),
-            title: title.clone(),
-            source: body.source,
-            profile: profile.clone(),
-            points: Vec::new(),
-        };
-        if crate::record_journal::save(&notes, &meta).is_err() {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Could not save the audio journal. Check free disk space.",
-            );
-        }
-        Some((notes, meta))
-    } else {
-        None
-    };
     {
         let Ok(mut held) = state.recording.lock() else {
             return error(StatusCode::INTERNAL_SERVER_ERROR, "leo hit a problem.");
@@ -402,23 +328,14 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
             .is_some_and(|j| j.busy() || j.writing.load(Ordering::Acquire))
         {
             drop(held);
-            if let Some((notes, meta)) = &journal {
-                if let Ok(dir) = crate::record_journal::folder(notes, &meta.id) {
-                    let _ = std::fs::remove_dir_all(dir);
-                }
-            }
             return error(
                 StatusCode::CONFLICT,
                 "A recording is already going. Stop it first.",
             );
         }
         *held = Some(RecordJob {
-            journal,
-            next_seq: 0,
             writing: Default::default(),
-            delivery_failed: Default::default(),
             view: RecordView {
-                next_seq: 0,
                 id: id.clone(),
                 source: body.source,
                 state: if body.recover.is_some() {
@@ -443,14 +360,11 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
                 note: None,
                 error: None,
             },
-            audio: sender,
-            other_audio: other_sender,
             stop: Arc::clone(&stop),
             finish_now: finish_now.clone(),
             pause: Arc::clone(&pause),
             points: Arc::clone(&points),
             wants: Arc::clone(&wants),
-            seen: Instant::now(),
         });
     }
     let listening = Listening {
@@ -458,9 +372,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
         recover: body.recover,
         id: id.clone(),
         profile,
-        audio,
-        other_audio,
-        call: matches!(body.source, Source::Call | Source::Nativecall),
+        call: body.source == Source::Nativecall,
         screen: body.source.is_sound(),
         directory: directory.clone(),
         title: title.clone(),
@@ -476,33 +388,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
         let _activity = activity;
         run(worker, job, listener, listening, directory, title)
     });
-    let watched = Arc::clone(&state.recording);
-    let job = id.clone();
-    std::thread::spawn(move || watch(watched, job));
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id }))).into_response()
-}
-
-fn watch(recordings: Recordings, id: String) {
-    loop {
-        std::thread::sleep(Duration::from_secs(2));
-        let Ok(mut held) = recordings.lock() else {
-            return;
-        };
-        let Some(job) = held.as_mut().filter(|j| j.view.id == id) else {
-            return;
-        };
-        if !job.live() {
-            return;
-        }
-        if job.seen.elapsed() >= FORGOTTEN_AFTER && job.view.source.fed_by_browser() {
-            let warning = "The recording page is offline. Its unsent audio is kept on that device; reopen it to reconnect and save.";
-            if !job.view.warnings.iter().any(|w| w == warning) {
-                job.view.warn(warning.into());
-            }
-            job.seen = Instant::now();
-            continue;
-        }
-    }
 }
 
 fn run(
@@ -522,8 +408,6 @@ fn run(
             change(&self.recordings, &self.id, |job| {
                 if job.view.state != "done" && job.view.state != "failed" {
                     job.stop.store(true, Ordering::Relaxed);
-                    job.audio = None;
-                    job.other_audio = None;
                     job.view.state = "failed";
                     job.view.error = Some(
                         "Recording worker stopped unexpectedly; its audio is available for recovery."
@@ -538,15 +422,6 @@ fn run(
         recordings: Arc::clone(&recordings),
         id: id.clone(),
     };
-    let delivery_failed = recordings
-        .lock()
-        .ok()
-        .and_then(|held| {
-            held.as_ref()
-                .filter(|job| job.view.id == id)
-                .map(|job| Arc::clone(&job.delivery_failed))
-        })
-        .unwrap_or_default();
     let written = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         listener(listening, &mut |heard| {
             change(&recordings, &id, |job| match heard {
@@ -579,18 +454,11 @@ fn run(
             "Recording worker stopped unexpectedly; its audio is available for recovery."
         ))
     });
-    let written = if delivery_failed.load(Ordering::Acquire) {
-        Err(anyhow::anyhow!(AUDIO_BACKLOG))
-    } else {
-        written
-    };
     let recorded = match written {
         Ok(found) => found,
         Err(e) => {
             change(&recordings, &id, |job| {
                 job.stop.store(true, Ordering::Relaxed);
-                job.audio = None;
-                job.other_audio = None;
                 job.view.state = "failed";
                 job.view.error = Some(e.to_string());
             });
@@ -651,18 +519,6 @@ fn run(
                 ));
             }
         }
-        let journal = recordings.lock().ok().and_then(|held| {
-            held.as_ref()
-                .filter(|j| j.view.id == id && !j.writing.load(Ordering::Acquire))
-                .and_then(|j| j.journal.clone())
-        });
-        if warning.is_none() {
-            if let Some((notes, meta)) = journal {
-                if let Ok(dir) = crate::record_journal::folder(&notes, &meta.id) {
-                    let _ = std::fs::remove_dir_all(dir);
-                }
-            }
-        }
     }
     change(&recordings, &id, |job| match made {
         Ok((note, _)) => {
@@ -689,188 +545,7 @@ pub(crate) async fn status(State(state): State<AppState>, Path(id): Path<String>
     }
 }
 
-fn audio_tracks(bytes: &[u8], call: bool) -> anyhow::Result<(Vec<i16>, Vec<i16>)> {
-    if !bytes.len().is_multiple_of(if call { 4 } else { 2 }) {
-        anyhow::bail!("Audio must contain whole PCM frames.");
-    }
-    let samples = decode(bytes);
-    if call {
-        Ok(samples
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| (pair[0], pair[1]))
-            .unzip())
-    } else {
-        Ok((samples, Vec::new()))
-    }
-}
-fn send_samples(
-    tx: &SyncSender<Vec<i16>>,
-    mut samples: Vec<i16>,
-    stop: &AtomicBool,
-    wait: Duration,
-) -> anyhow::Result<()> {
-    let started = Instant::now();
-    loop {
-        match tx.try_send(samples) {
-            Ok(()) => return Ok(()),
-            Err(TrySendError::Disconnected(_)) => anyhow::bail!(AUDIO_BACKLOG),
-            Err(TrySendError::Full(pending)) => samples = pending,
-        }
-        if stop.load(Ordering::Acquire) || started.elapsed() >= wait {
-            anyhow::bail!(AUDIO_BACKLOG);
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn send_audio(
-    tx: &SyncSender<Vec<i16>>,
-    other: Option<&SyncSender<Vec<i16>>>,
-    bytes: &[u8],
-    stop: &AtomicBool,
-) -> anyhow::Result<()> {
-    let (samples, system) = audio_tracks(bytes, other.is_some())?;
-    send_samples(tx, samples, stop, WAIT_FOR_AUDIO)?;
-    if let Some(other) = other {
-        send_samples(other, system, stop, WAIT_FOR_AUDIO)?;
-    }
-    Ok(())
-}
-
-#[derive(Default, Deserialize)]
-pub(crate) struct AudioQuery {
-    seq: Option<u64>,
-}
-
-pub(crate) async fn audio(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<AudioQuery>,
-    bytes: Bytes,
-) -> Response {
-    if state
-        .discarded_recordings
-        .lock()
-        .is_ok_and(|gone| gone.contains(&id))
-    {
-        return error(StatusCode::NOT_FOUND, "That recording was deleted.");
-    }
-    if !bytes.len().is_multiple_of(2) {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "Audio must contain whole PCM samples.",
-        );
-    }
-    if !state
-        .recording
-        .lock()
-        .is_ok_and(|held| held.as_ref().is_some_and(|j| j.view.id == id))
-    {
-        if let Some(seq) = query.seq {
-            let notes = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
-                Ok(notes) => notes,
-                Err(code) => return error(code, "The recovery folder could not be opened."),
-            };
-            let result = tokio::task::spawn_blocking(move || {
-                crate::record_journal::append(&notes, &id, seq, &bytes)
-                    .map_err(|_| StatusCode::CONFLICT)?;
-                let next = crate::record_journal::chunks(&notes, &id)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                    .len();
-                Ok(serde_json::json!({"next_seq":next}))
-            })
-            .await
-            .unwrap_or(Err(StatusCode::INTERNAL_SERVER_ERROR));
-            return match result {
-                Ok(v) => Json(v).into_response(),
-                Err(code) => error(
-                    code,
-                    "This audio cannot be appended. Check recovery recordings.",
-                ),
-            };
-        }
-    }
-    let upload = match with_job(&state, &id, |job| {
-        let lease = Writing::take(job)?;
-        if !job.view.source.fed_by_browser() {
-            anyhow::bail!("This recording uses audio from leo’s computer.");
-        }
-        if job.view.source == Source::Call && !bytes.len().is_multiple_of(4) {
-            anyhow::bail!("Call audio must contain whole stereo frames.");
-        }
-        let seq = query.seq.unwrap_or(job.next_seq);
-        if !job.live() && job.view.state != "failed" && seq >= job.next_seq {
-            anyhow::bail!("This recording has stopped accepting audio.");
-        }
-        Ok((
-            lease,
-            job.journal.clone(),
-            seq,
-            job.next_seq,
-            job.audio.clone(),
-            job.other_audio.clone(),
-            Arc::clone(&job.stop),
-            Arc::clone(&job.delivery_failed),
-        ))
-    }) {
-        Ok(Ok(upload)) => upload,
-        Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
-        Err((code, message)) => return error(code, message),
-    };
-    let (lease, journal, seq, next, tx, other, stop, delivery_failed) = upload;
-    let worker = state.clone();
-    let job = id.clone();
-    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
-        let _lease = lease;
-        let acknowledge = |next| {
-            let _ = with_job(&worker, &job, |job| {
-                job.next_seq = next;
-                job.view.next_seq = next;
-            });
-            next
-        };
-        if let Some((notes, meta)) = journal {
-            if !crate::record_journal::append(&notes, &meta.id, seq, &bytes)? {
-                return Ok(acknowledge(next.max(seq + 1)));
-            }
-        } else if seq != next {
-            anyhow::bail!("Audio is out of order; retry the pending chunk.");
-        }
-        if let Some(tx) = tx {
-            if let Err(error) = send_audio(&tx, other.as_ref(), &bytes, &stop) {
-                delivery_failed.store(true, Ordering::Release);
-                stop.store(true, Ordering::Release);
-                return Err(error);
-            }
-        }
-        Ok(acknowledge(next.max(seq + 1)))
-    })
-    .await;
-    match result {
-        Ok(Ok(next)) => {
-            if query.seq.is_some() {
-                Json(serde_json::json!({"next_seq":next})).into_response()
-            } else {
-                StatusCode::NO_CONTENT.into_response()
-            }
-        }
-        Ok(Err(e)) => error(StatusCode::CONFLICT, &e.to_string()),
-        Err(_) => error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Audio could not be saved. Retry the pending chunk.",
-        ),
-    }
-}
-
-const REPLAY_CHUNKS: usize = 4;
-
 pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let activity = match state.capture_activity.begin() {
-        Ok(lease) => lease,
-        Err(e) => return error(StatusCode::CONFLICT, &e.to_string()),
-    };
     if let Some(housekeeper) = state.housekeeper.clone() {
         let pending = tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await;
         if let Ok(Ok(pending)) = pending {
@@ -889,145 +564,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
             }
         }
     }
-    let Some(listener) = state.listener.clone() else {
-        return error(StatusCode::SERVICE_UNAVAILABLE, "Recording is unavailable.");
-    };
-    let notes = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
-        Ok(notes) => notes,
-        Err(code) => return error(code, "The recovery folder could not be read."),
-    };
-    let recovery = tokio::task::spawn_blocking({
-        let id = id.clone();
-        move || {
-            let meta = crate::record_journal::pending(&notes)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .into_iter()
-                .find(|m| m.id == id)
-                .ok_or(StatusCode::NOT_FOUND)?;
-            let chunks = crate::record_journal::chunks(&notes, &id)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            Ok((notes, meta, chunks))
-        }
-    })
-    .await
-    .unwrap_or(Err(StatusCode::INTERNAL_SERVER_ERROR));
-    let (notes, meta, chunks) = match recovery {
-        Ok(v) => v,
-        Err(code) => return error(code, "The recovery audio could not be read."),
-    };
-    let (tx, rx) = std::sync::mpsc::sync_channel(REPLAY_CHUNKS);
-    let (other_tx, other_audio) = if meta.source == Source::Call {
-        let (tx, rx) = std::sync::mpsc::sync_channel(REPLAY_CHUNKS);
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
-    let stop = Arc::new(AtomicBool::new(false));
-    let pause = Arc::new(AtomicBool::new(false));
-    let finish_now = Arc::new(AtomicBool::new(false));
-    let points = Arc::new(Mutex::new(meta.points.clone()));
-    let wants: Arc<Mutex<Option<String>>> = Default::default();
-    {
-        let Ok(mut held) = state.recording.lock() else {
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        };
-        if held
-            .as_ref()
-            .is_some_and(|j| j.busy() || j.writing.load(Ordering::Acquire))
-        {
-            return error(StatusCode::CONFLICT, "Stop the current recording first.");
-        }
-        if state
-            .discarded_recordings
-            .lock()
-            .is_ok_and(|gone| gone.contains(&id))
-        {
-            return error(StatusCode::NOT_FOUND, "That recording was deleted.");
-        }
-        *held = Some(RecordJob {
-            view: RecordView {
-                next_seq: chunks.len() as u64,
-                id: id.clone(),
-                source: meta.source,
-                state: "writing",
-                secs: 0,
-                step: "Recovering saved audio".into(),
-                steps: None,
-                transcript: String::new(),
-                warnings: vec!["Recovered audio from the last interrupted recording.".into()],
-                points: meta.points.clone(),
-                wants: meta.profile.wants.clone(),
-                levels: Vec::new(),
-                levels_start: 0,
-                note: None,
-                error: None,
-            },
-            next_seq: chunks.len() as u64,
-            writing: Default::default(),
-            delivery_failed: Default::default(),
-            journal: Some((notes, meta.clone())),
-            audio: None,
-            other_audio: None,
-            stop: stop.clone(),
-            finish_now: finish_now.clone(),
-            pause: pause.clone(),
-            points: points.clone(),
-            wants: wants.clone(),
-            seen: Instant::now(),
-        });
-    }
-    let listening = Listening {
-        preview: state.visible.clone(),
-        recover: None,
-        id: id.clone(),
-        profile: meta.profile,
-        audio: Some(rx),
-        other_audio,
-        call: meta.source == Source::Call,
-        screen: meta.source.is_sound(),
-        directory: meta.directory.clone(),
-        title: meta.title.clone(),
-        stop: stop.clone(),
-        finish_now,
-        pause,
-        points,
-        wants,
-    };
-    let worker = state.clone();
-    let job = id.clone();
-    std::thread::spawn(move || {
-        let _activity = activity;
-        run(worker, job, listener, listening, meta.directory, meta.title)
-    });
-    let replay_id = id.clone();
-    std::thread::spawn(move || {
-        let id = replay_id;
-        for path in chunks {
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    let sent = (|| -> anyhow::Result<()> {
-                        let (samples, system) = audio_tracks(&bytes, other_tx.is_some())?;
-                        tx.send(samples)?;
-                        if let Some(other) = &other_tx {
-                            other.send(system)?;
-                        }
-                        Ok(())
-                    })();
-                    if sent.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => {
-                    change(&state.recording, &id, |j| {
-                        j.view.warn("A saved audio chunk could not be read.".into())
-                    });
-                    break;
-                }
-            }
-        }
-        stop.store(true, Ordering::Relaxed);
-    });
-    (StatusCode::ACCEPTED, Json(serde_json::json!({"id":id}))).into_response()
+    error(StatusCode::NOT_FOUND, "That recording cannot be recovered.")
 }
 
 #[derive(Deserialize)]
@@ -1086,19 +623,18 @@ async fn append_point(
         }
         let lease = Writing::take(job)?;
         let at = at.unwrap_or(job.view.secs).min(job.view.secs);
-        let journal = job.journal.clone();
-        Ok((lease, at, journal))
+        Ok((lease, at))
     }) {
         Ok(Ok(input)) => input,
         Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
         Err((code, message)) => return error(code, message),
     };
-    let (lease, at, journal) = input;
+    let (lease, at) = input;
     let worker = state.clone();
     let id = id.to_string();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
         let _lease = lease;
-        persist_point(&worker, &id, text, at, journal, warning)
+        persist_point(&worker, &id, text, at, warning)
     })
     .await;
     match result {
@@ -1120,15 +656,9 @@ fn persist_point(
     id: &str,
     text: String,
     at: u64,
-    mut journal: Option<(std::path::PathBuf, crate::record_journal::Journal)>,
     warning: Option<String>,
 ) -> Result<RecordView> {
-    if let Some((notes, meta)) = &mut journal {
-        meta.points.push((at, text.clone()));
-        crate::record_journal::save(notes, meta)?;
-    }
     with_job(state, id, |job| {
-        job.journal = journal;
         if let Ok(mut points) = job.points.lock() {
             points.push((at, text.clone()));
         }
@@ -1154,42 +684,19 @@ pub(crate) async fn wants(
         );
     }
     writes_done(&state, &id).await;
-    let input = match with_job(&state, &id, |job| -> anyhow::Result<_> {
+    let lease = match with_job(&state, &id, |job| -> anyhow::Result<_> {
         if !job.live() {
             anyhow::bail!(
                 "The notes are already being written; change this before you stop next time."
             );
         }
-        let lease = Writing::take(job)?;
-        let mut journal = job.journal.clone();
-        if let Some((_, meta)) = &mut journal {
-            meta.profile.wants = text.clone();
-        }
-        Ok((lease, journal))
+        Writing::take(job)
     }) {
-        Ok(Ok(input)) => input,
+        Ok(Ok(lease)) => lease,
         Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
         Err((code, message)) => return error(code, message),
     };
-    let (lease, journal) = input;
-    let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-        if let Some((notes, meta)) = &journal {
-            crate::record_journal::save(notes, meta)?;
-        }
-        Ok(journal)
-    })
-    .await;
-    let journal = match saved {
-        Ok(Ok(journal)) => journal,
-        _ => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "What you want from the notes could not be saved. Check free disk space and retry.",
-            );
-        }
-    };
     let result = with_job(&state, &id, |job| {
-        job.journal = journal;
         if let Ok(mut wants) = job.wants.lock() {
             *wants = Some(text.clone());
         }
@@ -1226,26 +733,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_audio_queues_wait_for_consumers_and_stop_on_cancel_or_timeout() {
-        let stop = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        tx.send(vec![1]).unwrap();
-        assert!(send_samples(&tx, vec![2], &stop, Duration::ZERO).is_err());
-        assert_eq!(rx.recv().unwrap(), vec![1]);
-        tx.send(vec![3]).unwrap();
-        stop.store(true, Ordering::Release);
-        assert!(send_samples(&tx, vec![4], &stop, Duration::from_secs(1)).is_err());
-        assert_eq!(rx.recv().unwrap(), vec![3]);
-        stop.store(false, Ordering::Release);
-        tx.send(vec![5]).unwrap();
-        let waiting =
-            std::thread::spawn(move || send_samples(&tx, vec![6], &stop, Duration::from_secs(1)));
-        assert_eq!(rx.recv().unwrap(), vec![5]);
-        waiting.join().unwrap().unwrap();
-        assert_eq!(rx.recv().unwrap(), vec![6]);
-    }
-
-    #[test]
     fn long_recordings_keep_only_a_bounded_tail_of_actionable_warnings() {
         let mut view = view();
         for index in 0..MOST_WARNINGS + 5 {
@@ -1264,9 +751,8 @@ mod tests {
 
     fn view() -> RecordView {
         RecordView {
-            next_seq: 0,
             id: "r".into(),
-            source: Source::Browser,
+            source: Source::Microphone,
             state: "recording",
             secs: 0,
             step: String::new(),
@@ -1323,13 +809,9 @@ pub(crate) async fn snapshot(
             job.live() && job.view.points.len() < MOST_POINTS,
             "Start a recording before pasting a screenshot."
         );
-        Ok((
-            Writing::take(job)?,
-            job.journal.clone(),
-            body.at.min(job.view.secs),
-        ))
+        Ok((Writing::take(job)?, body.at.min(job.view.secs)))
     });
-    let (lease, journal, at) = match input {
+    let (lease, at) = match input {
         Ok(Ok(input)) => input,
         Ok(Err(problem)) => return error(StatusCode::CONFLICT, &problem.to_string()),
         Err((status, problem)) => return error(status, problem),
@@ -1366,7 +848,7 @@ pub(crate) async fn snapshot(
                 _ => warning = Some("The slide image is kept; its text could not be read.".into()),
             }
         }
-        persist_point(&state, &id, point, at, journal, warning)
+        persist_point(&state, &id, point, at, warning)
     })
     .await;
     match saved {
@@ -1422,21 +904,11 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
         Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
         Err((code, message)) => return error(code, message),
     };
-    let notes = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
-        Ok(notes) => notes,
-        Err(code) => return error(code, "The recovery folder could not be opened. Try again."),
-    };
     let housekeeper = state.housekeeper.clone();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let _lease = lease;
         if let Some(housekeeper) = housekeeper {
             housekeeper.discard_recording(&id)?;
-        }
-        let folder = crate::record_journal::folder(&notes, &id)?;
-        match std::fs::remove_dir_all(folder) {
-            Ok(()) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
         }
         let mut held = state
             .recording
@@ -1460,7 +932,7 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
         Ok(Ok(())) => Json(serde_json::json!({ "deleted": true })).into_response(),
         _ => error(
             StatusCode::CONFLICT,
-            "The recording could not be deleted. Try again, or remove its audio in Storage.",
+            "The recording could not be deleted. Try again.",
         ),
     }
 }

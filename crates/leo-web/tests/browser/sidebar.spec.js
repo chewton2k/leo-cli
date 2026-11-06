@@ -99,8 +99,8 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       await expect(rail.getByRole('button',{name:'New note',exact:true})).toHaveCount(0);
       await expect(rail.getByRole('button',{name:'Quick Leo',exact:true}),'search and Quick Leo are one button').toHaveCount(0);
       await expect(rail.locator('kbd')).toHaveCount(0);
-      // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
-      await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
+      // Trash and Keeping live inside Settings now, so the rail only offers Settings for them.
+      await expect(rail.getByRole('button',{name:/^(Trash|Keeping)$/})).toHaveCount(0);
       await expect(rail.getByRole('button',{name:'Ask Felix',exact:true}),'Felix opens from the toolbar, not the rail').toHaveCount(0);
       await expect(page.locator('[data-action="side-collapse"]'),'there is no Collapse all').toHaveCount(0);
       for(const label of ['Search','Record','Note from a file','Calendar','Boards','Settings']) {

@@ -192,20 +192,6 @@ async fn retired_backup_endpoints_and_lifecycle_leave_existing_repositories_unto
             String::from_utf8_lossy(&response)
         );
     }
-    let inventory = running
-        .state
-        .with_store(|store| {
-            let graphs = crate::graph::Graphs::for_notes(&store.notes_dir, None);
-            Ok(crate::storage::areas(
-                store,
-                &graphs,
-                &store.notes_dir.join("chats"),
-                chrono::Utc::now(),
-            ))
-        })
-        .await
-        .unwrap();
-    assert!(!inventory.iter().any(|area| area.id == "backup"));
     let export = ask(port, "GET", "/api/export", cookie, "").await;
     assert!(
         export.starts_with(b"HTTP/1.1 200"),

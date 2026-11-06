@@ -610,27 +610,6 @@ fn an_answer_is_one_request_and_is_never_taken_back_or_asked_again() {
 }
 
 #[test]
-fn felix_is_given_web_tools_only_when_his_ai_cannot_search() {
-    for needed in [true, false] {
-        let (mut state, _d, _ids) = state_with(&[]);
-        let (streamer, prompts) = scripted(vec!["Plain answer."]);
-        state.chat = Some(streamer);
-        state.web = Some(crate::Web {
-            search: Arc::new(|_: &str| Ok(vec![])),
-            page: Arc::new(|_: &str| Ok(String::new())),
-            needed: Arc::new(move || needed),
-        });
-        chat_lines(&state, "hello");
-        let prompt = prompts.lock().unwrap()[0].clone();
-        assert_eq!(
-            prompt.contains("### web_search"),
-            needed,
-            "needed = {needed}"
-        );
-    }
-}
-
-#[test]
 fn a_model_that_says_its_tools_are_missing_is_told_once_that_they_are_not() {
     let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
     let (streamer, prompts) = scripted(vec![

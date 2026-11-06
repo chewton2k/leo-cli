@@ -661,7 +661,6 @@ mod tests {
         let store = MemoryStore::default();
         let cfg = Config::parse_with_built_ins(legacy).unwrap();
         assert_eq!(cfg.chat.chain, ["ollama"]);
-        assert_eq!(cfg.theme.preset.as_deref(), Some("coral"));
         let page = describe(&cfg, &store, &Local::default(), &Default::default(), None);
         assert!(page.get("backup").is_none());
         assert!(apply(

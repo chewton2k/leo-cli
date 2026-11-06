@@ -16,12 +16,12 @@ pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
+mod keeping;
 pub mod margin;
 mod originals;
 mod progress;
 mod read_cache;
 pub mod record;
-mod record_journal;
 pub mod reply;
 pub mod review;
 mod routes;
@@ -30,8 +30,6 @@ pub mod sessions;
 mod shutdown;
 pub mod speech;
 pub mod steer;
-pub mod storage;
-mod storage_saved;
 mod tasks;
 #[cfg(test)]
 mod tests;
@@ -57,8 +55,7 @@ use leo_core::store::Store;
 
 use crate::routes::activity::activity;
 use crate::routes::assets::{
-    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recorder_js, recording_js,
-    saving_js,
+    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recording_js, saving_js,
 };
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
@@ -67,7 +64,7 @@ use crate::routes::felix::{
     get_review, list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
     steer_answer,
 };
-use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
+use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
     move_note, rename_dir, search_notes, toggle_checkbox, update_note,
@@ -100,23 +97,6 @@ pub struct UploadFile {
 }
 
 pub type Room = Arc<dyn Fn() -> usize + Send + Sync>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WebHit {
-    pub title: String,
-    pub url: String,
-    pub snippet: String,
-}
-
-pub type WebSearch = Arc<dyn Fn(&str) -> Result<Vec<WebHit>> + Send + Sync>;
-pub type WebPage = Arc<dyn Fn(&str) -> Result<String> + Send + Sync>;
-
-#[derive(Clone)]
-pub struct Web {
-    pub search: WebSearch,
-    pub page: WebPage,
-    pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
-}
 
 pub struct Fetched {
     pub body: Option<Vec<u8>>,
@@ -180,11 +160,10 @@ pub struct Powers {
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
     pub calendar_access: Option<Arc<dyn CalendarAccess>>,
-    pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    pub housekeeper: Option<Arc<dyn record::Housekeeper>>,
     pub reader: Option<Reader>,
     pub room: Option<Room>,
     pub context: Option<Room>,
-    pub web: Option<Web>,
     pub converse: Option<chat::Converser>,
     pub seer: Option<captions::Seer>,
     pub meaning: Option<vectors::Meaning>,
@@ -226,11 +205,10 @@ struct AppState {
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
     chats: std::path::PathBuf,
-    housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    housekeeper: Option<Arc<dyn record::Housekeeper>>,
     reader: Option<Reader>,
     room: Option<Room>,
     context: Option<Room>,
-    web: Option<Web>,
     converse: Option<chat::Converser>,
     seer: Option<captions::Seer>,
     captions: Arc<captions::Captions>,
@@ -586,7 +564,6 @@ pub(crate) async fn start_in(
     let housekeeper = powers.housekeeper;
     let reader = powers.reader;
     let room = powers.room;
-    let web = powers.web;
     let converse = powers.converse;
     let seer = powers.seer;
     let meaning = powers.meaning;
@@ -641,7 +618,6 @@ pub(crate) async fn start_in(
         reader,
         room,
         context: powers.context,
-        web,
         converse,
         seer,
         captions,
@@ -651,6 +627,17 @@ pub(crate) async fn start_in(
         meaning,
         vectors,
     };
+
+    tokio::spawn({
+        let state = state.clone();
+        async move {
+            let mut daily = tokio::time::interval(std::time::Duration::from_secs(86_400));
+            loop {
+                daily.tick().await;
+                keeping::expire_now(&state).await;
+            }
+        }
+    });
 
     let background = Background {
         graph: tokio::spawn(keep_graph_current(state.clone())),
@@ -848,7 +835,6 @@ fn router(state: AppState) -> Router {
         .route("/theme.js", get(routes::assets::theme_js))
         .route("/chat.js", get(chat_js))
         .route("/pane-resize.js", get(routes::assets::pane_resize_js))
-        .route("/api/progress/{key}", get(routes::progress::get))
         .route("/api/chat", post(chat_reply))
         .route("/api/quiz/mark", post(routes::felix::mark_quiz))
         .route(
@@ -872,7 +858,6 @@ fn router(state: AppState) -> Router {
             "/api/chats/{id}/files/{doc}",
             axum::routing::delete(remove_chat_file),
         )
-        .route("/api/storage", get(get_storage).post(change_storage))
         .route("/api/keep", get(get_keep).post(set_keep))
         .route("/api/export", get(export_zip))
         .route(
@@ -925,10 +910,6 @@ fn router(state: AppState) -> Router {
             "/api/record/{id}",
             get(record::status).delete(record::discard),
         )
-        .route(
-            "/api/record/{id}/audio",
-            post(record::audio).layer(axum::extract::DefaultBodyLimit::max(record::AUDIO_BYTES)),
-        )
         .route("/api/record/{id}/pause", post(record::pause))
         .route("/api/record/{id}/point", post(record::point))
         .route("/api/record/{id}/wants", post(record::wants))
@@ -941,12 +922,6 @@ fn router(state: AppState) -> Router {
         .route("/api/record/{id}/stop", post(record::stop))
         .route("/api/record/{id}/finish", post(record::finish_available))
         .route("/api/record/{id}/recover", post(record::recover))
-        .route("/recorder.js", get(recorder_js))
-        .route("/audio-queue.js", get(routes::assets::audio_queue_js))
-        .route(
-            "/browser-storage.js",
-            get(routes::assets::browser_storage_js),
-        )
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
         .route(

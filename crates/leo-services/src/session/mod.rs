@@ -46,8 +46,6 @@ pub struct Manifest {
     pub dir: String,
     #[serde(default)]
     pub screen: bool,
-    #[serde(default)]
-    pub browser: bool,
     pub segment_secs: u64,
     #[serde(default)]
     pub duration_secs: Option<u64>,
@@ -74,7 +72,6 @@ impl Manifest {
             append_to,
             dir: dir.to_string(),
             screen,
-            browser: false,
             segment_secs: SEGMENT_SECS,
             duration_secs: None,
             points: Vec::new(),
@@ -380,9 +377,7 @@ impl Session {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| e.path())
             .filter(|dir| !locked(dir))
-            .filter(|dir| {
-                Session::open(dir).is_ok_and(|s| !s.manifest.saved && !s.manifest.browser)
-            })
+            .filter(|dir| Session::open(dir).is_ok_and(|s| !s.manifest.saved))
             .collect();
         out.sort();
         out
@@ -678,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_sessions_are_found_unless_saved_or_in_use() {
+    fn unfinished_sessions_are_found_unless_saved_or_in_use_even_from_an_older_version() {
         let tmp = tempfile::tempdir().unwrap();
         let a = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         let mut b = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
@@ -686,15 +681,17 @@ mod tests {
         b.save().unwrap();
         let c = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         let _held = c.lock().unwrap();
-        let browser = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
-        let mut metadata = serde_json::to_value(&browser.manifest).unwrap();
+        let older = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
+        let mut metadata = serde_json::to_value(&older.manifest).unwrap();
         metadata["browser"] = serde_json::json!(true);
         std::fs::write(
-            browser.dir.join("session.json"),
+            older.dir.join("session.json"),
             serde_json::to_vec(&metadata).unwrap(),
         )
         .unwrap();
-        assert_eq!(Session::unfinished(tmp.path()), vec![a.dir.clone()]);
+        let mut expected = vec![a.dir.clone(), older.dir.clone()];
+        expected.sort();
+        assert_eq!(Session::unfinished(tmp.path()), expected);
     }
 
     #[test]

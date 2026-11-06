@@ -104,9 +104,7 @@ pub struct Source {
 pub fn sources(notes: &[Note]) -> Vec<Source> {
     notes
         .iter()
-        .filter(|n| {
-            !(n.title == leo_core::manual::MANUAL_TITLE && n.tags.iter().any(|t| t == "manual"))
-        })
+        .filter(|n| crate::chat::studied(n))
         .map(|n| Source {
             id: n.id.clone(),
             title: n.title.clone(),
@@ -439,10 +437,6 @@ pub fn parse_links(reply: &str, notes: &[&Source]) -> Option<Vec<NoteLink>> {
     Some(out)
 }
 
-pub fn group_count(notes: usize) -> usize {
-    group_count_at(notes, GROUP_NOTES)
-}
-
 fn group_count_at(notes: usize, group_notes: usize) -> usize {
     notes.div_ceil(group_notes.max(1)).max(1)
 }
@@ -461,14 +455,6 @@ fn chunks<'a>(list: &[&'a Source], group_notes: usize) -> Vec<Vec<&'a Source>> {
     let groups = group_count_at(list.len(), group_notes);
     let size = list.len().div_ceil(groups).max(1);
     list.chunks(size).map(|c| c.to_vec()).collect()
-}
-
-pub fn link_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
-    link_work_at(sources, cache, &Scale::default())
-}
-
-pub fn link_work_at<'a>(sources: &'a [Source], cache: &Cache, scale: &Scale) -> Vec<Work<'a>> {
-    link_work_near(sources, cache, scale, None)
 }
 
 pub type Near = crate::vectors::Near;
@@ -568,14 +554,6 @@ pub fn stale<'a>(sources: &'a [Source], cache: &Cache) -> Vec<&'a Source> {
                 .is_none_or(|read| read.hash != hash_of(s))
         })
         .collect()
-}
-
-pub fn requests_needed(sources: &[Source], cache: &Cache) -> usize {
-    requests_needed_at(sources, cache, &Scale::default())
-}
-
-pub fn requests_needed_at(sources: &[Source], cache: &Cache, scale: &Scale) -> usize {
-    requests_needed_near(sources, cache, scale, None)
 }
 
 pub fn requests_needed_near(
@@ -771,24 +749,6 @@ pub fn build_near(
     problems
 }
 
-pub fn wiki_targets(body: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = body;
-    while let Some(start) = rest.find("[[") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find("]]") else {
-            break;
-        };
-        let inner = &after[..end];
-        let name = inner.split(['|', '#']).next().unwrap_or("").trim();
-        if !name.is_empty() && !name.contains('\n') {
-            out.push(name.to_lowercase());
-        }
-        rest = &after[end + 2..];
-    }
-    out
-}
-
 fn ordered(a: &str, b: &str) -> (String, String) {
     if a < b {
         (a.to_string(), b.to_string())
@@ -892,46 +852,6 @@ impl Graphs {
 
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    pub fn stored_in(&self) -> &Path {
-        self.db.path()
-    }
-
-    pub fn bytes(&self) -> u64 {
-        self.db
-            .with(|c| {
-                c.query_row(
-                    "SELECT (SELECT coalesce(SUM(length(id) + length(data)), 0) FROM graph_notes)
-                          + (SELECT coalesce(SUM(length(data)), 0) FROM graph_links)
-                          + (SELECT coalesce(SUM(length(data)), 0) FROM graph_meta)",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map_or(0, |n| n.max(0) as u64)
-    }
-
-    pub fn clear(&self) -> Result<bool> {
-        let mut job = self.job.lock().unwrap_or_else(|e| e.into_inner());
-        if job.state == "building" {
-            return Ok(false);
-        }
-        self.bring_in_file();
-        self.db.with(|c| {
-            let tx = c.transaction()?;
-            tx.execute("DELETE FROM graph_notes", [])?;
-            tx.execute("DELETE FROM graph_links", [])?;
-            tx.execute("DELETE FROM graph_meta", [])?;
-            tx.commit()
-        })?;
-        *job = Job {
-            state: "idle",
-            done: 0,
-            total: 0,
-            message: None,
-        };
-        Ok(true)
     }
 
     fn bring_in_file(&self) {
@@ -1587,7 +1507,6 @@ mod tests {
         assert_eq!(edge("a", "b").strength, 3, "strength is clamped");
         assert_eq!(edge("b", "c").kind, "same idea");
         assert_eq!(cache.all_links().count(), 3);
-        assert_eq!(wiki_targets(&sources[0].body), ["stacks"]);
         let ideas = concepts(&sources, &cache);
         assert!(ideas["queue"].notes.contains("a"));
         assert!(
@@ -1603,11 +1522,17 @@ mod tests {
             (1, 1),
             "nothing changed, nothing asked"
         );
-        assert_eq!(requests_needed(&sources, &cache), 0);
+        assert_eq!(
+            requests_needed_near(&sources, &cache, &Scale::default(), None),
+            0
+        );
 
         let mut changed = sources.clone();
         changed[1].body = "LIFO. Used by DFS and recursion.".into();
-        assert_eq!(requests_needed(&changed, &cache), 2);
+        assert_eq!(
+            requests_needed_near(&changed, &cache, &Scale::default(), None),
+            2
+        );
         build(&changed, &mut cache, &write, &mut |_, _| {});
         assert_eq!(
             reads.load(Ordering::SeqCst),
@@ -1686,8 +1611,7 @@ mod tests {
                 },
             );
         }
-        let work = link_work(&many, &cache);
-        assert_eq!(group_count(200), 3);
+        let work = link_work_near(&many, &cache, &Scale::default(), None);
         assert_eq!(work.len(), 6);
         let mut covered = BTreeSet::new();
         for w in &work {
@@ -1746,7 +1670,7 @@ mod tests {
             "a pair inside one group is left to that group's own request"
         );
         assert!(
-            link_work(&many, &cache).is_empty(),
+            link_work_near(&many, &cache, &Scale::default(), None).is_empty(),
             "every note is linked now"
         );
     }
@@ -1814,7 +1738,10 @@ mod tests {
                 r#"{{"links": [{{"a": "{new}", "b": "{other}", "kind": "same idea", "why": "new one"}}, {{"a": "{other}", "b": "{third}", "kind": "same idea", "why": "old pair"}}]}}"#
             ))
         };
-        assert_eq!(requests_needed(&many, &cache), 1 + 3);
+        assert_eq!(
+            requests_needed_near(&many, &cache, &Scale::default(), None),
+            1 + 3
+        );
         let problems = build(&many, &mut cache, &write, &mut |_, _| {});
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(
@@ -1836,7 +1763,10 @@ mod tests {
             !cache.links.iter().any(|l| l.why == "old pair"),
             "links between two old notes are not redone"
         );
-        assert_eq!(requests_needed(&many, &cache), 0);
+        assert_eq!(
+            requests_needed_near(&many, &cache, &Scale::default(), None),
+            0
+        );
     }
 
     #[test]
@@ -1853,7 +1783,10 @@ mod tests {
         let problems = build(&many, &mut cache, &read_only, &mut |_, _| {});
         assert_eq!(problems, ["rate limited"]);
         assert_eq!(cache.notes["new"].linked, None);
-        assert_eq!(requests_needed(&many, &cache), 1);
+        assert_eq!(
+            requests_needed_near(&many, &cache, &Scale::default(), None),
+            1
+        );
         assert!(cache.links.iter().any(|l| l.why == "kept"));
     }
 
@@ -1956,27 +1889,12 @@ mod tests {
     }
 
     #[test]
-    fn wiki_links_name_their_target() {
-        assert_eq!(
-            wiki_targets(
-                "see [[Stacks]], [[Heaps|a heap]] and [[Trees#AVL]] but not [[ ]] or [[open"
-            ),
-            ["stacks", "heaps", "trees"]
-        );
-    }
-
-    #[test]
     fn the_manual_is_not_study_material() {
         let mut store =
             leo_core::store::Store::load_from(&tempfile::tempdir().unwrap().path().join("notes"))
                 .unwrap();
         store
-            .create_note(
-                leo_core::manual::MANUAL_TITLE,
-                "help",
-                vec!["manual".into()],
-                "",
-            )
+            .create_note(crate::chat::MANUAL_TITLE, "help", vec!["manual".into()], "")
             .unwrap();
         store.create_note("Graphs", "BFS", vec![], "cs130").unwrap();
         let list = sources(&store.notes);

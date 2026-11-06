@@ -316,15 +316,6 @@ function stopSlide(el) {
   el.style.overflow = '';
 }
 
-function keepOpen(box, html) {
-  if (!box) return;
-  const key = (fold) => fold.dataset.keep || fold.querySelector(':scope > summary')?.textContent.trim() || '';
-  const open = new Set([...box.querySelectorAll('details[open]')].map(key));
-  box.innerHTML = html;
-  if (!open.size) return;
-  for (const fold of box.querySelectorAll('details:not([open])')) if (open.has(key(fold))) fold.open = true;
-}
-
 function slideHeight(el, from, to, then) {
   stopSlide(el);
   if (stillMotion() || Math.abs(from - to) < 1) {
@@ -566,7 +557,7 @@ function goBack(hash) {
 }
 
 function back() {
-  if (state.view === 'storage' && /^#\/settings\/storage(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
+  if (state.view === 'keeping' && /^#\/settings\/(?:keeping|storage)(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
   if (state.view === 'note') return goBack('#/');
   goBack('#/');
@@ -886,58 +877,3 @@ window.addEventListener('beforeprint', () => {
 window.addEventListener('afterprint', () => {
   document.body.querySelectorAll('[data-print-off]').forEach((el) => el.removeAttribute('data-print-off'));
 });
-
-function meterPercent(fraction) {
-  return Math.max(2, Math.min(100, Math.round((Number(fraction) || 0) * 100)));
-}
-
-function meterText(label, view) {
-  const seconds = Number(view?.seconds) || 0;
-  const expected = Number(view?.expected) || 0;
-  const took = seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds} s`;
-  const left = Number(view?.left ?? Math.max(0, expected - seconds));
-  const rest = view?.slow ? ' · taking longer than usual' : expected && left > 0 ? ` · about ${left >= 60 ? `${Math.round(left / 60)} min` : `${left} s`} left` : '';
-  return `${label} · ${meterPercent(view?.fraction)}%${seconds ? ` · ${took}` : ''}${rest}`;
-}
-
-function finishMeter(id) {
-  const el = document.getElementById(id);
-  if (!el) return Promise.resolve();
-  el.setAttribute('aria-valuenow', '100');
-  el.querySelector('.meter-text').textContent = `${el.dataset.label} · done`;
-  const bar = el.querySelector('i');
-  bar.style.transitionDuration = '.25s';
-  bar.style.width = '100%';
-  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  return new Promise((resolve) => setTimeout(resolve, still ? 0 : 300));
-}
-
-function meterBar(id, label, view) {
-  const pct = meterPercent(view?.fraction);
-  return `<div class="meter" id="${id}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${esc(label)}" data-label="${esc(label)}"><span class="hint meter-text">${esc(meterText(label, view))}</span><span class="activity-bar"><i style="width:${pct}%"></i></span></div>`;
-}
-
-function setMeter(id, view) {
-  const el = document.getElementById(id);
-  if (!el || !view || view.fraction === null || view.fraction === undefined) return;
-  const pct = meterPercent(view.fraction);
-  el.setAttribute('aria-valuenow', String(pct));
-  el.querySelector('.meter-text').textContent = meterText(el.dataset.label, view);
-  el.querySelector('i').style.width = `${pct}%`;
-}
-
-function watchProgress(key, seen) {
-  let stopped = false;
-  const look = async () => {
-    if (stopped) return;
-    try {
-      const view = await api(`/api/progress/${enc(key)}`);
-      if (!stopped && view && view.fraction !== null) seen(view);
-    } catch (e) {
-      if (e instanceof Locked) return;
-    }
-    if (!stopped) setTimeout(look, 800);
-  };
-  setTimeout(look, 300);
-  return () => { stopped = true; };
-}

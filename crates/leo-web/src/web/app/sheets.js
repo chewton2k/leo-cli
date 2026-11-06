@@ -115,7 +115,7 @@ function closeSheet(now = false) {
   }
   if (state.keepPending) {
     state.keepPending = null;
-    if (state.view === 'storage' && state.storage) drawStorage(state.storage);
+    if (state.view === 'keeping') drawKeeping();
   }
   if (foldersReturn && !sideWide()) {
     showFolders();
@@ -132,7 +132,7 @@ const QUICK_PLACES = [
   { name: 'Boards', hash: '#/boards', icon: 'board' },
   { name: 'Record', hash: '#/record', icon: 'mic' },
   { name: 'Trash', hash: '#/trash', icon: 'trash' },
-  { name: 'Storage', hash: '#/settings/storage', icon: 'storage' },
+  { name: 'Keeping', hash: '#/settings/keeping', icon: 'storage' },
   { name: 'Settings', hash: '#/settings', icon: 'gear' },
 ];
 const QUICK_SEARCH_MS = 120;
@@ -338,7 +338,7 @@ function menu() {
     <button class="list-row" data-action="usage">${svg('<path d="M4 19V9m8 10V5m8 14v-7"/>')}<span class="grow">Usage</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
-    <button class="list-row" data-action="storage">${ICON.storage}<span class="grow">Storage</span></button>
+    <button class="list-row" data-action="keeping">${ICON.storage}<span class="grow">Keeping</span></button>
     <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
   box.returnFocus = $('#menu');
 }

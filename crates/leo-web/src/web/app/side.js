@@ -67,8 +67,8 @@ function sidePlace() {
   const view = state.view;
   if (view === 'workspace') return 'home';
   if (view === 'note' || view === 'new') return `dir:${state.dir || ''}`;
-  // Storage and Trash live inside Settings, so the sidebar shows Settings for them.
-  if (view === 'storage' || view === 'trash') return 'settings';
+  // Keeping and Trash live inside Settings, so the sidebar shows Settings for them.
+  if (view === 'keeping' || view === 'trash') return 'settings';
   return view;
 }
 

@@ -3,8 +3,6 @@
 
 use std::path::Path;
 
-use leo_core::action::Line;
-
 use crate::config::secret::SecretStore;
 use crate::config::Config;
 use crate::health::{self, Check, State};
@@ -66,40 +64,6 @@ pub fn scan(
             checks: recording_checks(probe),
         },
     ]
-}
-
-pub fn report(sections: &[Section]) -> (Vec<Line>, usize) {
-    let mut lines = Vec::new();
-    let mut failed = 0;
-    for section in sections {
-        if !lines.is_empty() {
-            lines.push(Line::blank());
-        }
-        lines.push(Line::plain(section.title));
-        for check in &section.checks {
-            let detail = check
-                .detail
-                .as_deref()
-                .map(|d| format!(" — {d}"))
-                .unwrap_or_default();
-            match &check.state {
-                State::Ready => lines.push(Line::good(format!("  ok   {}{detail}", check.what))),
-                State::Warn { note } => {
-                    lines.push(Line::warn(format!("  note {}{detail}", check.what)));
-                    lines.push(Line::dim(format!("       {note}")));
-                }
-                State::Missing { fix } => {
-                    failed += 1;
-                    lines.push(Line::bad(format!("  no   {}{detail}", check.what)));
-                    lines.push(Line::dim(format!("       needed for {}", check.needed_for)));
-                    for step in fix.lines() {
-                        lines.push(Line::plain(format!("       {}", step.trim())));
-                    }
-                }
-            }
-        }
-    }
-    (lines, failed)
 }
 
 fn warn(what: &str, needed_for: &str, note: String) -> Check {
@@ -420,48 +384,6 @@ mod tests {
         let notes = tmp.path().join("notes");
         let config = tmp.path().join("config.toml");
         (tmp, notes, config)
-    }
-
-    #[test]
-    fn the_report_names_each_problem_with_its_fix_and_counts_them() {
-        use leo_core::action::Kind;
-        let sections = vec![
-            Section {
-                title: "leo",
-                checks: vec![Check::ready("leo", "everything", Some("version 9".into()))],
-            },
-            Section {
-                title: "AI",
-                checks: vec![
-                    Check::missing(
-                        "AI for writing",
-                        "notes from recordings",
-                        "brew install ollama\nor: store a key",
-                    ),
-                    warn("config file", "settings", "is old".into()),
-                ],
-            },
-        ];
-        let (lines, failed) = report(&sections);
-        assert_eq!(failed, 1);
-        let text: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
-        let joined = text.join("\n");
-        for expected in [
-            "leo",
-            "ok   leo — version 9",
-            "no   AI for writing",
-            "needed for notes from recordings",
-            "brew install ollama",
-            "or: store a key",
-            "note config file",
-            "is old",
-        ] {
-            assert!(joined.contains(expected), "no {expected:?} in:\n{joined}");
-        }
-        let missing = lines.iter().find(|l| l.text.contains("no   AI")).unwrap();
-        assert_eq!(missing.kind, Kind::Bad);
-        let fine = lines.iter().find(|l| l.text.contains("ok   leo")).unwrap();
-        assert_eq!(fine.kind, Kind::Good);
     }
 
     #[test]

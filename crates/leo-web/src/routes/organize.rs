@@ -1050,7 +1050,7 @@ pub(crate) async fn act(
             )
             .await?;
             if imported["added"] != 1 {
-                return Err("Leo could not restore that task. Check Storage and try again.".into());
+                return Err("Leo could not restore that task. Try again.".into());
             }
             Ok((
                 serde_json::json!({ "task": task.id }),

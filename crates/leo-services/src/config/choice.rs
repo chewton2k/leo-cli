@@ -97,8 +97,6 @@ pub fn priced(task: Task, provider: &str, model: &str) -> String {
     }
 }
 
-pub const OLLAMA_STARTER: &str = "qwen3:8b";
-
 pub fn choices(task: Task) -> &'static [Choice] {
     match task {
         Task::Chat => WRITING,
@@ -223,28 +221,6 @@ pub fn model_options(task: Task, provider: &str, local: &Local) -> Vec<String> {
     }
 }
 
-pub fn step<'a>(options: &'a [String], current: Option<&str>, delta: isize) -> Option<&'a String> {
-    if options.is_empty() {
-        return None;
-    }
-    let len = options.len() as isize;
-    let at = current.and_then(|c| options.iter().position(|o| o == c));
-    let next = match at {
-        Some(i) => (i as isize + delta).rem_euclid(len),
-        None if delta < 0 => len - 1,
-        None => 0,
-    };
-    options.get(next as usize)
-}
-
-pub fn step_choice(task: Task, current: Option<&str>, delta: isize) -> Choice {
-    let all = choices(task);
-    let names: Vec<String> = all.iter().map(|c| c.provider.to_string()).collect();
-    step(&names, current, delta)
-        .and_then(|name| find(task, name))
-        .unwrap_or(all[0])
-}
-
 pub fn write_choice(doc: &mut DocumentMut, task: Task, provider: &str) {
     edit::write_chain(doc, task, &[provider.to_string()]);
 }
@@ -283,25 +259,6 @@ pub fn effort_for(provider: &str, model: &str, configured: Option<&str>) -> Opti
             .filter(|e| levels.contains(&e.as_str()))
             .unwrap_or_else(|| DEFAULT_EFFORT.to_string()),
     )
-}
-
-pub fn step_effort(
-    provider: &str,
-    model: &str,
-    current: Option<&str>,
-    delta: isize,
-) -> Option<Option<&'static str>> {
-    let levels = efforts(provider, model);
-    if levels.is_empty() {
-        return None;
-    }
-    let ring: Vec<Option<&'static str>> = levels.iter().map(|l| Some(*l)).collect();
-    let current = current
-        .filter(|c| levels.contains(c))
-        .unwrap_or(DEFAULT_EFFORT);
-    let at = ring.iter().position(|l| *l == Some(current)).unwrap_or(0) as isize;
-    let next = (at + delta).rem_euclid(ring.len() as isize) as usize;
-    Some(ring[next])
 }
 
 pub fn write_effort(doc: &mut DocumentMut, provider: &str, effort: Option<&str>) {
@@ -378,21 +335,6 @@ mod tests {
             "a level it does not offer means medium"
         );
         assert_eq!(effort_for("ollama", "qwen3:8b", Some("high")), None);
-        assert_eq!(
-            step_effort("codex", "", None, 1),
-            Some(Some("high")),
-            "unset counts as medium"
-        );
-        assert_eq!(
-            step_effort("codex", "", Some("xhigh"), 1),
-            Some(Some("low")),
-            "past the last comes back to low"
-        );
-        assert_eq!(
-            step_effort("codex", "", Some("low"), -1),
-            Some(Some("xhigh"))
-        );
-        assert_eq!(step_effort("ollama", "", None, 1), None);
         let mut doc: DocumentMut = "".parse().unwrap();
         write_effort(&mut doc, "codex", Some("high"));
         assert!(
@@ -557,34 +499,6 @@ mod tests {
         for model in ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"] {
             assert!(has("codex", model), "{model}");
         }
-    }
-
-    #[test]
-    fn stepping_wraps_both_ways_and_starts_from_an_unknown_value() {
-        let options: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(step(&options, Some("a"), 1).unwrap(), "b");
-        assert_eq!(step(&options, Some("c"), 1).unwrap(), "a");
-        assert_eq!(step(&options, Some("a"), -1).unwrap(), "c");
-        assert_eq!(step(&options, Some("zzz"), 1).unwrap(), "a");
-        assert_eq!(step(&options, None, -1).unwrap(), "c");
-        assert!(step(&[], Some("a"), 1).is_none());
-    }
-
-    #[test]
-    fn stepping_a_choice_from_a_custom_chain_lands_on_the_first() {
-        assert_eq!(
-            step_choice(Task::Chat, Some("openrouter"), 1).provider,
-            "ollama"
-        );
-        assert_eq!(step_choice(Task::Chat, Some("ollama"), 1).provider, "codex");
-        assert_eq!(
-            step_choice(Task::Chat, Some("ollama"), -1).provider,
-            "claude_code"
-        );
-        assert_eq!(
-            step_choice(Task::Transcribe, Some("xai_speech"), 1).provider,
-            "parakeet"
-        );
     }
 
     #[test]
