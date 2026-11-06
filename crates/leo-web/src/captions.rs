@@ -56,6 +56,12 @@ impl Captions {
         }
     }
 
+    pub fn waiting(&self) -> bool {
+        let mut failed = self.failed.lock().unwrap_or_else(|e| e.into_inner());
+        failed.retain(|_, at| at.elapsed() < RETRY_FAILED_AFTER);
+        !failed.is_empty()
+    }
+
     fn failed_lately(&self, key: &str) -> bool {
         self.failed
             .lock()
@@ -250,11 +256,13 @@ mod tests {
             .unwrap();
         let captions = Captions::for_notes(&notes);
         let failing: Seer = Arc::new(|_: &str, _: &str, _: Vec<Picture>| anyhow::bail!("no"));
+        assert!(!captions.waiting());
         assert_eq!(uncaptioned(&store, &captions, 10).len(), 2);
         assert_eq!(caption_some(&store, &captions, &failing, 10), 0);
         assert_eq!(uncaptioned(&store, &captions, 10).len(), 1);
         assert_eq!(caption_some(&store, &captions, &failing, 10), 0);
         assert!(uncaptioned(&store, &captions, 10).is_empty());
+        assert!(captions.waiting(), "the loop comes back for them");
     }
 
     #[test]

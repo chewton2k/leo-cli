@@ -42,6 +42,32 @@ pub struct Vectors {
     db: Arc<crate::db::Db>,
     known: Mutex<BTreeMap<String, Entry>>,
     version: std::sync::atomic::AtomicU64,
+    held: Mutex<Option<Held>>,
+}
+
+struct Held {
+    most: usize,
+    means: BTreeMap<String, Vec<f32>>,
+    near: Near,
+}
+
+fn nearest_to(
+    id: &str,
+    v: &[f32],
+    means: &BTreeMap<String, Vec<f32>>,
+    most: usize,
+) -> std::collections::BTreeSet<String> {
+    let mut scored: Vec<(f32, &String)> = means
+        .iter()
+        .filter(|(other, _)| other.as_str() != id)
+        .map(|(other, w)| (cosine(v, w), other))
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(b.1)));
+    scored
+        .into_iter()
+        .take(most)
+        .map(|(_, other)| other.clone())
+        .collect()
 }
 
 fn to_blob(vector: &[f32]) -> Vec<u8> {
@@ -190,6 +216,7 @@ impl Vectors {
             db,
             known: Mutex::new(known),
             version: std::sync::atomic::AtomicU64::new(0),
+            held: Mutex::new(None),
         }
     }
 
@@ -203,41 +230,68 @@ impl Vectors {
     }
 
     pub fn neighbours(&self, most: usize) -> Near {
-        let Ok(known) = self.known.lock() else {
-            return Near::new();
-        };
-        if known.len() > MOST_FOR_NEIGHBOURS {
-            return Near::new();
-        }
-        let means: Vec<(&String, Vec<f32>)> = known
-            .iter()
-            .filter_map(|(id, entry)| {
-                let width = entry.pieces.first()?.1.len();
-                let mut sum = vec![0f32; width];
-                for (_, v) in &entry.pieces {
-                    sum.iter_mut().zip(v).for_each(|(s, x)| *s += x);
-                }
-                let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt();
-                (norm > 0.0).then(|| (id, sum.into_iter().map(|x| x / norm).collect()))
-            })
-            .collect();
-        let mut near = Near::new();
-        for (id, v) in &means {
-            let mut scored: Vec<(f32, &String)> = means
+        let means: BTreeMap<String, Vec<f32>> = {
+            let Ok(known) = self.known.lock() else {
+                return Near::new();
+            };
+            if known.len() > MOST_FOR_NEIGHBOURS {
+                return Near::new();
+            }
+            known
                 .iter()
-                .filter(|(other, _)| other != id)
-                .map(|(other, w)| (cosine(v, w), *other))
+                .filter_map(|(id, entry)| {
+                    let width = entry.pieces.first()?.1.len();
+                    let mut sum = vec![0f32; width];
+                    for (_, v) in &entry.pieces {
+                        sum.iter_mut().zip(v).for_each(|(s, x)| *s += x);
+                    }
+                    let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    (norm > 0.0).then(|| (id.clone(), sum.into_iter().map(|x| x / norm).collect()))
+                })
+                .collect()
+        };
+        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        let old = held.take().filter(|old| old.most == most);
+        let near: Near = {
+            let moved = |id: &String| {
+                old.as_ref()
+                    .is_none_or(|old| old.means.get(id) != means.get(id))
+            };
+            let changed: Vec<&Vec<f32>> = means
+                .iter()
+                .filter(|(id, _)| moved(id))
+                .map(|(_, v)| v)
                 .collect();
-            scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(b.1)));
-            near.insert(
-                (*id).clone(),
-                scored
-                    .into_iter()
-                    .take(most)
-                    .map(|(_, other)| other.clone())
-                    .collect(),
-            );
-        }
+            means
+                .iter()
+                .map(|(id, v)| {
+                    let kept = old
+                        .as_ref()
+                        .and_then(|old| old.near.get(id))
+                        .filter(|list| {
+                            list.len() == most
+                                && !moved(id)
+                                && list.iter().all(|other| !moved(other))
+                                && {
+                                    let worst = list
+                                        .iter()
+                                        .map(|other| cosine(v, &means[other]))
+                                        .fold(f32::INFINITY, f32::min);
+                                    changed.iter().all(|c| cosine(v, c) < worst)
+                                }
+                        });
+                    let list = kept
+                        .cloned()
+                        .unwrap_or_else(|| nearest_to(id, v, &means, most));
+                    (id.clone(), list)
+                })
+                .collect()
+        };
+        *held = Some(Held {
+            most,
+            means,
+            near: near.clone(),
+        });
         near
     }
 
@@ -565,6 +619,55 @@ mod tests {
             close_to(Some(&fake()), &again, "plants and light", 5)[0].0,
             id
         );
+    }
+
+    #[test]
+    fn nearest_notes_updated_after_a_few_changes_match_a_full_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let vectors = Vectors::at(dir.path().join("meaning.json"));
+        let mut seed = 7u32;
+        let mut vector = move || -> Vec<f32> {
+            let mut v: Vec<f32> = (0..8)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+                })
+                .collect();
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            v.iter_mut().for_each(|x| *x /= norm);
+            v
+        };
+        let mut place = |id: String, hash: &str| {
+            let work = Work {
+                id,
+                hash: hash.into(),
+                pieces: vec![(0, "text".into())],
+                kept: Vec::new(),
+            };
+            vectors.put(&[work], vec![vector()]);
+        };
+        for n in 0..60 {
+            place(format!("note-{n:02}"), "first");
+        }
+        let full = |vectors: &Vectors| {
+            *vectors.held.lock().unwrap() = None;
+            vectors.neighbours(5)
+        };
+        assert_eq!(vectors.neighbours(5), full(&vectors));
+        for round in 0..6 {
+            for n in [3 + round, 20 + round * 2, 59 - round] {
+                place(format!("note-{n:02}"), &format!("round-{round}"));
+            }
+            place(format!("new-{round}"), "first");
+            vectors
+                .known
+                .lock()
+                .unwrap()
+                .remove(&format!("note-{:02}", 40 + round));
+            let updated = vectors.neighbours(5);
+            assert_eq!(updated, full(&vectors), "round {round}");
+            assert_eq!(updated.len(), 60);
+        }
     }
 
     #[test]

@@ -376,7 +376,7 @@ async fn keep_graph_current(state: AppState) {
                 .is_ok_and(|done| done > 0);
             }
         }
-        if settled {
+        if settled && !state.captions.waiting() {
             graphed_at = Some(seen);
         } else if !busy {
             stuck = Some((seen, std::time::Instant::now()));
