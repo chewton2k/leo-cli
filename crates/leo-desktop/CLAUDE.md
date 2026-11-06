@@ -108,7 +108,11 @@ Accessibility changes. Recording a binding pauses global registration, supports
 modifier-only/Fn and expires after 30 s. Secure Input uses the Carbon fallback
 for representable chords (side-specific modifiers widen); modifier-only events
 stay on handy-keys. Escape registers only during capture, including fallback,
-and is reserved from being the dictation binding. Status exposes missing
+and is reserved from being the dictation binding. On Windows the same system
+hotkey path carries any chord it can match exactly (2026-11-06, the user's
+call), because handy-keys' Windows listener wakes every 10 ms and hooks the
+mouse; handy-keys runs there only for modifier-only, Fn and one-side bindings
+and while a shortcut is being recorded (`shortcut::tapped`). Status exposes missing
 permissions, unavailable registration and uncovered Secure Input chords.
 
 `paste_tx` publishes lazy clipboard data, waits for post-injection reads and a
@@ -202,11 +206,14 @@ secret names and corrective steps appear; private values stay in the environment
 
 `shortcut_events` owns the raw handy-keys listener and forwards relevant events
 through a bounded queue. The coordinator waits on that queue; the old 10 ms poll
-and handy-keys manager timer are gone. One-second waits cover permission/Secure
-Input checks and receiver shutdown, while key/control messages wake immediately.
+and handy-keys manager timer are gone. Permission/Secure
+Input checks run every second while someone is at the keyboard or mouse and
+stretch to ten seconds as the Mac sits idle (`secure_input::user_idle`), while
+key/control messages wake immediately. A replaced feed is not joined: its
+thread ends at its next key event or within thirty seconds.
 Bindings preserve key/modifier release order, repeats, Fn and side-specific keys;
 Escape eligibility wakes the coordinator explicitly. Feed shutdown clears native
-blockers before joining and cancels a producer waiting on a full queue.
+blockers and cancels a producer waiting on a full queue.
 
 The main window publishes visibility to the engine and page on hide/show,
 minimize/restore and page-load completion. Hidden/minimized lecture previews pause;

@@ -3,12 +3,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
 };
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 use handy_keys::{Hotkey, KeyEvent, KeyboardListener};
 
 pub const IDLE: Duration = Duration::from_secs(1);
+pub const AWAY: Duration = Duration::from_secs(10);
+const LINGER: Duration = Duration::from_secs(30);
 const BACKPRESSURE: Duration = Duration::from_millis(5);
 
 pub struct Binding {
@@ -60,7 +61,6 @@ pub struct Feed {
     stop: Arc<AtomicBool>,
     blocked: Arc<Mutex<HashSet<Hotkey>>>,
     recording: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
 }
 
 impl Feed {
@@ -77,9 +77,9 @@ impl Feed {
         let recording = Arc::new(AtomicBool::new(false));
         let raw = recording.clone();
         let keys = blocked.clone();
-        let thread = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             while !stopped.load(Ordering::Acquire) {
-                match listener.recv_timeout(IDLE) {
+                match listener.recv_timeout(LINGER) {
                     Ok(event) => {
                         let relevant = raw.load(Ordering::Acquire)
                             || keys
@@ -100,7 +100,6 @@ impl Feed {
             stop,
             blocked,
             recording,
-            thread: Some(thread),
         })
     }
 
@@ -120,9 +119,6 @@ impl Drop for Feed {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
     }
 }
 
