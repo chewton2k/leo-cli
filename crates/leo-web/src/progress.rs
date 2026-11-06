@@ -228,6 +228,7 @@ pub fn metered(writer: Writer, streamer: Option<Streamer>, meter: Arc<Meter>) ->
                 most,
                 &mut |piece| meter.add(piece),
                 &mut || meter.restart(),
+                &|| false,
             )?;
             Ok(reply.text)
         }
@@ -325,7 +326,7 @@ mod tests {
             .start_sized("combine:note-2".into(), COMBINE, None)
             .unwrap();
         let plain: Writer = Arc::new(|_: &str, _: &str, _| Ok("y".repeat(3_000)));
-        let streamer: Streamer = Arc::new(|_: &str, _: &str, _, piece, _| {
+        let streamer: Streamer = Arc::new(|_: &str, _: &str, _, piece, _, _| {
             piece(&"z".repeat(3_000));
             Ok("z".repeat(3_000).into())
         });

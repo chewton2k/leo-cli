@@ -9,7 +9,8 @@ pub fn powers() -> leo_web::Powers {
          user: &str,
          most: u32,
          piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut()| {
+         restart: &mut dyn FnMut(),
+         stopped: &dyn Fn() -> bool| {
             let (text, answered) = leo_services::ai::chat_streaming(
                 leo_services::ai::chat::Prompt {
                     system: system.to_string(),
@@ -18,6 +19,7 @@ pub fn powers() -> leo_web::Powers {
                 most,
                 piece,
                 restart,
+                stopped,
             )?;
             Ok(leo_web::Reply {
                 text,
@@ -30,7 +32,8 @@ pub fn powers() -> leo_web::Powers {
          user: &str,
          most: u32,
          piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut()| {
+         restart: &mut dyn FnMut(),
+         stopped: &dyn Fn() -> bool| {
             let (text, answered) = leo_services::ai::toolless_streaming(
                 leo_services::ai::chat::Prompt {
                     system: system.to_string(),
@@ -39,6 +42,7 @@ pub fn powers() -> leo_web::Powers {
                 most,
                 piece,
                 restart,
+                stopped,
             )?;
             Ok(leo_web::Reply {
                 text,

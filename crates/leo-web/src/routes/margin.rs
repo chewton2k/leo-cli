@@ -441,6 +441,7 @@ async fn answered(
             margin::REPLY_TOKENS,
             &mut |_| {},
             &mut || {},
+            &|| false,
         )
     })
     .await?;

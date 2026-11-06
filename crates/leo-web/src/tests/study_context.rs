@@ -65,7 +65,7 @@ fn native_and_text_sessions_are_reused_without_repeating_documents_and_refresh_c
             let heard = Arc::new(Mutex::new(Vec::new()));
             let opened = Arc::new(AtomicUsize::new(0));
             let (ears, opens) = (Arc::clone(&heard), Arc::clone(&opened));
-            state.chat = Some(Arc::new(|_, _, _, _, _| {
+            state.chat = Some(Arc::new(|_, _, _, _, _, _| {
                 panic!("the retained session should answer")
             }));
             state.converse = Some(Arc::new(move |_, _| {
@@ -154,7 +154,7 @@ fn retained_tool_context_counts_toward_the_warm_session_limit() {
     }
     let (mut state, _dir, _) = state_with(&[]);
     state.room = Some(Arc::new(|| 32_000));
-    state.chat = Some(Arc::new(|_, _, _, _, _| {
+    state.chat = Some(Arc::new(|_, _, _, _, _, _| {
         panic!("the retained session should answer")
     }));
     let opened = Arc::new(AtomicUsize::new(0));

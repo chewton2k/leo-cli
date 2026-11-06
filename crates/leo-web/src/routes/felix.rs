@@ -485,7 +485,7 @@ pub(crate) fn verdict_in(text: &str) -> Option<&'static str> {
 
 fn judged(streamer: &chat::Streamer, asked: &str) -> (Option<&'static str>, Option<chat::Spent>) {
     let user = format!("{asked}\n\nReply with one word: correct or incorrect.");
-    let Ok(reply) = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}) else {
+    let Ok(reply) = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}, &|| false) else {
         return (None, None);
     };
     let word = reply.text.trim().to_lowercase();
@@ -1577,8 +1577,11 @@ fn text_answer(
             purpose,
             outcome.as_ref().ok().and_then(|reply| reply.spent.as_ref()),
             started.elapsed(),
-            outcome.is_err(),
+            outcome.is_err() && !stopped(),
         );
+        if outcome.is_err() && stopped() {
+            return Ok(spent);
+        }
         let reply = outcome?;
         counted(&mut spent, reply.spent);
         if desk.reply_closed() {

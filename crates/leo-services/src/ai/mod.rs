@@ -142,6 +142,7 @@ pub fn toolless_streaming(
     max_tokens: u32,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
 ) -> Result<(String, Option<spend::Answered>)> {
     let (cfg, store) = context();
     let outcome = chat::complete_streaming(
@@ -151,6 +152,7 @@ pub fn toolless_streaming(
         max_tokens,
         on_fragment,
         on_restart,
+        stopped,
     )?;
     let answered = outcome
         .spent
@@ -242,10 +244,18 @@ pub fn chat_streaming(
     max_tokens: u32,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
 ) -> Result<(String, Option<spend::Answered>)> {
     let (cfg, store) = context();
-    let outcome =
-        chat::complete_streaming(&cfg, &store, prompt, max_tokens, on_fragment, on_restart)?;
+    let outcome = chat::complete_streaming(
+        &cfg,
+        &store,
+        prompt,
+        max_tokens,
+        on_fragment,
+        on_restart,
+        stopped,
+    )?;
     let answered = outcome
         .spent
         .map(|spent| spend::answered(&cfg, &outcome.provider, spent));

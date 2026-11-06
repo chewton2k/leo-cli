@@ -466,7 +466,7 @@ async fn no_read_runs_while_felix_is_answering() {
     let released = Mutex::new(released);
     let (started, was_started) = tokio::sync::oneshot::channel::<()>();
     let started = Mutex::new(Some(started));
-    let streamer: crate::chat::Streamer = Arc::new(move |_, _, _, _, _| {
+    let streamer: crate::chat::Streamer = Arc::new(move |_, _, _, _, _, _| {
         if let Some(started) = started.lock().unwrap().take() {
             let _ = started.send(());
         }
@@ -629,7 +629,7 @@ async fn a_missing_or_failing_ai_stays_silent_and_leaves_one_line() {
 }
 
 fn talking(text: &'static str, prompts: Arc<Mutex<Vec<String>>>) -> crate::chat::Streamer {
-    Arc::new(move |_, user, _, _, _| {
+    Arc::new(move |_, user, _, _, _, _| {
         prompts.lock().unwrap().push(user.to_string());
         Ok(crate::chat::Reply::from(text.to_string()))
     })

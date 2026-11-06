@@ -10,7 +10,16 @@ use leo_core::store::Store;
 use crate::graph::Cache;
 
 pub type Streamer = Arc<
-    dyn Fn(&str, &str, u32, &mut dyn FnMut(&str), &mut dyn FnMut()) -> Result<Reply> + Send + Sync,
+    dyn Fn(
+            &str,
+            &str,
+            u32,
+            &mut dyn FnMut(&str),
+            &mut dyn FnMut(),
+            &dyn Fn() -> bool,
+        ) -> Result<Reply>
+        + Send
+        + Sync,
 >;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +102,7 @@ impl Conversation for Restated {
             exchange.max_tokens,
             exchange.piece,
             exchange.restart,
+            exchange.stopped,
         )?;
         self.transcript
             .push_str(&format!("\n\nFelix replied: {}", reply.text));
@@ -1034,6 +1044,34 @@ pub fn before_reply(user: &str, block: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_text_answer_hands_its_stop_check_to_the_streamer() {
+        let seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let saw = Arc::clone(&seen);
+        let streamer: Streamer = Arc::new(move |_, _, _, _, _, stopped| {
+            saw.store(stopped(), std::sync::atomic::Ordering::SeqCst);
+            Ok("fine".into())
+        });
+        let mut restated = Restated::new(streamer, "system".into(), "last".into());
+        restated
+            .say(
+                "hello",
+                Exchange {
+                    tail: "",
+                    last: false,
+                    max_tokens: 10,
+                    most_calls: 0,
+                    piece: &mut |_| {},
+                    restart: &mut || {},
+                    call: &mut |_, _| String::new(),
+                    stopped: &|| true,
+                    tools_done: &|| false,
+                },
+            )
+            .unwrap();
+        assert!(seen.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     fn turns(n: usize) -> Vec<Turn> {
         (0..n)

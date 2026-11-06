@@ -341,6 +341,7 @@ pub fn complete_streaming(
     max_tokens: u32,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
 ) -> Result<ChainOutcome<String>> {
     let providers = build_chat_chain(cfg, store);
     let req = ChatRequest {
@@ -349,7 +350,7 @@ pub fn complete_streaming(
         temperature: TEMPERATURE,
         max_tokens,
     };
-    crate::ai::chain::run_chat_chain_streaming(providers, &req, on_fragment, on_restart)
+    crate::ai::chain::run_chat_chain_streaming(providers, &req, on_fragment, on_restart, stopped)
 }
 
 #[cfg(test)]

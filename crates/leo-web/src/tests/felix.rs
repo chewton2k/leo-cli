@@ -11,7 +11,12 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
     let seen = Arc::new(Mutex::new(String::new()));
     let saw = Arc::clone(&seen);
     state.chat = Some(Arc::new(
-        move |_: &str, user: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+        move |_: &str,
+              user: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             *saw.lock().unwrap() = user.to_string();
             piece("It says Dijkstra uses a heap (slides.pdf).");
             Ok("done".into())
@@ -121,7 +126,8 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
               user: &str,
               _: u32,
               piece: &mut dyn FnMut(&str),
-              _: &mut dyn FnMut()| {
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             *saw.lock().unwrap() = format!("{system}\n{user}");
             piece("Heaps keep the minimum on top ");
             piece("[n1].");
@@ -198,9 +204,12 @@ fn a_chat_without_ai_or_a_question_is_refused() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let mut with = state.clone();
     with.chat = Some(Arc::new(
-        |_: &str, _: &str, _: u32, _: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
-            anyhow::bail!("no AI for writing is chosen")
-        },
+        |_: &str,
+         _: &str,
+         _: u32,
+         _: &mut dyn FnMut(&str),
+         _: &mut dyn FnMut(),
+         _: &dyn Fn() -> bool| { anyhow::bail!("no AI for writing is chosen") },
     ));
     let status = run(async {
         chat_reply(State(with.clone()), Json(ask("   ")))
@@ -280,7 +289,8 @@ fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String
               user: &str,
               _: u32,
               piece: &mut dyn FnMut(&str),
-              _: &mut dyn FnMut()| {
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             seen.lock().unwrap().push(format!("{system}\n{user}"));
             let reply = replies.lock().unwrap().next().unwrap_or("Out of script.");
             for chunk in reply.chars().collect::<Vec<_>>().chunks(7) {
@@ -638,7 +648,12 @@ fn what_every_step_of_an_answer_spent_is_added_up_and_sent_before_done() {
         .into_iter(),
     ));
     state.chat = Some(Arc::new(
-        move |_: &str, _: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+        move |_: &str,
+              _: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             let text = replies.lock().unwrap().next().unwrap_or("Out of script.");
             piece(text);
             Ok(chat::Reply {
@@ -1083,7 +1098,8 @@ fn a_message_sent_while_felix_works_reaches_him_at_his_next_step() {
               user: &str,
               _: u32,
               piece: &mut dyn FnMut(&str),
-              _: &mut dyn FnMut()| {
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             seen.lock().unwrap().push(format!("{system}\n{user}"));
             let mut at = step.lock().unwrap();
             *at += 1;
@@ -1197,7 +1213,8 @@ fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_pro
                               _: &str,
                               _: u32,
                               piece: &mut dyn FnMut(&str),
-                              _: &mut dyn FnMut()| {
+                              _: &mut dyn FnMut(),
+                              _: &dyn Fn() -> bool| {
                             let reply = if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
                                 for id in steering.open_ids() {
                                     steering.set_access(&id, access).unwrap();
@@ -1573,7 +1590,12 @@ fn a_failed_answer_is_tried_once_more_before_the_user_sees_an_error() {
     let calls = Arc::new(Mutex::new(0));
     let count = Arc::clone(&calls);
     state.chat = Some(Arc::new(
-        move |_: &str, _: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+        move |_: &str,
+              _: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             let mut n = count.lock().unwrap();
             *n += 1;
             if *n == 1 {
@@ -2190,7 +2212,8 @@ fn felix_task_descriptions_use_the_same_cards_permissions_and_undo_in_both_proto
                               _: &str,
                               _: u32,
                               piece: &mut dyn FnMut(&str),
-                              _: &mut dyn FnMut()| {
+                              _: &mut dyn FnMut(),
+                              _: &dyn Fn() -> bool| {
                             let reply = replies
                                 .lock()
                                 .unwrap()
@@ -2308,7 +2331,7 @@ fn repeated_identical_failed_calls_get_one_final_answer_without_exhausting_the_b
         let (mut state, _dir, _) = state_with(&[]);
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let called = Arc::clone(&count);
-        state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+        state.chat = Some(Arc::new(move |system, _, _, piece, _, _| {
             called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let text = if system.contains(tools::NO_MORE_TOOLS) {
                 "I could not open that note. Choose an existing note and try again."
@@ -2336,7 +2359,7 @@ fn hidden_study_grading_is_counted_and_only_runs_when_the_verdict_is_missing() {
             let (mut state, _dir, _) = state_with(&[]);
             let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let called = Arc::clone(&count);
-            state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+            state.chat = Some(Arc::new(move |system, _, _, piece, _, _| {
                 called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let text = if system == crate::routes::felix::JUDGE {
                     judge
@@ -2386,7 +2409,7 @@ fn closing_a_reply_stops_follow_up_tools_grading_and_fallbacks() {
         let continued = Arc::new(Mutex::new(continued));
         let called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = Arc::clone(&called);
-        state.chat = Some(Arc::new(move |_, _, _, piece, _| {
+        state.chat = Some(Arc::new(move |_, _, _, piece, _, _| {
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             ready.send(()).unwrap();
             continued
@@ -2451,7 +2474,7 @@ fn native_repeated_failures_finish_without_more_tools_or_a_refusal_retry() {
     let (mut state, _dir, _) = state_with(&[]);
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = Arc::clone(&calls);
-    state.chat = Some(Arc::new(|_, _, _, _, _| {
+    state.chat = Some(Arc::new(|_, _, _, _, _, _| {
         anyhow::bail!("unexpected fallback")
     }));
     state.converse = Some(Arc::new(move |_, _| {
@@ -2471,7 +2494,7 @@ fn native_repeated_failures_finish_without_more_tools_or_a_refusal_retry() {
 #[test]
 fn foreground_answers_are_bounded_before_context_preparation() {
     let (mut state, _dir, _) = state_with(&[]);
-    state.chat = Some(Arc::new(|_, _, _, _, _| {
+    state.chat = Some(Arc::new(|_, _, _, _, _, _| {
         anyhow::bail!("busy answers must not reach the model")
     }));
     let mut held = Vec::new();
@@ -2516,7 +2539,7 @@ fn structured_study_verdicts_avoid_hidden_grading_on_both_protocols_and_do_not_m
                 let (mut state, _dir, _) = state_with(&[]);
                 let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let called = Arc::clone(&calls);
-                state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+                state.chat = Some(Arc::new(move |system, _, _, piece, _, _| {
                     assert_ne!(
                         system,
                         crate::routes::felix::JUDGE,
