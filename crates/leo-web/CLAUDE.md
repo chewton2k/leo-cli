@@ -1204,6 +1204,8 @@ recording
 reserves `capture_activity` before creating a job; its lease prevents updater
 installation through the durable save.
 
+Arriving on a page closes sheets left from before but keeps one opened on the new
+address (`scrim.openedOn`): input can run ahead of the queued `hashchange`.
 Router completion and error handling check a render generation and the current
 hash. Late missing-note/offline failures cannot redirect, toast or overwrite a
 newer page, including a return to the same route. Cancelling a menu animation

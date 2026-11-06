@@ -108,7 +108,7 @@ window.addEventListener('hashchange', async () => {
     state.session = null;
   }
   marginLeave();
-  route();
+  route(true);
 });
 
 const busy = () => {
@@ -133,8 +133,8 @@ window.addEventListener(
   { passive: true }
 );
 
-async function route() {
-  closeSheet(true);
+async function route(arrived = false) {
+  if (!arrived || $('.scrim')?.openedOn !== location.hash) closeSheet(true);
   drawn.top = /^#\/(?:f|n|new)(?:\/|$)|^#?\/?$/.test(location.hash);
   if (!drawn.top) window.scrollTo(0, 0);
   await render();

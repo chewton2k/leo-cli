@@ -3907,6 +3907,7 @@ test.describe('passages', () => {
     await page.keyboard.press('ControlOrMeta+Shift+e');
     await expect(page.locator('.margin-note[data-id="draft"] textarea')).toBeFocused();
     expect(await box()).toEqual(first);
+    await page.locator('.margin-note[data-id="draft"]').evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((run) => run.finished)));
     await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('.margin-note')).toHaveCount(0);
     expect(await box()).toEqual(first);

@@ -16,6 +16,7 @@ function sheet(html, { modal = false } = {}) {
   closeSheet(true);
   const scrim = document.createElement('div');
   scrim.foldersReturn = foldersReturn;
+  scrim.openedOn = location.hash;
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
   scrim.addEventListener('click', (e) => {
