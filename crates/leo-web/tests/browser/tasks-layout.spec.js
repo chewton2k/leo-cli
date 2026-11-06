@@ -12,7 +12,7 @@ test('task completion shows its check before hiding and survives refresh, Undo a
   const completion = calendar.slice(calendar.indexOf('function taskDoneOn'), calendar.indexOf('function pickerBody'));
   const panel = calendar.slice(calendar.indexOf('var tasksWin'), calendar.indexOf('const source ='));
   const action = actions.slice(actions.indexOf("  'task-done':"), actions.indexOf("  'task-date':"));
-  const motion = core.slice(core.indexOf('const LEAVE_MS'), core.indexOf('function unfold'));
+  const motion = core.slice(core.indexOf('const LEAVE_MS'), core.indexOf('function rel('));
   const fixture = `const S = window.leoSchedule;
     const app = document.querySelector('main');
     let state = {view: 'folder'};

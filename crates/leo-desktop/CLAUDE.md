@@ -11,7 +11,7 @@ a test, or leave it unset to see the user's own data.
 1. macOS: `PATH` = the login shell's PATH (`shell_path::login_path`, markers,
    3 s timeout, process group killed on timeout) merged with the current PATH and
    `usual_folders` (Homebrew, `/usr/local/bin`, `~/.local/bin`, `~/.cargo/bin`),
-   so Codex, Claude Code, Ollama, gh and git are found when Finder starts leo.
+   so Codex, Claude Code and Ollama are found when Finder starts leo.
 2. `leo_web::start` on `port::remembered` (`<config>/app-port`, default 47318,
    kept stable because localStorage and IndexedDB are per origin), with
    `fresh_token()`; the port actually used is remembered. A failure opens
@@ -24,16 +24,17 @@ a test, or leave it unset to see the user's own data.
    `html[data-app="mac"]`, which hides the sidebar wordmark and makes room for
    the buttons (2026-10-31, the user found the grey title strip ugly). `#bar`
    and `.side-head` are `data-tauri-drag-region="deep"`. The icon rail stays
-   visible when the explorer is hidden; the sidebar toggle sits fixed right after
-   the window buttons whether the explorer is shown or hidden, and the folded
-   toolbar leaves room for both.
+   visible when the explorer is hidden. The sidebar toggle and the brand share one
+   header row: to the right of the window controls when windowed, flush left in
+   full screen (`lib.rs` tells the page on load and on every resize). Folded on
+   a windowed Mac, the toggle drops into the rail below the window controls.
 
 ## Behaviour
 
-- Close hides the window and queues a backup; Dock click and "Open leo" show
+- Close hides the window; Dock click and "Open leo" show
   it; on macOS, Leo's Quit menu items or ⌘Q need a second attempt within three seconds
   (the first shows a prompt). Update restarts and error exits bypass this guard.
-  `RunEvent::Exit` backs up and stops the engine (6 s cap).
+  `RunEvent::Exit` stops the engine (6 s cap), without committing or pushing notes.
   The macOS app menu replaces the predefined native Quit item with a regular
   ⌘Q item routed through `app.exit(0)`, so it reaches the guard and update actor.
   Tauri's default menu supplies Edit (⌘C/⌘V/⌘Z/⌘A)
@@ -49,9 +50,11 @@ a test, or leave it unset to see the user's own data.
   `Library::selected_name`, writing AI and model plus 5h/7d plan use from
   `web_settings::writing_status`, AI use since launch `Running::usage_line`),
   Settings…, Check for updates… (queues a check, opens Updates & about), the
-  version, Quit. A `leo-tray-status` thread refreshes the rows every 20 s; Codex
-  limits are asked from its app-server at most every 5 min and only when Codex is
-  the chosen writing AI and its saved use is stale (`writing_status(may_ask)`).
+  version, Quit. A `leo-tray-status` thread refreshes the rows when the icon is
+  clicked and otherwise every 5 min (2026-11-06, the user's call: no idle
+  polling); Codex limits are asked from its app-server only after a click, at
+  most every 5 min and only when Codex is the chosen writing AI and its saved
+  use is stale (`writing_status(may_ask)`).
   Page commands are offered for 5 s (the page may still be loading) and run once
   per click (`__leoAsked`); copying runs off the main thread. A speech model that
   is chosen but not on disk reads "(not downloaded)".
@@ -107,7 +110,11 @@ Accessibility changes. Recording a binding pauses global registration, supports
 modifier-only/Fn and expires after 30 s. Secure Input uses the Carbon fallback
 for representable chords (side-specific modifiers widen); modifier-only events
 stay on handy-keys. Escape registers only during capture, including fallback,
-and is reserved from being the dictation binding. Status exposes missing
+and is reserved from being the dictation binding. On Windows the same system
+hotkey path carries any chord it can match exactly (2026-11-06, the user's
+call), because handy-keys' Windows listener wakes every 10 ms and hooks the
+mouse; handy-keys runs there only for modifier-only, Fn and one-side bindings
+and while a shortcut is being recorded (`shortcut::tapped`). Status exposes missing
 permissions, unavailable registration and uncovered Secure Input chords.
 
 `paste_tx` publishes lazy clipboard data, waits for post-injection reads and a
@@ -201,11 +208,14 @@ secret names and corrective steps appear; private values stay in the environment
 
 `shortcut_events` owns the raw handy-keys listener and forwards relevant events
 through a bounded queue. The coordinator waits on that queue; the old 10 ms poll
-and handy-keys manager timer are gone. One-second waits cover permission/Secure
-Input checks and receiver shutdown, while key/control messages wake immediately.
+and handy-keys manager timer are gone. Permission/Secure
+Input checks run every second while someone is at the keyboard or mouse and
+stretch to ten seconds as the Mac sits idle (`secure_input::user_idle`), while
+key/control messages wake immediately. A replaced feed is not joined: its
+thread ends at its next key event or within thirty seconds.
 Bindings preserve key/modifier release order, repeats, Fn and side-specific keys;
 Escape eligibility wakes the coordinator explicitly. Feed shutdown clears native
-blockers before joining and cancels a producer waiting on a full queue.
+blockers and cancels a producer waiting on a full queue.
 
 The main window publishes visibility to the engine and page on hide/show,
 minimize/restore and page-load completion. Hidden/minimized lecture previews pause;

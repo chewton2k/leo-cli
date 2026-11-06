@@ -44,7 +44,7 @@ Open Leo like any other app, or type `leo` in a terminal. First launch offers
 three skippable steps: microphone, Accessibility, and a local speech model.
 Dictation defaults to Option+Space on macOS and Ctrl+Space on Windows; rebind it
 in Settings. Models and speech stay on this computer. Choose Writing AI when
-you need it; dictation never uses writing AI.
+you need it; dictation uses writing AI only if you turn on its AI writing switch.
 
 Settings → Health has setup checks and fixes. Updates & about checks for app
 updates, shows what changed, and installs when you quit by default. Updates wait
@@ -60,16 +60,16 @@ The installer replaces the terminal command with the app launcher, so typing
 `leo` opens the app. The terminal interface and browser-server workflow are
 replaced by the desktop window.
 
-Your notes stay in the same folder. Leo reads the existing database, writing
-settings and backup repository; there is no export/import step. Keep the same
+Your notes stay in the same folder. Leo reads the existing database and writing
+settings; there is no export/import step. Built-in GitHub backup is retired;
+existing repositories and remotes stay untouched. Keep the same
 operating-system account and data location when switching.
 
 On first launch, allow microphone access for recording and Accessibility access
 for pasting dictation into other apps. Download a speech model in Settings →
-Speech models. The previous speech model cannot be reused; Leo removes its old
-folder after a new model is verified and ready. Previous cloud speech choices
-fall back to local speech, and their stored speech keys are removed. Writing AI
-and calendar credentials are kept.
+Speech models. The previous speech model cannot be reused. Previous cloud speech choices
+fall back to local speech. Stored keys, writing AI sign-ins and calendar
+credentials stay in leo's credentials file.
 
 Two migration cases are not automatic yet:
 
@@ -86,17 +86,18 @@ app supports macOS and Windows only.
 
 ## What you can do
 
-**Organize your notes.** Browse folders in a grid or list, search your notes, and
-keep tasks close by.
+**Organize your notes.** Browse folders and notes in the explorer beside your
+note. Right-click a note or folder to rename, move or trash it, with Undo. Search
+your notes and keep tasks close by.
 
-![Leo's note library with folder cards, note previews, and a tasks panel](public/notes-library.png)
-
-**Study with Felix.** Explore your notes with questions, explanations and feedback.
+**Study with Felix.** Ask anything, or say what you want to learn: Felix finds where
+your understanding stops, teaches one step at a time and quizzes you on your notes.
 
 
 **Dictate into other apps.** Hold or tap your global shortcut, speak, and Leo
 pastes your words back. Custom words, filler removal, the last 20 dictations and
-popup appearance are in Settings. Speech stays local, with no AI cleanup.
+popup appearance are in Settings. Speech stays local; AI writing of the text is
+off unless you turn it on.
 
 **Choose your speech model.** Dictation and recording share one local model.
 Settings → Speech models shows downloaded models, language and streaming support,

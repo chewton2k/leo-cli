@@ -10,10 +10,10 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `manual`, `action/` (`Line`/`Kind` output lines and front matter) | — |
-| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
+| `crates/leo-core` | `notes`, `store` (+ undo), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices), `paths`, `recording`, `activity` | — |
+| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials), `health`, `providers`, `speech`, `dictation`, `session`, `update`, `usage`, `import` | core |
 | `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
-| `crates/leo-host` | `powers()` (the AI, speech, settings, storage and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
+| `crates/leo-host` | `powers()` (the AI, speech, settings, recording housekeeping and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
 | `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, services, host, web |
 | root `leo` | `main.rs` and `cli/`: `leo` opens the app, `leo update`, `leo uninstall`, `--version` | core, services |
 
@@ -68,25 +68,11 @@ Two invariants worth keeping: a no-op (a delete that matched nothing, a refused
 root delete) must record nothing, or `u` appears to do nothing; and undo must not
 push its own inverse, or one press would toggle forever.
 
-### Automatic backup is a policy, not a timer
+### Notes stay local
 
-`config/sync.rs` holds the decision as data and two pure functions,
-`should_push_now` and `should_push_on_quit`, so "why did it push then?" is
-answerable without a terminal and a stopwatch. The App gathers the inputs
-(`PushWhen`) and the worker performs the effect.
-
-Four rules that must stay: a push only starts from the *idle* branch of the event
-loop, so it never competes with typing; `MIN_PUSH_GAP` is a floor regardless of
-`idle_secs`, so a stream of small edits cannot produce a push every few seconds;
-no upstream means no push, which is not the same as nothing to push; and a failure
-records `last_push` too, or a broken remote means a git process every time the
-loop goes quiet. A rejected push is reported and never retried automatically —
-the fix is a pull, and doing that silently could merge someone's notes without
-telling them.
-
-`sync::push` and `pull` ask git for the current branch. `main` was hardcoded,
-which meant a repository on `master` could not be pushed at all and blamed the
-refspec rather than saying so.
+Leo no longer sets up or runs git/GitHub backup. Saves, idle work, visibility
+changes and quit never commit or push. Existing repositories/remotes and legacy
+`[sync]` settings are left untouched; the zip export in Settings → Keeping remains available.
 
 ### Capability checks
 
@@ -106,57 +92,29 @@ Two rules there, both learned from tests that hung:
 Checks must stay cheap enough to run on startup: a key presence check, a PATH
 scan, or a loopback connect with a 300 ms timeout. Never a real request.
 
-### The manual note
-
-`manual.rs` creates one note on first run: a one-screen quickstart for the app
-(Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
-real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (23); deleting the
-manual survives the next launch, and a version bump rewrites the user's note.
-Tests: under 60 lines, names Settings, Felix, Record and ⌘F, and names no
-terminal command.
-
 ### Data model
 
 Notes are stored as one Markdown file per note, with YAML frontmatter, under
 the platform data directory (`<data_dir>/leo/notes/`). `store.rs` derives a
 note's `directory` from its path on disk, and `directories.json` tracks empty
-directories. A legacy `notes.json` is migrated automatically on first read
-(`migrate_from_json`, `store.rs:455`). Each `Note` has `id` (UUID v4), `title`,
+directories. Each `Note` has `id` (UUID v4), `title`,
 `body` (Markdown), `tags`, `directory` (empty string = root), `created_at`, and
 `updated_at`.
 
-`sync.rs` provides optional git-backed sync of that directory
-(`init`, `connect`, `push`, `pull`, `status`). `config.toml` lives one level
-above it, in `<config_dir>/leo/`, so machine-local settings are never pushed to
-the notes remote.
+`config.toml` lives in `<config_dir>/leo/`, separately from notes. Machine-local
+settings and credentials are excluded from note exports.
 
 ### Recent additions worth knowing
 
-- `leo_services::doctor::scan` (sections leo/notes/AI/recording/backup;
-  network/mic probes behind `Probe`), formatted once by `doctor::report`; plan 4
-  is shown in Settings → Health.
+- `leo_services::doctor::scan` (sections leo/notes/AI/recording;
+  network/mic probes behind `Probe`), plan 4 is shown in Settings → Health.
 - Recording loop: `leo_services::session::recorder` (`record`, `resume`,
-  `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio; browser-fed audio remains for
-  old recovery journals. Pauses are cut by `listen::cut_pauses` before
-  the final transcription.
+  `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio.
 - `Store::unreadable`: files that failed to parse; `save` never deletes them.
 - Trash: `save` moves any note file that vanished (and was not just moved:
   its id is not live) to `<notes>/.trash/<same relative path>`, mtime = when
-  deleted. `tidy_trash` (load and save) drops live ids and ones past
-  `TRASH_DAYS` (30). `.trash/` is gitignored, and `auto_commit` refreshes the
-  ignore list so old backups pick it up. The Trash page restores and empties.
-- Backup: pulls merge (`--no-rebase --allow-unrelated-histories`), notes merge
-  by union and stay LF (`text eol=lf`, beating Git for Windows' autocrlf) in
-  .gitattributes, git runs with `core.longpaths=true` on Windows, directories.json is not tracked (rebuilt on load).
-- Editor: `leo_core::editor` (EDITOR, VISUAL, then nano, then vi; flags split,
-  quotes kept together, a setting that is an existing file is one program; on
-  Windows the program is found through `paths::find`, so `code.cmd` runs).
-- GitHub backup: `sync::github(notes_dir, name)` uses `gh` (`gh_ready` =
-  `gh auth token` succeeds, no network): `repo view` else `repo create
-  --private`, URL by `gh config get git_protocol` (https + `gh auth setup-git`
-  by default), then connect + `now`. Setting backup up from the app arrives
-  in Settings → Backup.
+  deleted. `tidy_trash` (load, a save that writes a new id, and hourly on save) drops live ids and ones past
+  the Keeping choice (`keep::DEFAULT_TRASH_DAYS`, 30). The Trash page restores and empties.
 - Updates: `leo_services::update::available()` reads the latest tag from the
   `releases/latest` redirect (not the API: rate limits), cached a day in
   `<config>/update-check.json`, failures cached too; `LEO_NO_UPDATE_CHECK=1`
@@ -187,15 +145,9 @@ the notes remote.
   refresh keeps undo). Engine mutations reconcile before writing; hot read-only
   paths use the existing filesystem watcher with a 60 s reconciliation fallback.
   Returning to the native window forces a check before serving cached reads.
-- `sync::pull` = auto_commit, fetch, `keep_both_notes_with_the_same_name`
-  (a `.md` both sides added with different ids → local renamed to
-  `Name (2).md` and committed), then merge. git's union driver otherwise glues
-  add/add files together. `sync::now` commits before pushing. `.obsidian/` is
-  gitignored.
 - Never slice strings by byte offsets computed from lengths: use char indices
   or `str::get`.
-- `listen::microphone_peak` has a deadline (3 s past the sample); tests must
-  never call the probe (`recording(.., false)`).
+- Tests must never run the microphone probe (`doctor::recording_checks` with the probe off).
 - Install: `install.sh` downloads the latest GitHub release. Releases are
   automatic: `ci.yml` calls `release.yml` after every job passes on a push to
   main; `scripts/next-version.sh` picks the version (patch + 1, or Cargo.toml's
@@ -209,8 +161,8 @@ the notes remote.
   under `models_dir()/speech`, selected in `<config>/speech-model.json`.
   `leo-services::speech` verifies downloads, isolates native transcribe-cpp
   0.4.0 in a supervised child, prioritizes dictation and pins the model during
-  recording. Cloud speech configurations/aliases migrate locally and their
-  stored keys are retired through SecretStore; calendar/writing data stays.
+  recording. Cloud speech choices fall back to local speech; any keys
+  already stored stay in leo's credentials file.
 - Dictation preferences/text rules live in `leo-services::dictation`; desktop
   owns global shortcuts, permissions, in-memory capture, transactional paste
   and a bundled nonactivating popup. Writing AI runs on dictations only when
@@ -226,24 +178,22 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   speech model, and uninstall retains the existing data-removal controls.
 - Note connections (cache code still says `graph`): see crates/leo-web/CLAUDE.md.
 - Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
-  line each, tombstones for deletes), so the git backup carries them;
-  `sync::GITATTRIBUTES` merges them by union and leo-web reads the newest line.
+  line each, tombstones for deletes); leo-web reads the newest line.
   A repeating task's moved days live in its `moved` field (original date →
   new slot); the Calendar page is a Notion-style Day/Week/Month screen beside
   the explorer: see crates/leo-web/CLAUDE.md.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
-  search and note connections cover it): no `#tag` in `new` (split_new returns (dir,
-  title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips
-  on the web. Tags already in files are kept and still searchable with `#word`
-  (Obsidian), and leo's own markers (`manual`, `listen`) stay.
+  search and note connections cover it): no tag column, completion, Tags page or
+  chips on the web. Tags already in files are kept and still searchable with `#word`
+  (Obsidian).
 - Felix in the margin (2026-11-04, the user's call): threads in `leo.db`, never
   note files or git; read-along is off by default. Reads use `Powers.toolless`
   (no tools at all). See crates/leo-web/CLAUDE.md.
 - Boards (2026-11-02, the user's call): Jira-style task boards on their own
   rail page (`#/boards`), several boards, untimed cards (title, subheading,
   description, priority) in custom columns, dragged between columns and boards.
-  Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` sync like tasks
-  (union merge, newest line wins); they are not calendar tasks. Felix has
+  Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` follow tasks (one
+  JSON line per save, newest line wins); they are not calendar tasks. Felix has
   board tools (list/open, add/update/move/delete cards, add/change/delete
   boards) under the usual Ask/Auto/Read and Undo. See crates/leo-web/CLAUDE.md.
 - Menu bar, study order, idle compaction and in-app drag and drop
@@ -252,12 +202,24 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   idle compaction).
 - Keeping: `leo_core::keep` (`<data>/keep.json`, beside notes, not synced):
   `trash_days` (7/30/90/365/None=forever, default 30) drives `tidy_trash`;
-  `chat_days` (30/90/365/None, default forever) drives `chats::tidy` in leo-web.
-  Trash messages use `keep::kept_for`.
+  one shared choice list (7, 30, 90, 365 days, forever);
+  `chat_days`, `upload_days`, `transcript_days` and `audio_days` (default forever)
+  drive the expiry in `crates/leo-web/src/keeping.rs`. Settings → Data → Keeping
+  (`#/settings/keeping`) shows the five rows, each with a line saying what it
+  is, and the zip export. A shorter choice asks first with a count from
+  `/api/keep/preview`. Expiry runs at start, once a day and after a save, and
+  stops with the engine. `keep::describe` words a choice; `keep::load` reads
+  each field on its own, so one bad value never resets the others.
+- Cut-down (2026-11-05, the user's call): the Storage page is replaced by
+  Keeping; Felix has no web tool of leo's own (Claude Code and Codex keep
+  theirs); the first-run manual note is gone; the legacy fallbacks and
+  one-time migrations are gone (`notes.json`, old tasks and chats, the direct
+  Anthropic wire, `codex exec`, the sign-in device list, AGY/Copilot cleanup,
+  stored cloud speech key retirement).
 
 Recording sources live in `leo-core::recording` (`Archive`, and `Profile {context,
 wants}`: calendar-event details and what the user wants from the notes), shared by
-both front ends. Saved recording session IDs make new notes and appends idempotent;
+the app. Saved recording session IDs make new notes and appends idempotent;
 retain sources before saving the note, then commit the session after the note is
 durable. Default AI gap-filling and merging of typed points always stay, whatever
 the user asks for. Note workflows (folder defaults, note formats, vocabulary, saved
@@ -265,37 +227,34 @@ actions, chat scope) were removed on 2026-10-10, the user's call: the "What do y
 want from the notes?" box replaces formats.
 
 Interview coding practice was removed by the user's decision on 2026-11-05.
-Felix keeps Chat and Study, including quizzes, study sessions and review. Legacy
-interview database tables and rows stay unused; old interview-style chats open
-as Chat and retired cards show a short removal message. Downloaded runtimes stay
-visible and removable through Storage's symlink-safe downloaded-files cleanup.
+Felix keeps quizzes, study sessions and review. Legacy interview database tables
+and rows stay unused; old interview-style chats open normally and retired cards
+show a short removal message. Downloaded runtimes stay
+on disk, untouched.
 
-Storage scans use a read-only Store snapshot and blocking workers so filesystem
-walks and database compaction do not hold the notes lock. The Housekeeper lists
-both config and data folder settings, the application and
-model downloads; cache removal refuses symlinks and active partial downloads.
+Felix has no modes (2026-11-05, the user's call): one prompt, and he works out
+from each message whether to answer, teach or quiz. Lessons follow the method of
+LearnHarness (measure, plan, teach step by step, practise), written in leo's own
+words: LearnHarness is AGPL-3.0 and leo is MIT, so its code and prompt text must
+never be copied in. See crates/leo-web/CLAUDE.md.
 
-Website backup leaves the browser through an authenticated beacon; the web crate
-queues work and bounds the push, while WebSettings supplies the configured git
-command through SettingsApi::backup. Off, no remote, and no unpushed commits skip
-network work. It commits note/task files first, never pulls, and never creates a
-remote or changes the user’s backup policy.
+Keeping expiry runs on blocking workers so filesystem walks do not hold the
+notes lock. The `Housekeeper` in `crates/leo-web/src/record.rs` lists and
+discards unfinished recordings and expires audio kept from saved sessions and
+old browser capture. A recovery job carries its session id, so Delete and
+expiry act on the recording being recovered, never on the job's own id.
 
-Security cleanup: note roots refuse symlinks, folder scans have depth bounds, legacy
-migration uses contained paths and atomic writes, and displayed short IDs use
-Unicode characters. Git children run without credential prompts and are reaped on
-timeout. Credential updates use a bounded writer plus a cross-process private lock;
+Security cleanup: note roots refuse symlinks, folder scans have depth bounds, and displayed short IDs use
+Unicode characters. Credential updates use a bounded writer plus a cross-process private lock;
 use `secret::default_store()` (private file by default, optional keychain), never a
-backend directly. Legacy AGY/Copilot profiles contain private sign-in state, stay outside
-notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
+backend directly. `.superpowers/` stays local
 and must never be staged or committed.
 
-Settings uses grouped `#/settings/<section>` routes in a sidebar with icons (a rounded panel set apart from the explorer; panel and section are centered together), preserving Storage's route; Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
+Settings uses grouped `#/settings/<section>` routes in a sidebar with icons (a rounded panel set apart from the explorer; panel and section are centered together), Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
 `leo_web::app_settings::AppApi` bridges native preferences, permission requests,
 Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.
-Backup setup is explicit, preserves an existing remote and runs outside the store
-lock. Health uses local doctor checks without microphone or AI requests. First-launch
+Health uses local doctor checks without microphone or AI requests. First-launch
 setup groups microphone and macOS Accessibility on one page with live checkmarks,
 then offers a speech model; existing completion flags remain compatible.
 Desktop navigation uses an icon rail beside a folder-and-note explorer. Folder

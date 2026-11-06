@@ -76,8 +76,10 @@ async function calendarFixture(browser, run, { width = 1360, height = 900, view 
       }
       throw new Error('No fake for '+method+' '+url);
     }
-    const EASE_OUT='ease-out';
+    ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
+    ${core.slice(core.indexOf('const moving'), core.indexOf('function rel('))}
     ${read('app/motion.js')}
+    ${read('app/settings-navigation.js')}
     ${page}
     const actions={${calActions}'task-done':el=>{const id=el.dataset.id,on=el.dataset.on||null;const task=calFind(id);const done=!(task&&taskDoneOn(task,on));return setTaskDone(id,done,on);},'task-delete':el=>deleteTask(el.dataset.id),'task-new':el=>newTaskSheet(el.dataset.day||null),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});

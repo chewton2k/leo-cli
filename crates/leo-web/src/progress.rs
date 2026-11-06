@@ -219,17 +219,6 @@ impl Board {
     }
 }
 
-pub fn valid_key(key: &str) -> bool {
-    key.len() <= 200
-        && key.split_once(':').is_some_and(|(kind, rest)| {
-            kind == COMBINE.name
-                && !rest.is_empty()
-                && rest
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ':')
-        })
-}
-
 pub fn metered(writer: Writer, streamer: Option<Streamer>, meter: Arc<Meter>) -> Writer {
     Arc::new(move |system: &str, user: &str, most: u32| match &streamer {
         Some(stream) => {
@@ -239,6 +228,7 @@ pub fn metered(writer: Writer, streamer: Option<Streamer>, meter: Arc<Meter>) ->
                 most,
                 &mut |piece| meter.add(piece),
                 &mut || meter.restart(),
+                &|| false,
             )?;
             Ok(reply.text)
         }
@@ -330,13 +320,13 @@ mod tests {
     }
 
     #[test]
-    fn a_metered_writer_counts_streamed_text_and_progress_keys_are_checked() {
+    fn a_metered_writer_counts_streamed_text() {
         let board = Arc::new(Board::default());
         let ticket = board
             .start_sized("combine:note-2".into(), COMBINE, None)
             .unwrap();
         let plain: Writer = Arc::new(|_: &str, _: &str, _| Ok("y".repeat(3_000)));
-        let streamer: Streamer = Arc::new(|_: &str, _: &str, _, piece, _| {
+        let streamer: Streamer = Arc::new(|_: &str, _: &str, _, piece, _, _| {
             piece(&"z".repeat(3_000));
             Ok("z".repeat(3_000).into())
         });
@@ -350,9 +340,6 @@ mod tests {
         let without = metered(plain, None, Arc::clone(&ticket.meter));
         without("s", "u", 10).unwrap();
         assert!(ticket.meter.fraction_at(0.0) > 0.9);
-        assert!(!valid_key("language:practice-1:problem-1"));
-        assert!(!valid_key("coverage:practice-1:problem-1"));
-        assert!(!valid_key("other:x") && !valid_key("key:") && !valid_key("key:a/b"));
     }
 
     #[test]
@@ -366,6 +353,5 @@ mod tests {
             .unwrap();
         assert_eq!(small.meter.view()["expected"], 30);
         assert_eq!(large.meter.view()["expected"], 240);
-        assert!(valid_key("combine:a"));
     }
 }

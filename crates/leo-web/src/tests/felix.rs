@@ -11,7 +11,12 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
     let seen = Arc::new(Mutex::new(String::new()));
     let saw = Arc::clone(&seen);
     state.chat = Some(Arc::new(
-        move |_: &str, user: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+        move |_: &str,
+              user: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             *saw.lock().unwrap() = user.to_string();
             piece("It says Dijkstra uses a heap (slides.pdf).");
             Ok("done".into())
@@ -51,7 +56,6 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
             role: "user".into(),
             text: "what do my slides say?".into(),
         }],
-        mode: None,
         note: None,
         refs: vec![],
         chat: Some("chat-docs-0001".into()),
@@ -122,7 +126,8 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
               user: &str,
               _: u32,
               piece: &mut dyn FnMut(&str),
-              _: &mut dyn FnMut()| {
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             *saw.lock().unwrap() = format!("{system}\n{user}");
             piece("Heaps keep the minimum on top ");
             piece("[n1].");
@@ -134,7 +139,6 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
             role: "user".into(),
             text: "how do heaps work?".into(),
         }],
-        mode: Some("study".into()),
         note: Some(ids[0].clone()),
         refs: vec![],
         chat: None,
@@ -168,7 +172,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
     assert_eq!(lines[3]["t"], "[n1].");
     assert_eq!(lines[4]["done"], true);
     let prompt = seen.lock().unwrap().clone();
-    assert!(prompt.contains("Mode: study."), "{prompt}");
+    assert!(prompt.contains("there are no modes to choose"), "{prompt}");
     assert!(prompt.contains("A binary heap backs a priority queue."));
     assert!(prompt.contains("User: how do heaps work?"));
 }
@@ -181,7 +185,6 @@ fn a_chat_without_ai_or_a_question_is_refused() {
             role: "user".into(),
             text: text.into(),
         }],
-        mode: None,
         note: None,
         refs: vec![],
         chat: None,
@@ -201,9 +204,12 @@ fn a_chat_without_ai_or_a_question_is_refused() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let mut with = state.clone();
     with.chat = Some(Arc::new(
-        |_: &str, _: &str, _: u32, _: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
-            anyhow::bail!("no AI for writing is chosen")
-        },
+        |_: &str,
+         _: &str,
+         _: u32,
+         _: &mut dyn FnMut(&str),
+         _: &mut dyn FnMut(),
+         _: &dyn Fn() -> bool| { anyhow::bail!("no AI for writing is chosen") },
     ));
     let status = run(async {
         chat_reply(State(with.clone()), Json(ask("   ")))
@@ -251,7 +257,6 @@ fn chat_lines_in(
             role: "user".into(),
             text: question.into(),
         }],
-        mode: None,
         note: None,
         refs: vec![],
         chat: None,
@@ -284,7 +289,8 @@ fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String
               user: &str,
               _: u32,
               piece: &mut dyn FnMut(&str),
-              _: &mut dyn FnMut()| {
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             seen.lock().unwrap().push(format!("{system}\n{user}"));
             let reply = replies.lock().unwrap().next().unwrap_or("Out of script.");
             for chunk in reply.chars().collect::<Vec<_>>().chunks(7) {
@@ -331,7 +337,7 @@ fn auto_applies_a_margin_note_through_the_real_path_and_undo_takes_it_off() {
 
 #[test]
 fn gathered_notes_respect_the_provider_budget_in_every_chat_style() {
-    for mode in ["chat", "study"] {
+    for practice in [false, true] {
         let (mut state, _dir, ids) = state_with(&[("Queues", "")]);
         {
             let mut store = state.fresh();
@@ -342,7 +348,7 @@ fn gathered_notes_respect_the_provider_budget_in_every_chat_style() {
         let (streamer, prompts) = scripted(vec!["A queue removes the oldest item first."]);
         state.chat = Some(streamer);
         let body = serde_json::from_value(serde_json::json!({
-            "mode": mode,
+            "practice": practice,
             "note": ids[0],
             "messages": [{"role":"user", "text":"Explain queues."}]
         }))
@@ -362,7 +368,7 @@ fn gathered_notes_respect_the_provider_budget_in_every_chat_style() {
             .split_once("</notes>")
             .unwrap()
             .0;
-        assert!(notes.chars().count() <= 2_048, "{mode}");
+        assert!(notes.chars().count() <= 2_048, "practice={practice}");
         assert!(notes.contains("A queue is FIFO."));
     }
 }
@@ -614,27 +620,6 @@ fn an_answer_is_one_request_and_is_never_taken_back_or_asked_again() {
 }
 
 #[test]
-fn felix_is_given_web_tools_only_when_his_ai_cannot_search() {
-    for needed in [true, false] {
-        let (mut state, _d, _ids) = state_with(&[]);
-        let (streamer, prompts) = scripted(vec!["Plain answer."]);
-        state.chat = Some(streamer);
-        state.web = Some(crate::Web {
-            search: Arc::new(|_: &str| Ok(vec![])),
-            page: Arc::new(|_: &str| Ok(String::new())),
-            needed: Arc::new(move || needed),
-        });
-        chat_lines(&state, "hello");
-        let prompt = prompts.lock().unwrap()[0].clone();
-        assert_eq!(
-            prompt.contains("### web_search"),
-            needed,
-            "needed = {needed}"
-        );
-    }
-}
-
-#[test]
 fn a_model_that_says_its_tools_are_missing_is_told_once_that_they_are_not() {
     let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
     let (streamer, prompts) = scripted(vec![
@@ -663,7 +648,12 @@ fn what_every_step_of_an_answer_spent_is_added_up_and_sent_before_done() {
         .into_iter(),
     ));
     state.chat = Some(Arc::new(
-        move |_: &str, _: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+        move |_: &str,
+              _: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             let text = replies.lock().unwrap().next().unwrap_or("Out of script.");
             piece(text);
             Ok(chat::Reply {
@@ -708,8 +698,7 @@ fn chat_titles_are_kept_locally_without_spending_a_model_request() {
     ));
     let put = |messages: serde_json::Value| {
         let body: crate::chats::Saving =
-            serde_json::from_value(serde_json::json!({ "mode": "chat", "messages": messages }))
-                .unwrap();
+            serde_json::from_value(serde_json::json!({ "messages": messages })).unwrap();
         json_of(run(crate::routes::felix::put_chat(
             State(state.clone()),
             Path("chat-name-0001".into()),
@@ -1109,7 +1098,8 @@ fn a_message_sent_while_felix_works_reaches_him_at_his_next_step() {
               user: &str,
               _: u32,
               piece: &mut dyn FnMut(&str),
-              _: &mut dyn FnMut()| {
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             seen.lock().unwrap().push(format!("{system}\n{user}"));
             let mut at = step.lock().unwrap();
             *at += 1;
@@ -1223,7 +1213,8 @@ fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_pro
                               _: &str,
                               _: u32,
                               piece: &mut dyn FnMut(&str),
-                              _: &mut dyn FnMut()| {
+                              _: &mut dyn FnMut(),
+                              _: &dyn Fn() -> bool| {
                             let reply = if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
                                 for id in steering.open_ids() {
                                     steering.set_access(&id, access).unwrap();
@@ -1348,14 +1339,13 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
     crate::chats::save(
         &state.chats,
         id,
-        serde_json::from_value(serde_json::json!({ "mode": "study", "messages": [] })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "messages": [] })).unwrap(),
         chrono::Utc::now(),
     )
     .unwrap();
     let ask = |messages: &[chat::Turn]| {
         let body = chat::ChatBody {
             messages: messages.to_vec(),
-            mode: None,
             note: None,
             refs: vec![],
             chat: Some(id.into()),
@@ -1396,7 +1386,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
         &state.chats,
         id,
         serde_json::from_value(
-            serde_json::json!({ "mode": "study", "messages": [{ "role": "user", "text": "x" }] }),
+            serde_json::json!({ "messages": [{ "role": "user", "text": "x" }] }),
         )
         .unwrap(),
         chrono::Utc::now(),
@@ -1512,7 +1502,6 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
             role: "user".into(),
             text: "Quiz answer. Question: why f'(x)=0?\nMy answer: dunno\nMark it: start your reply with [[correct]] or [[incorrect]]".into(),
         }],
-        mode: Some("study".into()),
         note: None,
         refs: vec![],
         chat: None,
@@ -1601,7 +1590,12 @@ fn a_failed_answer_is_tried_once_more_before_the_user_sees_an_error() {
     let calls = Arc::new(Mutex::new(0));
     let count = Arc::clone(&calls);
     state.chat = Some(Arc::new(
-        move |_: &str, _: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+        move |_: &str,
+              _: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut(),
+              _: &dyn Fn() -> bool| {
             let mut n = count.lock().unwrap();
             *n += 1;
             if *n == 1 {
@@ -1631,7 +1625,6 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
             role: "user".into(),
             text: "Quiz answer. Question: what do you compare?\nMy answer: the middle\nA model answer to compare with: f(a), f(b) and critical points".into(),
         }],
-        mode: Some("study".into()),
         note: None,
         refs: vec![],
         chat: None,
@@ -1949,12 +1942,10 @@ fn felix_renames_pins_restores_and_deletes_folders_only_when_asked_and_finds_old
     crate::chats::save(
         &state.chats,
         "chat-midterm-0001",
-        serde_json::from_value(
-            serde_json::json!({"title": "Midterm prep", "mode": "study", "messages": [
-                {"role": "user", "text": "What is on the midterm?"},
-                {"role": "assistant", "text": "The midterm covers heaps and Dijkstra."}
-            ]}),
-        )
+        serde_json::from_value(serde_json::json!({"title": "Midterm prep", "messages": [
+            {"role": "user", "text": "What is on the midterm?"},
+            {"role": "assistant", "text": "The midterm covers heaps and Dijkstra."}
+        ]}))
         .unwrap(),
         chrono::Utc::now(),
     )
@@ -2085,7 +2076,6 @@ fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new
                     text: text.to_string(),
                 })
                 .collect(),
-            mode: None,
             note: None,
             refs: vec![],
             chat: Some(chat.into()),
@@ -2222,7 +2212,8 @@ fn felix_task_descriptions_use_the_same_cards_permissions_and_undo_in_both_proto
                               _: &str,
                               _: u32,
                               piece: &mut dyn FnMut(&str),
-                              _: &mut dyn FnMut()| {
+                              _: &mut dyn FnMut(),
+                              _: &dyn Fn() -> bool| {
                             let reply = replies
                                 .lock()
                                 .unwrap()
@@ -2340,7 +2331,7 @@ fn repeated_identical_failed_calls_get_one_final_answer_without_exhausting_the_b
         let (mut state, _dir, _) = state_with(&[]);
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let called = Arc::clone(&count);
-        state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+        state.chat = Some(Arc::new(move |system, _, _, piece, _, _| {
             called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let text = if system.contains(tools::NO_MORE_TOOLS) {
                 "I could not open that note. Choose an existing note and try again."
@@ -2368,7 +2359,7 @@ fn hidden_study_grading_is_counted_and_only_runs_when_the_verdict_is_missing() {
             let (mut state, _dir, _) = state_with(&[]);
             let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let called = Arc::clone(&count);
-            state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+            state.chat = Some(Arc::new(move |system, _, _, piece, _, _| {
                 called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let text = if system == crate::routes::felix::JUDGE {
                     judge
@@ -2418,7 +2409,7 @@ fn closing_a_reply_stops_follow_up_tools_grading_and_fallbacks() {
         let continued = Arc::new(Mutex::new(continued));
         let called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = Arc::clone(&called);
-        state.chat = Some(Arc::new(move |_, _, _, piece, _| {
+        state.chat = Some(Arc::new(move |_, _, _, piece, _, _| {
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             ready.send(()).unwrap();
             continued
@@ -2483,7 +2474,7 @@ fn native_repeated_failures_finish_without_more_tools_or_a_refusal_retry() {
     let (mut state, _dir, _) = state_with(&[]);
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = Arc::clone(&calls);
-    state.chat = Some(Arc::new(|_, _, _, _, _| {
+    state.chat = Some(Arc::new(|_, _, _, _, _, _| {
         anyhow::bail!("unexpected fallback")
     }));
     state.converse = Some(Arc::new(move |_, _| {
@@ -2503,7 +2494,7 @@ fn native_repeated_failures_finish_without_more_tools_or_a_refusal_retry() {
 #[test]
 fn foreground_answers_are_bounded_before_context_preparation() {
     let (mut state, _dir, _) = state_with(&[]);
-    state.chat = Some(Arc::new(|_, _, _, _, _| {
+    state.chat = Some(Arc::new(|_, _, _, _, _, _| {
         anyhow::bail!("busy answers must not reach the model")
     }));
     let mut held = Vec::new();
@@ -2548,7 +2539,7 @@ fn structured_study_verdicts_avoid_hidden_grading_on_both_protocols_and_do_not_m
                 let (mut state, _dir, _) = state_with(&[]);
                 let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let called = Arc::clone(&calls);
-                state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+                state.chat = Some(Arc::new(move |system, _, _, piece, _, _| {
                     assert_ne!(
                         system,
                         crate::routes::felix::JUDGE,
@@ -2567,7 +2558,7 @@ fn structured_study_verdicts_avoid_hidden_grading_on_both_protocols_and_do_not_m
                         Some(Box::new(Mark { verdict }) as Box<dyn chat::Conversation>)
                     }));
                 }
-                let body = serde_json::from_value(serde_json::json!({"mode":"study","practice":true,"mark":marking,"messages":[{"role":"user","text":"A queue takes the oldest item first."}]})).unwrap();
+                let body = serde_json::from_value(serde_json::json!({"practice":true,"mark":marking,"messages":[{"role":"user","text":"A queue takes the oldest item first."}]})).unwrap();
                 let bytes = run(async {
                     let response = chat_reply(State(state.clone()), Json(body)).await;
                     axum::body::to_bytes(response.into_body(), 1_000_000)
@@ -2686,7 +2677,7 @@ fn a_study_recap_can_carry_the_last_grade_without_a_hidden_request() {
                 Some(Box::new(Recap) as Box<dyn chat::Conversation>)
             }));
         }
-        let body = serde_json::from_value(serde_json::json!({"mode":"study","practice":true,"mark":true,"session":{"ideas":["FIFO"],"closed":[false],"asked":1},"messages":[{"role":"user","text":"The newest queue item leaves first. Please finish the session after marking this."}]})).unwrap();
+        let body = serde_json::from_value(serde_json::json!({"practice":true,"mark":true,"session":{"ideas":["FIFO"],"closed":[false],"asked":1},"messages":[{"role":"user","text":"The newest queue item leaves first. Please finish the session after marking this."}]})).unwrap();
         let bytes = run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
             axum::body::to_bytes(response.into_body(), 1_000_000)
@@ -2729,7 +2720,7 @@ fn conflicting_study_verdicts_are_checked_and_an_invalid_check_does_not_assign_a
         state.converse = Some(Arc::new(|_, _| {
             Some(Box::new(Conflict) as Box<dyn chat::Conversation>)
         }));
-        let body = serde_json::from_value(serde_json::json!({"chat":"conflicting-study-01","mode":"study","practice":true,"mark":true,"messages":[{"role":"user","text":"The oldest queue item leaves first."}]})).unwrap();
+        let body = serde_json::from_value(serde_json::json!({"chat":"conflicting-study-01","practice":true,"mark":true,"messages":[{"role":"user","text":"The oldest queue item leaves first."}]})).unwrap();
         let bytes = run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
             axum::body::to_bytes(response.into_body(), 1_000_000)
@@ -2846,7 +2837,7 @@ fn an_idle_chat_is_compacted_so_the_next_message_sends_a_summary_and_the_last_tu
     crate::chats::save(
         &state.chats,
         id,
-        serde_json::from_value(serde_json::json!({ "mode": "study", "messages": [] })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "messages": [] })).unwrap(),
         chrono::Utc::now(),
     )
     .unwrap();
@@ -2877,7 +2868,6 @@ fn an_idle_chat_is_compacted_so_the_next_message_sends_a_summary_and_the_last_tu
     });
     let body = chat::ChatBody {
         messages: messages.clone(),
-        mode: Some("study".into()),
         note: None,
         refs: vec![],
         chat: Some(id.into()),
@@ -3193,7 +3183,7 @@ fn a_retired_interview_request_uses_chat_and_refuses_removed_tools_cleanly() {
         .all(|l| l.get("proposal").is_none() && l.get("error").is_none()));
     assert!(lines.iter().any(|l| l["done"] == true));
     let prompts = prompts.lock().unwrap();
-    assert!(prompts[0].contains("Mode: chat."));
+    assert!(prompts[0].contains("there are no modes to choose"));
     assert!(!prompts[0].contains("### interview_challenge"));
     assert!(!prompts[0].contains("<interview_material>"));
     assert!(prompts[1].contains("there is no tool called"));

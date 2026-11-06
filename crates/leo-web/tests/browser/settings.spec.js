@@ -51,7 +51,7 @@ test('coding accounts show readable usage and sign-in states in both themes and 
         const limits = { five_hour: { used: .25, resets_at: Date.now() / 1000 + 3600 }, seven_day: { used: .93, resets_at: Date.now() / 1000 + 86400 }, seen_at: new Date().toISOString() };
         document.querySelector('#plans').innerHTML = codingPlans({ tasks: [{ task: 'writing', provider: 'codex' }], plans: [{ provider: 'codex', name: 'Codex', installed: true, signed_in: true, limits }, { provider: 'claude_code', name: 'Claude Code', installed: true, signed_in: false, signin: 'claude auth login', limits: null }] });
       }, theme);
-      await expect(page.getByRole('meter')).toHaveCount(2);
+      await expect(page.getByRole('meter')).toHaveCount(4);
       await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '75');
       await expect(page.getByRole('meter', { name: 'Codex 7 day remaining' })).toHaveAttribute('aria-valuenow', '7');
       await expect(page.getByText('Signed in', { exact: true })).toBeVisible();
@@ -65,6 +65,129 @@ test('coding accounts show readable usage and sign-in states in both themes and 
   }
 });
 
+test('Usage keeps cached readings through refresh failure and ignores a closed sheet', async ({ page }, testInfo) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const read = name => fs.readFileSync(path.join(web, name), 'utf8');
+  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const settings = read('app/settings.js');
+  const plans = settings.slice(settings.indexOf('const PLAN_STALE_MS'), settings.indexOf('const THEME_LABELS'));
+  const usage = settings.slice(settings.indexOf('async function showUsage('));
+  const sheets = read('app/sheets.js');
+  const focus = sheets.slice(sheets.indexOf('function trapSheetFocus('), sheets.indexOf('const SWIPE_CLOSE'));
+  await page.setContent(`<style>${css}</style><body></body>`);
+  await page.addScriptTag({ content: `
+    const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const rel=()=> '10 minutes ago'; let seq=1, finishUsage, failUsage, usageCalls=0, writer='claude_code';
+    const cached={tasks:[{task:'writing',provider:'claude_code'}],plans:[{provider:'codex',name:'Codex',installed:true,signed_in:true,limits:{five_hour:{used:.39,resets_at:Date.now()/1000+3600},seven_day:{used:.06,resets_at:Date.now()/1000+86400},seen_at:new Date(Date.now()-600000).toISOString()}},{provider:'claude_code',name:'Claude Code',installed:true,signed_in:true,limits:{five_hour:{used:1,resets_at:Date.now()/1000+3600},seven_day:{used:.95,resets_at:Date.now()/1000+86400},seen_at:new Date().toISOString()}}]};
+    function sheet(html){const box=document.createElement('div');box.className='scrim';box.innerHTML='<div class="sheet" role="dialog" aria-modal="true">'+html+'</div>';box.addEventListener('click',e=>{if(e.target.closest('[data-action="close"]')) box.classList.add('scrim-gone');});document.body.append(box);return box;}
+    async function api(url){if(url==='/api/settings')return structuredClone(cached);usageCalls++;return new Promise((resolve,reject)=>{finishUsage=resolve;failUsage=reject;});}
+    ${focus}
+    ${plans}
+    ${usage}
+    window.audit={open:showUsage,usageCalls:()=>usageCalls,finish:value=>finishUsage(value),fail:()=>failUsage(new Error('offline')),writer:()=>writer};` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => audit.open());
+  await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
+  await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '61');
+  await expect(page.getByRole('meter', { name: 'Codex 7 day remaining' })).toHaveAttribute('aria-valuenow', '94');
+  await expect(page.getByRole('meter', { name: 'Claude Code 5 hour remaining' })).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.getByRole('meter', { name: 'Claude Code 7 day remaining' })).toHaveAttribute('aria-valuenow', '5');
+  await expect(page.getByRole('button', { name: /Use|Selected for writing/ })).toHaveCount(0);
+  await expect(page.getByText('Saved · Updated 10 minutes ago')).toBeVisible();
+  const sheet = page.locator('.usage-sheet');
+  expect(await sheet.evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(900);
+  expect(await sheet.evaluate(el => el.getBoundingClientRect().width)).toBeLessThanOrEqual(960);
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await page.screenshot({path:testInfo.outputPath('usage-desktop-dark.png'),animations:'disabled'});
+  await expect.poll(() => page.evaluate(() => audit.usageCalls())).toBe(1);
+  await expect(page.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Refresh' }).dispatchEvent('click');
+  expect(await page.evaluate(() => audit.usageCalls())).toBe(1);
+  await page.evaluate(() => audit.fail());
+  await expect(page.getByText('Refresh failed · showing saved usage')).toBeVisible();
+  await expect(page.getByText('Saved · Updated 10 minutes ago')).toBeVisible();
+  await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '61');
+  expect(await page.evaluate(() => audit.writer())).toBe('claude_code');
+  await page.setViewportSize({ width: 390, height: 780 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await sheet.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await page.screenshot({path:testInfo.outputPath('usage-compact-light.png'),animations:'disabled'});
+  const refresh = page.getByRole('button', { name: 'Refresh' });
+  await refresh.focus();
+  await refresh.click();
+  await expect(refresh).toBeDisabled();
+  await page.evaluate(() => audit.finish({tasks:[{task:'writing',provider:'codex'}],plans:[{provider:'codex',name:'Codex',installed:true,signed_in:true,limits:{five_hour:{used:.2,resets_at:Date.now()/1000+3600},seen_at:new Date().toISOString()}}]}));
+  await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '80');
+  await expect(refresh).toBeEnabled();
+  await expect(refresh).toBeFocused();
+  await expect(page.getByText('Refresh failed · showing saved usage')).toHaveCount(0);
+  expect(await page.evaluate(() => audit.writer())).toBe('claude_code');
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.evaluate(() => audit.open());
+  await expect(page.locator('.scrim:not(.scrim-gone)').getByRole('heading', { name: 'Usage' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => audit.usageCalls())).toBe(3);
+  const closing = page.locator('.scrim:not(.scrim-gone)');
+  const closed = await closing.elementHandle();
+  await closing.getByRole('button', { name: 'Close' }).click();
+  await page.evaluate(() => audit.finish({ tasks:[], plans:[{provider:'codex',name:'Late',installed:true,signed_in:true}] }));
+  expect(await closed.evaluate(el => el.classList.contains('scrim-gone') && !el.textContent.includes('Late'))).toBe(true);
+  expect(await page.evaluate(() => audit.writer())).toBe('claude_code');
+});
+
+test('note mention picker scrolls within its list and keeps the composer caret', async ({ page }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const read = name => fs.readFileSync(path.join(web, name), 'utf8');
+  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const chat = read('chat.js');
+  const start = chat.indexOf('  function containChatPickWheel(');
+  const end = chat.indexOf('  function felix(', start);
+  const reveal = chat.slice(start, end);
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.setContent(`<style>${css}</style><main style="height:1800px;padding:250px 20px"><section id="picker" class="chat-pick"><input id="composer" value="@note text"><div id="list" class="chat-pick-list" role="listbox"></div></section></main>`);
+  await page.addScriptTag({ content: `${reveal} window.revealChatPick = revealChatPick; window.containChatPickWheel = containChatPickWheel;` });
+  await page.evaluate(() => {
+    document.querySelector('#list').innerHTML = Array.from({ length: 20 }, (_, i) => `<button class="chat-pick-row${i === 0 ? ' on' : ''}" role="option" aria-selected="${i === 0}"><b>Note ${i}</b><span>Folder</span></button>`).join('');
+    document.querySelector('#list').addEventListener('wheel', e => containChatPickWheel(document.querySelector('#list'), e), {passive:false});
+    scrollTo(0, 150);
+  });
+  const list = page.locator('#list');
+  expect(await list.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+  const pageTop = await page.evaluate(() => scrollY);
+  const listBox = await list.boundingBox();
+  await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + 8);
+  await page.mouse.wheel(0, -160);
+  expect(await list.evaluate(el => el.scrollTop)).toBe(0);
+  expect(await page.evaluate(() => scrollY)).toBe(pageTop);
+  await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + 8);
+  await page.mouse.wheel(0, 160);
+  await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  await list.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  const bottom = await list.evaluate(el => el.scrollTop);
+  await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + listBox.height - 8);
+  await page.mouse.wheel(0, 180);
+  expect(await list.evaluate(el => el.scrollTop)).toBe(bottom);
+  expect(await page.evaluate(() => scrollY)).toBe(pageTop);
+  const input = page.locator('#composer');
+  expect(await list.evaluate(el => el.dispatchEvent(new WheelEvent('wheel', {deltaY:150,ctrlKey:true,cancelable:true})))).toBe(true);
+  await input.evaluate(el => { el.focus(); el.setSelectionRange(2, 7); });
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.chat-pick-row')];
+    rows.forEach((row, i) => { row.classList.toggle('on', i === rows.length - 1); row.setAttribute('aria-selected', String(i === rows.length - 1)); });
+    revealChatPick(document.querySelector('#list'));
+  });
+  await expect(input).toBeFocused();
+  expect(await input.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([2, 7]);
+  expect(await page.evaluate(() => { const list=document.querySelector('#list'), row=list.lastElementChild; return row.getBoundingClientRect().bottom <= list.getBoundingClientRect().bottom + 1 && scrollY === 150; })).toBe(true);
+  await page.evaluate(() => { const rows=[...document.querySelectorAll('.chat-pick-row')]; rows.forEach((row,i)=>row.classList.toggle('on',i===0)); revealChatPick(document.querySelector('#list')); });
+  expect(await list.evaluate(el => el.scrollTop)).toBe(0);
+  await list.evaluate(el => { el.innerHTML = '<button class="chat-pick-row on"><b>One</b></button><button class="chat-pick-row"><b>Two</b></button>'; });
+  await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + 8);
+  await page.mouse.wheel(0, 150);
+  expect(await page.evaluate(() => scrollY)).toBe(150);
+  expect(await list.evaluate(el => el.scrollTop)).toBe(0);
+});
+
 test('Settings sections keep drafts and selections across redraws in both themes', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
@@ -72,39 +195,41 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
+    const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)}, saving={drafts:()=>[]};
     window.errors=[]; window.leoChat={usageRows:()=>[]};
-    const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'},{id:'when_idle',label:'When idle'},{id:'off',label:'Off'}]}};
+    const page={tasks:[]};
     let appStatusReads=0;
     async function api(url,options={}) {
-      if(url==='/api/settings'&&options.method==='POST') {if(options.body.set==='auto_push') page.backup.auto_push=options.body.value; return {settings:structuredClone(page),message:'Saved'};}
+      if(url==='/api/settings'&&options.method==='POST') return {settings:structuredClone(page),message:'Saved'};
       if(url==='/api/settings') return structuredClone(page);
       if(url==='/api/calendar') return {calendars:[],events:[]};
       if(url==='/api/speech') return {ready:false,models:[],extra_files:[],disk_bytes:0};
       if(url==='/api/dictation') return {settings:{custom_words:[],shortcut:'Option+Space'},recent:[]};
       if(url==='/api/health') return {sections:[{title:'This app',checks:[{name:'Speech model',state:'missing',fix:'Choose a model.',section:'models'}]}]};
       if(url==='/api/app') { appStatusReads++; return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}}; }
-      if(url==='/api/storage') return {total:0,total_label:'0 B',areas:[]};
-      if(url==='/api/keep') return {trash_choices:[],chat_choices:[],trash_days:30};
+      if(url==='/api/keep') return {choices:[{days:7,label:'7 days'},{days:30,label:'30 days'},{days:90,label:'90 days'},{days:365,label:'a year'},{days:null,label:'forever'}],trash_days:30,chat_days:null,upload_days:90,transcript_days:null,audio_days:null};
       if(url==='/api/trash') return [];
       throw new Error(url);
     }
+    const cascade=()=>{}, pulse=()=>{}, overlapOut=()=>{};
+    ${read('app/core.js').slice(read('app/core.js').indexOf('const MOTION_MS'), read('app/core.js').indexOf('function stillMotion'))}
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
-    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else resetSetting(el);});
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="width-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else if(act==='width-pick') pickWidth(el); else resetSetting(el);});
     ${read('theme.js')}
     ${read('app/refresh.js')}
     ${read('app/trash.js')}
     const stillMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
     ${read('app/settings-navigation.js')}
     ${read('app/select-menu.js')}
+    ${read('app/sheets.js').slice(read('app/sheets.js').indexOf('function trapSheetFocus('), read('app/sheets.js').indexOf('const SWIPE_CLOSE'))}
     ${read('app/settings.js')}
-    ${read('app/storage.js')}
+    ${read('app/keeping.js')}
     ${read('app/dictation.js')}
     ${read('app/app-settings.js')}
     ${read('app/onboarding.js')}
     const route=()=>showSettings(location.hash.split('/')[2] || 'general').catch(fail);
     window.addEventListener('hashchange',route); route();
-    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,storage:()=>drawStorage(state.storage),reads:()=>appStatusReads};`;
+    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,reads:()=>appStatusReads};`;
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
@@ -114,8 +239,9 @@ test('Settings sections keep drafts and selections across redraws in both themes
   try {
     for(const theme of ['light','dark']) {
       const page=await browser.newPage({colorScheme:theme,viewport:{width:900,height:850}});
-      await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/backup');
-      await expect(page.locator('#backup-repository')).toBeVisible();
+      await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/general');
+      await expect(page.getByRole('heading',{level:1,name:'General'})).toBeVisible();
+      await expect(page).toHaveURL(/#\/settings\/general$/);
       await page.clock.install();
       await page.evaluate(()=>{window.__LEO_VISIBLE__=false;window.dispatchEvent(new Event('leo-visibility'));});
       const hiddenReads=await page.evaluate(()=>audit.reads());
@@ -124,72 +250,38 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.evaluate(()=>{window.__LEO_VISIBLE__=true;window.dispatchEvent(new Event('leo-visibility'));window.dispatchEvent(new Event('leo-visibility'));});
       expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads+1);
       await page.clock.resume();
-      await expect(page.locator('.settings-nav a')).toHaveCount(11);
+      await expect(page.locator('.settings-nav a')).toHaveCount(10);
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
-      await expect(page.locator('.settings-nav a svg')).toHaveCount(11);
-      await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();
+      await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
+      await expect(page.getByRole('heading',{level:1,name:'General'})).toBeVisible();
       const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
       const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
       const gap=await page.locator('.settings-layout').evaluate(el=>parseFloat(getComputedStyle(el).paddingTop));
       const [left]=await pinned();
       expect(left).toBeGreaterThanOrEqual(gap);
-      for(const width of [900,1600]) {
+      for(const width of [390,900,1000,1280,1440]) {
         await page.setViewportSize({width,height:850});
-        const [start,end]=await page.evaluate(()=>{const main=document.querySelector('main').getBoundingClientRect();return [document.querySelector('.settings-nav').getBoundingClientRect().left-main.left,main.right-document.querySelector('.settings-section').getBoundingClientRect().right];});
-        if(width<1000) expect(Math.abs(start-end)).toBeLessThan(2);
-        else expect(start,'beside the explorer the section list sits close to it').toBeLessThanOrEqual(80);
+        for(const mini of [false,true]) for(const chat of [false,true]) {
+          await page.evaluate(({mini,chat})=>{document.body.classList.toggle('side-mini',mini);document.body.classList.toggle('chat-open',chat);document.body.style.setProperty('--explorer-w','332px');},{mini,chat});
+          const [start,end]=await page.evaluate(()=>{const main=document.querySelector('main').getBoundingClientRect();return [document.querySelector('.settings-nav').getBoundingClientRect().left-main.left,main.right-document.querySelector('.settings-section').getBoundingClientRect().right];});
+          expect(Math.abs(start-end),`nav and section centered together at ${width}px, mini:${mini}, chat:${chat}`).toBeLessThan(2);
+        }
       }
+      await page.evaluate(()=>{document.body.classList.remove('side-mini','chat-open');document.body.style.removeProperty('--explorer-w');});
       await page.setViewportSize({width:900,height:850});
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});
       expect(await pinned()).toEqual([left,Math.round(bar+gap)]);
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
-      await page.locator('#backup-repository').fill('Personal notes 文字');
-      await page.locator('#backup-repository').evaluate(el=>{el.focus();el.setSelectionRange(4,8);});
-      const keptField = await page.locator('#backup-repository').elementHandle();
+      const search = page.locator('#settings-search');
+      await search.fill('popup');
+      await search.evaluate(el=>{el.focus();el.setSelectionRange(2,4);});
+      const keptField = await search.elementHandle();
       const keptNav = await page.locator('.settings-nav').elementHandle();
       await page.evaluate(()=>window.audit.redraw());
       expect(await keptField.evaluate(el=>el.isConnected)).toBe(true);
       expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
-      await expect(page.locator('#backup-repository')).toBeFocused();
-      expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
-      const push=page.getByRole('button',{name:'Push changes'});
-      await expect(push).toHaveText('On quit');
-      const keptPush = await push.elementHandle();
-      await push.focus();
-      await page.evaluate(()=>audit.redraw());
-      expect(await keptPush.evaluate(el=>el.isConnected)).toBe(true);
-      await expect(push).toBeFocused();
-      expect(await page.locator('select[data-set="auto_push"]').evaluate(el=>getComputedStyle(el).opacity)).toBe('0');
-      await push.click();
-      const menu=page.getByRole('listbox',{name:'Push changes'});
-      await expect(menu).toBeVisible();
-      const keptMenu = await menu.elementHandle();
-      await page.evaluate(()=>audit.redraw());
-      expect(await keptMenu.evaluate(el=>el.isConnected)).toBe(true);
-      await expect(menu).toBeVisible();
-      await expect(menu).toBeFocused();
-      await expect(menu.getByRole('option',{name:'On quit'})).toHaveAttribute('aria-selected','true');
-      await page.keyboard.press('ArrowDown');
-      await page.keyboard.press('Enter');
-      await expect(menu).toBeHidden();
-      await expect(push).toBeFocused();
-      await expect(push).toHaveText('When idle');
-      await expect(page.locator('select[data-set="auto_push"]')).toHaveValue('when_idle');
-      await push.click();
-      await page.keyboard.press('Escape');
-      await expect(menu).toBeHidden();
-      await expect(push).toBeFocused();
-      await push.click();
-      await menu.getByRole('option',{name:'Off'}).click();
-      await expect(push).toHaveText('Off');
-      await page.locator('select[data-set="auto_push"]').selectOption('quit');
-      await expect(push).toHaveText('On quit');
-      await push.click();
-      await expect(menu).toBeVisible();
-      await push.click();
-      await page.waitForTimeout(300);
-      await expect(menu).toBeHidden();
-      await expect(push).toHaveAttribute('aria-expanded','false');
+      await expect(search).toBeFocused();
+      expect(await search.evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['popup',2,4]);
       const pillOn=async()=>page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top)+Math.abs(pill.height-on.height);});
       expect(await pillOn()).toBeLessThan(2);
       await page.locator('#settings-search').fill('zzzz');
@@ -250,6 +342,11 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await themeReset.click();
       await expect(themeReset).toBeHidden();
       await expect(page.getByRole('button',{name:'Match device',exact:true})).toHaveAttribute('aria-pressed','true');
+      for(const [find,count] of [['theme',3],['felix-look',2],['note-width',3]]) await expect(page.locator(`[data-find="${find}"] .choice-cards button.choice-pick:has(.choice-diagram svg)`),`${find} is a row of picture cards`).toHaveCount(count);
+      await page.getByRole('button',{name:'Full width',exact:true}).click();
+      await expect(page.locator('html')).toHaveAttribute('data-note-width','full');
+      await page.getByRole('button',{name:'Reset Note width to default'}).click();
+      await expect(page.getByRole('button',{name:'Wide',exact:true})).toHaveAttribute('aria-pressed','true');
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
       await page.waitForTimeout(400);
       expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);
@@ -258,18 +355,17 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();
       await page.getByRole('link',{name:'Updates & about',exact:true}).click();
       await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
+      await expect(page.locator('[data-find="updates-check"] h3 .set-version')).toHaveText('1.2.3');
+      await expect(page.locator('[data-find="updates-about"] .set-path')).toHaveCount(2);
       const updateCard = await page.locator('#app-updates .set-card').first().elementHandle();
       await page.evaluate(()=>window.audit.status());
       expect(await updateCard.evaluate(el=>el.isConnected)).toBe(true);
-      await page.getByRole('link',{name:'Storage',exact:true}).click();
-      await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
-      await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
-      await expect(page.locator('#crumbs [aria-current="page"]')).toHaveText('Storage');
-      const storageBar = await page.locator('.store-bar').elementHandle();
-      await storageBar.evaluate(el=>{window.storageListeners=0;const add=el.addEventListener;el.addEventListener=function(...args){window.storageListeners++;return add.apply(this,args);};});
-      await page.evaluate(()=>{audit.storage();audit.storage();});
-      expect(await storageBar.evaluate(el=>el.isConnected)).toBe(true);
-      expect(await page.evaluate(()=>window.storageListeners)).toBe(0);
+      await page.getByRole('link',{name:'Keeping',exact:true}).click();
+      await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/keeping');
+      await expect(page.getByRole('heading',{level:1,name:'Keeping'})).toBeVisible();
+      await expect(page.locator('#crumbs [aria-current="page"]')).toHaveText('Keeping');
+      await expect(page.locator('select[data-keep]')).toHaveCount(5);
+      await expect(page.locator('select[data-keep="upload_days"]')).toHaveValue('90');
       await page.getByRole('link',{name:'Trash',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
       await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
@@ -319,6 +415,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
     }
     ${sheets}
     ${read('app/refresh.js')}
+    ${read('app/settings-navigation.js')}
     ${read('app/app-settings.js')}
     ${read('app/onboarding.js')}
     document.addEventListener('click',event=>{
@@ -458,29 +555,20 @@ test('setup groups permissions with live checkmarks, then offers speech models a
   } finally {await context.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
 
-test('page toolbars share geometry and storage categories stay compact', async ({ page }) => {
+test('page toolbars share geometry', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
-  await page.setContent('<header class="bar"><div class="bar-row"><button class="icon-btn">‹</button><nav class="crumbs">Settings / Storage</nav><button class="icon-btn">…</button></div></header><main class="settings-section"><div class="settings" id="areas"></div></main>');
+  await page.setContent('<header class="bar"><div class="bar-row"><button class="icon-btn">‹</button><nav class="crumbs">Settings / Keeping</nav><button class="icon-btn">…</button></div></header><main class="settings-section"></main>');
   await page.addStyleTag({ content: css });
-  await page.addScriptTag({ content: `let state={}; const app=document.querySelector('main'), esc=String, enc=encodeURIComponent, ICON={chevron:'<svg></svg>'}; ${fs.readFileSync(path.join(web, 'app/storage.js'), 'utf8')} document.querySelector('#areas').innerHTML=storageAreas([{id:'notes',title:'Notes',size:'378 KB',about:'Notes on disk',path:'/notes',items:[],actions:[]},{id:'trash',title:'Trash',size:'2.2 KB',about:'Deleted notes',path:'/trash',items:[{id:'one',name:'One',size:'2.2 KB'}],actions:[]}],new Set());` });
-  await expect(page.locator('.store-area > summary')).toHaveCount(2);
   for (const width of [2000, 1200, 390]) {
     await page.setViewportSize({ width, height: 850 });
     let baseline;
-    for (const classes of ['', 'on-settings', 'on-library', 'on-note']) {
+    for (const classes of ['', 'on-settings', 'on-note']) {
       await page.locator('body').evaluate((body, value) => { body.className = value; }, classes);
       const box = await page.locator('.bar-row').boundingBox();
       if (!baseline) baseline = box;
       expect(box).toEqual(baseline);
       expect(box.width).toBeLessThanOrEqual(760);
-    }
-    for (const summary of await page.locator('.store-area > summary').all()) {
-      const box = await summary.boundingBox();
-      const card = await summary.locator('..').boundingBox();
-      expect(card.height - box.height).toBeLessThanOrEqual(2);
-      expect(box.height).toBeGreaterThanOrEqual(44);
-      expect(box.height).toBeLessThanOrEqual(72);
     }
   }
 });

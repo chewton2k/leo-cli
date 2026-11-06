@@ -366,10 +366,14 @@ fn settle(
                 .and_then(|v| *v)
                 .is_some_and(|at| at.elapsed() >= policy.finish_limit);
             if finishing
-                && !waiting_for_model(&error)
-                && (expired || (attempt >= policy.attempts_after_stop && !rate_limited(&error)))
+                && (expired
+                    || (attempt >= policy.attempts_after_stop
+                        && !rate_limited(&error)
+                        && !waiting_for_model(&error)))
             {
-                if write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err() {
+                if waiting_for_model(&error)
+                    || write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err()
+                {
                     if let Ok(mut terminal) = work.terminal.lock() {
                         terminal.insert(index);
                     }
@@ -385,7 +389,7 @@ fn settle(
                 } else {
                     policy.wait(attempt)
                 };
-                if finishing && !waiting_for_model(&error) {
+                if finishing {
                     if let Some(at) = work.stopped_at.lock().ok().and_then(|v| *v) {
                         wait = wait.min(policy.finish_limit.saturating_sub(at.elapsed()));
                     }
@@ -472,6 +476,36 @@ mod tests {
         assert!(rx.try_iter().any(|e| matches!(e, Update::Failed { .. })));
         assert!(dir.path().join(wav::done_name(0)).exists());
         assert!(dir.path().join("seg-00000.err").exists());
+    }
+
+    #[test]
+    fn a_missing_model_ends_after_the_finish_window_and_leaves_the_segment_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        loud(dir.path(), 0);
+        let (tx, rx) = mpsc::channel();
+        let worker = Transcriber::start(
+            dir.path(),
+            Arc::new(|_| Err("Download a model in Settings → Speech models.".into())),
+            Policy {
+                finish_limit: Duration::from_millis(40),
+                ..quick()
+            },
+            false,
+            tx,
+        );
+        let (ended, end) = mpsc::channel();
+        std::thread::spawn(move || {
+            worker.wait();
+            let _ = ended.send(());
+        });
+        assert!(
+            end.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "the wait for a model never ended"
+        );
+        assert!(rx.try_iter().any(|e| matches!(e, Update::Failed { .. })));
+        assert!(dir.path().join(wav::done_name(0)).exists());
+        assert!(!dir.path().join("seg-00000.err").exists());
+        assert_eq!(waiting(dir.path()), [0]);
     }
 
     fn quick() -> Policy {

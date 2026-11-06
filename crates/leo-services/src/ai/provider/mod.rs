@@ -97,6 +97,19 @@ pub trait ChatProvider {
         }
         self.complete(req)
     }
+    fn complete_streaming_until(
+        &self,
+        req: &ChatRequest,
+        sink: Sink<'_>,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
+        if stopped() {
+            return Err(crate::ai::error::ProviderError::Fatal(
+                "The answer was stopped.".into(),
+            ));
+        }
+        self.complete_streaming(req, sink)
+    }
     /// A cheap, local precondition check: key present, binary on PATH, port
     /// open. Performs no inference and makes no billable call.
     fn available(&self) -> bool;
@@ -132,9 +145,6 @@ pub trait ChatProvider {
 
 pub trait TranscribeProvider {
     fn transcribe(&self, audio_path: &Path) -> ProviderResult<String>;
-    /// Largest file this provider accepts in one request. `None` means no
-    /// limit, which skips chunking entirely — the local-binary case.
-    fn max_bytes(&self) -> Option<u64>;
     fn available(&self) -> bool;
     fn name(&self) -> &str;
     fn unavailable_reason(&self) -> String {
@@ -143,16 +153,13 @@ pub trait TranscribeProvider {
 }
 
 pub mod agent_cli;
-pub mod anthropic;
 pub mod audio;
 pub mod codex_app;
-pub(crate) mod codex_exec;
 pub mod local_speech;
 pub mod mcp;
 pub mod openai;
 pub(crate) mod process;
 pub mod scoped_cli;
-pub mod whisper_cpp;
 
 use crate::config::provider::ProviderKind;
 use crate::config::secret::{resolve, SecretStore};
@@ -186,13 +193,6 @@ pub fn build_one_chat(
                 Some(_) => resolve(pc.account(name), store),
                 None => None,
             };
-            if pc.base_url.as_deref().is_some_and(anthropic::is_anthropic) {
-                return Some(Box::new(anthropic::Anthropic::new(
-                    name.to_string(),
-                    pc,
-                    key,
-                )));
-            }
             Some(Box::new(openai::OpenAiChat::new(name.to_string(), pc, key)))
         }
         Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => {
@@ -207,14 +207,8 @@ pub fn build_one_chat(
     }
 }
 
-/// Build the transcription chain in config order, same dropping policy.
-///
-/// `resolve` (a keychain read) is called only inside the arms that actually
-/// need a credential (`Hf`, `Groq`) — never for `WhisperCpp` or an
-/// unrecognized kind. Calling it unconditionally before this match would
-/// perform a discarded keychain read for every local/unknown entry, which
-/// with a broken backend prints one warning per entry per invocation for no
-/// reason (the default transcribe chain alone would print up to three).
+/// Build the transcription chain in config order, same dropping policy. Only
+/// local speech remains, so no credential is read.
 pub fn build_transcribe_chain(
     cfg: &Config,
     _store: &dyn SecretStore,
@@ -225,9 +219,6 @@ pub fn build_transcribe_chain(
             continue;
         };
         match pc.kind {
-            Some(ProviderKind::WhisperCpp) => out.push(Box::new(
-                whisper_cpp::WhisperCppTranscribe::new(name.clone(), pc),
-            )),
             Some(ProviderKind::Parakeet) => {
                 out.push(Box::new(local_speech::LocalSpeech::new(name.clone(), pc)))
             }
@@ -328,15 +319,14 @@ model = "m"
     }
 
     #[test]
-    fn a_transcribe_kind_in_the_chat_chain_is_dropped() {
+    fn a_speech_kind_in_the_chat_chain_is_dropped() {
         let cfg = Config::parse(
             r#"
 [chat]
-chain = ["groq_whisper"]
+chain = ["local"]
 
-[providers.groq_whisper]
-kind = "groq"
-model = "whisper-large-v3-turbo"
+[providers.local]
+kind = "parakeet"
 "#,
         )
         .unwrap();
@@ -388,49 +378,6 @@ key_env = "LEO_TEST_ABSENT_KEY"
         let stocked = MemoryStore::default();
         stocked.set("openrouter", "a-key").unwrap();
         assert!(build_chat_chain(&cfg, &stocked)[0].available());
-    }
-
-    #[test]
-    fn local_transcriber_reports_no_size_limit() {
-        let cfg = Config::parse(
-            r#"
-[transcribe]
-chain = ["whisper_cpp"]
-
-[providers.whisper_cpp]
-kind = "whisper_cpp"
-bin = "whisper-cli"
-model_path = "/nonexistent/model.bin"
-"#,
-        )
-        .unwrap();
-        let store = MemoryStore::default();
-        let chain = build_transcribe_chain(&cfg, &store);
-        assert_eq!(chain[0].max_bytes(), None);
-    }
-
-    #[test]
-    fn whisper_cpp_only_chain_never_touches_the_secret_store() {
-        let cfg = Config::parse(
-            r#"
-[transcribe]
-chain = ["whisper_cpp"]
-
-[providers.whisper_cpp]
-kind = "whisper_cpp"
-bin = "whisper-cli"
-model_path = "/nonexistent/model.bin"
-"#,
-        )
-        .unwrap();
-        let store = CountingStore::default();
-        let chain = build_transcribe_chain(&cfg, &store);
-        assert_eq!(chain.len(), 1);
-        assert_eq!(
-            store.gets.get(),
-            0,
-            "a provider needing no credential must never read the secret store"
-        );
     }
 
     /// The chat side of the same rule. A keyless local server in the chat

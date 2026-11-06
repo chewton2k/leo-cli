@@ -9,10 +9,9 @@ const SETTINGS_SECTIONS = [
   ] },
   { group: 'Your notes', items: [
     ['calendar', 'Calendar', 'calendar', 'Name recordings after the class or meeting you are in.'],
-    ['backup', 'Backup', 'backup', 'Keep a private copy of your notes on GitHub.'],
   ] },
   { group: 'Data', items: [
-    ['storage', 'Storage', 'storage', 'What Leo keeps on this computer, and how long.'],
+    ['keeping', 'Keeping', 'storage', 'How long leo keeps each kind of data on this computer.'],
     ['trash', 'Trash', 'trash', 'Deleted notes wait here, so a mistake can be undone.'],
   ] },
   { group: 'This app', items: [
@@ -49,15 +48,17 @@ const SETTINGS_INDEX = [
   { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
   { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
   { section: 'felix', id: 'felix-pace', label: 'Reading pace', keywords: 'felix margin regular slow pause wait' },
-  { section: 'felix', id: 'felix-cap', label: 'Reads a day', keywords: 'felix margin daily cap limit usage today' },
+  { section: 'felix', id: 'felix-gap', label: 'Time between reads', keywords: 'felix margin often seconds minutes wait cooldown' },
+  { section: 'felix', id: 'felix-cap', label: 'Reads a day', keywords: 'felix margin often daily limit cap budget' },
   { section: 'calendar', id: 'calendar-connect', label: 'Connect a calendar', keywords: 'google ical ics outlook apple link secret address meetings classes' },
   { section: 'calendar', id: 'calendar-next', label: 'Next up', keywords: 'upcoming event check now refresh' },
-  { section: 'backup', id: 'backup-github', label: 'GitHub backup', keywords: 'repository repo copy private notes sync gh' },
-  { section: 'backup', id: 'backup-push', label: 'Push changes', keywords: 'automatic idle quit off when upload backup' },
-  { section: 'storage', id: 'storage-keep', label: 'How long Leo keeps things', keywords: 'trash chats days delete retention' },
-  { section: 'storage', id: 'storage-areas', label: 'Storage used', keywords: 'disk space size clear cache folders models' },
-  { section: 'storage', id: 'storage-export', label: 'Export everything', keywords: 'zip download backup notes uploads chats' },
-  { section: 'storage', id: 'storage-restore', label: 'Restore tasks', keywords: 'import tasks json' },
+  { section: 'keeping', id: 'keeping-trash', label: 'Keep the trash', keywords: 'deleted notes days retention delete' },
+  { section: 'keeping', id: 'keeping-chat', label: 'Keep chats with Felix', keywords: 'conversations days retention delete' },
+  { section: 'keeping', id: 'keeping-upload', label: 'Keep uploaded files', keywords: 'originals documents pdf days retention delete' },
+  { section: 'keeping', id: 'keeping-transcript', label: 'Keep recording transcripts', keywords: 'recordings sources what was said days retention delete' },
+  { section: 'keeping', id: 'keeping-audio', label: 'Keep unfinished recording audio', keywords: 'interrupted recordings recover days retention delete' },
+  { section: 'keeping', id: 'keeping-export', label: 'Export notes', keywords: 'zip download backup uploads chats trash storage disk' },
+  { section: 'keeping', id: 'keeping-restore', label: 'Restore tasks', keywords: 'import tasks json bring back old computer' },
   { section: 'trash', id: 'trash-notes', label: 'Trash', keywords: 'deleted notes restore empty bin recover' },
   { section: 'health', id: 'health-checks', label: 'Health checks', keywords: 'doctor microphone permissions accessibility ready problems fix' },
   { section: 'updates', id: 'updates-check', label: 'Check for updates', keywords: 'new version download install restart' },
@@ -70,7 +71,6 @@ const SETTINGS_ICON_PATHS = {
   keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>',
   wave: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>',
   pen: '<path d="M4 20h4L18.5 9.5a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13 7l4 4"/>',
-  backup: '<path d="M7 18.5a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5 3.8 3.8 0 0 1-.3 7.5"/><path d="M12 12.5v7M9 15.5l3-3 3 3"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   update: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5l3.5 3.5 3.5-3.5"/>',
 };
@@ -116,7 +116,9 @@ function paintSettingsSearch() {
   const results = settingsResults();
   const input = nav.querySelector('#settings-search');
   const box = nav.querySelector('.settings-results');
+  const opening = box && results.open && !box.firstElementChild;
   if (box && box.innerHTML !== results.html) box.innerHTML = results.html;
+  if (opening) cascade(box.firstElementChild);
   nav.toggleAttribute('data-searching', Boolean(settingsFind.query.trim()));
   if (!input) return;
   if (input.value !== settingsFind.query) input.value = settingsFind.query;
@@ -168,9 +170,8 @@ function arriveAtSetting(target) {
   target.scrollIntoView({ block: 'center' });
   target.focus({ preventScroll: true });
   target.classList.remove('found', 'found-still');
-  void target.offsetWidth;
   target.classList.add(still ? 'found-still' : 'found');
-  if (!still) target.addEventListener('animationend', () => target.classList.remove('found'), { once: true });
+  pulse(target, { ring: true });
   target.addEventListener('blur', () => target.classList.remove('found', 'found-still'), { once: true });
 }
 document.addEventListener('input', (e) => {
@@ -223,6 +224,7 @@ function settingsFrame(section, content) {
   // Callers assign the frame to the page right away; once they have, bring the current
   // section into view in the phone strip, where the list scrolls sideways.
   if (typeof queueMicrotask === 'function') queueMicrotask(revealSettingsLink);
+  if (arrive && shown) overlapOut(shown);
   const lean = arrive && shown && from >= 0 && to >= 0 ? (to > from ? ' style="--arrive-from:6px"' : ' style="--arrive-from:-6px"') : '';
   return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"${settingsFind.query.trim() ? ' data-searching' : ''}>${search}<div class="settings-lists"><div class="settings-sections"><span class="settings-nav-pill" aria-hidden="true"></span>${nav}</div><div class="settings-results" id="settings-results">${found.html}</div></div></nav><div class="settings-section${arrive ? ' arrive' : ''}" data-settings-section="${esc(section)}"${lean}><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
 }
@@ -236,33 +238,22 @@ function placeSettingsPill(nav, on) {
   pill.style.height = `${on.offsetHeight}px`;
   pill.classList.add('placed');
   if (!from || Math.abs(from.top - on.offsetTop) < 1 || stillMotion()) return;
-  pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: 260, easing: 'cubic-bezier(.22, 1, .36, 1)' });
-}
-
-function fitSettingsEdge() {
-  const body = document.body;
-  const layout = app.querySelector('.settings-layout');
-  const nav = layout && layout.querySelector('.settings-nav');
-  const section = layout && layout.querySelector('.settings-section');
-  if (!nav || !section || !matchMedia('(min-width: 1000px)').matches) {
-    body.classList.remove('settings-edge');
-    return;
-  }
-  const half = (parseFloat(getComputedStyle(body).getPropertyValue('--side')) || 0) / 2;
-  const gap = parseFloat(getComputedStyle(layout).columnGap) || 0;
-  body.style.setProperty('--settings-c', `${Math.round(nav.getBoundingClientRect().right + gap / 2 - half)}px`);
-  body.style.setProperty('--settings-lc', `${Math.round(section.getBoundingClientRect().left - half)}px`);
-  body.classList.add('settings-edge');
+  pill.animate([{ transform: `translateY(${from.top}px)`, height: `${from.height}px` }, { transform: `translateY(${on.offsetTop}px)`, height: `${on.offsetHeight}px` }], { duration: DRAWER_MS, easing: EASE_MOVE });
 }
 
 const settingsRevealed = new WeakMap();
 function revealSettingsLink() {
-  fitSettingsEdge();
   const nav = app.querySelector('.settings-sections'), on = nav?.querySelector('.settings-link.on');
   if (nav) placeSettingsPill(nav, on);
   if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;
   settingsRevealed.set(nav, on.getAttribute('href'));
   if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+}
+
+const KNOB_STRETCH = 1.12;
+function knobStretch(knob, pseudoElement) {
+  if (!knob || stillMotion() || typeof knob.animate !== 'function') return;
+  knob.animate({ scale: ['1 1', `${KNOB_STRETCH} 1`, '1 1'] }, { duration: DRAWER_MS, easing: EASE_MOVE, pseudoElement });
 }
 
 // An iOS-style switch. It stays a real checkbox, so change handlers, forms and tests keep working.
@@ -275,10 +266,10 @@ function settingsSwitch(attrs, on, label = '') {
 //   updates it and fires `change` on it, like the <select> it replaces.
 // - `action`: each option is a data-action button (the caller's handler stores the choice).
 function segmented({ label, choices, current, field = '', action = '', key = '' }) {
-  const options = choices.map(([value, text, icon = '']) => {
+  const options = choices.map(([value, text, icon = '', hint = '']) => {
     const on = String(value) === String(current);
     const what = action ? ` data-action="${action}" data-${key}="${esc(value)}" aria-pressed="${on}"` : ` data-action="segment-pick" data-value="${esc(value)}" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
-    return `<button type="button" class="segment${on ? ' on' : ''}"${what} title="${esc(text)}">${icon}<span>${esc(text)}</span></button>`;
+    return `<button type="button" class="segment${on ? ' on' : ''}"${what} title="${esc(hint || text)}">${icon}<span>${esc(text)}</span></button>`;
   }).join('');
   const index = Math.max(0, choices.findIndex(([value]) => String(value) === String(current)));
   const hidden = field ? `<input type="hidden" ${field} value="${esc(current ?? '')}">` : '';
@@ -302,6 +293,7 @@ function syncSegmented(box, from = null) {
     void pill.offsetWidth;
     pill.style.transition = '';
   }
+  if (Number(box.style.getPropertyValue('--at')) !== at) knobStretch(pill);
   box.style.setProperty('--at', at);
 }
 function pickSegment(el) {
@@ -325,18 +317,25 @@ document.addEventListener('keydown', (e) => {
 });
 
 let choiceCardsMade = 0;
-function choiceCards({ label, choices, current, field = '' }) {
+function choiceCards({ label, choices, current, field = '', action = '', key = '', columns = 0 }) {
   const name = `choice-${++choiceCardsMade}`;
   const index = Math.max(0, choices.findIndex(([value]) => String(value) === String(current)));
-  const cards = choices.map(([value, title, about = '', diagram = ''], i) => `<label class="choice-pick${i === index ? ' on' : ''}">${diagram ? `<span class="choice-diagram" aria-hidden="true">${diagram}</span>` : ''}<input type="radio" name="${name}" value="${esc(value)}"${i === index ? ' checked' : ''}><span class="choice-title">${esc(title)}</span>${about ? `<span class="choice-about">${esc(about)}</span>` : ''}</label>`).join('');
+  const cards = choices.map(([value, title, about = '', diagram = ''], i) => {
+    const on = i === index;
+    const art = diagram ? `<span class="choice-diagram" aria-hidden="true">${diagram}</span>` : '';
+    const words = `<span class="choice-title">${esc(title)}</span>${about ? `<span class="choice-about">${esc(about)}</span>` : ''}`;
+    return action
+      ? `<button type="button" class="choice-pick${on ? ' on' : ''}" data-action="${action}" data-${key}="${esc(value)}" aria-pressed="${on}">${art}${words}</button>`
+      : `<label class="choice-pick${on ? ' on' : ''}">${art}<input type="radio" name="${name}" value="${esc(value)}"${on ? ' checked' : ''}>${words}</label>`;
+  }).join('');
   const hidden = field ? `<input type="hidden" ${field} value="${esc(current ?? '')}">` : '';
-  return `<div class="choice-cards" role="radiogroup" aria-label="${esc(label)}" style="--count:${choices.length};--at:${index}">${hidden}<span class="choice-ring" aria-hidden="true"></span>${cards}</div>`;
+  return `<div class="choice-cards" role="${action ? 'group' : 'radiogroup'}" aria-label="${esc(label)}" style="--count:${columns || choices.length};--at:${index}">${hidden}<span class="choice-ring" aria-hidden="true"></span>${cards}</div>`;
 }
 function syncChoiceCards(box, from = null) {
   const picks = [...box.querySelectorAll('.choice-pick')];
   const field = box.querySelector('input[type="hidden"]');
   if (field) for (const pick of picks) pick.querySelector('input').checked = pick.querySelector('input').value === field.value;
-  picks.forEach((pick) => pick.classList.toggle('on', pick.querySelector('input').checked));
+  for (const pick of picks) if (pick.querySelector('input')) pick.classList.toggle('on', pick.querySelector('input').checked);
   const at = Math.max(0, picks.findIndex((pick) => pick.classList.contains('on')));
   const ring = box.querySelector('.choice-ring');
   if (from !== null && from !== at && ring) {
@@ -345,9 +344,11 @@ function syncChoiceCards(box, from = null) {
     void ring.offsetWidth;
     ring.style.transition = '';
   }
+  if (Number(box.style.getPropertyValue('--at')) !== at) knobStretch(ring);
   box.style.setProperty('--at', at);
 }
 document.addEventListener('change', (e) => {
+  if (e.target.matches?.('.switch')) knobStretch(e.target, '::before');
   const radio = e.target.closest?.('.choice-pick input[type="radio"]');
   const box = radio?.closest('.choice-cards');
   if (!box) return;

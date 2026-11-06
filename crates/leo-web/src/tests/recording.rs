@@ -4,24 +4,13 @@ fn hearing() -> record::Listener {
     Arc::new(
         |listening: record::Listening, heard: &mut dyn FnMut(record::Heard)| {
             use std::sync::atomic::Ordering;
-            use std::sync::mpsc::RecvTimeoutError;
-            let rx = listening.audio.expect("audio from the browser");
-            let mut samples = 0;
-            loop {
+            while !listening.stop.load(Ordering::Relaxed) {
                 heard(record::Heard::Clock {
                     secs: 1,
                     paused: listening.pause.load(Ordering::Relaxed),
                     level: 0.25,
                 });
-                match rx.recv_timeout(std::time::Duration::from_millis(20)) {
-                    Ok(chunk) => samples += chunk.len(),
-                    Err(RecvTimeoutError::Timeout) => {
-                        if listening.stop.load(Ordering::Relaxed) {
-                            break;
-                        }
-                    }
-                    Err(RecvTimeoutError::Disconnected) => break,
-                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
             heard(record::Heard::Step {
                 label: "Writing the notes".into(),
@@ -36,7 +25,7 @@ fn hearing() -> record::Listener {
                 .collect();
             Ok(record::Recorded {
                 title: "Lecture".into(),
-                body: format!("heard {samples} samples; points: {}", points.join(", ")),
+                body: format!("points: {}", points.join(", ")),
                 ..Default::default()
             })
         },
@@ -75,24 +64,14 @@ fn recording_until(state: &AppState, done: impl Fn(&str) -> bool) -> record::Rec
 }
 
 #[test]
-fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
+fn a_recording_keeps_its_points_pauses_and_becomes_a_note() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(hearing());
-    let started = start_recording(&state, record::Source::Browser);
+    let started = start_recording(&state, record::Source::Microphone);
     assert_eq!(started.status(), StatusCode::ACCEPTED);
     let id = json_of(started)["id"].as_str().unwrap().to_string();
     recording_until(&state, |s| s == "recording");
 
-    let chunk: Vec<u8> = (0..1600i16).flat_map(|s| s.to_le_bytes()).collect();
-    for _ in 0..3 {
-        let sent = run(record::audio(
-            State(state.clone()),
-            Path(id.clone()),
-            Query(Default::default()),
-            axum::body::Bytes::from(chunk.clone()),
-        ));
-        assert_eq!(sent.status(), StatusCode::NO_CONTENT);
-    }
     let jotted = run(record::point(
         State(state.clone()),
         Path(id.clone()),
@@ -107,18 +86,11 @@ fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
     assert_eq!(json_of(paused)["state"], "paused");
     recording_until(&state, |s| s == "paused");
 
-    let busy = start_recording(&state, record::Source::Browser);
+    let busy = start_recording(&state, record::Source::Microphone);
     assert_eq!(busy.status(), StatusCode::CONFLICT);
 
     let stopped = run(record::stop(State(state.clone()), Path(id.clone())));
     assert_eq!(json_of(stopped)["state"], "writing");
-    let late = run(record::audio(
-        State(state.clone()),
-        Path(id.clone()),
-        Query(Default::default()),
-        axum::body::Bytes::from(chunk.clone()),
-    ));
-    assert_eq!(late.status(), StatusCode::CONFLICT);
 
     let view = recording_until(&state, |s| s == "done" || s == "failed");
     assert_eq!(view.state, "done", "{view:?}");
@@ -129,7 +101,7 @@ fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
         .clone();
     assert_eq!(note.title, "Lecture");
     assert_eq!(note.directory, "cs130");
-    assert_eq!(note.body, "heard 4800 samples; points: exam is on BFS");
+    assert_eq!(note.body, "points: exam is on BFS");
     assert!(!view.levels.is_empty());
     assert!(
         view.levels.len() <= record::LEVELS_KEPT,
@@ -139,7 +111,7 @@ fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
 
     let gone = run(record::status(State(state.clone()), Path("nope".into())));
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
-    let again = start_recording(&state, record::Source::Browser);
+    let again = start_recording(&state, record::Source::Microphone);
     assert_eq!(again.status(), StatusCode::ACCEPTED);
     let id = json_of(again)["id"].as_str().unwrap().to_string();
     run(record::stop(State(state.clone()), Path(id)));
@@ -163,13 +135,13 @@ fn the_computers_own_microphone_and_sound_can_be_recorded() {
 }
 
 #[test]
-fn a_tabs_sound_is_recorded_from_any_browser_as_screen_audio() {
+fn screen_recordings_are_marked_as_screen_audio() {
     let (mut state, _d, _ids) = state_with(&[]);
-    let seen: Arc<Mutex<Option<(bool, bool)>>> = Default::default();
+    let seen: Arc<Mutex<Option<bool>>> = Default::default();
     let saw = Arc::clone(&seen);
     state.listener = Some(Arc::new(
         move |listening: record::Listening, _: &mut dyn FnMut(record::Heard)| {
-            *saw.lock().unwrap() = Some((listening.screen, listening.audio.is_some()));
+            *saw.lock().unwrap() = Some(listening.screen);
             Ok(record::Recorded {
                 title: "Lecture video".into(),
                 body: "notes".into(),
@@ -177,24 +149,17 @@ fn a_tabs_sound_is_recorded_from_any_browser_as_screen_audio() {
             })
         },
     ));
-    let started = start_recording(&state, record::Source::Tab);
+    let started = start_recording(&state, record::Source::Screen);
     assert_eq!(started.status(), StatusCode::ACCEPTED);
     let view = recording_until(&state, |s| s == "done" || s == "failed");
     assert_eq!(view.state, "done", "{view:?}");
-    assert_eq!(
-        *seen.lock().unwrap(),
-        Some((true, true)),
-        "screen audio, sent by the browser"
-    );
-    assert!(record::Source::Tab.fed_by_browser());
-    assert!(!record::Source::Tab.on_this_computer());
-    assert!(!record::Source::Browser.is_sound());
+    assert_eq!(*seen.lock().unwrap(), Some(true));
 }
 
 #[test]
 fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() {
     let (mut state, _d, _ids) = state_with(&[]);
-    let none = start_recording(&state, record::Source::Browser);
+    let none = start_recording(&state, record::Source::Microphone);
     assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
     state.listener = Some(hearing());
     let outside = run(record::start(
@@ -202,7 +167,7 @@ fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() 
         Json(
             serde_json::from_value(serde_json::json!({
                 "directory": "../outside",
-                "source": "browser",
+                "source": "microphone",
             }))
             .unwrap(),
         ),
@@ -212,59 +177,10 @@ fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() 
 }
 
 #[test]
-fn audio_arrives_as_little_endian_samples_and_an_odd_byte_is_ignored() {
-    assert_eq!(record::decode(&[1, 0, 0xfe, 0xff, 7]), vec![1, -2]);
-}
-
-#[test]
-fn retried_sequences_are_durable_and_never_counted_twice() {
+fn a_point_or_stop_during_a_save_waits_for_it_instead_of_failing() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(hearing());
-    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    recording_until(&state, |s| s == "recording");
-    let send = |seq: u64, bytes: Vec<u8>| {
-        run(record::audio(
-            State(state.clone()),
-            Path(id.clone()),
-            Query(serde_json::from_value(serde_json::json!({"seq":seq})).unwrap()),
-            bytes.into(),
-        ))
-    };
-    assert_eq!(send(0, vec![1, 0, 2, 0]).status(), StatusCode::OK);
-    assert_eq!(send(0, vec![1, 0, 2, 0]).status(), StatusCode::OK);
-    assert_eq!(send(0, vec![9, 0]).status(), StatusCode::CONFLICT);
-    assert_eq!(send(2, vec![3, 0]).status(), StatusCode::CONFLICT);
-    assert_eq!(send(1, vec![3]).status(), StatusCode::BAD_REQUEST);
-    store_now(&state, |store| {
-        assert_eq!(
-            crate::record_journal::chunks(&store.notes_dir, &id)
-                .unwrap()
-                .len(),
-            1
-        );
-        Ok(())
-    })
-    .unwrap();
-    run(record::stop(State(state.clone()), Path(id)));
-    let view = recording_until(&state, |s| s == "done");
-    store_now(&state, |store| {
-        assert!(store
-            .find_note(view.note.as_ref().unwrap())
-            .unwrap()
-            .body
-            .contains("heard 2 samples"));
-        Ok(())
-    })
-    .unwrap();
-}
-#[test]
-fn a_point_or_stop_during_an_audio_save_waits_for_it_instead_of_failing() {
-    let (mut state, _d, _ids) = state_with(&[]);
-    state.listener = Some(hearing());
-    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
+    let id = json_of(start_recording(&state, record::Source::Microphone))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -295,31 +211,14 @@ fn a_point_or_stop_during_an_audio_save_waits_for_it_instead_of_failing() {
 }
 
 #[test]
-fn a_panicking_listener_keeps_its_audio_journal_for_recovery() {
+fn a_panicking_listener_fails_the_recording() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(Arc::new(|_, _| panic!("simulated failure")));
-    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    recording_until(&state, |s| s == "failed");
-    assert_eq!(
-        run(record::audio(
-            State(state.clone()),
-            Path(id.clone()),
-            Query(serde_json::from_value(serde_json::json!({"seq":0})).unwrap()),
-            vec![1, 0].into()
-        ))
-        .status(),
-        StatusCode::OK
-    );
-    store_now(&state, |store| {
-        let pending = crate::record_journal::pending(&store.notes_dir).unwrap();
-        assert_eq!(pending[0].id, id);
-        Ok(())
-    })
-    .unwrap();
+    start_recording(&state, record::Source::Microphone);
+    let view = recording_until(&state, |s| s == "failed");
+    assert!(view.error.is_some());
 }
+
 #[test]
 fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_same_id() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -351,7 +250,7 @@ fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_sa
             })),
         })
     }));
-    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
+    let id = json_of(start_recording(&state, record::Source::Microphone))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -361,154 +260,38 @@ fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_sa
 }
 
 #[test]
-fn call_pcm_is_split_into_two_independent_tracks() {
+fn recovering_a_recording_nothing_kept_is_not_found() {
     let (mut state, _d, _ids) = state_with(&[]);
-    state.listener = Some(Arc::new(|input, _| {
-        assert!(input.call);
-        let you = input.audio.unwrap().recv().unwrap();
-        let others = input.other_audio.unwrap().recv().unwrap();
-        assert_eq!(you, [1, 2]);
-        assert_eq!(others, [100, 200]);
-        Ok(record::Recorded {
-            title: "Call".into(),
-            body: "Two tracks".into(),
-            ..Default::default()
-        })
-    }));
-    let id = json_of(start_recording(&state, record::Source::Call))["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let bytes: Vec<u8> = [1i16, 100, 2, 200]
-        .into_iter()
-        .flat_map(i16::to_le_bytes)
-        .collect();
-    assert_eq!(
-        run(record::audio(
-            State(state.clone()),
-            Path(id),
-            Query(Default::default()),
-            bytes.into()
-        ))
-        .status(),
-        StatusCode::NO_CONTENT
-    );
-    recording_until(&state, |s| s == "done");
+    state.listener = Some(hearing());
+    let response = run(record::recover(
+        State(state.clone()),
+        Path("gone-0001".into()),
+    ));
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(state.recording.lock().unwrap().is_none());
 }
 
 #[test]
-fn recovery_stays_in_saving_state_and_delivers_every_persisted_chunk() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    let (mut state, _d, _ids) = state_with(&[]);
-    let ready = Arc::new(AtomicBool::new(false));
-    let release = Arc::new(AtomicBool::new(false));
-    let listener = hearing();
-    let started = ready.clone();
-    let resume = release.clone();
-    state.listener = Some(Arc::new(move |input, heard| {
-        heard(record::Heard::Clock {
-            secs: 1,
-            paused: false,
-            level: 0.0,
-        });
-        started.store(true, Ordering::Release);
-        for _ in 0..1000 {
-            if resume.load(Ordering::Acquire) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        listener(input, heard)
-    }));
-    let id = "recovery-0001".to_string();
-    store_now(&state, |store| {
-        let meta = crate::record_journal::Journal {
-            id: id.clone(),
-            directory: "cs130".into(),
-            title: None,
-            source: record::Source::Browser,
-            profile: Default::default(),
-            points: vec![],
-        };
-        crate::record_journal::save(&store.notes_dir, &meta).unwrap();
-        for seq in 0..20 {
-            crate::record_journal::append(&store.notes_dir, &id, seq, &[1, 0]).unwrap();
-        }
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(
-        run(record::recover(State(state.clone()), Path(id.clone()))).status(),
-        StatusCode::ACCEPTED
-    );
-    for _ in 0..1000 {
-        if ready.load(Ordering::Acquire) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    assert!(ready.load(Ordering::Acquire));
-    let view = json_of(run(record::status(State(state.clone()), Path(id.clone()))));
-    assert_eq!(view["state"], "writing");
-    assert_eq!(
-        run(record::audio(
-            State(state.clone()),
-            Path(id),
-            Query(serde_json::from_value(serde_json::json!({"seq":20})).unwrap()),
-            vec![2, 0].into()
-        ))
-        .status(),
-        StatusCode::CONFLICT
-    );
-    release.store(true, Ordering::Release);
-    let view = recording_until(&state, |s| s == "done");
-    store_now(&state, |store| {
-        assert!(store
-            .find_note(view.note.as_ref().unwrap())
-            .unwrap()
-            .body
-            .contains("heard 20 samples"));
-        Ok(())
-    })
-    .unwrap();
-}
-
-#[test]
-fn a_failed_recording_can_be_deleted_without_deleting_notes_or_other_audio() {
+fn a_failed_recording_can_be_deleted_without_deleting_notes() {
     let (mut state, _d, ids) = state_with(&[("Keep this note", "")]);
     state.listener = Some(Arc::new(|_, _| anyhow::bail!("No sound was recorded.")));
-    let id = json_of(start_recording(&state, record::Source::Call))["id"]
+    let id = json_of(start_recording(&state, record::Source::Nativecall))["id"]
         .as_str()
         .unwrap()
         .to_string();
     recording_until(&state, |s| s == "failed");
-    let notes = state.store.lock().unwrap().notes_dir.clone();
-    let folder = crate::record_journal::folder(&notes, &id).unwrap();
-    assert!(folder.exists());
     let saving = state.recording.lock().unwrap().as_ref().unwrap().writing();
     saving.store(true, std::sync::atomic::Ordering::Release);
     assert_eq!(
         run(record::discard(State(state.clone()), Path(id.clone()))).status(),
         StatusCode::CONFLICT
     );
-    assert!(folder.exists());
     saving.store(false, std::sync::atomic::Ordering::Release);
     let response = run(record::discard(State(state.clone()), Path(id.clone())));
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json_of(response)["deleted"], true);
-    assert!(!folder.exists());
     assert!(state.recording.lock().unwrap().is_none());
     assert!(state.discarded_recordings.lock().unwrap().contains(&id));
-    assert_eq!(
-        run(record::audio(
-            State(state.clone()),
-            Path(id.clone()),
-            Query(Default::default()),
-            axum::body::Bytes::from_static(&[1, 0])
-        ))
-        .status(),
-        StatusCode::NOT_FOUND
-    );
     assert!(state.store.lock().unwrap().find_note(&ids[0]).is_some());
     assert_eq!(
         run(record::discard(State(state), Path(id))).status(),
@@ -520,7 +303,7 @@ fn a_failed_recording_can_be_deleted_without_deleting_notes_or_other_audio() {
 fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
     let (mut state, _d, _) = state_with(&[]);
     state.listener = Some(hearing());
-    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
+    let id = json_of(start_recording(&state, record::Source::Microphone))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -536,7 +319,7 @@ fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
 #[test]
 fn native_recordings_can_be_recovered_without_reopening_capture() {
     struct Kept;
-    impl crate::storage::Housekeeper for Kept {
+    impl crate::record::Housekeeper for Kept {
         fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
             Ok(vec![record::Pending {
                 id: "native-saved".into(),
@@ -544,20 +327,14 @@ fn native_recordings_can_be_recovered_without_reopening_capture() {
                 directory: "cs130".into(),
                 source: record::Source::Microphone,
                 profile: Default::default(),
+                started: None,
             }])
-        }
-        fn areas(&self) -> Vec<crate::storage::Area> {
-            vec![]
-        }
-        fn act(&self, _: &str, _: &str, _: &[String]) -> Option<anyhow::Result<String>> {
-            None
         }
     }
     let (mut state, _dir, _) = state_with(&[]);
     state.housekeeper = Some(Arc::new(Kept));
     state.listener = Some(Arc::new(|listening, _| {
         assert_eq!(listening.recover.as_deref(), Some("native-saved"));
-        assert!(listening.audio.is_none());
         Ok(record::Recorded {
             title: "Kept lecture".into(),
             body: "Saved speech".into(),
@@ -577,9 +354,73 @@ fn native_recordings_can_be_recovered_without_reopening_capture() {
 }
 
 #[test]
+fn deleting_after_a_failed_recovery_or_from_the_waiting_list_removes_that_session() {
+    #[derive(Default)]
+    struct Kept(std::sync::Mutex<Vec<String>>);
+    impl crate::record::Housekeeper for Kept {
+        fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
+            Ok(["failed-native", "waiting-native"]
+                .into_iter()
+                .filter(|id| !self.0.lock().unwrap().iter().any(|gone| gone == id))
+                .map(|id| record::Pending {
+                    id: id.into(),
+                    title: None,
+                    directory: String::new(),
+                    source: record::Source::Microphone,
+                    profile: Default::default(),
+                    started: None,
+                })
+                .collect())
+        }
+        fn discard_recording(&self, id: &str) -> anyhow::Result<()> {
+            self.0.lock().unwrap().push(id.into());
+            Ok(())
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    let kept = Arc::new(Kept::default());
+    state.housekeeper = Some(kept.clone());
+    state.listener = Some(Arc::new(|_, _| anyhow::bail!("The model is missing.")));
+    let recovered = run(record::recover(
+        State(state.clone()),
+        Path("failed-native".into()),
+    ));
+    let job = json_of(recovered)["id"].as_str().unwrap().to_string();
+    assert_ne!(job, "failed-native");
+    recording_until(&state, |s| s == "failed");
+    assert_eq!(
+        run(record::discard(
+            State(state.clone()),
+            Path("failed-native".into())
+        ))
+        .status(),
+        StatusCode::CONFLICT,
+        "a session being recovered is not deleted from the waiting list"
+    );
+    assert_eq!(
+        run(record::discard(State(state.clone()), Path(job))).status(),
+        StatusCode::OK
+    );
+    assert_eq!(*kept.0.lock().unwrap(), ["failed-native"]);
+    assert_eq!(
+        run(record::discard(
+            State(state.clone()),
+            Path("waiting-native".into())
+        ))
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(*kept.0.lock().unwrap(), ["failed-native", "waiting-native"]);
+    assert_eq!(
+        run(record::discard(State(state), Path("unknown-0001".into()))).status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[test]
 fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_model() {
     struct Kept;
-    impl crate::storage::Housekeeper for Kept {
+    impl crate::record::Housekeeper for Kept {
         fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
             Ok(vec![record::Pending {
                 id: "waiting-native".into(),
@@ -587,13 +428,8 @@ fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_mo
                 directory: "cs130".into(),
                 source: record::Source::Microphone,
                 profile: Default::default(),
+                started: None,
             }])
-        }
-        fn areas(&self) -> Vec<crate::storage::Area> {
-            vec![]
-        }
-        fn act(&self, _: &str, _: &str, _: &[String]) -> Option<anyhow::Result<String>> {
-            None
         }
     }
     let (mut state, _dir, _) = state_with(&[]);
@@ -642,7 +478,7 @@ fn stopping_waits_until_a_pasted_screenshot_is_kept_with_its_recording() {
             .unwrap();
         Ok("A diagram of a queue".into())
     }));
-    let started_recording = start_recording(&state, record::Source::Browser);
+    let started_recording = start_recording(&state, record::Source::Microphone);
     let id = json_of(started_recording)["id"]
         .as_str()
         .unwrap()

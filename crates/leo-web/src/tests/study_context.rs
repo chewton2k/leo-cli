@@ -42,10 +42,9 @@ fn append(messages: &mut Vec<serde_json::Value>, question: &str) {
 }
 
 #[test]
-fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_refresh_changed_material(
-) {
+fn native_and_text_sessions_are_reused_without_repeating_documents_and_refresh_changed_material() {
     for native in [false, true] {
-        for mode in chat::MODES {
+        for practice in [false, true] {
             let (mut state, _dir, notes) = state_with(&[("Practice notes", "")]);
             state.room = Some(Arc::new(|| 360_000));
             let note = notes[0].clone();
@@ -66,7 +65,7 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
             let heard = Arc::new(Mutex::new(Vec::new()));
             let opened = Arc::new(AtomicUsize::new(0));
             let (ears, opens) = (Arc::clone(&heard), Arc::clone(&opened));
-            state.chat = Some(Arc::new(|_, _, _, _, _| {
+            state.chat = Some(Arc::new(|_, _, _, _, _, _| {
                 panic!("the retained session should answer")
             }));
             state.converse = Some(Arc::new(move |_, _| {
@@ -105,11 +104,15 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
                 }
                 request(
                     &state,
-                    serde_json::json!({"chat":"study-cache-0001", "mode":mode, "access":"auto", "practice":mode=="study", "note":notes[0], "files":files, "messages":messages}),
+                    serde_json::json!({"chat":"study-cache-0001", "access":"auto", "practice":practice, "note":notes[0], "files":files, "messages":messages}),
                 );
             }
             let seen = heard.lock().unwrap();
-            assert_eq!(opened.load(Ordering::SeqCst), 1, "{mode}, native={native}");
+            assert_eq!(
+                opened.load(Ordering::SeqCst),
+                1,
+                "practice={practice}, native={native}"
+            );
             assert!(seen[0].contains("first.pdf") && seen[0].contains("FIRST_NOTE_MARKER"));
             assert!(!seen[1].contains("first.pdf") && !seen[1].contains("FIRST_NOTE_MARKER"));
             assert!(
@@ -118,7 +121,7 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
             assert!(
                 !seen[3].contains("SECOND_DOC_MARKER") && !seen[3].contains("UPDATED_NOTE_MARKER")
             );
-            if mode == "study" {
+            if practice {
                 assert!(seen[0].chars().count() < 90_000);
             } else {
                 assert!(seen[0].chars().count() > 200_000);
@@ -127,7 +130,7 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
             append(&mut messages, "Help with an ordinary message.");
             request(
                 &state,
-                serde_json::json!({"chat":"study-cache-0001", "mode":mode, "access":"read", "practice":false, "files":files, "messages":messages}),
+                serde_json::json!({"chat":"study-cache-0001", "access":"read", "practice":false, "files":files, "messages":messages}),
             );
             assert_eq!(opened.load(Ordering::SeqCst), 2);
         }
@@ -151,7 +154,7 @@ fn retained_tool_context_counts_toward_the_warm_session_limit() {
     }
     let (mut state, _dir, _) = state_with(&[]);
     state.room = Some(Arc::new(|| 32_000));
-    state.chat = Some(Arc::new(|_, _, _, _, _| {
+    state.chat = Some(Arc::new(|_, _, _, _, _, _| {
         panic!("the retained session should answer")
     }));
     let opened = Arc::new(AtomicUsize::new(0));

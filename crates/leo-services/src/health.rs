@@ -180,41 +180,6 @@ pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool
     checks
 }
 
-/// The four steps of getting leo set up, as the setup screen lists them: AI
-/// for writing, AI for speech, recording, and backup. Cheap checks only — no
-/// request is sent and the microphone is not opened.
-pub fn setup_steps(
-    config: &Config,
-    store: &dyn SecretStore,
-    notes_dir: &std::path::Path,
-) -> Vec<Check> {
-    let named = |mut check: Check, what: &str| {
-        check.what = what.to_string();
-        check
-    };
-    let recording = Check::ready(
-        "Recording",
-        "recording lectures",
-        Some("built in; Enter checks the microphone".to_string()),
-    );
-    let backup = match (
-        leo_core::sync::is_initialized(notes_dir),
-        leo_core::sync::remote_url(notes_dir),
-    ) {
-        (true, Some(url)) => Check::ready("Backup to GitHub", "a copy in the cloud", Some(url)),
-        _ => Check::missing("Backup to GitHub", "a copy in the cloud", "not set up"),
-    };
-    vec![
-        named(chain_check(config, Chain::Chat, store), "AI for writing"),
-        named(
-            chain_check(config, Chain::Transcribe, store),
-            "AI for speech",
-        ),
-        recording,
-        backup,
-    ]
-}
-
 /// Which chain a check refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chain {
@@ -308,16 +273,6 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
         let bin = provider.bin.as_deref().unwrap_or(agent.program());
         return crate::ai::provider::agent_cli::locate(bin).is_some();
     }
-    if provider.kind == Some(crate::config::provider::ProviderKind::WhisperCpp) {
-        let model = crate::ai::provider::audio::expand_tilde(
-            provider.model_path.as_deref().unwrap_or_default(),
-        );
-        return model.is_file()
-            && crate::ai::provider::whisper_cpp::WhisperCppTranscribe::binary_on_path(
-                provider.bin.as_deref().unwrap_or("whisper-cli"),
-            );
-    }
-
     // A key-based provider: only the key leo stored, and `has` rather than a
     // read so this cannot cost a permission prompt.
     if provider.key_env.is_some() {
@@ -335,17 +290,6 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
 
 fn is_loopback(url: &str) -> bool {
     url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]")
-}
-
-/// The platform's install command for a tool, so the fix is copy-pasteable
-/// rather than "install git".
-pub(crate) fn install_hint(tool: &str) -> &'static str {
-    match (tool, cfg!(target_os = "macos"), cfg!(target_os = "windows")) {
-        ("git", true, _) => "xcode-select --install",
-        ("git", _, true) => "winget install Git.Git",
-        ("git", ..) => "sudo apt install git",
-        _ => "see the README",
-    }
 }
 
 /// Where credentials are kept, and whether the file is readable by anyone else.
@@ -394,25 +338,6 @@ pub(crate) fn credentials_check() -> Check {
     }
 }
 
-/// The single most useful thing to do next, or `None` when nothing is missing.
-///
-/// Used by the first-run greeting: one instruction is actionable where a list of
-/// seven is a chore.
-pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
-    let chat = chain_check(config, Chain::Chat, store);
-    if let State::Missing { .. } = chat.state {
-        return Some(
-            "No AI model yet. Open Settings in leo to choose one, or `brew install ollama` for a free local one."
-                .to_string(),
-        );
-    }
-    let transcribe = chain_check(config, Chain::Transcribe, store);
-    if let State::Missing { .. } = transcribe.state {
-        return Some("The speech model is missing. Run `leo update` to download it.".to_string());
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,8 +360,6 @@ mod tests {
                 chain: chat.into_iter().map(String::from).collect(),
             },
             transcribe: crate::config::provider::TaskChain { chain: vec![] },
-            theme: Default::default(),
-            sync: Default::default(),
         }
     }
 
@@ -448,55 +371,30 @@ mod tests {
         assert!(!on_path("leo-definitely-not-a-real-binary"));
     }
 
-    fn whisper(model: &std::path::Path, bin: Option<&str>) -> ProviderConfig {
+    fn cli(bin: &str) -> ProviderConfig {
         ProviderConfig {
-            kind: Some(crate::config::provider::ProviderKind::WhisperCpp),
-            model_path: Some(model.to_string_lossy().to_string()),
-            bin: bin.map(str::to_string),
+            kind: Some(crate::config::provider::ProviderKind::ClaudeCode),
+            bin: Some(bin.to_string()),
             ..Default::default()
         }
     }
 
+    fn installed() -> ProviderConfig {
+        cli(if cfg!(windows) { "cmd.exe" } else { "sh" })
+    }
+
+    fn missing() -> ProviderConfig {
+        cli("leo-definitely-not-a-real-binary")
+    }
+
     #[test]
-    fn a_named_whisper_binary_must_be_installed() {
-        let model = tempfile::NamedTempFile::new().unwrap();
+    fn a_named_program_must_be_installed() {
         let config = config_with(
-            vec![
-                ("present", whisper(model.path(), Some("sh"))),
-                (
-                    "absent",
-                    whisper(model.path(), Some("leo-definitely-not-a-real-binary")),
-                ),
-            ],
+            vec![("present", installed()), ("absent", missing())],
             vec!["present"],
         );
         assert!(provider_usable(&config, "present", &store()));
         assert!(!provider_usable(&config, "absent", &store()));
-    }
-
-    fn speech_model() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("fake-model"), "model").unwrap();
-        dir
-    }
-
-    fn built_in(dir: &std::path::Path) -> ProviderConfig {
-        whisper(
-            &dir.join("fake-model"),
-            Some(if cfg!(windows) { "cmd.exe" } else { "sh" }),
-        )
-    }
-
-    #[test]
-    fn the_fake_transcription_binary_needs_its_model_file() {
-        let model = speech_model();
-        let empty = tempfile::tempdir().unwrap();
-        let config = config_with(
-            vec![("a", built_in(model.path())), ("b", built_in(empty.path()))],
-            vec!["a"],
-        );
-        assert!(provider_usable(&config, "a", &store()));
-        assert!(!provider_usable(&config, "b", &store()));
     }
 
     #[test]
@@ -518,8 +416,7 @@ mod tests {
     /// "chat works" is less useful than "chat works, using ollama".
     #[test]
     fn a_usable_chain_names_the_provider_it_would_use() {
-        let model = speech_model();
-        let config = config_with(vec![("localbin", built_in(model.path()))], vec!["localbin"]);
+        let config = config_with(vec![("localbin", installed())], vec!["localbin"]);
         let check = chain_check(&config, Chain::Chat, &store());
         assert!(check.state.is_ready());
         assert_eq!(check.detail.as_deref(), Some("using localbin"));
@@ -529,40 +426,13 @@ mod tests {
     /// second one, because that is exactly how the fallback behaves at runtime.
     #[test]
     fn a_chain_falls_past_an_unusable_provider() {
-        let model = speech_model();
-        let empty = tempfile::tempdir().unwrap();
-        let broken = built_in(empty.path());
-        let working = built_in(model.path());
         let config = config_with(
-            vec![("broken", broken), ("working", working)],
+            vec![("broken", missing()), ("working", installed())],
             vec!["broken", "working"],
         );
         let check = chain_check(&config, Chain::Chat, &store());
         assert!(check.state.is_ready());
         assert_eq!(check.detail.as_deref(), Some("using working"));
-    }
-
-    /// One instruction, not a list: the greeting names the first gap only.
-    #[test]
-    fn the_next_step_names_one_thing() {
-        let config = config_with(vec![], vec![]);
-        let step =
-            next_step(&config, &store()).expect("a config with nothing should suggest something");
-        assert!(step.contains("Settings"), "{step}");
-        assert_eq!(step.lines().count(), 1, "more than one instruction: {step}");
-    }
-
-    /// Nothing to fix must produce no greeting at all, rather than a cheerful
-    /// message the user has to dismiss on every launch.
-    #[test]
-    fn a_working_setup_has_no_next_step() {
-        let model = speech_model();
-        let mut config = config_with(vec![("localbin", built_in(model.path()))], vec!["localbin"]);
-        config.transcribe.chain = vec!["localbin".to_string()];
-        match next_step(&config, &store()) {
-            None => {}
-            Some(step) => assert!(step.contains("microphone"), "unexpected next step: {step}"),
-        }
     }
 
     /// Screen capture does not go through the microphone, so a silent mic must
@@ -575,15 +445,6 @@ mod tests {
             !without.iter().any(|c| c.what == "microphone"),
             "screen capture probed the microphone"
         );
-    }
-
-    #[test]
-    fn install_hints_are_platform_specific() {
-        let hint = install_hint("git");
-        if cfg!(target_os = "macos") {
-            assert_eq!(hint, "xcode-select --install");
-        }
-        assert!(!hint.is_empty());
     }
 
     /// A port check must not hang, panic, or resolve DNS on nonsense input.

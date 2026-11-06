@@ -1,6 +1,6 @@
 # leo — maintainer notes
 
-Private notes for working on and releasing leo. This file is gitignored; the
+Private notes for working on and releasing leo. This file is tracked; the
 public guide for contributors is CONTRIBUTING.md.
 
 ## Before every push
@@ -79,7 +79,7 @@ coverage and flake/retry rates before introducing a blocking percentage.
 
 ## Releasing
 
-Automatic. Push to `main`; when every CI job passes (tests on Linux and macOS,
+Automatic. Push to `main`; when every CI job passes (tests on macOS and Windows,
 lint, MSRV), `ci.yml` calls `release.yml`, which:
 
 1. runs `scripts/next-version.sh`: the last `v*` tag with patch + 1, or
@@ -109,8 +109,7 @@ env -i HOME=$T/home SHELL=/bin/zsh PATH=/usr/bin:/bin \
 $T/home/.local/bin/leo --version
 ```
 
-Update your own copy: `cargo install --path . --force --locked`, or the curl
-install (which gets the released version number).
+Update your own copy with `leo update`.
 
 **A broken release:** delete the release and its tag on GitHub (and locally with
 `git tag -d vX.Y.Z`), fix the problem, then release a new patch version. Don't
@@ -133,7 +132,7 @@ The flows include a contrast check (`readability`): every text on every page,
 light and dark, must be at least 3:1 against what is behind it. Screenshot
 baselines are saved per platform (`-darwin`), so they are compared on this Mac
 only; CI runs the flows. The visual config starts its own leo on port 31832
-with a fresh home and masks storage sizes.
+with a fresh home.
 
 ## Tests that only run by hand
 
@@ -146,28 +145,20 @@ cargo test -p leo-services tls -- --ignored
 # Reading the latest release from GitHub's redirect.
 cargo test -p leo-services latest -- --ignored
 
-# Live transcription end to end, replaying a WAV instead of the microphone.
-# Uses your transcription provider and key.
-say -o /tmp/speech.aiff "Breadth first search explores a graph level by level"
-sox /tmp/speech.aiff -r 16000 -c 1 -b 16 /tmp/speech.wav
-LEO_FAKE_AUDIO=/tmp/speech.wav cargo test live_streams -- --ignored --nocapture
 ```
 
-`LEO_FAKE_AUDIO=<wav>` also works on a normal run: `R` in the app then replays
-the file at real-time pace instead of recording from the microphone.
+`LEO_FAKE_AUDIO=<wav>` also works on a normal run: recording then replays the
+file instead of using the microphone.
 
 ## Useful for debugging
 
 - `LEO_HOME=/tmp/leo-dev leo` gives a separate world of notes, config and keys.
-- `leo doctor` shows everything leo depends on. It listens to the microphone
-  for half a second and sends one small request to each AI in use.
-- `LEO_CHAT_PROVIDER=openrouter` or `LEO_TRANSCRIBE_PROVIDER=groq` pins a
-  single provider, bypassing the fallback chain.
-- In the app, warnings from lower layers appear on the status line (via
-  `leo_core::diag`) rather than being printed, which would corrupt the screen.
+- Settings → Health shows everything leo depends on, without a microphone or AI
+  request.
+- `LEO_CHAT_PROVIDER=ollama` pins a single chat provider, bypassing the
+  fallback chain.
 - My own data: `~/Library/Application Support/leo/` (notes, `config.toml`,
-  `credentials.json`). `config.toml.before-8192` is the backup from raising
-  openrouter's `max_tokens`; delete it once you're happy.
+  `credentials.json`).
 - With the lid closed, a MacBook's built-in microphone is off, so recording hears
   nothing. Use an external mic.
 
@@ -179,8 +170,7 @@ a second launch focuses the first, Felix answers, Quit exits within seconds.
 ## Pitfalls learned the hard way
 
 - **Never write a note file except through `Store::save`.** It checks the file
-  still has the bytes leo saw, which is what keeps Obsidian's and the phone's
-  edits safe.
+  still has the bytes leo saw, which is what keeps Obsidian's edits safe.
 - **Never change `stable_id`.** Headerless notes' ids come from it; a golden
   test guards the values.
 - **Never slice a `String` at a byte offset computed from a length.** Korean
@@ -196,17 +186,13 @@ a second launch focuses the first, Felix answers, Quit exits within seconds.
   `MemoryStore`.
 - **Never resolve DNS in health checks.** `to_socket_addrs` has no timeout;
   `health::port_open` only connects to literal addresses and localhost.
-- **Git in the notes repository:** always pull with `--no-rebase` and say so
-  explicitly. Users' own git settings differ, and newer git refuses to combine
-  diverged histories unless told how. `directories.json` is deliberately not
-  tracked; notes merge by union (`.gitattributes`).
 - **A provider's `max_tokens` in config.toml replaces what leo asks for**, it
   does not cap it. Raising leo's own constants does nothing for a provider with
   its own setting.
 - **Anything user-facing that names a command must name a real one**, or
   `tests/wording.rs` fails.
-- **Two programs, one notes folder.** The app, another editor (Obsidian) and git
-  can all write at once. `Store.known` keeps a save from trashing notes it never had,
+- **Two programs, one notes folder.** The app and another editor (Obsidian)
+  can both write at once. `Store.known` keeps a save from trashing notes it never had,
   and the web server reloads from disk per request. Keep both if you touch
   saving or the server.
 - **Don't `cp` over a running binary on macOS**: the new copy gets killed.
@@ -218,22 +204,12 @@ a second launch focuses the first, Felix answers, Quit exits within seconds.
 
 ## Ideas not done yet
 
-- Resolve `[[wikilinks]]` by title in the app and on the phone page.
+- Resolve `[[wikilinks]]` by title in the app.
 - An Obsidian plugin inside an existing vault.
 
 - A Homebrew tap (`brew install chewton2k/tap/leo`). It needs a second
   repository, `homebrew-tap`, and a token for the release workflow to update the
   formula.
-- The app picks up notes added elsewhere only on `Ctrl-R`; it could reload when
-  the notes folder changes.
-- A fixed `--anywhere` address (a named Cloudflare tunnel) instead of a new
-  one each run. Needs a Cloudflare account and a domain.
 - Keep the audio file when a recording's transcription fails, so it can be
   retried.
 - Flashcards or a quiz generated from a note.
-- Tab completion for `leo` commands in the shell.
-- Quick capture from the shell (`leo add "..."` to an Inbox note).
-- The same `leo ask` across notes in the web UI.
-- A Windows build (`install.sh` is Mac and Linux only).
-- Two "leo manual" notes appear after a second computer joins a backup (each
-  computer installed its own). Harmless, but could be merged.

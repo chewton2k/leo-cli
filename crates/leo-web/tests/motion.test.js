@@ -6,47 +6,34 @@ const vm = require('node:vm');
 const core = fs.readFileSync(path.resolve(__dirname, '../src/web/app/core.js'), 'utf8');
 const sheets = fs.readFileSync(path.resolve(__dirname, '../src/web/app/sheets.js'), 'utf8');
 
-test('removal motion finishes before removing content, and reduced motion skips the wait', async () => {
-  for (const reduced of [false, true]) {
-    let complete, removed = 0, animated = 0;
-    const element = { isConnected: true, remove: () => removed++, animate: () => { animated++; return { finished: new Promise(resolve => { complete = resolve; }) }; } };
-    const context = { stillMotion: () => reduced, MOTION_MS: 180, EASE_OUT: 'ease-out', app: {}, LIBRARY_ITEMS: '', libraryKey: () => '', flipList: (root, selector, key, change) => change() };
+test('note deletion preserves failures and never redirects another open note', async () => {
+  for (const mode of ['success', 'error', 'navigate']) {
+    let destroyed = 0, went = 0, failed = 0;
+    const session = { note: { id: 'note' }, doc: { destroy() { destroyed++; } } };
+    const box = { isConnected: true };
+    const button = { dataset: { id: 'note' }, isConnected: true, disabled: false, closest: () => box };
+    const context = { state: { session }, closeSheet() {}, enc: encodeURIComponent, loadSideFolders() {}, toast() {}, restore() {}, fail: () => failed++, go: () => went++ };
+    context.api = async () => {
+      if (mode === 'error') throw Error('offline');
+      if (mode === 'navigate') context.state.session = { note: { id: 'other' } };
+    };
     vm.createContext(context);
-    vm.runInContext(core.slice(core.indexOf('async function dismissContent'), core.indexOf('function stopSlide')), context);
-    const pending = context.dismissContent([element]);
-    assert.equal(animated, reduced ? 0 : 1);
-    if (!reduced) { assert.equal(removed, 0); complete(); }
-    await pending;
-    assert.equal(removed, 1);
-  }
-});
-
-test('note deletion preserves the session on failure and never redirects a newer page', async () => {
-  for (const mode of ['success', 'error', 'navigate-api', 'navigate-animation']) {
-    const session = { note: { id: 'note', directory: 'Folder' }, doc: { destroy() {} } };
-    let went = 0, dismissed = 0, failed = 0;
-    const context = { state: { session }, seq: 1, closeSheet() {}, enc: encodeURIComponent, app: { querySelectorAll: () => [] }, loadSideFolders() {}, toast() {}, folderHash: () => '#/f/Folder', restore() {}, fail: () => failed++, go: () => went++ };
-    context.api = async () => { if (mode === 'error') throw Error('offline'); if (mode === 'navigate-api') context.seq++; };
-    context.dismissContent = async () => { dismissed++; if (mode === 'navigate-animation') context.seq++; };
-    vm.createContext(context);
-    vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow()'), sheets.indexOf('async function restore(')), context);
-    await context.deleteNow();
+    vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow('), sheets.indexOf('async function restore(')), context);
+    await context.deleteNow(button);
     assert.equal(went, mode === 'success' ? 1 : 0);
+    assert.equal(destroyed, mode === 'success' ? 1 : 0);
     assert.equal(failed, mode === 'error' ? 1 : 0);
-    assert.equal(dismissed, mode === 'success' || mode === 'navigate-animation' ? 1 : 0);
-    assert.equal(context.state.session, mode === 'success' ? null : session);
+    assert.equal(button.disabled, false);
+    if (mode === 'error') assert.equal(context.state.session, session);
+    if (mode === 'navigate') assert.equal(context.state.session.note.id, 'other');
   }
-  const empty = { state: { session: null } };
-  vm.createContext(empty);
-  vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow()'), sheets.indexOf('async function restore(')), empty);
-  await empty.deleteNow();
 });
 
 const motionSource = fs.readFileSync(path.resolve(__dirname, '../src/web/app/motion.js'), 'utf8');
 function motion(extra = {}) {
-  const context = { stillMotion: () => false, EASE_OUT: 'ease-out', MOTION_MS: 180, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
+  const context = { overlapOut() {}, unfold() {}, fold() {}, cascade() {}, pulse() {}, rubber() {}, iconSwap() {}, stillMotion: () => false, EASE_OUT: 'ease-out', EASE_MOVE: 'ease-in-out', EASE_EXIT: 'ease-in', MOTION_MS: 180, OPEN_MS: 200, DRAWER_MS: 240, EXIT_SHARE: .8, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
   vm.createContext(context);
-  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, sameKeys, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
+  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
   return context.api;
 }
 
@@ -68,8 +55,6 @@ test('list moves skip reduced motion, unchanged lists, single rows and big lists
   assert.equal(m.flipSkip({ reduced: false, count: 1 }), true);
   assert.equal(m.flipSkip({ reduced: false, count: m.FLIP_ROWS }), false);
   assert.equal(m.flipSkip({ reduced: false, count: m.FLIP_ROWS + 1 }), true);
-  assert.equal(m.sameKeys(['a', 'b'], ['a', 'b']), true);
-  assert.equal(m.sameKeys(['a', 'b'], ['b', 'a']), false);
 });
 
 test('a big or still list changes at once and reads no layout', () => {
@@ -166,4 +151,15 @@ test('the selection pill does not glide without a previous place, under Reduced 
   assert.equal(motion({ stillMotion: () => true }).pillGlide({ left: 10, top: 40, width: 200, height: 30 }, pill(to)), null);
   assert.equal(motion().pillGlide({ ...to }, pill(to)), null);
   assert.equal(motion().pillGlide({ left: 10, top: 40, width: 200, height: 30 }, pill(to)), 'ran');
+});
+
+test('a settling object takes a slight curve and ends exactly in place', () => {
+  const played = [];
+  const el = { dataset: {}, getBoundingClientRect: () => ({ left: 100, top: 100 }), animate: (frames) => { played.push(frames); return {}; } };
+  const m = motion({ performance: { now: () => 0 } });
+  m.settleLater('x', 'a', { left: 200, top: 200 });
+  m.settleNow('x', () => el);
+  const middle = played[0][Math.floor(played[0].length / 2)].transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/).slice(1).map(Number);
+  assert.notEqual(middle[0], middle[1]);
+  assert.equal(played[0].at(-1).transform, 'none');
 });

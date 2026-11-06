@@ -1,4 +1,5 @@
 pub fn powers() -> leo_web::Powers {
+    std::thread::spawn(leo_services::ai::tidy_rooms);
     let usage = std::sync::Arc::new(leo_web::usage::Usage::default());
     let writer = crate::felix::writer(
         std::sync::Arc::clone(&usage),
@@ -9,7 +10,8 @@ pub fn powers() -> leo_web::Powers {
          user: &str,
          most: u32,
          piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut()| {
+         restart: &mut dyn FnMut(),
+         stopped: &dyn Fn() -> bool| {
             let (text, answered) = leo_services::ai::chat_streaming(
                 leo_services::ai::chat::Prompt {
                     system: system.to_string(),
@@ -18,6 +20,7 @@ pub fn powers() -> leo_web::Powers {
                 most,
                 piece,
                 restart,
+                stopped,
             )?;
             Ok(leo_web::Reply {
                 text,
@@ -30,7 +33,8 @@ pub fn powers() -> leo_web::Powers {
          user: &str,
          most: u32,
          piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut()| {
+         restart: &mut dyn FnMut(),
+         stopped: &dyn Fn() -> bool| {
             let (text, answered) = leo_services::ai::toolless_streaming(
                 leo_services::ai::chat::Prompt {
                     system: system.to_string(),
@@ -39,6 +43,7 @@ pub fn powers() -> leo_web::Powers {
                 most,
                 piece,
                 restart,
+                stopped,
             )?;
             Ok(leo_web::Reply {
                 text,
@@ -98,25 +103,9 @@ pub fn powers() -> leo_web::Powers {
         listener: Some(crate::record::listener()),
         regenerator: Some(crate::record::regenerator()),
         calendar_access: Some(std::sync::Arc::new(crate::settings::WebSettings)),
-        housekeeper: Some(std::sync::Arc::new(crate::storage::Housekeeping)),
+        housekeeper: Some(std::sync::Arc::new(crate::housekeeping::Housekeeping)),
         room: Some(std::sync::Arc::new(leo_services::ai::felix_room)),
         context: Some(std::sync::Arc::new(leo_services::ai::felix_context)),
-        web: Some(leo_web::Web {
-            search: std::sync::Arc::new(|query: &str| {
-                Ok(leo_services::web::search(query)?
-                    .into_iter()
-                    .map(|h| leo_web::WebHit {
-                        title: h.title,
-                        url: h.url,
-                        snippet: h.snippet,
-                    })
-                    .collect())
-            }),
-            page: std::sync::Arc::new(|address: &str| leo_services::web::page(address)),
-            needed: std::sync::Arc::new(|| {
-                !leo_services::web::has_own_web(&leo_services::config::Config::load())
-            }),
-        }),
         reader: Some(std::sync::Arc::new(
             |file: leo_web::UploadFile, progress: &mut dyn FnMut(&str)| {
                 leo_services::import::read_for_chat(

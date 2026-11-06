@@ -50,6 +50,7 @@ const ICON = {
   tidy: svg('<circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h8M6 8v8M18 8v8M8 18h8"/>'),
   fit: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
   restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
+  filePlus: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M12 10v7M8.5 13.5h7"/>'),
   note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
   refresh: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6L20 8.5"/><path d="M20 4v4.5h-4.5"/>'),
   check: svg('<path d="M5 12l4.5 4.5L19 7"/>'),
@@ -68,7 +69,7 @@ const ICON = {
   cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
 };
 
-const recorder = window.leoRecording.create({ encodePicture: async (file) => base64((await pictureFor(file)).blob), api, esc, toast, go: (hash, opts) => go(hash, opts), noteHash: (id) => noteHash(id), felix, icons: ICON, noteReady: () => showLatest().catch(() => {}) });
+const recorder = window.leoRecording.create({ encodePicture: async (file) => base64((await pictureFor(file)).blob), api, esc, toast, go: (hash, opts) => go(hash, opts), noteHash: (id) => noteHash(id), felix, icons: ICON, noteFields: (options) => noteFields(options), noteReady: () => showLatest().catch(() => {}) });
 const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
@@ -284,25 +285,26 @@ function toast(message, { action, run, bad } = {}) {
   }, lasts);
 }
 
-const LEAVE_MS = 150;
+const LEAVE_MS = 160;
 const MOTION_MS = 180;
+const OPEN_MS = 200;
+const DRAWER_MS = 240;
+const PULSE_MS = 320;
+const ICON_MS = 140;
+const EXIT_SHARE = .8;
+const POP_FROM = .95;
+const POP_OPEN = 'inset(-24px)';
+const CASCADE_MS = 30 * 5 + MOTION_MS + 30;
 const EASE_OUT = 'cubic-bezier(.2, .8, .2, 1)';
-const moving = new WeakMap();
+const EASE_MOVE = 'cubic-bezier(.45, 0, .15, 1)';
+const EASE_EXIT = 'cubic-bezier(.4, 0, 1, 1)';
 
 function stillMotion() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-async function dismissContent(elements) {
-  const live = Array.from(elements).filter(el => el.isConnected);
-  if (!stillMotion()) {
-    await Promise.all(live.map(el => el.animate([
-      { opacity: 1, transform: 'none' },
-      { opacity: 0, transform: 'translateY(6px) scale(.98)' },
-    ], { duration: MOTION_MS, easing: EASE_OUT }).finished.catch(() => {})));
-  }
-  flipList(app, LIBRARY_ITEMS, libraryKey, () => { for (const el of live) el.remove(); });
-}
+const moving = new WeakMap();
+const popEdges = new WeakMap();
 
 function stopSlide(el) {
   delete el.dataset.folding;
@@ -315,13 +317,85 @@ function stopSlide(el) {
   el.style.overflow = '';
 }
 
-function keepOpen(box, html) {
-  if (!box) return;
-  const key = (fold) => fold.dataset.keep || fold.querySelector(':scope > summary')?.textContent.trim() || '';
-  const open = new Set([...box.querySelectorAll('details[open]')].map(key));
-  box.innerHTML = html;
-  if (!open.size) return;
-  for (const fold of box.querySelectorAll('details:not([open])')) if (open.has(key(fold))) fold.open = true;
+function pulse(el, { lift = 1.04, ring = false } = {}) {
+  if (!el || stillMotion() || typeof el.animate !== 'function') return null;
+  const frames = ring
+    ? { boxShadow: ['0 0 0 0 transparent', '0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent)', '0 0 0 5px transparent'] }
+    : { scale: [1, lift, 1] };
+  return el.animate(frames, { duration: PULSE_MS, easing: EASE_MOVE });
+}
+
+function cascade(el, kind = 'rows-in') {
+  if (!el || stillMotion()) return;
+  el.classList.add(kind);
+  setTimeout(() => el.classList.remove(kind), CASCADE_MS);
+}
+
+function rubber(over, reach = 24) {
+  return Math.sign(over) * reach * (1 - 1 / (1 + Math.abs(over) / reach));
+}
+
+const pastEdge = (at, low, high) => (stillMotion() ? at : at < low ? low + rubber(at - low) : at > high ? high + rubber(at - high) : at);
+
+function iconSwap(host, change, part = 'svg') {
+  const old = host?.querySelector(part);
+  if (!old || stillMotion() || typeof old.animate !== 'function') return change();
+  const box = old.getBoundingClientRect();
+  const ghost = old.cloneNode(true);
+  ghost.setAttribute('aria-hidden', 'true');
+  Object.assign(ghost.style, { position: 'fixed', zIndex: 1000, left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`, margin: 0, pointerEvents: 'none', color: getComputedStyle(old).color });
+  document.body.appendChild(ghost);
+  const result = change();
+  const out = { opacity: [1, 0], filter: ['blur(0)', 'blur(2px)'], scale: [1, .85] };
+  ghost.animate(out, { duration: ICON_MS * EXIT_SHARE, easing: EASE_EXIT, fill: 'forwards' }).onfinish = () => ghost.remove();
+  host.querySelector(part)?.animate({ opacity: [0, 1], filter: ['blur(2px)', 'blur(0)'], scale: [.85, 1] }, { duration: ICON_MS, easing: EASE_OUT });
+  return result;
+}
+
+function popEdge(menu, from) {
+  const box = menu.getBoundingClientRect();
+  const at = from.getBoundingClientRect ? from.getBoundingClientRect() : { left: from.x, right: from.x, top: from.y, bottom: from.y };
+  const x = Math.max(0, Math.min(box.width, (at.left + at.right) / 2 - box.left));
+  const y = Math.max(0, Math.min(box.height, (at.top + at.bottom) / 2 - box.top));
+  return { origin: `${x}px ${y}px`, up: y > box.height / 2 };
+}
+
+const popShut = (edge) => (edge.up ? 'inset(100% 0 0 0)' : 'inset(0 0 100% 0)');
+
+function unfold(menu, from = null) {
+  stopSlide(menu);
+  menu.hidden = false;
+  if (stillMotion()) return;
+  const edge = from ? popEdge(menu, from) : { origin: '50% 0', up: false };
+  popEdges.set(menu, edge);
+  menu.style.transformOrigin = edge.origin;
+  const run = menu.animate([{ clipPath: popShut(edge), transform: `scale(${POP_FROM})` }, { clipPath: POP_OPEN, transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
+  moving.set(menu, run);
+  run.onfinish = () => moving.delete(menu);
+}
+
+function fold(menu, then = null) {
+  if (menu.hidden || menu.dataset.folding) {
+    if (then && menu.hidden) then();
+    return;
+  }
+  stopSlide(menu);
+  if (stillMotion()) {
+    menu.hidden = true;
+    if (then) then();
+    return;
+  }
+  menu.dataset.folding = '1';
+  const edge = popEdges.get(menu) || { up: false };
+  const run = menu.animate([{ clipPath: POP_OPEN, opacity: 1, transform: 'none' }, { clipPath: popShut(edge), opacity: 0, transform: `scale(${POP_FROM})` }], { duration: MOTION_MS * EXIT_SHARE, easing: EASE_EXIT });
+  moving.set(menu, run);
+  run.onfinish = () => {
+    moving.delete(menu);
+    delete menu.dataset.folding;
+    menu.hidden = true;
+    if (then) then();
+  };
+  run.oncancel = () => delete menu.dataset.folding;
 }
 
 function slideHeight(el, from, to, then) {
@@ -331,40 +405,14 @@ function slideHeight(el, from, to, then) {
     return;
   }
   el.style.overflow = 'hidden';
-  const run = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: MOTION_MS, easing: EASE_OUT });
+  const leaving = to < from;
+  const run = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: leaving ? MOTION_MS * EXIT_SHARE : MOTION_MS, easing: leaving ? EASE_EXIT : EASE_OUT });
   moving.set(el, run);
   run.onfinish = () => {
     moving.delete(el);
     el.style.overflow = '';
     if (then) then();
   };
-}
-
-function unfold(menu) {
-  stopSlide(menu);
-  menu.hidden = false;
-  if (stillMotion()) return;
-  const run = menu.animate([{ clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-4px)' }, { clipPath: 'inset(0 0 0 0)', transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
-  moving.set(menu, run);
-  run.onfinish = () => moving.delete(menu);
-}
-
-function fold(menu) {
-  if (menu.hidden || menu.dataset.folding) return;
-  stopSlide(menu);
-  if (stillMotion()) {
-    menu.hidden = true;
-    return;
-  }
-  menu.dataset.folding = '1';
-  const run = menu.animate([{ clipPath: 'inset(0 0 0 0)', opacity: 1 }, { clipPath: 'inset(0 0 100% 0)', opacity: 0 }], { duration: 140, easing: 'cubic-bezier(.4, 0, 1, 1)' });
-  moving.set(menu, run);
-  run.onfinish = () => {
-    moving.delete(menu);
-    delete menu.dataset.folding;
-    menu.hidden = true;
-  };
-  run.oncancel = () => delete menu.dataset.folding;
 }
 
 function rel(iso) {
@@ -420,19 +468,15 @@ function pinButton(note) {
   return `<button class="pin-toggle${note.pinned ? ' on' : ''}" data-action="pin-card" data-id="${esc(note.id)}" aria-pressed="${note.pinned}" aria-label="${label}" title="${label}">${ICON.pin}</button>`;
 }
 
-function card(note, { words = [], showFolder = false, pick = null, why = null, browse = false } = {}) {
+function card(note, { words = [], showFolder = false, why = null } = {}) {
   const where = showFolder && note.directory ? `<span class="chip accent">${esc(note.directory)}</span>` : '';
-  const text = browse && note.summary ? esc(md.plain(note.summary)) : snippet(note.body, words);
-  const open = pick
-    ? `class="card pick-card${pick.on ? ' picked' : ''}" role="checkbox" tabindex="0" aria-checked="${pick.on}" data-action="folder-pick" data-key="${esc(pick.key)}"`
-    : `class="card" role="link" tabindex="0" draggable="true" data-action="open-note" data-id="${esc(note.id)}" data-title="${esc(note.title)}" data-from="${esc(note.directory || '')}"`;
-  const corner = pick ? `<span class="pick-box${pick.on ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : pinButton(note);
-  return `<div ${open}${browse ? ' data-library-card="true"' : ''}>
-    ${browse ? `<div class="note-thumb" data-id="${esc(note.id)}" data-pending="true" inert aria-hidden="true"></div>` : ''}
-    <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
+  const text = snippet(note.body, words);
+  const open = `class="card" role="link" tabindex="0" draggable="true" data-action="open-note" data-id="${esc(note.id)}" data-title="${esc(note.title)}" data-from="${esc(note.directory || '')}"`;
+  return `<div ${open}>
+    <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${pinButton(note)}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
     ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}”` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary'}</div>` : ''}
-    <div class="card-meta">${where}<span title="${esc(`Edited ${rel(note.updated_at)}`)}">${browse ? esc(new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : rel(note.updated_at)}</span>${progress(note)}</div>
+    <div class="card-meta">${where}<span title="${esc(`Edited ${rel(note.updated_at)}`)}">${rel(note.updated_at)}</span>${progress(note)}</div>
   </div>`;
 }
 
@@ -450,6 +494,8 @@ const SEARCH_HIGHLIGHT_MOST = 300;
 const SEARCH_HIGHLIGHT_NODES = 20000;
 let searchHighlightTimer;
 let searchPassage = null;
+let openingNote = null;
+let navigationRequest = 0;
 
 function clearSearchHighlight() {
   clearTimeout(searchHighlightTimer);
@@ -491,13 +537,48 @@ window.addEventListener('hashchange', () => {
   if (searchPassage && searchPassage.hash !== location.hash) searchPassage = null;
 });
 
-function go(hash, { replace = false, search = null } = {}) {
+function showSaveFailure(s, error, retry, current) {
+  history.replaceState(history.state, '', s.note.id ? noteHash(s.note.id) : s.note.directory ? `#/new/${enc(s.note.directory)}` : '#/new');
+  if (!s.persisted || error instanceof Locked) return fail(error);
+  toast(error instanceof Offline ? "Can't reach leo. Your draft is kept in this browser." : error.message || 'Leo could not save this note. Your draft is kept in this browser.', {
+    bad: true,
+    action: 'Leave, draft kept',
+    run: () => { if (current() && s.persisted) return retry(s); },
+  });
+}
+
+async function go(hash, { replace = false, search = null, note = null, isCurrent = null, kept = null } = {}) {
+  const request = ++navigationRequest;
+  const leaving = state.session;
+  const mine = seq;
+  const current = () => request === navigationRequest && mine === seq && state.session === leaving && (!isCurrent || isCurrent());
+  if (leaving) {
+    leaving.doc.stop();
+    if (!(kept === leaving && leaving.persisted)) {
+      try { await flush(leaving); }
+      catch (error) {
+        if (current()) showSaveFailure(leaving, error, saved => go(hash, { replace, search, note, isCurrent, kept: saved }), current);
+        return;
+      }
+    }
+    if (!current()) return;
+  }
+  if (!current()) return;
+  if (leaving) {
+    leaving.doc.destroy();
+    state.session = null;
+  }
+  openingNote = note;
   clearSearchHighlight();
   const query = search ?? (state.view === 'search' ? state.query : null);
   searchPassage = query && hash.startsWith('#/n/') ? { hash, query } : null;
-  if (location.hash === hash) return route();
+  if (location.hash === hash) {
+    marginLeave();
+    return route();
+  }
   if (replace) {
     history.replaceState(history.state, '', hash);
+    marginLeave();
     route();
   } else {
     location.hash = hash;
@@ -532,14 +613,13 @@ function goBack(hash) {
 }
 
 function back() {
-  if (state.view === 'storage' && /^#\/settings\/storage(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
+  if (state.view === 'keeping' && /^#\/settings\/keeping(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
-  if (state.view === 'note') return goBack(folderHash(state.dir || ''));
-  if (state.view === 'folder') return goBack(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
+  if (state.view === 'note') return goBack('#/');
   goBack('#/');
 }
 
-const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', new: 'New note' };
+const PAGE_NAMES = { '': 'Notes', f: 'Notes', search: 'Search', trash: 'Trash', calendar: 'Calendar', boards: 'Boards', settings: 'Settings', record: 'Record', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -568,10 +648,7 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
   document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
 }
 
-const newButton = (dir, { note = true } = {}) => `<div class="fabs"><button class="fab ghost" data-action="record" data-dir="${esc(dir)}" aria-label="Record" title="Record a lecture or meeting">${ICON.mic}<span>Record</span></button><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button>${note ? `<button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button>` : ''}</div>`;
-const newCard = (dir) => `<button class="card new-card" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}"><span class="new-card-icon">${ICON.plus}</span><span class="new-card-label">New note</span></button>`;
-
-const CRUMB_EDGES = ['.note-columns > .note', '.library-tools', '.cal-head', '.kanban-head'];
+const CRUMB_EDGES = ['.note-columns > .note', '.workspace-empty', '.cal-head', '.kanban-head'];
 
 function fitCrumbs() {
   const body = document.body;
@@ -600,207 +677,36 @@ if (typeof MutationObserver === 'function') {
 if (typeof ResizeObserver === 'function') new ResizeObserver(fitCrumbs).observe(app);
 window.addEventListener('resize', fitCrumbs);
 
-async function showFolder(dir) {
+async function showWorkspace(dir = null) {
   const mine = ++seq;
-  const arrived = state.view === 'folder' && state.dir !== dir;
-  stopLibraryArrival();
-  const before = state.view === 'folder' && state.dir === dir ? state : null;
-  const left = state.view === 'note' ? state.session?.note?.id || null : null;
-  state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: before ? new Set(before.picked) : new Set() };
-  chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
-  if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
-  const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
-  if (mine !== seq) return;
-  state.listing = { dirs, notes: page.items, total: page.total };
-  const moved = swap(`f:${dir}`, () => { scrollToTop(); drawFolder(); }, {
-    from: () => { const title = $('#title'); return inView(title) ? title : null; },
-    to: () => (left ? morphTitle(left) : null),
+  if (dir !== null) {
+    const folders = await api('/api/folders');
+    if (mine !== seq) return;
+    side.folders = folders;
+    side.loaded = true;
+    if (dir && !folders.some((folder) => folder.name === dir)) toast('That folder is not there any more. Choose another folder.', { bad: true });
+    else revealFolder(dir);
+    history.replaceState(history.state, '', '#/');
+  }
+  if (state.session?.doc) state.session.doc.destroy();
+  state = { view: 'workspace', dir: '' };
+  document.body.classList.remove('on-note');
+  chrome({});
+  swap('workspace', () => {
+    app.innerHTML = `<section class="workspace-empty">${empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    scrollToTop();
   });
-  if (arrived || moved) arriveOnPage();
 }
 
-const PAGE = 200;
 let moreWatch = null;
-
-function noteCard(n) {
-  const key = `n:${n.id}`;
-  return card(n, { browse: true, showFolder: !state.dir, ...(state.selecting ? { pick: { key, on: state.picked.has(key) } } : {}) });
-}
-
-function watchMore() {
-  if (moreWatch) moreWatch.disconnect();
-  moreWatch = null;
-  const sentinel = $('#more-notes');
-  if (!sentinel || typeof IntersectionObserver !== 'function') return;
-  moreWatch = new IntersectionObserver((seen) => {
-    if (seen.some((e) => e.isIntersecting)) loadMoreNotes();
-  }, { rootMargin: '600px 0px' });
-  moreWatch.observe(sentinel);
-}
-
-let loadingMore = null;
-function loadMoreNotes() {
-  const listing = state.listing;
-  if (loadingMore && loadingMore.listing === listing) return loadingMore.promise;
-  if (state.view !== 'folder' || !listing || listing.notes.length >= listing.total) return Promise.resolve();
-  const dir = state.dir;
-  const pending = { listing };
-  loadingMore = pending;
-  pending.promise = (async () => {
-    try {
-      const page = await api(libraryQuery(dir, listing.notes.length), { total: true });
-      if (state.listing !== listing) return;
-      const known = new Set(listing.notes.map((n) => n.id));
-      const fresh = page.items.filter((n) => !known.has(n.id));
-      listing.notes.push(...fresh);
-      listing.total = Math.max(page.total, listing.notes.length);
-      if (!fresh.length) listing.total = listing.notes.length;
-      const cards = $('.cards');
-      if (cards) cards.insertAdjacentHTML('beforeend', libraryRows(fresh));
-      watchPreviews();
-      const sentinel = $('#more-notes');
-      if (sentinel && listing.notes.length >= listing.total) sentinel.remove();
-    } catch (e) {
-      fail(e);
-    } finally {
-      if (loadingMore === pending) loadingMore = null;
-    }
-  })();
-  return pending.promise;
-}
-
-async function loadAllNotes() {
-  while (state.view === 'folder' && state.listing && state.listing.notes.length < state.listing.total) {
-    const before = state.listing.notes.length;
-    await loadMoreNotes();
-    if (!state.listing || state.listing.notes.length === before) break;
-  }
-}
-
-function folderKeys() {
-  const { dirs, notes } = state.listing;
-  const dir = state.dir;
-  return [...dirs.map((d) => `d:${dir ? `${dir}/${d.name}` : d.name}`), ...notes.map((n) => `n:${n.id}`)];
-}
-
-const LIBRARY_ITEMS = '.library-cards > .card[data-id], .library-cards > .card[data-key], .folders > .folder[data-dir]';
-const libraryKey = (el) => el.dataset.key || (el.dataset.id ? `n:${el.dataset.id}` : `d:${el.dataset.dir}`);
-
-function drawFolder() {
-  const keys = folderKeys();
-  const here = `${state.dir}|${library.view}`;
-  const same = drawn.library && drawn.library.here === here && !sameKeys(drawn.library.keys, keys);
-  drawn.library = { here, keys };
-  if (!same) return paintFolder();
-  return flipList(app, LIBRARY_ITEMS, libraryKey, paintFolder);
-}
-
-function paintFolder() {
-  const { dirs, notes } = state.listing;
-  const dir = state.dir;
-  const sel = state.selecting;
-  const picked = state.picked;
-  libraryClasses();
-  if (!dirs.length && !notes.length && libraryFiltered()) {
-    state.selecting = false;
-    chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
-    app.innerHTML = libraryTools() + libraryNoMatch();
-    return;
-  }
-  if (!dirs.length && !notes.length) {
-    state.selecting = false;
-    chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
-    app.innerHTML = libraryTools() + (dir
-      ? empty(ICON.folder, 'This folder is empty', 'Tap “New note” to write the first one here.')
-      : empty(ICON.note, 'No notes yet', 'Tap “New note” to write one. Notes you make in leo on your computer show up here too.'));
-    return;
-  }
-  const tick = (key) => (sel ? `<span class="pick-box${picked.has(key) ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : '');
-  let html = libraryTools();
-  if (dirs.length) {
-    html += `<div class="section-title">Folders</div><div class="folders">${dirs
-      .map((d) => {
-        const full = dir ? `${dir}/${d.name}` : d.name;
-        const key = `d:${full}`;
-        return `<button class="folder${sel ? ' picking' : ''}${picked.has(key) ? ' picked' : ''}" data-action="${sel ? 'folder-pick' : 'open-folder'}" data-key="${esc(key)}" data-dir="${esc(full)}"${sel ? '' : ' draggable="true"'} aria-pressed="${sel ? picked.has(key) : ''}">${ICON.folder}<span><span class="name">${esc(d.name)}</span><span class="count">${d.notes} note${d.notes === 1 ? '' : 's'}</span></span>${tick(key)}</button>`;
-      })
-      .join('')}</div>`;
-  }
-  if (notes.length) {
-    const total = Math.max(state.listing.total || 0, notes.length);
-    html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards library-cards ${library.view}${sel ? ' picking' : ''}">${sel ? '' : newCard(dir)}${libraryRows(notes)}</div>`;
-    if (total > notes.length) html += '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>';
-  } else if (libraryFiltered()) {
-    html += `<div class="section-title">Notes</div>${libraryNoMatch()}`;
-  }
-  app.innerHTML = html;
-  watchMore();
-  watchPreviews();
-  if (sel) {
-    const all = picked.size === folderKeys().length;
-    floating.innerHTML = `<div class="select-bar" role="toolbar" aria-label="Selected notes and folders">
-        <label class="select-all"><input type="checkbox" data-folder-all${all ? ' checked' : ''}><span>All</span></label>
-        <span class="select-count">${picked.size} selected</span>
-        <button class="btn sm danger" data-action="folder-trash"${picked.size ? '' : ' disabled'}>Move to trash</button>
-      </div>`;
-  } else {
-    chrome({ dir, showBack: Boolean(dir), fab: newButton(dir, { note: !notes.length }) });
-  }
-}
-
-function folderTrashAsk() {
-  const keys = [...state.picked];
-  if (!keys.length) return;
-  const dirs = keys.filter((k) => k.startsWith('d:')).map((k) => k.slice(2));
-  const notes = keys.filter((k) => k.startsWith('n:')).map((k) => k.slice(2));
-  const inside = state.listing.dirs
-    .filter((d) => dirs.includes(state.dir ? `${state.dir}/${d.name}` : d.name))
-    .reduce((sum, d) => sum + d.notes, 0);
-  const parts = [];
-  if (notes.length) parts.push(plural(notes.length, 'note'));
-  if (dirs.length) parts.push(`${plural(dirs.length, 'folder')}${inside ? ` (with ${plural(inside, 'note')} inside)` : ''}`);
-  state.trashMove = { notes, dirs };
-  sheet(`<h3>Move ${esc(parts.join(' and '))} to the trash?</h3>
-    <p>Notes stay in the trash for 30 days, so you can restore them from there.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-trash-now">Move to trash</button></div>`);
-}
-
-async function folderTrashNow() {
-  const mine = seq;
-  const move = state.trashMove;
-  closeSheet();
-  if (!move) return;
-  state.trashMove = null;
-  const done = await api('/api/trash/move', { method: 'POST', body: move });
-  if (mine === seq) await dismissContent(app.querySelectorAll('.pick-card.picked, .folder.picked'));
-  const parts = [];
-  if (done.notes) parts.push(plural(done.notes, 'note'));
-  if (done.folders) parts.push(plural(done.folders, 'folder'));
-  const undo = done.ids && (done.ids.length || (done.dirs && done.dirs.length)) ? { action: 'Undo', run: () => undoTrashMove(done) } : { action: 'Open trash', run: () => go('#/trash') };
-  toast(`Moved ${parts.join(' and ') || 'nothing'} to the trash`, undo);
-  if (mine !== seq) return;
-  state.selecting = false;
-  await showFolder(state.dir);
-}
 
 async function undoTrashMove(done) {
   try {
     const back = await api('/api/trash/restore', { method: 'POST', body: { ids: done.ids, dirs: done.dirs || [] } });
     toast(back.restored === done.ids.length ? 'Brought back' : `Brought back ${plural(back.restored, 'note')}`);
-    if (state.view === 'folder') await showFolder(state.dir);
-  } catch (e) {
-    fail(e);
-  }
+    await loadSideFolders();
+  } catch (e) { fail(e); }
 }
-
-floating.addEventListener('change', async (e) => {
-  if (state.view !== 'folder' || !e.target.closest('[data-folder-all]')) return;
-  const on = e.target.checked;
-  if (on) await loadAllNotes();
-  if (state.view !== 'folder') return;
-  state.picked = on ? new Set(folderKeys()) : new Set();
-  drawFolder();
-});
 
 const cleanTitle = (text) => text.replace(/\s*\n\s*/g, ' ').trim();
 
@@ -818,7 +724,10 @@ const saving = window.leoSaving.create({
   storageError: () => toast('This browser cannot keep a draft. Keep the page open until your note says Saved.', { bad: true }),
   recovered: (count) => {
     toast(`Saving ${count} edit${count === 1 ? '' : 's'} that had not reached leo yet.`);
-    setTimeout(() => saving.retry(), 0);
+    setTimeout(() => saving.retry().then(() => {
+      const left = saving.drafts().length;
+      if (left) toast(`${plural(left, 'edit')} still could not be saved. Try again or discard ${left === 1 ? 'it' : 'them'} in Settings → Keeping.`, { bad: true });
+    }), 0);
   },
   created: (s, note) => {
     if (state.session === s) history.replaceState(history.state, '', noteHash(note.id));
@@ -886,12 +795,13 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   let s;
   swap(`n:${note.id || 'new'}`, () => {
     scrollToTop();
-    document.body.classList.toggle('on-library', false);
     document.body.classList.toggle('on-note', true);
     if (source.note && source.note !== note.id) closeSource();
     if (state.session && state.session.doc) state.session.doc.destroy();
     s = draft || saving.open(note);
     s.tags = [...s.edit.tags];
+    if (side.openedNote !== note.id) side.target = null;
+    side.openedNote = note.id;
     state = { view: 'note', dir: note.directory, session: s };
     chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
     document.title = `${note.title || 'New note'} · leo`;
@@ -899,8 +809,8 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
-    <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
-    <div class="note-meta">${where}<span id="save-state">${when}</span><button type="button" id="margin-mode" class="chip margin-mode" aria-pressed="false" disabled>Felix: when you ask</button></div></header>
+    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
+    <div class="note-meta"><span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article></div></div>`;
@@ -982,6 +892,7 @@ async function showSearch(query) {
   app.innerHTML = results.length
     ? `<div class="section-title">${count}</div><div class="cards">${draw(results.slice(0, SEARCH_STEP))}</div>${results.length > SEARCH_STEP ? '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>' : ''}`
     : empty(ICON.search, 'Nothing found', `No note mentions “${query}”.`);
+  cascade($('.cards'));
   let shown = SEARCH_STEP;
   if (moreWatch) moreWatch.disconnect();
   const sentinel = $('#more-notes');
@@ -1026,58 +937,3 @@ window.addEventListener('beforeprint', () => {
 window.addEventListener('afterprint', () => {
   document.body.querySelectorAll('[data-print-off]').forEach((el) => el.removeAttribute('data-print-off'));
 });
-
-function meterPercent(fraction) {
-  return Math.max(2, Math.min(100, Math.round((Number(fraction) || 0) * 100)));
-}
-
-function meterText(label, view) {
-  const seconds = Number(view?.seconds) || 0;
-  const expected = Number(view?.expected) || 0;
-  const took = seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds} s`;
-  const left = Number(view?.left ?? Math.max(0, expected - seconds));
-  const rest = view?.slow ? ' · taking longer than usual' : expected && left > 0 ? ` · about ${left >= 60 ? `${Math.round(left / 60)} min` : `${left} s`} left` : '';
-  return `${label} · ${meterPercent(view?.fraction)}%${seconds ? ` · ${took}` : ''}${rest}`;
-}
-
-function finishMeter(id) {
-  const el = document.getElementById(id);
-  if (!el) return Promise.resolve();
-  el.setAttribute('aria-valuenow', '100');
-  el.querySelector('.meter-text').textContent = `${el.dataset.label} · done`;
-  const bar = el.querySelector('i');
-  bar.style.transitionDuration = '.25s';
-  bar.style.width = '100%';
-  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  return new Promise((resolve) => setTimeout(resolve, still ? 0 : 300));
-}
-
-function meterBar(id, label, view) {
-  const pct = meterPercent(view?.fraction);
-  return `<div class="meter" id="${id}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${esc(label)}" data-label="${esc(label)}"><span class="hint meter-text">${esc(meterText(label, view))}</span><span class="activity-bar"><i style="width:${pct}%"></i></span></div>`;
-}
-
-function setMeter(id, view) {
-  const el = document.getElementById(id);
-  if (!el || !view || view.fraction === null || view.fraction === undefined) return;
-  const pct = meterPercent(view.fraction);
-  el.setAttribute('aria-valuenow', String(pct));
-  el.querySelector('.meter-text').textContent = meterText(el.dataset.label, view);
-  el.querySelector('i').style.width = `${pct}%`;
-}
-
-function watchProgress(key, seen) {
-  let stopped = false;
-  const look = async () => {
-    if (stopped) return;
-    try {
-      const view = await api(`/api/progress/${enc(key)}`);
-      if (!stopped && view && view.fraction !== null) seen(view);
-    } catch (e) {
-      if (e instanceof Locked) return;
-    }
-    if (!stopped) setTimeout(look, 800);
-  };
-  setTimeout(look, 300);
-  return () => { stopped = true; };
-}

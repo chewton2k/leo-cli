@@ -29,8 +29,8 @@ notes/    your notes as Markdown files, in their folders. Any Markdown
 uploads/  the files you uploaded, in a folder per note (named by the note's id,
           which is the id: line at the top of the note).
 chats/    your conversations with Felix, one JSON file each.
-tasks.json the tasks you added on the Calendar page (Storage can restore
-          them). Tasks from notes are in the notes themselves.
+tasks.json the tasks you added on the Calendar page. Tasks from notes are
+          in the notes themselves.
 margin.json Felix's margin notes and their replies, included with chats.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
@@ -286,7 +286,7 @@ fn write_zip_with_limits<W: Write + Seek>(
         budget: &mut budget,
     }
     .write_all(README.as_bytes())?;
-    let data = crate::storage::data_dir(notes_dir);
+    let data = crate::keeping::data_dir(notes_dir);
     add_dir(
         &mut zip,
         &data,
@@ -416,7 +416,7 @@ fn write_zip_with_limits<W: Write + Seek>(
             for doc in documents(chats_dir, &chat.id, &budget)? {
                 ensure!(
                     doc.len() == 32 && doc.chars().all(|c| c.is_ascii_hexdigit()),
-                    "A saved document has an invalid id; remove it in Storage and try again"
+                    "A saved document has an invalid id; remove it from the chat and try again"
                 );
                 let body: String = crate::chats::db_of(chats_dir).with(|connection| {
                     connection.query_row(

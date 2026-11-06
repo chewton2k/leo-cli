@@ -1,10 +1,7 @@
-//! `leo doctor`: a full health scan of leo, the notes, the AI, recording and
-//! backup, grouped so a problem is found under the thing it affects.
+//! `leo doctor`: a full health scan of leo, notes, AI and recording.
 //!
 
 use std::path::Path;
-
-use leo_core::action::Line;
 
 use crate::config::secret::SecretStore;
 use crate::config::Config;
@@ -25,8 +22,6 @@ pub struct Probe {
     pub ai: bool,
     /// Record a moment of audio to check the microphone is heard.
     pub microphone: bool,
-    /// Ask the backup remote whether it answers.
-    pub remote: bool,
     pub update: bool,
 }
 
@@ -35,7 +30,6 @@ impl Probe {
         Probe {
             ai: true,
             microphone: !crate::session::mic::disabled(),
-            remote: true,
             update: true,
         }
     }
@@ -69,45 +63,7 @@ pub fn scan(
             title: "recording",
             checks: recording_checks(probe),
         },
-        Section {
-            title: "backup",
-            checks: backup_checks(config, notes_dir, probe),
-        },
     ]
-}
-
-pub fn report(sections: &[Section]) -> (Vec<Line>, usize) {
-    let mut lines = Vec::new();
-    let mut failed = 0;
-    for section in sections {
-        if !lines.is_empty() {
-            lines.push(Line::blank());
-        }
-        lines.push(Line::plain(section.title));
-        for check in &section.checks {
-            let detail = check
-                .detail
-                .as_deref()
-                .map(|d| format!(" — {d}"))
-                .unwrap_or_default();
-            match &check.state {
-                State::Ready => lines.push(Line::good(format!("  ok   {}{detail}", check.what))),
-                State::Warn { note } => {
-                    lines.push(Line::warn(format!("  note {}{detail}", check.what)));
-                    lines.push(Line::dim(format!("       {note}")));
-                }
-                State::Missing { fix } => {
-                    failed += 1;
-                    lines.push(Line::bad(format!("  no   {}{detail}", check.what)));
-                    lines.push(Line::dim(format!("       needed for {}", check.needed_for)));
-                    for step in fix.lines() {
-                        lines.push(Line::plain(format!("       {}", step.trim())));
-                    }
-                }
-            }
-        }
-    }
-    (lines, failed)
 }
 
 fn warn(what: &str, needed_for: &str, note: String) -> Check {
@@ -380,103 +336,6 @@ fn recording_checks(probe: Probe) -> Vec<Check> {
     checks
 }
 
-fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> {
-    use leo_core::sync;
-
-    if !health::on_path("git") {
-        return vec![Check::missing(
-            "git",
-            "backing up",
-            health::install_hint("git"),
-        )];
-    }
-    let mut checks = vec![Check::ready("git", "backing up", None)];
-
-    if !sync::is_initialized(notes_dir) {
-        checks.push(warn(
-            "backup",
-            "keeping a copy on GitHub",
-            "off — set it up in Settings, Backup".to_string(),
-        ));
-        return checks;
-    }
-    checks.push(Check::ready(
-        "backup",
-        "keeping a copy on GitHub",
-        Some("every save is committed".to_string()),
-    ));
-
-    match sync::remote_url(notes_dir) {
-        None => checks.push(warn(
-            "GitHub remote",
-            "keeping a copy on GitHub",
-            "none connected — connect one in Settings, Backup".to_string(),
-        )),
-        Some(url) if probe.remote => checks.push(match sync::remote_reachable(notes_dir) {
-            Ok(()) => Check::ready("GitHub remote", "keeping a copy on GitHub", Some(url)),
-            Err(e) => {
-                let mut c = Check::missing(
-                    "GitHub remote",
-                    "keeping a copy on GitHub",
-                    &format!(
-                        "check the address, and that `git push` works from this terminal:\n{url}"
-                    ),
-                );
-                c.detail = Some(e);
-                c
-            }
-        }),
-        Some(url) => checks.push(Check::ready(
-            "GitHub remote",
-            "keeping a copy on GitHub",
-            Some(url),
-        )),
-    }
-
-    if let Some(waiting) = sync::unpushed(notes_dir) {
-        checks.push(if waiting == 0 {
-            Check::ready(
-                "pushed",
-                "keeping a copy on GitHub",
-                Some("GitHub has everything".to_string()),
-            )
-        } else {
-            warn(
-                "pushed",
-                "keeping a copy on GitHub",
-                format!(
-                    "{waiting} change{} not on GitHub yet — the next backup pushes {}",
-                    if waiting == 1 { "" } else { "s" },
-                    if waiting == 1 { "it" } else { "them" }
-                ),
-            )
-        });
-    }
-
-    if let Some(changed) = sync::uncommitted(notes_dir) {
-        checks.push(if changed == 0 {
-            Check::ready("uncommitted changes", "keeping a copy on GitHub", None)
-        } else {
-            warn(
-                "uncommitted changes",
-                "keeping a copy on GitHub",
-                format!(
-                    "{changed} file{} changed outside leo; the next save or backup commits {}",
-                    if changed == 1 { "" } else { "s" },
-                    if changed == 1 { "it" } else { "them" }
-                ),
-            )
-        });
-    }
-
-    checks.push(Check::ready(
-        "automatic backup",
-        "keeping a copy on GitHub",
-        Some(config.sync.auto_push.label().to_string()),
-    ));
-    checks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,48 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn the_report_names_each_problem_with_its_fix_and_counts_them() {
-        use leo_core::action::Kind;
-        let sections = vec![
-            Section {
-                title: "leo",
-                checks: vec![Check::ready("leo", "everything", Some("version 9".into()))],
-            },
-            Section {
-                title: "AI",
-                checks: vec![
-                    Check::missing(
-                        "AI for writing",
-                        "notes from recordings",
-                        "brew install ollama\nor: store a key",
-                    ),
-                    warn("config file", "settings", "is old".into()),
-                ],
-            },
-        ];
-        let (lines, failed) = report(&sections);
-        assert_eq!(failed, 1);
-        let text: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
-        let joined = text.join("\n");
-        for expected in [
-            "leo",
-            "ok   leo — version 9",
-            "no   AI for writing",
-            "needed for notes from recordings",
-            "brew install ollama",
-            "or: store a key",
-            "note config file",
-            "is old",
-        ] {
-            assert!(joined.contains(expected), "no {expected:?} in:\n{joined}");
-        }
-        let missing = lines.iter().find(|l| l.text.contains("no   AI")).unwrap();
-        assert_eq!(missing.kind, Kind::Bad);
-        let fine = lines.iter().find(|l| l.text.contains("ok   leo")).unwrap();
-        assert_eq!(fine.kind, Kind::Good);
-    }
-
-    #[test]
     fn a_newer_release_is_a_note_with_the_command_to_update() {
         let (_tmp, _notes, config) = setup();
         let checks = leo_checks(&config, Some("9.9.9".to_string()));
@@ -618,7 +435,7 @@ mod tests {
             quiet(),
         );
         let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
-        assert_eq!(titles, ["leo", "notes", "AI", "recording", "backup"]);
+        assert_eq!(titles, ["leo", "notes", "AI", "recording"]);
         assert!(matches!(
             meaning_check(crate::providers::ModelState::Missing).state,
             State::Warn { ref note } if note.contains("leo update")
@@ -689,66 +506,6 @@ mod tests {
         assert!(check(section(&sections, "leo"), "config file")
             .state
             .is_ready());
-    }
-
-    /// Backup is optional, so not having it is worth a mention, not a failure.
-    #[test]
-    fn backup_being_off_is_a_note_not_a_failure() {
-        let (_tmp, notes, config) = setup();
-        std::fs::create_dir_all(&notes).unwrap();
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
-        let b = check(section(&sections, "backup"), "backup");
-        match &b.state {
-            State::Warn { note } => assert!(note.contains("Settings, Backup"), "{note}"),
-            other => panic!("expected a note, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_backup_remote_is_checked_and_what_is_waiting_is_counted() {
-        let (tmp, notes, config) = setup();
-        let remote = tmp.path().join("remote.git");
-        assert!(std::process::Command::new("git")
-            .args(["init", "--bare", "-q"])
-            .arg(&remote)
-            .status()
-            .unwrap()
-            .success());
-        std::fs::create_dir_all(&notes).unwrap();
-        leo_core::sync::connect(&notes, remote.to_str().unwrap()).unwrap();
-        std::fs::write(notes.join("new.md"), "x").unwrap();
-
-        let probe = Probe {
-            remote: true,
-            ..Probe::default()
-        };
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            probe,
-        );
-        let backup = section(&sections, "backup");
-        assert!(
-            check(backup, "GitHub remote").state.is_ready(),
-            "{:?}",
-            backup.checks
-        );
-        assert!(
-            matches!(
-                check(backup, "uncommitted changes").state,
-                State::Warn { .. }
-            ),
-            "{:?}",
-            backup.checks
-        );
     }
 
     #[test]

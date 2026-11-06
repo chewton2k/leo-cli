@@ -39,14 +39,13 @@ test('citations become note chips, and ones Felix was never given are dropped', 
 test('the conversation is kept per browser and survives broken storage', () => {
   const values = new Map();
   const storage = { getItem: (k) => values.get(k) || null, setItem: (k, v) => values.set(k, v) };
-  C.save(storage, 'study', Array.from({ length: 60 }, (_, i) => ({ role: 'user', text: `m${i}` })));
+  C.save(storage, Array.from({ length: 60 }, (_, i) => ({ role: 'user', text: `m${i}` })));
   const back = C.load(storage);
-  assert.equal(back.mode, 'study');
   assert.equal(back.messages.length, 40);
   assert.equal(back.messages[0].text, 'm20');
   const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
-  assert.deepEqual(C.load(broken), { id: null, mode: 'chat', messages: [], refs: [] });
-  C.save(broken, 'ask', []);
+  assert.deepEqual(C.load(broken), { id: null, messages: [], refs: [] });
+  C.save(broken, []);
 });
 
 test('Felix keeps his colour and shape', () => {
@@ -60,7 +59,6 @@ test('Felix keeps his colour and shape', () => {
   assert.equal((svg.match(/class="felix-arm felix-(left|right)"/g) || []).length, 2, 'two arms');
   assert.match(svg, /<g class="felix-arm felix-left"><rect class="felix-arm-skin"[^>]*\/><g class="felix-claws">/, 'the monster’s claws move with his arms');
   assert.match(svg, /<g class="felix-rawr">/);
-  assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study']);
 });
 
 test('Demon Felix has his own taps, flames, slashes and words, and cute Felix can still surprise', () => {
@@ -94,19 +92,16 @@ test('a note is added once, and only up to the limit', () => {
 test('attached notes are kept with the conversation', () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) || null, setItem: (k, v) => store.set(k, v) };
-  C.save(storage, 'study', [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }], 'chat-1234');
-  assert.deepEqual(C.load(storage), { id: 'chat-1234', mode: 'study', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
+  C.save(storage, [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }], 'chat-1234');
+  assert.deepEqual(C.load(storage), { id: 'chat-1234', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
 });
 
-test('a style saved before there were two lands in the one that took it over', () => {
-  assert.equal(C.modeOf('quiz'), 'study');
-  assert.equal(C.modeOf('coach'), 'study');
-  assert.equal(C.modeOf('meeting'), 'chat');
-  assert.equal(C.modeOf('explain'), 'chat');
-  assert.equal(C.modeOf('ask'), 'chat');
-  assert.equal(C.modeOf(undefined), 'chat');
-  const storage = { getItem: () => JSON.stringify({ mode: 'quiz', messages: [] }), setItem() {} };
-  assert.equal(C.load(storage).mode, 'study');
+test('a chat saved under an old style opens with its messages', () => {
+  for (const mode of ['chat', 'study', 'quiz', 'interview']) {
+    const storage = { getItem: () => JSON.stringify({ mode, messages: [{ role: 'user', text: 'hi' }] }), setItem() {} };
+    assert.deepEqual(C.load(storage).messages, [{ role: 'user', text: 'hi' }]);
+    assert.equal('mode' in C.load(storage), false);
+  }
 });
 
 test('past chats are grouped the way chat apps group them', () => {
@@ -128,12 +123,12 @@ test('a chat id is safe in a file name even without randomUUID', () => {
 });
 
 test('a starter that needs classes names the ones picked', () => {
-  const plan = C.MODES[1].starters[2];
-  const across = C.MODES[1].starters[1];
+  const plan = C.STARTERS.find((s) => s.text.includes('review plan'));
+  const across = C.STARTERS.find((s) => s.text.includes('across my classes'));
   assert.equal(C.starterWords(plan, ['cs130']), 'Make me a 3-day review plan for cs130');
   assert.equal(C.starterWords(plan, ['cs130', 'math61', 'phys1b']), 'Make me a 3-day review plan for cs130, math61 and phys1b');
   assert.equal(C.starterWords(across, ['cs130', 'math61']), 'Quiz me across cs130 and math61');
-  for (const m of C.MODES) for (const s of m.starters) assert.ok(s.ask, `${s.text} asks when nothing is open`);
+  for (const s of C.STARTERS) assert.ok(s.ask, `${s.text} asks when nothing is open`);
 });
 
 test('splitFiles keeps files already sent out of the box for the next message', () => {
@@ -301,7 +296,6 @@ test('what any model is told about an earlier answer includes what Felix did, as
   const answer = {
     role: 'assistant',
     text: '[[incorrect]] It uses a queue [n1].',
-    mode: 'study',
     spent: { by: 'Codex', model: 'gpt-6.1-sol' },
     steps: [{ text: 'Searched your notes for “queue”', found: ['Graph traversals', 'Heaps'] }, 'Opened “Graph traversals”'],
     asks: [{ question: 'Which week?', options: ['1', '2'], answered: '2' }],
@@ -309,7 +303,7 @@ test('what any model is told about an earlier answer includes what Felix did, as
     proposals: [{ kind: 'edit', title: 'Graph traversals', find: 'stack', replace: 'queue', state: 'applied' }],
   };
   const text = C.historyText(answer);
-  assert.ok(text.startsWith('[Written by Codex · gpt-6.1-sol, in study style]\n[What Felix did'), 'notes come first, so clipping a long answer keeps them');
+  assert.ok(text.startsWith('[Written by Codex · gpt-6.1-sol]\n[What Felix did'), 'notes come first, so clipping a long answer keeps them');
   assert.ok(text.endsWith('\nIt uses a queue [n1].'), 'the verdict marker is not repeated');
   assert.ok(text.includes('[What Felix did for this answer: Searched your notes for “queue” (found: Graph traversals, Heaps); Opened “Graph traversals”]'));
   assert.ok(text.includes('[Felix asked: Which week? (choices: 1 | 2); the user answered: 2]'));
@@ -443,13 +437,13 @@ test('conversation rows display only escaped titles, including search results', 
 
 
 
-function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before = async () => true, stream = {}) {
+function chatSendFixture(id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');
   const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
   const send = source.slice(source.indexOf('    async function send('), source.indexOf('    let leaving ='));
-  const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const modeName ='));
-  const state = { id, mode, access, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
+  const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const writer = (m) =>'));
+  const state = { id, access, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
   const requests = [], prepared = [], notices = [];
   const contextBox = { textContent: '', title: '', hidden: false };
   const input = { value: 'Put the solution in my code area.' };
@@ -484,7 +478,7 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
 test('completed and stopped replies retain elapsed time without confusing completion with cancellation', async () => {
   for (const abort of [false, true]) {
     let now = 100;
-    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, {
+    const fixture = chatSendFixture('practice', 'ask', undefined, {
       clock: () => now,
       events: [{ proposal: { kind: 'add_task', state: 'applied' } }],
       finish: state => { now = 61250; if (abort) state.busy.abort(); },
@@ -501,7 +495,7 @@ test('successful card-only replies finish without a stopped error for every prop
   const kinds = ['create', 'edit', 'add_task', 'update_task', 'delete_task', 'restore_task', 'move_note', 'make_folder', 'remove_folder', 'move_folder', 'delete_note', 'restore_note', 'rename_note', 'rename_folder', 'pin_note', 'delete_folder', 'restore_folder', 'add_task', ];
   for (const kind of kinds) {
     for (const state of ['new', 'applied']) {
-      const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { events: [{ proposal: { kind, state, made: 'note' } }, { done: true }] });
+      const fixture = chatSendFixture('practice', 'ask', undefined, { events: [{ proposal: { kind, state, made: 'note' } }, { done: true }] });
       await fixture.send('Make this change.');
       const answer = fixture.state.messages.at(-1);
       assert.equal(answer.error, undefined, `${kind}: ${state}`);
@@ -512,7 +506,7 @@ test('successful card-only replies finish without a stopped error for every prop
   const events = [{ ask: { question: 'Which approach?', options: ['A', 'B'] } }, ...Object.keys(C.QUIZ_KINDS).map(kind => ({ quiz: { question: 'Why?', kind } })), { proposal: { kind: 'add_task', auto: true } }];
   for (const event of events) {
     for (const extra of [{}, { card: { question: 'Explain?', correct: null } }]) {
-      const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { events: [event, { done: true }] });
+      const fixture = chatSendFixture('practice', 'ask', undefined, { events: [event, { done: true }] });
       await fixture.send('Continue.', extra);
       assert.equal(fixture.state.messages.at(-1).error, undefined);
       if (extra.card) assert.equal(extra.card.reply.error, undefined);
@@ -523,7 +517,7 @@ test('successful card-only replies finish without a stopped error for every prop
 
 test('a restarted reply counts retained applied cards and reports empty output when pending cards were discarded', async () => {
   for (const state of ['new', 'applied']) {
-    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { events: [{ proposal: { kind: 'add_task', state } }, { reset: true }, { done: true }] });
+    const fixture = chatSendFixture('practice', 'ask', undefined, { events: [{ proposal: { kind: 'add_task', state } }, { reset: true }, { done: true }] });
     await fixture.send('Continue.');
     const answer = fixture.state.messages.at(-1);
     if (state === 'applied') {
@@ -548,7 +542,7 @@ test('empty completion, cancellation and provider failures remain distinct even 
     { events: [{ error: 'The provider is unavailable. Try again.' }], expected: /^The provider is unavailable\. Try again\.$/ },
   ];
   for (const reply of cases) {
-    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, reply);
+    const fixture = chatSendFixture('practice', 'ask', undefined, reply);
     await fixture.send('Continue.');
     const answer = fixture.state.messages.at(-1);
     assert.match(answer.error, reply.expected);
@@ -559,7 +553,7 @@ test('empty completion, cancellation and provider failures remain distinct even 
 
 test('proposal-only completion sends waiting follow-ups while cancellation restores them without sending', async () => {
   for (const abort of [false, true]) {
-    const fixture = chatSendFixture('chat', 'practice', 'ask', undefined, { replies: [{
+    const fixture = chatSendFixture('practice', 'ask', undefined, { replies: [{
       events: [{ proposal: { kind: 'add_task', state: 'applied' } }],
       finish: state => {
         const message = { role: 'user', text: 'Explain its complexity.', steer: 'waiting' };
@@ -651,34 +645,32 @@ test('canonical history preserves notes, actions and ordinary conversation chang
 });
 
 test('actual quiz sends keep the prior model history stable through hints, marking and saved next questions', async () => {
-  for (const mode of ['chat', 'study']) {
-    const hints = [true, true, false, false, true, false];
-    const replies = hints.map(hint => ({ events: [{ t: hint ? 'Check the boundary.' : '[[correct]] Your invariant holds.' }, ...(!hint ? [{ quiz: { kind: 'free_response', question: 'What happens next?', answer: 'The next state.', explain: 'Follow the state.' } }] : []), { done: true }] }));
-    const fixture = chatSendFixture(mode, 'practice', 'auto', undefined, { replies });
-    let quiz = { kind: 'free_response', question: 'Why is it preserved?', answer: 'The transition preserves it.', correct: null };
-    fixture.state.messages.push({ role: 'user', text: 'Practise this material.' }, { role: 'assistant', text: '', quizzes: [quiz] });
-    let previous = null;
-    for (const hint of hints) {
-      const text = hint ? C.hintSay(quiz) : 'The transition preserves the state.';
-      const extra = hint ? { card: quiz, hint: true } : { card: quiz, say: C.quizSay(quiz, text, null) };
-      if (!hint) { quiz.given = text; quiz.correct = null; }
-      await fixture.send(text, extra);
-      const request = fixture.requests.at(-1);
-      assert.equal(request.practice, true);
-      assert.equal(request.mark, !hint);
-      if (previous) {
-        assert.deepEqual(request.messages.slice(0, previous.length), previous);
-        assert.equal(request.messages.length, previous.length + 2);
-      }
-      const nested = hint ? quiz.hints.at(-1) : quiz.reply;
-      assert.equal(nested.request, request.messages.at(-1).text);
-      assert.match(nested.request, hint ? /Hint, please/ : /Quiz answer/);
-      assert.deepEqual(C.modelHistory(JSON.parse(JSON.stringify(fixture.state.messages))), C.modelHistory(fixture.state.messages));
-      previous = request.messages;
-      if (!hint) quiz = fixture.state.messages.at(-1).quizzes[0];
+  const hints = [true, true, false, false, true, false];
+  const replies = hints.map(hint => ({ events: [{ t: hint ? 'Check the boundary.' : '[[correct]] Your invariant holds.' }, ...(!hint ? [{ quiz: { kind: 'free_response', question: 'What happens next?', answer: 'The next state.', explain: 'Follow the state.' } }] : []), { done: true }] }));
+  const fixture = chatSendFixture('practice', 'auto', undefined, { replies });
+  let quiz = { kind: 'free_response', question: 'Why is it preserved?', answer: 'The transition preserves it.', correct: null };
+  fixture.state.messages.push({ role: 'user', text: 'Practise this material.' }, { role: 'assistant', text: '', quizzes: [quiz] });
+  let previous = null;
+  for (const hint of hints) {
+    const text = hint ? C.hintSay(quiz) : 'The transition preserves the state.';
+    const extra = hint ? { card: quiz, hint: true } : { card: quiz, say: C.quizSay(quiz, text, null) };
+    if (!hint) { quiz.given = text; quiz.correct = null; }
+    await fixture.send(text, extra);
+    const request = fixture.requests.at(-1);
+    assert.equal(request.practice, true);
+    assert.equal(request.mark, !hint);
+    if (previous) {
+      assert.deepEqual(request.messages.slice(0, previous.length), previous);
+      assert.equal(request.messages.length, previous.length + 2);
     }
-    assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
+    const nested = hint ? quiz.hints.at(-1) : quiz.reply;
+    assert.equal(nested.request, request.messages.at(-1).text);
+    assert.match(nested.request, hint ? /Hint, please/ : /Quiz answer/);
+    assert.deepEqual(C.modelHistory(JSON.parse(JSON.stringify(fixture.state.messages))), C.modelHistory(fixture.state.messages));
+    previous = request.messages;
+    if (!hint) quiz = fixture.state.messages.at(-1).quizzes[0];
   }
+  assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
 });
 
 test('usage breakdown separates cached input, failures and unknown counts without accepting arbitrary labels', () => {
@@ -698,10 +690,10 @@ test('usage breakdown separates cached input, failures and unknown counts withou
   assert.deepEqual(C.usageRows(null), []);
 });
 
-test('a confirmed Study verdict overrides a conflicting hidden marker without changing the explanation', async () => {
+test('a confirmed verdict overrides a conflicting hidden marker without changing the explanation', async () => {
   for (const verdict of ['correct', 'incorrect', 'ungraded']) {
     const previous = verdict === 'correct' ? 'incorrect' : 'correct';
-    const fixture = chatSendFixture('study', 'practice', 'ask', undefined, { events: [{ t: `[[${previous}]] Review the queue invariant.` }, { verdict }, { done: true }] });
+    const fixture = chatSendFixture('practice', 'ask', undefined, { events: [{ t: `[[${previous}]] Review the queue invariant.` }, { verdict }, { done: true }] });
     const quiz = { kind: 'free_response', question: 'What leaves first?', answer: 'The oldest item.', correct: null };
     fixture.state.messages.push({ role: 'user', text: 'Practise queues.' }, { role: 'assistant', text: '', quizzes: [quiz] });
     await fixture.send('The oldest item.', { card: quiz, say: C.quizSay(quiz, 'The oldest item.', null) });
@@ -720,4 +712,30 @@ test('a quiz answer leo already marked tells Felix not to repeat it, and how to 
   assert.match(wrong, /wrong; the right answer is a queue/);
   assert.match(wrong, /explanation and feedback/);
   assert.match(wrong, /finish it now with end_session/);
+});
+
+test('a prediction is an attempt before teaching, so it is never marked', async () => {
+  const quiz = { kind: 'free_response', predict: true, question: 'What has to change?', answer: 'The pointer.', correct: null };
+  const say = C.quizSay(quiz, 'the index', null);
+  assert.match(say, /My prediction: the index/);
+  assert.match(say, /do not mark it/);
+  assert.doesNotMatch(say, /\[\[correct\]\]/);
+  assert.match(C.historyText({ role: 'assistant', text: 'Try this.', quizzes: [quiz] }), /\[Prediction question/);
+
+  const fixture = chatSendFixture('practice', 'ask', undefined, { events: [{ t: '[[correct]] You said the index; it is the pointer.' }, { quiz: { kind: 'free_response', question: 'Check', answer: 'x' } }, { done: true }] });
+  quiz.given = 'the index';
+  fixture.state.messages.push({ role: 'assistant', text: '', quizzes: [quiz] });
+  await fixture.send(quiz.given, { card: quiz, say });
+  assert.equal(fixture.requests[0].mark, false);
+  assert.equal(fixture.requests[0].practice, true);
+  assert.equal(quiz.correct, null);
+  assert.equal(fixture.state.messages.at(-1).quizzes[0].question, 'Check');
+});
+
+test('how sure the user felt and their thinking reach Felix on the answer line', () => {
+  const mc = { kind: 'multiple_choice', question: 'Which?', options: ['a', 'b'], answer: 'a', given: 'b', correct: false, sure: 'guess', thinking: 'first\nsecond' };
+  for (const said of [C.quizSay(mc, 'b', false), C.heldSay(mc, false)]) assert.match(said, /My answer: b \(how sure I felt: guessing\) My thinking: first second/);
+  assert.match(C.heldSay(mc, false).split('\n').slice(0, 3).join('\n'), /first second/, 'a held result keeps them when it is folded into the next message');
+  assert.match(C.quizSay({ ...mc, sure: null, thinking: undefined }, 'b', false), /My answer: b\n/);
+  assert.deepEqual(Object.keys(C.SURE), ['sure', 'think', 'guess']);
 });

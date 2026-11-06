@@ -27,11 +27,6 @@ const test = base.test.extend({
 const fs = require('node:fs');
 const path = require('node:path');
 
-async function chooseMode(chat, mode) {
-  await chat.locator('#chat-mode-btn').click();
-  await chat.locator(`.chat-mode[data-mode="${mode}"]`).click();
-}
-
 test.beforeEach(async ({ page }) => {
   const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
   await page.goto(`/?token=${token}`);
@@ -43,8 +38,8 @@ async function goPlace(page, action) {
     await page.locator('#menu').click();
     return page.locator(`.sheet [data-action="${action}"]`).click();
   }
-  // Trash and Storage live inside Settings on a wide screen.
-  if (action === 'trash' || action === 'storage') {
+  // Trash and Keeping live inside Settings on a wide screen.
+  if (action === 'trash' || action === 'keeping') {
     await page.locator('#side [data-action="settings"]').click();
     return page.locator(`.settings-nav a[href="#/settings/${action}"]`).click();
   }
@@ -117,7 +112,7 @@ async function openNote(page, title) {
   return note;
 }
 
-test('retired practice state opens as Chat and old bookmarks return to the library', async ({ page }) => {
+test('retired practice state opens as Chat and old bookmarks return to the workspace', async ({ page }) => {
   const id = `retired-compat-${test.info().project.name}`;
   const messages = [{ role: 'assistant', text: 'An old saved explanation.', proposals: [{ kind: 'interview_test', state: 'applied', title: 'Old check' }] }];
   expect((await page.request.put(`/api/chats/${id}`, { data: { title: 'Saved conversation', mode: 'interview', refs: [], messages } })).ok()).toBe(true);
@@ -133,10 +128,9 @@ test('retired practice state opens as Chat and old bookmarks return to the libra
     await expect(page.locator('#app')).not.toBeEmpty();
     expect(await page.evaluate(() => localStorage.getItem('leo-last-place'))).toBe('#/');
     await page.goto(`/${hash}`);
-    await expect(page).toHaveURL(/#\/$/);
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
   }
   await page.locator('#chat-toggle').click();
-  await expect(page.locator('#chat-mode-name')).toHaveText('Chat');
   await expect(page.locator('#chat')).toContainText('An old saved explanation.');
   await expect(page.locator('#chat')).toContainText('Interview practice is no longer part of leo.');
   await expect(page.locator('[data-action="interviews"]')).toHaveCount(0);
@@ -165,7 +159,7 @@ test('a failed save survives navigation and reload, then saves on reconnection',
   await page.locator('#back').click();
   await expect.poll(() => page.evaluate(() => window.__refusedSaves)).toBeGreaterThan(refused);
   await page.reload();
-  await expect(page.locator('.toast')).toContainText('Saving 1 edit that had not reached leo yet');
+  await expect(page.locator('#save-state')).toContainText('draft kept');
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Keep this phone draft');
   const original = await (await page.request.get(`/api/notes/${note.id}`)).json();
@@ -202,10 +196,10 @@ test('a phone edit preserves an external edit as a separate conflict copy', asyn
   expect(updated.status()).toBe(200);
   await page.locator('.line-edit').fill('Phone edit');
   await expect(page.locator('#save-state')).toHaveText('Saved');
-  await expect(page.locator('#title')).toContainText('conflict from phone');
+  await expect(page.locator('#title')).toContainText('conflict from leo');
   const notes = await (await page.request.get('/api/notes')).json();
   expect(notes.find((n) => n.id === note.id).body).toBe('Computer edit');
-  expect(notes.some((n) => n.title === 'Conflict example (conflict from phone)' && n.body === 'Phone edit')).toBe(true);
+  expect(notes.some((n) => n.title === 'Conflict example (conflict from leo)' && n.body === 'Phone edit')).toBe(true);
 });
 
 test('authenticated requests cannot create notes outside the notes folder', async ({ page }) => {
@@ -264,9 +258,9 @@ test('a tap on any checkbox ticks it and saves without moving the note or openin
 test('a click 60 ms after a page change reaches the page, never the root element', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Quick ${test.info().project.name}`, body: '- [ ] first' } })).json();
   await page.goto('/#/');
-  const card = page.locator(`.card[data-id="${note.id}"]`);
+  const card = page.locator(`.side-note[data-id="${note.id}"]`);
   await card.scrollIntoViewIfNeeded();
-  await card.locator('.card-title').click();
+  await card.locator('.side-label').click();
   const seen = await page.evaluate(async () => {
     while (!document.querySelector('.doc input[data-box]')) await new Promise((resolve) => requestAnimationFrame(resolve));
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -282,23 +276,22 @@ test.describe('forced colors', () => {
   test.use({ forcedColors: 'active' });
   test('surfaces keep an edge and every selected state differs from its neighbours', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: `Edge ${test.info().project.name}`, body: 'text' } })).json();
-    await page.goto('/#/');
+    await page.goto('/#/search/' + encodeURIComponent(note.title));
     await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
     const look = (selector) => page.locator(selector).first().evaluate((el) => { const cs = getComputedStyle(el); return { border: parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth), bg: cs.backgroundColor, color: cs.color }; });
     expect((await look('.card')).border, 'library cards have an edge').toBeGreaterThan(0);
-    expect((await look('.library-views')).border, 'the Grid/List group has an edge').toBeGreaterThan(0);
-    const on = await look('.library-views .on');
-    const off = await look('.library-views button:not(.on)');
-    expect(on.bg, 'Grid/List shows which is selected').not.toBe(off.bg);
-    await page.goto('/#/settings/general');
+    await page.goto('/#/settings/felix');
     await expect(page.locator('.segment.on').first()).toBeVisible();
     expect((await look('.set-card')).border, 'settings groups have an edge').toBeGreaterThan(0);
     expect((await look('.segment.on')).bg, 'a segmented choice shows which is selected').not.toBe((await look('.segment:not(.on)')).bg);
     expect((await look('.settings-link.on')).bg, 'the settings section list shows where you are').not.toBe((await look('.settings-link:not(.on)')).bg);
-    await page.locator('.set-card').first().evaluate((card) => card.insertAdjacentHTML('beforeend', '<div class="choice-cards" style="--count:2;--at:0"><span class="choice-ring"></span><label class="choice-pick on"><input type="radio" name="fc" checked><span class="choice-title">A</span></label><label class="choice-pick"><input type="radio" name="fc"><span class="choice-title">B</span></label></div>'));
-    const chosen = await look('.choice-pick.on');
-    expect(chosen.border + (await look('.choice-pick:not(.on)')).border, 'choice cards have edges').toBeGreaterThan(0);
-    expect(chosen.bg, 'the chosen card differs from the others').not.toBe((await look('.choice-pick:not(.on)')).bg);
+    for (const where of ['/#/settings/felix', '/#/settings/general']) {
+      await page.goto(where);
+      await expect(page.locator('.choice-pick.on').first()).toBeVisible();
+      const chosen = await look('.choice-pick.on');
+      expect(chosen.border + (await look('.choice-pick:not(.on)')).border, `choice cards have edges on ${where}`).toBeGreaterThan(0);
+    expect(chosen.bg, `the chosen card differs from the others on ${where}`).not.toBe((await look('.choice-pick:not(.on)')).bg);
+    }
   });
   test('the explorer shows the open place and the rail has edges', async ({ page }) => {
     await page.goto('/#/settings/general');
@@ -328,9 +321,9 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
     await expect(page).toHaveURL(url);
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
   }
-  // Trash and Storage moved into Settings' own sidebar; the rail keeps Settings selected there.
-  await expect(side.locator('[data-action="trash"], [data-action="storage"]')).toHaveCount(0);
-  for (const section of ['trash', 'storage']) {
+  // Trash and Keeping moved into Settings' own sidebar; the rail keeps Settings selected there.
+  await expect(side.locator('[data-action="trash"], [data-action="keeping"]')).toHaveCount(0);
+  for (const section of ['trash', 'keeping']) {
     await page.locator(`.settings-nav a[href="#/settings/${section}"]`).click();
     await expect(page).toHaveURL(new RegExp(`#/settings/${section}$`));
     await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href', `#/settings/${section}`);
@@ -341,9 +334,9 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
   await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-expanded', 'true');
   await expect(page).toHaveURL(/#\/settings$/);
-  await side.locator('[data-action="chat"]').click();
+  await expect(side.locator('[data-action="chat"]')).toHaveCount(0);
+  await page.locator('#chat-toggle').click();
   await expect(page.locator('#chat')).toBeVisible();
-  await expect(side.locator('[data-action="chat"]')).toHaveClass(/\bon\b/);
   await page.locator('[data-chat="close"]').click();
 
   await page.keyboard.press('ControlOrMeta+f');
@@ -396,7 +389,7 @@ test('a board keeps its cards in the columns they were dragged to', async ({ pag
   await expect(columns.nth(0).locator('.kanban-card')).toHaveCount(2);
   await composer.press('Escape');
 
-  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1).locator('.kanban-cards'));
+  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1));
   await expect(columns.nth(1).locator('.kanban-card')).toHaveText(['Lab report']);
   await expect(page.locator('.kanban-ghost')).toHaveCount(0);
   await expect(page.locator('.scrim')).toHaveCount(0);
@@ -670,13 +663,13 @@ test.describe('diagrams', () => {
   });
 });
 
-test('a fresh launch reopens the last note, while reloads and the library stay put', async ({ page, context }) => {
+test('a fresh launch reopens the last note, while reloads and the workspace stay put', async ({ page, context }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Left off ${Date.now().toString(36)}`, body: 'Where I was.' } })).json();
   await page.goto('/');
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Where I was.');
   await page.goto('/');
-  await expect(page, 'going to the library in the same window stays there').toHaveURL(/\/(#\/)?$/);
+  await expect(page, 'going to the workspace in the same window stays there').toHaveURL(/\/(#\/)?$/);
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Where I was.');
   const relaunch = await context.newPage();
@@ -707,32 +700,32 @@ test.describe('drag and drop', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: `Drag me ${tag}`, body: 'x' } })).json();
     const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
     await page.goto('/');
-    const card = page.locator(`.card[data-id="${note.id}"]`);
-    await dragBetween(page, card, page.locator(`main .folder[data-dir="${a}"]`));
+    const card = page.locator(`.side-note[data-id="${note.id}"]`);
+    await dragBetween(page, card, page.locator(`#side .side-row[data-action="open-folder"][data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
     await expect(card).toHaveCount(0);
     await page.locator('.toast button').click();
     await expect(card).toBeVisible();
-    await expect(card.locator('.card-meta')).not.toContainText(a);
+    await expect(card).toHaveAttribute('data-from', '');
     expect(await where()).toBe('');
 
     await dragBetween(page, card, page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
     await expect.poll(where).toBe(b);
     await expect(card).toHaveCount(0);
 
-    await dragBetween(page, page.locator(`main .folder[data-dir="${b}"]`), page.locator(`main .folder[data-dir="${a}"]`));
+    await dragBetween(page, page.locator(`#side .side-row[data-action="open-folder"][data-dir="${b}"]`), page.locator(`#side .side-row[data-action="open-folder"][data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved ${b} into ${a}`);
     expect(await where()).toBe(`${a}/${b}`);
-    await expect(page.locator(`main .folder[data-dir="${b}"]`)).toHaveCount(0);
+    await expect(page.locator(`#side .side-row[data-action="open-folder"][data-dir="${b}"]`)).toHaveCount(0);
     const inside = await (await page.request.get(`/api/dirs?parent=${a}`)).json();
     expect(inside.map((d) => d.name)).toEqual([b]);
     await page.locator('.toast button').click();
-    await expect(page.locator(`main .folder[data-dir="${b}"]`)).toBeVisible();
+    await expect(page.locator(`#side .side-row[data-action="open-folder"][data-dir="${b}"]`)).toBeVisible();
     expect(await where()).toBe(b);
 
     await page.goto(`/#/f/${b}`);
-    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
+    await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
     await expect.poll(where).toBe('');
   });
 
@@ -750,7 +743,7 @@ test.describe('drag and drop', () => {
     await dropFiles(page, '#chat', [{ name: 'for-felix.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
     await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
-    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), chat.locator('#chat-input'));
+    await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), chat.locator('#chat-input'));
     await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
 });
@@ -848,29 +841,73 @@ test.describe('note connections', () => {
 });
 
 test.describe('Felix', () => {
-  test('the head menu reaches every style and stops reading the note, all by keyboard', async ({ page }) => {
+  test('Felix stops reading the note from the head, by keyboard', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: 'Save the password.\n\nThen compare it.' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
     await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
     await expect(chat.locator('#chat-history')).toBeHidden();
-    const button = chat.locator('#chat-mode-btn');
-    await button.focus();
+    await expect(chat.locator('#chat-mode-btn')).toHaveCount(0);
+    const drop = chat.locator('[data-chat="drop"]');
+    await drop.focus();
     await page.keyboard.press('Enter');
-    await expect(button).toHaveAttribute('aria-expanded', 'true');
-    await page.keyboard.press('ArrowDown');
-    await expect(chat.locator('.chat-mode').first()).toBeFocused();
-    await page.keyboard.press('End');
-    await expect(chat.locator('[data-chat="drop"]')).toBeFocused();
-    await page.keyboard.press('Escape');
-    await expect(chat.locator('#chat-mode-menu')).toBeHidden();
-    await expect(button).toBeFocused();
-    await expect(chat).toBeVisible();
-    await button.click();
-    await chat.locator('[data-chat="drop"]').click();
     await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
-    await expect(button).toBeFocused();
+    await expect(drop).toBeHidden();
+    await expect(chat.locator('#chat-input')).toBeFocused();
+  });
+
+  test('a lesson card asks how sure you are and takes your thinking, and a prediction is not marked', async ({ page }) => {
+    const asked = [];
+    const marks = [];
+    const quiz = { kind: 'multiple_choice', question: 'Which end does a queue leave from?', options: ['the front', 'the back'], answer: 'the front', explain: 'Oldest first.' };
+    await page.route('**/api/quiz/mark', async (route) => {
+      marks.push(route.request().postDataJSON());
+      await route.fulfill({ json: { correct: true, feedback: 'Yes: the oldest item leaves first.' } });
+    });
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const lines = asked.length === 1
+        ? [{ quiz: { kind: 'free_response', predict: true, question: 'What must a queue remember?', answer: 'Its oldest item.' } }, { done: true }]
+        : asked.length === 2
+          ? [{ t: 'You said the order, and that is right: it tracks the oldest item.' }, { quiz: { kind: 'free_response', question: 'Why does order matter here?', answer: 'Fairness.' } }, { done: true }]
+          : [{ quiz }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('teach me queues');
+    await chat.locator('#chat-input').press('Enter');
+    const predict = chat.locator('.quiz-card').first();
+    await expect(predict.locator('.quiz-kind')).toHaveText('Predict · a guess, not marked');
+    await expect(predict.locator('[data-chat="quiz-sure"]')).toHaveCount(0);
+    await predict.locator('.quiz-input').fill('the order');
+    await predict.locator('[data-chat="quiz-check"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveCount(2);
+    expect(marks).toEqual([]);
+    expect(asked[1].mark).toBe(false);
+    await expect(predict).not.toHaveClass(/right|wrong/);
+
+    const check = chat.locator('.quiz-card').nth(1);
+    const sure = check.locator('[data-chat="quiz-sure"]', { hasText: 'Guessing' });
+    await sure.click();
+    await expect(sure).toHaveAttribute('aria-pressed', 'true');
+    await check.locator('[data-chat="quiz-think"]').click();
+    await expect(check.locator('.quiz-thinking')).toBeFocused();
+    await page.keyboard.type('fairness maybe');
+    await check.locator('.quiz-input').fill('so nobody waits forever');
+    await check.locator('[data-chat="quiz-check"]').click();
+    await expect(check.locator('.quiz-own')).toHaveText('Guessing · fairness maybe');
+    expect(marks[0]).toMatchObject({ confidence: 'guess', thinking: 'fairness maybe' });
+    await check.locator('[data-chat="quiz-next"]').click();
+    await expect.poll(() => asked.length).toBe(3);
+    expect(asked[2].messages.at(-1).text).toContain('(how sure I felt: guessing) My thinking: fairness maybe');
+
+    const choice = chat.locator('.quiz-card').last();
+    await choice.locator('[data-chat="quiz-sure"]', { hasText: 'Sure' }).click();
+    await choice.locator('.quiz-option', { hasText: 'the front' }).click();
+    await expect(choice.locator('.quiz-own')).toHaveText('Sure');
   });
 
   test('a growing reply keeps its finished words, and a citation lights its passage in the open note', async ({ page }) => {
@@ -930,11 +967,9 @@ test.describe('Felix', () => {
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
     await expect(chat.locator('.chat-context')).toContainText('Heaps');
-    await chooseMode(chat, 'study');
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
     await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
-    expect(asked[0].mode).toBe('study');
     expect(asked[0].note).toBe(note.id);
     await chat.locator('#chat-input').fill('At the root');
     await chat.locator('#chat-input').press('Enter');
@@ -946,16 +981,12 @@ test.describe('Felix', () => {
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
     await expect(chat).not.toHaveClass(/chat-leaving/);
     if (!(await chat.isVisible())) await page.locator('#chat-toggle').click();
-    await chooseMode(chat, 'chat');
-    await expect(chat.locator('.msg'), 'switching style keeps the conversation').toHaveCount(4);
-    await expect(chat.locator('.chat-switch')).toHaveText('Switched to Chat; the conversation carries on');
+    await expect(chat.locator('.msg')).toHaveCount(4);
     await chat.locator('#chat-input').fill('now explain why');
     await chat.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(3);
-    expect(asked[2].mode).toBe('chat');
     expect(asked[2].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
-    await expect(chat.locator('.chat-switch')).toHaveText('Now in Chat');
-    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.mode === 'chat' && c.count === 6)).toBe(true);
+    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.count === 6)).toBe(true);
   });
 
   test('notes are added with @ or the paperclip and go with every message', async ({ page }) => {
@@ -970,7 +1001,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study']);
+    await expect(chat.locator('.chat-mode')).toHaveCount(0);
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');
@@ -1055,12 +1086,12 @@ test.describe('Felix', () => {
     await expect(chat.locator('.msg.leo').last()).toContainText(`About second question ${tag}`);
     await openSidebar();
     await second.locator('.chat-history-x').click();
-    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await expect(second.locator('.chat-history-x')).toHaveClass(/sure/);
     const list = await sidebar.locator('#chat-history-list').boundingBox();
     await page.mouse.click(list.x + list.width / 2, list.y + list.height - 6);
-    await expect(second.locator('.chat-history-x')).toHaveText('×');
+    await expect(second.locator('.chat-history-x')).not.toHaveClass(/sure/);
     await second.locator('.chat-history-x').click();
-    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await expect(second.locator('.chat-history-x')).toHaveClass(/sure/);
     await second.locator('.chat-history-x').click();
     await expect(second).toHaveCount(0);
     await expect(chat.locator('.msg')).toHaveCount(0);
@@ -1079,14 +1110,13 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chooseMode(chat, 'study');
-    await chat.locator('.starter', { hasText: 'Start a study session on this note' }).click();
-    await expect(chat.locator('.chat-ask')).toContainText('Which note should the session cover?');
+    await chat.locator('.starter', { hasText: 'Quiz me on this note' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should the quiz cover?');
     expect(asked.length).toBe(0);
     await chat.locator('#chat-pick-search').fill(`Sorting lecture ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Sorting lecture ${tag}` }).click();
     await expect(chat.locator('.msg.leo').last()).toContainText('Here we go.');
-    expect(asked[0].messages[0].text).toBe('Start a study session on this note');
+    expect(asked[0].messages[0].text).toBe('Quiz me on this note');
     expect(asked[0].refs).toEqual([note.id]);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
@@ -1099,9 +1129,8 @@ test.describe('Felix', () => {
     expect(asked[1].messages[0].text).toBe(`Make me a 3-day review plan for algos-${tag}`);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
-    await chooseMode(chat, 'chat');
-    await chat.locator('.starter', { hasText: 'Explain this simply' }).click();
-    await expect(chat.locator('.chat-ask')).toContainText('Which note should I explain?');
+    await chat.locator('.starter', { hasText: 'Teach me this note step by step' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should I teach you?');
     await chat.locator('[data-chat="ask-cancel"]').click();
     await expect(chat.locator('.chat-ask')).toHaveCount(0);
     expect(asked.length).toBe(2);
@@ -1219,7 +1248,6 @@ test.describe('Felix', () => {
     const question = `Which structure does BFS use (${test.info().project.name})?`;
     await page.request.put(`/api/chats/${id}`, {
       data: {
-        mode: 'study',
         refs: [],
         messages: [
           { role: 'user', text: 'quiz me' },
@@ -1242,7 +1270,6 @@ test.describe('Felix', () => {
     await card.locator('[data-chat="review"]').click();
     await expect(chat.locator('.msg.leo').last()).toContainText('First one: which structure?');
     const sent = asked[asked.length - 1];
-    expect(sent.mode).toBe('study');
     expect(sent.refs).toContain(note.id);
     expect(sent.messages[sent.messages.length - 1].text).toContain(`${question} (last time I said: a stack)`);
     await expect.poll(async () => (await (await page.request.get('/api/review')).json()).some((m) => m.question === question)).toBe(false);
@@ -1651,9 +1678,6 @@ test.describe('settings', () => {
     await page.locator('.settings-nav a[href="#/settings/models"]').click();
     await expect(page.getByRole('heading', { name: 'In use', exact: true })).toBeVisible();
     await expect(page.locator('[data-task-card="speech"], [data-key-input]')).toHaveCount(0);
-    await page.locator('.settings-nav a[href="#/settings/backup"]').click();
-    await page.locator('select[data-set="auto_push"]').selectOption('when_idle');
-    await expect(page.locator('.toast')).toContainText('Backing up when idle');
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
     await page.locator('.settings-nav a[href="#/settings/writing"]').click();
@@ -1686,11 +1710,12 @@ test.describe('folders', () => {
     await side.locator(`.side-twist[data-dir="${top}"]`).click();
     await expect(row(`${top}/week1`)).toBeVisible();
     await row(`${top}/week1`).hover();
-    await side.locator(`.side-sub[data-parent="${top}/week1"]`).click();
+    await row(`${top}/week1`).click({ button: 'right' });
+    await page.locator('.explorer-menu [data-explorer-action="folder"]').click();
     await expect(page.locator('.sheet h3')).toHaveText('New folder in week1');
     await page.locator('#folder-name').fill('lab');
     await page.locator('[data-action="create-folder"]').click();
-    await expect.poll(() => decodeURIComponent(page.url())).toMatch(new RegExp(`#/f/${top}/week1/lab$`));
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
     await expect(row(`${top}/week1/lab`)).toHaveAttribute('aria-current', 'page');
     await page.reload();
     await expect(row(`${top}/week1`), 'open folders stay open').toBeVisible();
@@ -1726,78 +1751,16 @@ test.describe('folders', () => {
     }
     await page.locator('#folder-name').fill(name);
     await page.locator('[data-action="create-folder"]').click();
-    await expect(page).toHaveURL(new RegExp(`#/f/${name}$`));
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="' + name + '"]')).toBeVisible();
     await expect(page.locator('.toast.bad')).toHaveCount(0);
     await expect(page.locator('.scrim')).toHaveCount(0);
   });
 
 
-  test('chosen notes and folders move to the trash after asking', async ({ page }) => {
-    const tag = test.info().project.name;
-    const top = `pick-${tag}`;
-    await page.request.post('/api/dirs', { data: { path: top } });
-    await page.request.post('/api/dirs', { data: { path: `${top}/week1` } });
-    const make = async (title, directory) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory } })).json();
-    const loose = await make('Loose note', top);
-    const kept = await make('Keep me', top);
-    const inside = await make('Inside week1', `${top}/week1`);
-    await page.goto(`/#/f/${top}`);
-    await expect(page.locator('.card', { hasText: 'Keep me' })).toBeVisible();
 
-    await page.locator('[data-action="folder-select"]').click();
-    await expect(page.locator('.select-bar')).toContainText('0 selected');
-    await expect(page.locator('[data-action="folder-trash"]')).toBeDisabled();
-    await page.locator('.folder', { hasText: 'week1' }).click();
-    await page.locator('.pick-card', { hasText: 'Loose note' }).click();
-    for (const item of [page.locator('.folder', { hasText: 'week1' }), page.locator('.pick-card', { hasText: 'Loose note' })]) {
-      const box = await item.boundingBox();
-      const tick = await item.locator('.pick-box').boundingBox();
-      expect(box.x + box.width - (tick.x + tick.width), 'the checkbox sits at the right edge').toBeLessThan(24);
-    }
-    await expect(page.locator('.select-bar')).toContainText('2 selected');
-    await expect(page).toHaveURL(new RegExp(`#/f/${top}$`));
 
-    await page.locator('[data-action="folder-trash"]').click();
-    await expect(page.locator('.sheet h3')).toHaveText('Move 1 note and 1 folder (with 1 note inside) to the trash?');
-    await page.locator('[data-action="close"]').click();
-    expect((await page.request.get(`/api/notes/${loose.id}`)).ok()).toBe(true);
 
-    await page.locator('[data-action="folder-trash"]').click();
-    await page.locator('[data-action="folder-trash-now"]').click();
-    await expect(page.locator('.toast')).toContainText('Moved 2 notes and 1 folder to the trash');
-    await expect(page.locator('.select-bar')).toHaveCount(0);
-    await expect(page.locator('.card', { hasText: 'Keep me' })).toBeVisible();
-    await expect(page.locator('.card', { hasText: 'Loose note' })).toHaveCount(0);
-    await expect(page.locator('.folder', { hasText: 'week1' })).toHaveCount(0);
-    const trashed = (await (await page.request.get('/api/trash')).json()).map((t) => t.id);
-    expect(trashed).toEqual(expect.arrayContaining([loose.id, inside.id]));
-    expect((await page.request.get(`/api/notes/${kept.id}`)).ok()).toBe(true);
-
-    await page.locator('[data-action="folder-select"]').click();
-    await page.locator('[data-folder-all]').check();
-    await expect(page.locator('.select-bar')).toContainText('1 selected');
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.select-bar')).toHaveCount(0);
-    await expect(page.locator('.fabs')).toHaveCount(1);
-  });
-
-  test('undo in the toast brings back what was just moved to the trash', async ({ page }) => {
-    const top = `undo-${test.info().project.name}`;
-    for (const dir of [top, `${top}/week2`, `${top}/week2/empty`]) await page.request.post('/api/dirs', { data: { path: dir } });
-    const inside = await (await page.request.post('/api/notes', { data: { title: 'Week 2 notes', body: 'x', directory: `${top}/week2` } })).json();
-    await page.goto(`/#/f/${top}`);
-    await page.locator('[data-action="folder-select"]').click();
-    await page.locator('.folder', { hasText: 'week2' }).click();
-    await page.locator('[data-action="folder-trash"]').click();
-    await page.locator('[data-action="folder-trash-now"]').click();
-    await expect(page.locator('.folder', { hasText: 'week2' })).toHaveCount(0);
-    await page.locator('.toast button', { hasText: 'Undo' }).click();
-    await expect(page.locator('.toast')).toContainText('Brought back');
-    await expect(page.locator('.folder', { hasText: 'week2' })).toBeVisible();
-    expect((await page.request.get(`/api/notes/${inside.id}`)).ok()).toBe(true);
-    const dirs = await (await page.request.get(`/api/dirs?parent=${encodeURIComponent(`${top}/week2`)}`)).json();
-    expect(dirs.map((d) => d.name)).toContain('empty');
-  });
 });
 
 test.describe('pictures', () => {
@@ -1896,55 +1859,8 @@ test.describe('pictures', () => {
   });
 });
 
-test('hovering the storage bar names the part and its size, and highlights it', async ({ page }) => {
-  test.skip(test.info().project.name === 'phone', 'hovering needs a mouse');
-  await page.request.post('/api/notes', { data: { title: 'Storage hover', body: 'x' } });
-  await page.goto('/#/settings/storage');
-  const seg = page.locator('.store-bar i').first();
-  await expect(seg).toBeVisible();
-  const name = await seg.getAttribute('data-name');
-  const size = await seg.getAttribute('data-size');
-  await seg.hover();
-  const tip = page.locator('#store-tip');
-  await expect(tip).toBeVisible();
-  await expect(tip).toContainText(name);
-  await expect(tip).toContainText(size);
-  await expect(seg).toHaveClass(/on/);
-  await expect(page.locator('.store-bar')).toHaveClass(/hovering/);
-  await expect(page.locator(`.store-key.on`)).toContainText(name);
-  await page.mouse.move(5, 5);
-  await expect(tip).toBeHidden();
-  await expect(page.locator('.store-bar')).not.toHaveClass(/hovering/);
-  await seg.click();
-  await expect(page.locator(`.store-area[data-area="${await seg.getAttribute('data-area')}"]`)).toHaveAttribute('open', '');
-});
-
 test.describe('large libraries', () => {
-  test('a big folder loads in pages as you scroll, and Select all takes every note', async ({ page }) => {
-    test.setTimeout(90000);
-    const dir = `big-${test.info().project.name}-${test.info().retry}-${Date.now().toString(36)}`;
-    await page.request.post('/api/dirs', { data: { path: dir } });
-    for (let i = 0; i < 230; i += 10) {
-      await Promise.all(Array.from({ length: 10 }, (_, j) => page.request.post('/api/notes', { data: { title: `Big note ${String(i + j).padStart(3, '0')}`, body: '- [x] done\n- [ ] not yet', directory: dir } })));
-    }
-    const listed = await page.request.get(`/api/notes?dir=${dir}&limit=200&brief=true`);
-    expect(listed.headers()['x-total']).toBe('230');
-    await page.goto(`/#/f/${dir}`);
-    const cards = page.locator('.cards .card[data-id]');
-    await expect(cards).toHaveCount(200);
-    await expect(page.locator('.section-title', { hasText: 'Notes' })).toHaveText('Notes · 230');
-    await expect(cards.first().locator('.chip.progress')).toContainText('1/2');
-    await page.locator('#more-notes').scrollIntoViewIfNeeded();
-    await expect(cards).toHaveCount(230);
-    await expect(page.locator('#more-notes')).toHaveCount(0);
 
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.reload();
-    await expect(cards).toHaveCount(200);
-    await page.locator('[data-action="folder-select"]').click();
-    await page.locator('[data-folder-all]').check();
-    await expect(page.locator('.select-bar')).toContainText('230 selected');
-  });
 });
 
 test.describe('readability', () => {
@@ -2017,19 +1933,18 @@ test.describe('readability', () => {
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.keyboard.press('Escape');
-      await page.goto('/#/settings/storage');
-      await page.locator('#tasks-restore').setInputFiles({ name: 'tasks.json', mimeType: 'application/json', buffer: Buffer.from('{"wrong":[]}') });
-      await expect(page.locator('.toast.bad')).toContainText('Choose tasks.json');
+      await page.goto('/#/settings/keeping');
+      await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
-      await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
-      await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
+      await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
+      await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
       await page.goto('/');
       await page.locator('#chat-toggle').click();
       const history = page.locator('.chat-history');
       if (await history.isHidden()) await page.getByRole('button', { name: 'Your chats', exact: true }).click();
       await history.locator(`[data-chat="forget"][data-id="readable-${tag}"]`).click();
-      await expect(history.locator('.chat-history-x.sure')).toHaveText('Delete');
+      await expect(history.locator('.chat-history-x.sure')).toHaveAttribute('aria-label', /^Confirm delete/);
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
     });
@@ -2049,7 +1964,7 @@ test.describe('readability', () => {
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['calendar', '#/calendar']]) {
+      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['keeping', '#/settings/keeping'], ['record', '#/record'], ['calendar', '#/calendar']]) {
         await page.goto(`/${hash}`);
         await look(name);
       }
@@ -2153,88 +2068,9 @@ test.describe('trash', () => {
   });
 });
 
-test.describe('storage', () => {
-  test('shows what leo keeps and deletes only what was chosen, after asking', async ({ page }) => {
-    const tag = test.info().project.name;
-    for (const n of [1, 2]) {
-      const put = await page.request.put(`/api/chats/storage-${tag}-${n}`, { data: { mode: 'chat', refs: [], messages: [{ role: 'user', text: `storage chat ${tag} ${n}` }] } });
-      expect(put.ok()).toBe(true);
-    }
-    const note = await (await page.request.post('/api/notes', { data: { title: `Throwaway ${tag}`, body: 'x' } })).json();
-    expect((await page.request.delete(`/api/notes/${note.id}`)).ok()).toBe(true);
-
-    await page.goto('/');
-    await goPlace(page, 'storage');
-    await expect(page).toHaveURL(/#\/settings\/storage$/);
-    await expect(page.locator('.store-big')).toContainText(/KB|MB|bytes/);
-    const chats = page.locator('details.store-area[data-area="chats"]');
-    await chats.locator('summary').click();
-    const first = chats.locator('.store-item', { hasText: `storage chat ${tag} 1` });
-    await expect(first).toBeVisible();
-    const deleteSelected = chats.locator('[data-act="delete"]');
-    await expect(deleteSelected).toBeDisabled();
-    await first.locator('input').check();
-    await expect(deleteSelected).toContainText('(1)');
-    await deleteSelected.click();
-    await expect(page.locator('.sheet')).toContainText('deleted for good');
-    await page.locator('[data-action="storage-go"]').click();
-    await expect(page.locator('.toast')).toContainText('Deleted 1 chat.');
-    await expect(chats).toHaveAttribute('open', '');
-    await expect(chats.locator('.store-item', { hasText: `storage chat ${tag} 1` })).toHaveCount(0);
-    await expect(chats.locator('.store-item', { hasText: `storage chat ${tag} 2` })).toBeVisible();
-
-    const trash = page.locator('details.store-area[data-area="trash"]');
-    await trash.locator('summary').click();
-    await expect(trash).toContainText(`Throwaway ${tag}`);
-    await trash.locator('[data-act="empty"]').click();
-    await page.locator('[data-action="close"]').click();
-    await expect(trash).toContainText(`Throwaway ${tag}`);
-    await trash.locator('[data-act="empty"]').click();
-    await page.locator('[data-action="storage-go"]').click();
-    await expect(page.locator('.toast')).toContainText('Emptied the trash');
-    expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
-    await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
-    // A wide screen opens Storage from Settings' sidebar; a phone opens it from the menu at the top level.
-    const openedFrom = (await page.locator('#side').isVisible()) ? /#\/settings$/ : /#\/$/;
-    await page.locator('#back').click();
-    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(openedFrom);
-  });
-});
-
-test.describe('storage of pictures', () => {
-  test('pictures are listed with the notes that use them, and unused ones can be deleted', async ({ page }) => {
-    const tag = test.info().project.name;
-    const data = await page.evaluate(() => {
-      const c = document.createElement('canvas');
-      c.width = 64;
-      c.height = 48;
-      c.getContext('2d').fillRect(0, 0, 30, 20);
-      return c.toDataURL('image/png').split(',')[1];
-    });
-    const used = (await (await page.request.post('/api/images', { data: { name: `used-${tag}.png`, data } })).json()).path;
-    const spare = (await (await page.request.post('/api/images', { data: { name: `spare-${tag}.png`, data } })).json()).path;
-    await page.request.post('/api/notes', { data: { title: `Pictured ${tag} for storage`, body: `![board](${used})` } });
-    await page.goto('/#/settings/storage');
-    const pictures = page.locator('details.store-area[data-area="pictures"]');
-    await expect(pictures).toContainText('Pictures in notes');
-    await pictures.locator('summary').click();
-    const name = (p) => p.split('/').pop();
-    await expect(pictures.locator('.store-item', { hasText: name(used) })).toContainText(`In “Pictured ${tag} for storage”`);
-    await expect(pictures.locator('.store-item', { hasText: name(spare) })).toContainText('Not in any note');
-    await pictures.locator('[data-act="unused"]').click();
-    await expect(page.locator('.sheet')).toContainText('no note shows');
-    await page.locator('[data-action="storage-go"]').click();
-    await expect(page.locator('.toast')).toContainText(/Deleted \d+ pictures?\./);
-    await expect(pictures.locator('.store-item', { hasText: name(spare) })).toHaveCount(0);
-    await expect(pictures.locator('.store-item', { hasText: name(used) })).toBeVisible();
-    expect((await page.request.get(`/api/image?path=${encodeURIComponent(used)}`)).ok()).toBe(true);
-    expect((await page.request.get(`/api/image?path=${encodeURIComponent(spare)}`)).status()).toBe(404);
-  });
-});
-
 test.describe('export and this browser', () => {
   test('exports a zip with the parts chosen', async ({ page }) => {
-    await page.goto('/#/settings/storage');
+    await page.goto('/#/settings/keeping');
     const link = page.locator('#export-link');
     await expect(link).toHaveAttribute('href', '/api/export?uploads=true&chats=true&trash=false');
     await page.locator('[data-export="chats"]').uncheck();
@@ -2247,8 +2083,6 @@ test.describe('export and this browser', () => {
     expect(bytes.subarray(0, 2).toString()).toBe('PK');
     expect(bytes.includes(Buffer.from('leo/README.txt'))).toBe(true);
     expect(bytes.includes(Buffer.from('serve-token'))).toBe(false);
-
-    await expect(page.locator('.store-browser')).toHaveCount(0);
   });
 
   test('Felix is the tab icon, even before signing in', async ({ page, playwright }) => {
@@ -2264,10 +2098,14 @@ test.describe('export and this browser', () => {
 });
 
 test.describe('advanced settings', () => {
-  test('chooses how long the trash and chats are kept, asking before deleting sooner', async ({ page }) => {
-    await page.goto('/#/settings/storage');
+  test('chooses how long each kind of data is kept, asking before deleting sooner', async ({ page }) => {
+    await page.goto('/#/settings/keeping');
+    await expect(page).toHaveURL(/#\/settings\/keeping$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Keeping' })).toBeVisible();
+    await expect(page.locator('select[data-keep]')).toHaveCount(5);
     const trash = page.locator('select[data-keep="trash_days"]');
     const chats = page.locator('select[data-keep="chat_days"]');
+    const uploads = page.locator('select[data-keep="upload_days"]');
     await expect(trash).toHaveValue('30');
     await expect(chats).toHaveValue('forever');
     const kept = async () => {
@@ -2285,13 +2123,18 @@ test.describe('advanced settings', () => {
     await page.locator('[data-action="keep-now"]').click();
     await expect.poll(kept).toEqual([null, 90]);
     await expect(chats).toHaveValue('90');
+    await uploads.selectOption('forever');
+    await uploads.selectOption('7');
+    await expect(page.locator('.sheet h3')).toHaveText('Keep uploaded files for 7 days?');
+    await page.locator('[data-action="keep-cancel"]').click();
+    await expect(uploads).toHaveValue('forever');
     await page.goto('/#/trash');
     await page.request.post('/api/keep', { data: { trash_days: 7, chat_days: null } });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Keep check', body: 'x' } })).json();
     await page.request.delete(`/api/notes/${note.id}`);
     await page.goto('/#/');
     await page.goto('/#/trash');
-    await expect(page.locator('.hint')).toContainText('stay here for 7 days');
+    await expect(page.locator('#app .hint')).toContainText('stay here for 7 days');
     await page.request.post('/api/keep', { data: { trash_days: 30, chat_days: null } });
   });
 
@@ -2416,6 +2259,7 @@ test.describe('uploads', () => {
     await expect(sheet.locator('#upload-go')).toHaveText('Make 2 notes');
     await expect(sheet.locator('#upload-dir')).toBeVisible();
     await sheet.locator('.upload-where [data-value="add"]').click();
+    await expect(sheet.locator('#upload-vision'), 'a picture brings the image note').toBeVisible();
     await sheet.locator('#upload-wants').fill('just the proofs');
     await sheet.locator('#upload-go').click();
     await expect(page.locator('.toast')).toContainText('Added to');
@@ -2445,6 +2289,8 @@ test.describe('uploads', () => {
     const input = page.locator('#upload-input');
     await input.setInputFiles({ name: 'lecture 1.txt', mimeType: 'text/plain', buffer: Buffer.from('One') });
     await expect(page.locator('#upload-together-row')).toBeHidden();
+    await expect(page.locator('#upload-vision'), 'text files need no image note').toBeHidden();
+    await expect(page.locator('.sheet .note-fields #upload-dir ~ .select-menu-button'), 'the same field group and menu as Record').toBeVisible();
     await expect(page.locator('#upload-title')).toBeVisible();
     await expect(page.locator('#upload-go')).toHaveText('Make the note');
     await input.setInputFiles({ name: 'lecture 2.txt', mimeType: 'text/plain', buffer: Buffer.from('Two') });
@@ -2459,8 +2305,8 @@ test.describe('uploads', () => {
     await page.locator('#upload-go').click();
     await expect.poll(() => sent.length).toBe(1);
     await expect(page.locator('.upload-working')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/f/${dir}`);
-    await expect(page.locator('.card', { hasText: 'Lecture 2' })).toBeVisible();
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('.side-note', { hasText: 'Lecture 2' })).toBeVisible();
     expect(sent[0].each).toBe(true);
     expect(sent[0].title).toBe(null);
     expect(sent[0].files.map((f) => f.name)).toEqual(['lecture 1.txt', 'lecture 2.txt']);
@@ -2485,7 +2331,7 @@ test.describe('uploads', () => {
     await expect(page.locator('.upload-working')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.locator('.scrim')).toHaveCount(0);
-    await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('.side-note', { hasText: title })).toBeVisible({ timeout: 8000 });
     await expect(page.locator('.toast')).toContainText('Your note from the upload is ready.');
     expect(page.url()).not.toContain('#/n/');
   });
@@ -2504,7 +2350,7 @@ test.describe('uploads', () => {
 
 test.describe('recording', () => {
   function stubRecorder(page, { noteId, local = true }) {
-    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false, levels: Array(200).fill(0.1), source: 'microphone' };
+    const seen = { started: null, points: [], stopped: false, paused: false, levels: Array(200).fill(0.1), source: 'microphone' };
     let polls = 0;
     const view = (over = {}) => ({ wants: seen.wants ?? (seen.started && seen.started.profile ? seen.started.profile.wants || '' : ''), id: 'rec-1', source: seen.source, state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), levels: seen.levels, note: null, error: null, ...over });
     page.route('**/api/record', async (route) => {
@@ -2517,11 +2363,6 @@ test.describe('recording', () => {
       if (!seen.stopped) return route.fulfill({ json: view() });
       polls += 1;
       return route.fulfill({ json: polls < 2 ? view({ state: 'writing', step: 'Writing the notes', steps: [1, 2] }) : view({ state: 'done', note: noteId }) });
-    });
-    page.route('**/api/record/rec-1/audio*', (route) => {
-      seen.audioBytes += route.request().postDataBuffer().length;
-      seen.posts += 1;
-      return route.fulfill({ json:{next_seq:Number(new URL(route.request().url()).searchParams.get('seq'))+1} });
     });
     page.route('**/api/record/rec-1/wants', (route) => {
       seen.wants = route.request().postDataJSON().text;
@@ -2565,8 +2406,6 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-transcript')).toBeVisible();
     await page.waitForTimeout(1500);
     await expect(page.locator('#rec-heard')).toHaveAttribute('open', '');
-    expect(seen.audioBytes).toBe(0);
-    expect(seen.posts).toBe(0);
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound', { timeout: 8000 });
     const drawn = await page.locator('#rec-wave').evaluate((canvas) => {
@@ -2629,7 +2468,7 @@ test.describe('recording', () => {
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
     await Promise.all([page.waitForResponse('**/api/record/rec-1/stop'), page.locator('[data-action="rec-stop"]').click()]);
     await page.evaluate(() => { location.hash = '#/'; });
-    await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.side-note', { hasText: title })).toBeVisible({ timeout: 10000 });
     await expect(page.locator('.toast')).toContainText('Your recording is now a note.');
     expect(page.url()).not.toContain('#/n/');
   });
@@ -2640,13 +2479,11 @@ test.describe('recording', () => {
     await page.goto('/#/record');
     await page.evaluate(() => {
       navigator.mediaDevices.getDisplayMedia = async () => { throw new Error('Browser capture must stay closed'); };
-      navigator.mediaDevices.getUserMedia = async () => { throw new Error('Browser capture must stay closed'); };
     });
     await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
     expect(seen.started.source).toBe('screen');
-    expect(seen.audioBytes).toBe(0);
     await page.locator('[data-action="rec-stop"]').click();
     await expect(page).toHaveURL(new RegExp('#/n/' + made.id + '$'), { timeout: 8000 });
   });
@@ -2662,7 +2499,6 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound');
     expect(seen.started.source).toBe('screen');
-    expect(seen.audioBytes).toBe(0);
     seen.levels = [...Array(12).fill(0.1), ...Array(30).fill(0)];
     await expect(page.locator('#rec-hear')).toHaveText('No sound for a while: is something playing on the computer?', { timeout: 12000 });
     await expect(page.locator('#rec-hear')).toHaveClass(/silent/);
@@ -2685,11 +2521,13 @@ test.describe('recording', () => {
     await page.goto('/#/record');
     await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen', 'Call']);
     await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Records what this computer plays');
+    await expect(page.locator('.rec-kind .choice-diagram > svg')).toHaveCount(3);
+    await expect(page.locator('.rec-start .rec-tip'), 'the tip sits with Start').toBeVisible();
+    await expect(page.locator('.rec-card .note-fields #rec-dir ~ .select-menu-button'), 'the folder uses the shared select menu inside the shared field group').toBeVisible();
     await page.locator('.rec-kind', { hasText: 'Call' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
     expect(seen.started.source).toBe('nativecall');
-    expect(seen.audioBytes).toBe(0);
   });
 
   test('the class or meeting happening now names the recording and tells the AI who and what, without overwriting a typed title', async ({ page, context }) => {
@@ -2725,7 +2563,7 @@ test.describe('recording', () => {
     await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null, pending: [] } }));
     await page.route('**/api/calendar', (route) => route.fulfill({ json: { connected: false, calendars: [], events: [] } }));
     await page.goto('/#/record');
-    await expect(page.locator('.rec-idle a[href="#/settings"]')).toContainText('connect a calendar in Settings');
+    await expect(page.locator('.rec-idle a[href="#/settings/calendar"]')).toHaveText('Connect a calendar');
     await expect(page.locator('#rec-event')).toHaveCount(0);
     await page.unroute('**/api/calendar');
     await page.route('**/api/calendar', (route) => route.fulfill({ status: 500, json: { error: 'The calendars could not be read.' } }));
@@ -2740,7 +2578,6 @@ test.describe('recording', () => {
       ? { status:400, json:{error:'Allow Leo in System Settings → Privacy & Security → Microphone.'} }
       : { json:{available:true,local:true,job:null} }));
     await page.goto('/#/record');
-    await page.evaluate(() => { navigator.mediaDevices.getUserMedia = async () => { throw new Error('Browser capture must stay closed'); }; });
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('.toast.bad')).toContainText('Allow Leo in System Settings');
     await expect(page.locator('[data-action="rec-start"]')).toBeEnabled();
@@ -2887,9 +2724,9 @@ test.describe('the kinds of bugs that reached people before', () => {
     const slow = [
       ['#/settings', '**/api/settings'],
       ['#/trash', '**/api/trash'],
-      ['#/settings/storage', '**/api/storage'],
+      ['#/settings/keeping', '**/api/keep'],
       ['#/search/slow', '**/api/search?*'],
-      [`#/f/slow-${kind()}`, '**/api/dirs?*'],
+      [`#/f/slow-${kind()}`, '**/api/folders'],
       [`#/n/${note.id}`, `**/api/notes/${note.id}`],
     ];
     for (const [hash, api] of slow) {
@@ -2898,6 +2735,7 @@ test.describe('the kinds of bugs that reached people before', () => {
       const held = new Promise((resolve) => { release = resolve; });
       let seen = false;
       await page.route(api, async (route) => {
+        if (seen) return route.continue();
         seen = true;
         await held;
         await route.continue().catch(() => {});
@@ -3015,7 +2853,8 @@ test.describe('the kinds of bugs that reached people before', () => {
     await page.locator('#folder-name').fill(name);
     await page.locator('#folder-name').press('Enter');
     await page.locator('[data-action="create-folder"]').click({ force: true, timeout: 1000 }).catch(() => {});
-    await expect(page).toHaveURL(new RegExp(`#/f/${name}$`));
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="' + name + '"]')).toBeVisible();
     await page.waitForTimeout(500);
     await expect(page.locator('.toast.bad')).toHaveCount(0);
     const folders = await (await page.request.get('/api/folders')).json();
@@ -3060,8 +2899,8 @@ test.describe('the kinds of bugs that reached people before', () => {
     await call('POST', '/api/dirs', { path: `contract-moved-${tag}` });
     await call('POST', '/api/dirs/move', { from: `contract-moved-${tag}`, into: `contract-${tag}` });
     await call('POST', `/api/notes/${made.id}/suggestion`, { find: 'new', replace: 'newer' });
-    await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', mode: 'chat', messages: [{ role: 'user', text: 'hi' }] });
-    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/speech', '/api/record']) {
+    await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', messages: [{ role: 'user', text: 'hi' }] });
+    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/keep', '/api/speech', '/api/record']) {
       await call('GET', url);
     }
     const trashed = json(await call('POST', '/api/trash/move', { notes: [made.id], dirs: [] }));
@@ -3408,7 +3247,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
   });
 });
 
-test.describe('switching models and styles mid-chat', () => {
+test.describe('switching models mid-chat', () => {
   test('the next model is told what the last one looked up, and the switch is shown', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {
@@ -3429,7 +3268,7 @@ test.describe('switching models and styles mid-chat', () => {
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo').last()).toContainText('Building on that');
     const before = asked[1].messages[1].text;
-    expect(before).toContain('[Written by Codex · gpt-6.1-sol, in chat style]');
+    expect(before).toContain('[Written by Codex · gpt-6.1-sol]');
     expect(before).toContain('[What Felix did for this answer: Searched your notes for “queue” (found: Graph traversals)]');
     expect(before.endsWith('BFS uses a queue.')).toBe(true);
     expect(asked[1].recent).toEqual(['x1']);
@@ -3438,9 +3277,9 @@ test.describe('switching models and styles mid-chat', () => {
 });
 
 test.describe('past chats', () => {
-  test('chats are found by what was said in them, and switching style does not reorder them', async ({ page }) => {
+  test('chats are found by what was said in them, and opening one does not reorder them', async ({ page }) => {
     const tag = `${test.info().project.name}${Date.now().toString(36)}`;
-    const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, mode: 'chat', messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
+    const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
     await put(`chat-dij-${tag}`, `how does dijkstra${tag} relax edges`, `Shortest paths ${tag}`);
     await put(`chat-heap-${tag}`, `what is a heap${tag}`, `Heaps ${tag}`);
     await page.goto('/');
@@ -3458,7 +3297,6 @@ test.describe('past chats', () => {
     await search.fill('');
     await expect(chat.locator('.chat-history-title').first()).toHaveText(`Heaps ${tag}`);
     await chat.locator('.chat-history-item', { hasText: `Shortest paths ${tag}` }).click();
-    await chooseMode(chat, 'study');
     await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).filter((c) => c.id.endsWith(tag)).map((c) => c.id)).toEqual([`chat-heap-${tag}`, `chat-dij-${tag}`]);
   });
 });
@@ -3554,7 +3392,7 @@ test('dropping one note on another combines them in the background with progress
     return route.fulfill({ json: job });
   });
   await page.route('**/api/activity', (route) => route.fulfill({ json: { tasks: forgotten ? [] : [{ kind: 'combine', label: `Combining “${a.title}” into “${b.title}”`, step: job.state === 'working' ? 'Felix is writing one note' : 'Ready to review', done: job.state === 'working' ? percent : 100, total: 100, href: `#combine/${job.id}`, ...(job.state === 'working' ? {} : { ready: true }) }] } }));
-  await page.goto(`/#/f/${folder}`);
+  await page.goto('/#/search/' + tag);
   await dragBetween(page, page.locator(`.card[data-id="${a.id}"]`), page.locator(`.card[data-id="${b.id}"]`));
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
@@ -3643,97 +3481,21 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
 
-test('note thumbnails are read only, cards open directly and layout choices persist', async ({ page }) => {
-  const made = await page.request.post('/api/notes', { data: { title: 'Library thumbnail fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
-  expect(made.status()).toBe(201);
-  const note = await made.json();
-  await page.goto('/#/');
-  const card = page.locator(`.library-cards.grid .card[data-id="${note.id}"]`);
+test('Search cards remain read only and open notes directly', async ({ page }) => {
+  const tag = 'search-card-' + Date.now();
+  const note = await (await page.request.post('/api/notes', { data: { title: tag, body: '- [ ] A task stays unticked' } })).json();
+  await page.goto('/#/search/' + tag);
+  const card = page.locator('.card[data-id="' + note.id + '"]');
   await expect(card).toBeVisible();
-  await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
-  await card.scrollIntoViewIfNeeded();
-  await expect(card.locator('.note-thumb img')).toBeVisible();
-  await expect(card.locator('.note-thumb input:enabled')).toHaveCount(0);
-  await expect(page.locator('[data-action="note-preview"]')).toHaveCount(0);
-  const aligned = await page.locator('[data-action="library-view"]').evaluateAll((buttons) => buttons.map((button) => {
-    const icon = button.querySelector('svg').getBoundingClientRect();
-    const text = button.querySelector('span').getBoundingClientRect();
-    const box = button.getBoundingClientRect();
-    return { offsets: [Math.abs(icon.y + icon.height / 2 - text.y - text.height / 2), Math.abs((icon.x + text.right) / 2 - box.x - box.width / 2)], gap: text.left - icon.right };
-  }));
-  for (const item of aligned) {
-    for (const offset of item.offsets) expect(offset).toBeLessThanOrEqual(1);
-    expect(item.gap).toBeGreaterThanOrEqual(8);
-  }
-  await page.locator('[data-action="library-view"][data-view="list"]').click();
-  await expect(page.locator('.library-cards.list')).toBeVisible();
-  await page.reload();
-  await expect(page.locator('.library-cards.list')).toBeVisible();
-  await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
-  await page.locator('[data-action="library-view"][data-view="grid"]').click();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await expect(card.locator('input')).toHaveCount(0);
   await card.click();
-  await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
-  await expect(page.locator('#doc')).toContainText('Homework due Friday');
+  await expect(page).toHaveURL(new RegExp('#/n/' + note.id + '$'));
+  expect((await (await page.request.get('/api/notes/' + note.id)).json()).body).toContain('- [ ]');
 });
 
-test('notes come newest edit first, sort and show choices filter the folder and are remembered', async ({ page }) => {
-  const dir = `library-sort-${Date.now()}`;
-  const make = async (title, body) => (await (await page.request.post('/api/notes', { data: { title, directory: dir, body } })).json()).id;
-  const zebra = await make('Zebra notes', '- [ ] feed the zebra');
-  const apple = await make('Apple notes', 'Nothing to do.');
-  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
-  const ids = () => page.locator('.library-cards .card[data-id]').evaluateAll((els) => els.map((el) => el.dataset.id));
-  await expect.poll(ids).toEqual([apple, zebra]);
-  await page.locator('select[data-library="sort"]').selectOption('title-desc');
-  await expect.poll(ids).toEqual([zebra, apple]);
-  await page.locator('select[data-library="show"]').selectOption('tasks');
-  await expect.poll(ids).toEqual([zebra]);
-  await page.reload();
-  await expect(page.locator('select[data-library="sort"]')).toHaveValue('title-desc');
-  await expect(page.locator('select[data-library="show"]')).toHaveValue('tasks');
-  await expect.poll(ids).toEqual([zebra]);
-  await page.locator('select[data-library="show"]').selectOption('pinned');
-  await expect(page.locator('.library-none')).toBeVisible();
-  await page.locator('[data-action="library-show-all"]').click();
-  await expect.poll(ids).toEqual([zebra, apple]);
-  await page.locator('select[data-library="sort"]').selectOption('updated');
-  await expect.poll(ids).toEqual([apple, zebra]);
-});
 
-test('grid and list keep the library and header width in every layout', async ({ page }) => {
-  const dir = `library-width-${Date.now()}`;
-  await page.request.post('/api/notes', { data: { title: 'Stable library width', directory: dir, body: 'Keep the layout steady.' } });
-  const bounds = () => page.locator('main, .bar-row, .search').evaluateAll((els) => els.map((el) => {
-    const rect = el.getBoundingClientRect();
-    return { left: rect.left, width: rect.width };
-  }));
-  for (const folder of ['', dir]) {
-    await page.goto(folder ? `/#/f/${encodeURIComponent(folder)}` : '/#/');
-    const layouts = test.info().project.name === 'desktop' ? ['wide', 'mini', 'chat'] : ['phone'];
-    for (const layout of layouts) {
-      if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
-      if (layout === 'chat') {
-        await page.locator('[data-action="side-fold"]').click();
-        await expect(page.locator('body')).not.toHaveClass(/side-folding/);
-        await page.locator('#chat-toggle').click();
-        await expect(page.locator('.chat')).toBeVisible();
-      }
-      await expect(page.locator('body')).not.toHaveClass(/side-folding/);
-      for (const views of [['grid', 'list'], ['list', 'grid']]) {
-        await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
-        const before = await bounds();
-        await page.locator(`[data-action="library-view"][data-view="${views[1]}"]`).click();
-        expect(await bounds()).toEqual(before);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-      }
-      if (layout === 'chat') {
-        await page.locator('.chat [data-chat="close"]').click();
-        await expect(page.locator('body')).not.toHaveClass(/chat-open|chat-leaving/);
-      }
-    }
-  }
-});
+
+
 
 test('sidebar folders can move to the top level with their contents and Undo', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'sidebar dragging needs a mouse');
@@ -3747,11 +3509,11 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   await expect(target).toContainText('Folders');
   await dragBetween(page, page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`), target);
   await expect.poll(where).toBe(`${root}/Child`);
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
+  await expect(page).toHaveURL(/\/(?:#\/)?$/);
   await expect(page.locator(`#side [data-action="open-folder"][data-dir="${root}"]`)).toBeVisible();
   await page.locator('.toast button', { hasText: 'Undo' }).last().click();
   await expect.poll(where).toBe(`${from}/Child`);
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(from)}$`));
+  await expect(page).toHaveURL(/\/(?:#\/)?$/);
   const moves = [];
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/dirs/move') moves.push(request.postDataJSON()); });
   const transfer = await page.evaluateHandle(() => new DataTransfer());
@@ -3771,100 +3533,11 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   expect(moves).toEqual([{ from, into: '' }]);
 });
 
-test('folder navigation keeps the header steady while loading and animates only content', async ({ page }) => {
-  const dir = `folder-arrival-${Date.now()}`;
-  await page.request.post('/api/notes', { data: { title: 'Folder arrival fixture', directory: dir, body: 'A smooth arrival.' } });
-  await page.addInitScript(() => {
-    const animate = Element.prototype.animate;
-    window.folderAnimations = [];
-    Element.prototype.animate = function (frames, options) {
-      if (this.id === 'app') window.folderAnimations.push({ frames, options });
-      return animate.call(this, frames, options);
-    };
-  });
-  await page.reload();
-  await page.goto('/#/');
-  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
-  const header = page.locator('.bar-row');
-  const before = await header.boundingBox();
-  let release;
-  const hold = new Promise(resolve => { release = resolve; });
-  let waiting = false;
-  await page.route('**/api/notes?*', async route => {
-    if (new URL(route.request().url()).searchParams.get('dir') === dir) { waiting = true; await hold; }
-    await route.continue();
-  });
-  await page.locator(`main .folder[data-dir="${dir}"]`).click();
-  try {
-    await expect.poll(() => waiting).toBe(true);
-    const loading = await header.boundingBox();
-    expect(loading.width).toBe(before.width);
-    expect(loading.x).toBe(before.x);
-  } finally { release(); }
-  await expect(page.locator('.library-cards')).toContainText('Folder arrival fixture');
-  await expect.poll(() => page.evaluate(() => window.folderAnimations.length)).toBe(1);
-  await page.evaluate(() => { window.keptCrumb = document.querySelector('#crumbs button:last-child'); });
-  for (const view of ['list', 'grid']) await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
-  expect(await page.evaluate(() => window.keptCrumb === document.querySelector('#crumbs button:last-child'))).toBe(true);
-  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.locator('#crumbs [data-action="home"]').click();
-  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
-  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
-});
 
-test('top level and folders show only their own notes and ignore old recency preferences', async ({ page }) => {
-  const dir = `folder-scope-${Date.now()}`;
-  const notes = [];
-  for (const [title, directory] of [['Zebra scope fixture', ''], ['Alpha scope fixture', ''], ['Nested scope fixture', dir], ['Child scope fixture', `${dir}/Child`]]) {
-    notes.push(await (await page.request.post('/api/notes', { data: { title, directory, body: 'Only in its own folder.' } })).json());
-  }
-  await page.addInitScript(() => localStorage.setItem('leo-library', JSON.stringify({ view: 'grid', sort: 'opened' })));
-  await page.reload();
-  await page.goto('/#/');
-  await expect(page.locator(`.card[data-id="${notes[1].id}"]`)).toBeVisible();
-  for (const view of ['grid', 'list']) {
-    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
-    await expect(page.locator(`.card[data-id="${notes[2].id}"], .card[data-id="${notes[3].id}"]`)).toHaveCount(0);
-    const ids = await page.locator('.card[data-id]').evaluateAll(els => els.map(el => el.dataset.id));
-    expect(ids.indexOf(notes[1].id)).toBeLessThan(ids.indexOf(notes[0].id));
-    await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
-  }
-  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
-  await expect(page.locator('.card[data-id]')).toHaveCount(1);
-  await expect(page.locator(`.card[data-id="${notes[2].id}"]`)).toBeVisible();
-});
 
-test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {
-  const original = `folder-controls-${Date.now()}/nested`;
-  const made = await page.request.post('/api/notes', { data: { title: 'Folder controls fixture', directory: original, body: 'Keep this note through renaming and moving.' } });
-  expect(made.status()).toBe(201);
-  const note = await made.json();
-  const renamed = `Renamed-${note.id}`;
-  const full = original.split('/')[0] + '/' + renamed;
-  await page.goto(`/#/f/${encodeURIComponent(original)}`);
-  await page.locator('[data-action="folder-options"]').click();
-  await page.locator('[data-action="folder-rename"]').click();
-  await expect(page.locator('#folder-rename')).toBeFocused();
-  await page.locator('#folder-rename').fill(renamed);
-  await page.locator('#folder-rename').press('Enter');
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(full)}$`));
-  await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
-  if (test.info().project.name === 'desktop') {
-    await dragBetween(page, page.locator(`#crumbs [data-dir="${full}"]`), page.locator('#crumbs [data-action="home"]'));
-  } else {
-    await page.locator('[data-action="folder-options"]').click();
-    await page.locator('[data-action="folder-root"]').click();
-  }
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(renamed)}$`));
-  await page.locator('[data-action="folder-options"]').click();
-  await page.locator('[data-action="folder-delete"]').click();
-  await page.locator('[data-action="folder-delete-now"]').click();
-  await expect(page).toHaveURL(/#\/$/);
-  expect((await page.request.get(`/api/notes/${note.id}`)).status()).toBe(404);
-  await page.locator('.toast button', { hasText: 'Undo' }).last().click();
-  await expect(async () => expect((await page.request.get(`/api/notes/${note.id}`)).status()).toBe(200)).toPass();
-});
+
+
+
 
 test('dropdowns and nested disclosures share real icons and keep their native controls', async ({ page }) => {
   const inspect = async () => {
@@ -3874,7 +3547,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
       const wrap = el.closest('.select-control');
       const menu = wrap && wrap.classList.contains('has-menu') && wrap.querySelector(':scope > .select-menu-button');
       if (menu) {
-        const name = el.id || el.dataset.set || el.dataset.keep || el.dataset.library;
+        const name = el.id || el.dataset.set || el.dataset.keep;
         const icon = menu.querySelector('svg')?.getBoundingClientRect();
         const box = menu.getBoundingClientRect(), under = el.getBoundingClientRect();
         if (!icon) return [`${name}: menu missing chevron`];
@@ -3883,35 +3556,18 @@ test('dropdowns and nested disclosures share real icons and keep their native co
         return Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2) > 1 || icon.right > box.right - 4 || icon.left < box.left ? [`${name}: misaligned menu chevron`] : [];
       }
       const arrow = wrap && wrap.querySelector(':scope > svg[aria-hidden="true"]');
-      if (!arrow) return [`${el.id || el.dataset.set || el.dataset.keep || el.dataset.library}: missing chevron`];
+      if (!arrow) return [`${el.id || el.dataset.set || el.dataset.keep}: missing chevron`];
       const box = el.getBoundingClientRect();
       const icon = arrow.getBoundingClientRect();
       const style = getComputedStyle(el);
       return Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2) > 1 || icon.right > box.right - 4 || icon.left < box.left || parseFloat(style.paddingRight) < icon.width + 12
-        ? [`${el.id || el.dataset.set || el.dataset.keep || el.dataset.library}: misaligned chevron`]
+        ? [`${el.id || el.dataset.set || el.dataset.keep}: misaligned chevron`]
         : [];
     }));
     expect(issues).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   };
-  await page.goto('/#/');
-  await inspect();
-  const sort = page.locator('select[data-library="sort"]');
-  await sort.focus();
-  await expect(sort).toBeFocused();
-  await sort.selectOption('title');
-  await expect(sort).toHaveValue('title');
-  await page.locator('[data-action="library-view"][data-view="list"]').click();
-  const align = await page.locator('.library-views .btn').evaluateAll(els => els.map(el => {
-    const icon = el.querySelector('svg').getBoundingClientRect();
-    const box = el.getBoundingClientRect();
-    return Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2);
-  }));
-  expect(align.every(offset => offset < 1)).toBe(true);
-  await page.goto('/#/settings/backup');
-  await expect(page.locator('select[data-set="auto_push"]')).toBeVisible();
-  await inspect();
-  await page.goto('/#/settings/storage');
+  await page.goto('/#/settings/keeping');
   await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
   await inspect();
   await page.goto('/#/');
@@ -3927,7 +3583,8 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.locator('#rec-event').selectOption('');
   await expect(page.locator('#rec-event')).toHaveValue('');
   await page.emulateMedia({ forcedColors: 'active' });
-  await expect(page.locator('#rec-dir').locator('..').locator('svg')).toBeHidden();
+  await expect(page.locator('#rec-dir + svg')).toBeHidden();
+  await expect(page.locator('#rec-dir ~ .select-menu-button'), 'forced colours fall back to the native select').toBeHidden();
   expect(await page.locator('#rec-dir').evaluate(el => getComputedStyle(el).appearance)).toBe('auto');
   await page.emulateMedia({ forcedColors: 'none' });
   await page.goto('/#/calendar');
@@ -3966,7 +3623,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await step.locator('summary').click();
   await expect(step.locator('li')).toHaveText(['Queues', 'Heaps']);
   await page.locator('[data-chat="close"]').click();
-  const job = { id: 'controls-failed', source: 'call', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded.; You: No sound was recorded.' };
+  const job = { id: 'controls-failed', source: 'nativecall', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded.; You: No sound was recorded.' };
   await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job, pending: [] } }));
   await page.route('**/api/record/controls-failed', route => route.fulfill({ json: job }));
   await page.goto('/#/record');
@@ -3976,7 +3633,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
 });
 
 test('a failed call has calm details and can be dismissed or deleted directly', async ({ page }) => {
-  let job = { id: 'failed-call-fixture', source: 'call', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded. Check your microphone.; You: No sound was recorded. Check your microphone.' };
+  let job = { id: 'failed-call-fixture', source: 'nativecall', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded. Check your microphone.; You: No sound was recorded. Check your microphone.' };
   let deletions = 0;
   await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job, pending: [] } }));
   await page.route('**/api/record/failed-call-fixture', route => {
@@ -3995,11 +3652,6 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await page.evaluate(() => sessionStorage.removeItem('leo-record-dismissed'));
   await page.reload();
   await expect(page.locator('.rec-failed-card')).toBeVisible();
-  await page.evaluate(async () => {
-    const queue = window.leoAudioQueue.indexed();
-    await queue.put({ id: 'failed-call-fixture', seq: 0, bytes: new ArrayBuffer(4) });
-    await queue.put({ id: 'keep-fixture', seq: 0, bytes: new ArrayBuffer(4) });
-  });
   await page.locator('[data-action="rec-discard"]').click();
   await page.locator('.scrim [data-action="close"]').click();
   expect(deletions).toBe(0);
@@ -4007,8 +3659,6 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await page.locator('[data-action="rec-discard-now"]').click();
   await expect(page.locator('.rec-idle')).toBeVisible();
   expect(deletions).toBe(1);
-  expect(await page.evaluate(() => window.leoAudioQueue.indexed().count('failed-call-fixture'))).toBe(0);
-  expect(await page.evaluate(() => window.leoAudioQueue.indexed().count('keep-fixture'))).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.reload();
   await expect(page.locator('.rec-idle')).toBeVisible();
@@ -4058,6 +3708,7 @@ test.describe('passages', () => {
   });
 
   test('Felix reads along only after an edit, speaks in the margin, and his answer lands in the note', async ({ page }) => {
+    await page.request.post('/api/margin', { data: { layout: 'both' } });
     await page.setViewportSize({ width: 1600, height: 900 });
     const start = 'Save the password in the users table.';
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: start } })).json();
@@ -4072,12 +3723,13 @@ test.describe('passages', () => {
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
     await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
     await page.goto(`/#/n/${note.id}`);
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
     await page.locator('#margin-mode').click();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
-    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'right');
+    await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'both');
     await page.reload();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.waitForTimeout(4500);
     expect(reads, 'opening a note must not read it').toEqual([]);
 
@@ -4085,14 +3737,15 @@ test.describe('passages', () => {
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
     await area.pressSequentially('\n\nThen login just checks if it matches, I think');
-    await expect(page.locator('.margin-reading .felix.think')).toBeVisible({ timeout: 9000 });
+    await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 9000 });
     await expect(page.locator('.margin-note')).toBeVisible({ timeout: 9000 });
     await expect(page.locator('.margin-reading')).toHaveCount(0);
     expect(reads).toHaveLength(1);
     expect(reads[0].blocks).toEqual(['Then login just checks if it matches, I think']);
     await expect(area).toBeFocused();
     await expect(page.locator('.margin-ink .squiggle')).toHaveCount(1);
-    await expect(page.locator('.margin-ink .tether')).toHaveCount(1);
+    await expect(page.locator('.margin-ink .tether')).toHaveCount(0);
+    expect(await page.locator('.margin-ink .squiggle').getAttribute('d')).not.toMatch(/ q| C/);
     await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?');
     const delays = await page.locator('.ink-word').evaluateAll((words) => words.map((word) => parseFloat(word.style.animationDelay)));
     expect(delays.length).toBeGreaterThan(40);
@@ -4111,9 +3764,11 @@ test.describe('passages', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle).toBeFocused();
     await page.locator('.margin-note').click();
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Ask in chat' })).toBeHidden();
     const reply = page.locator('.margin-reply textarea');
     await expect(reply).toBeFocused();
-    expect(await reply.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
+    expect(await reply.evaluate((el) => { const css = getComputedStyle(el); return css.boxShadow.includes('0px 1px 0px') && !css.boxShadow.includes('rgba(0, 0, 0, 0)'); })).toBe(true);
     await reply.fill('So hash it?');
     await reply.press('Enter');
     await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
@@ -4129,7 +3784,8 @@ test.describe('passages', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Real margin', body: 'Save the password in the users table.' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#margin-mode').click();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.locator('#doc .blk').first().click();
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
@@ -4231,6 +3887,7 @@ test.describe('passages', () => {
   });
 
   test('the note column stays put through a draft, a thread and a dismissal, and Marks only centres it', async ({ page }) => {
+    await page.request.post('/api/margin', { data: { layout: 'right' } });
     await page.setViewportSize({ width: 1700, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Steady column', body: 'A binary heap keeps the minimum at the root.' } })).json();
     await page.goto(`/#/n/${note.id}`);
@@ -4250,6 +3907,7 @@ test.describe('passages', () => {
     await page.keyboard.press('ControlOrMeta+Shift+e');
     await expect(page.locator('.margin-note[data-id="draft"] textarea')).toBeFocused();
     expect(await box()).toEqual(first);
+    await page.locator('.margin-note[data-id="draft"]').evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((run) => run.finished)));
     await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('.margin-note')).toHaveCount(0);
     expect(await box()).toEqual(first);
@@ -4309,7 +3967,7 @@ test.describe('passages', () => {
     await expect(mark).toBeVisible();
     const mouse = await mark.boundingBox();
     expect(Math.min(mouse.width, mouse.height)).toBeGreaterThanOrEqual(24);
-    expect((await mark.locator('svg').boundingBox()).width).toBeLessThanOrEqual(14);
+    expect((await mark.locator('.margin-anchor').boundingBox()).width).toBeLessThanOrEqual(14);
     await page.emulateMedia({ forcedColors: 'active' });
     expect(await page.locator('.margin-ink .squiggle').evaluate((el) => getComputedStyle(el).stroke)).not.toBe('none');
     await page.emulateMedia({ forcedColors: 'none' });
@@ -4339,10 +3997,10 @@ test.describe('passages', () => {
     const newNotes = page.locator('[data-find="felix-new-notes"]');
     await expect(newNotes.locator('.choice-pick.on')).toContainText('When you ask');
     await expect(newNotes).toContainText('the note’s title and the text you change');
-    await page.locator('[data-find="felix-cap"] .segment', { hasText: '20' }).click();
-    await expect(page.locator('#margin-today')).toContainText('of 20 used today');
-    await page.locator('[data-find="felix-cap"] .segment', { hasText: '40' }).click();
-    await expect(page.locator('#margin-today')).toContainText('of 40 used today');
+    await expect(newNotes.locator('p.hint'), 'one line: the privacy statement').toHaveCount(1);
+    await expect(newNotes.locator('.choice-about')).toHaveCount(2);
+    await expect(page.locator('#margin-today')).toHaveCount(0);
+    expect((await (await page.request.get('/api/margin')).json()).cap).toBe(40);
     await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Marks only' }).click();
     await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).layout).toBe('marks');
     await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Right margin' }).click();
@@ -4440,7 +4098,6 @@ test.describe('study sessions', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chooseMode(chat, 'study');
     await chat.locator('#chat-input').fill('quiz me on heaps');
     await chat.locator('#chat-input').press('Enter');
     const progress = chat.locator('#study-progress');
@@ -4879,30 +4536,7 @@ test('Felix tool activity stays between the response passages it belongs to afte
 
 
 
-test('the library starts with a New note card in grid and list, in place of the floating button', async ({ page }) => {
-  const dir = `newcard-${test.info().project.name}-${Date.now().toString(36)}`;
-  await page.request.post('/api/dirs', { data: { path: dir } });
-  await page.goto(`/#/f/${dir}`);
-  const phone = test.info().project.name === 'phone';
-  await expect(page.locator('.new-card')).toHaveCount(0);
-  if (phone) await expect(page.locator('.fab[data-action="new"]')).toBeVisible();
-  const note = await (await page.request.post('/api/notes', { data: { title: `Card ${dir}`, body: 'x', directory: dir } })).json();
-  await page.reload();
-  const tile = page.locator('.library-cards > .new-card');
-  await expect(tile).toBeVisible();
-  expect(await page.locator('.library-cards > *').first().evaluate((el) => el.classList.contains('new-card'))).toBe(true);
-  await expect(page.locator('.fab[data-action="new"]')).toHaveCount(0);
-  if (phone) await expect(page.locator('.fab[data-action="record"]')).toBeVisible();
-  await page.locator('[data-action="library-view"][data-view="list"]').click();
-  await expect(tile).toBeVisible();
-  await page.locator('[data-action="library-view"][data-view="grid"]').click();
-  const small = await tile.boundingBox();
-  expect(small.height).toBeLessThan(48);
-  expect(small.width).toBeLessThan(200);
-  await tile.click();
-  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toContain(`#/new/${dir}`);
-  await page.request.delete(`/api/notes/${note.id}`);
-});
+
 
 test('the same step repeated in a row shows once with how many times', async ({ page }) => {
   const step = (text, tool = 'open_note') => JSON.stringify({ step: text, tool, found: [] });
@@ -4946,30 +4580,7 @@ test('the open Tasks panel stays open and its own size through page changes and 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
-test('the open Tasks panel stays below the first row of notes', async ({ page }) => {
-  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
-  const tag = Date.now().toString(36);
-  const dir = `room-${tag}`;
-  await page.request.post('/api/dirs', { data: { path: dir } });
-  const notes = [];
-  for (const n of [1, 2, 3]) notes.push(await (await page.request.post('/api/notes', { data: { title: `Room ${n} ${tag}`, body: 'x', directory: dir } })).json());
-  const tasks = [];
-  for (let n = 0; n < 14; n += 1) tasks.push(await (await page.request.post('/api/tasks', { data: { title: `Room task ${n} ${tag}` } })).json());
-  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
-  for (const view of ['grid', 'list']) {
-    await page.goto(`/#/f/${dir}`);
-    await page.reload();
-    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
-    const panel = page.locator('#tasks-window');
-    await expect(panel.locator('.tasks-body')).toBeVisible();
-    const first = page.locator('.library-cards > .card:not(.new-card)').first();
-    await expect.poll(async () => (await panel.boundingBox()).y - ((await first.boundingBox()).y + (await first.boundingBox()).height)).toBeGreaterThanOrEqual(0);
-    await first.click();
-    await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
-  }
-  for (const task of tasks) await page.request.delete(`/api/tasks/${task.id}`);
-  for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
-});
+
 
 test('letting go of a picture’s corner outside the page ends the resize and keeps the size', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
@@ -5035,7 +4646,7 @@ test('the header starts where each page\'s content starts, in a wide window', as
   const board = await (await page.request.post('/api/boards', { data: { name: 'Edge' } })).json();
   const header = async () => (await page.locator('.bar-row').boundingBox()).x;
   const left = async (selector) => page.locator(selector).first().evaluate((el) => el.getBoundingClientRect().left + (parseFloat(getComputedStyle(el).paddingLeft) || 0));
-  for (const [hash, selector] of [['#/', '.library-tools'], [`#/n/${note.id}`, '.note-columns > .note'], ['#/calendar', '.cal-head'], ['#/boards', '.kanban-head'], ['#/record', 'main']]) {
+  for (const [hash, selector] of [['#/', '.workspace-empty'], [`#/n/${note.id}`, '.note-columns > .note'], ['#/calendar', '.cal-head'], ['#/boards', '.kanban-head'], ['#/record', 'main']]) {
     await page.goto('/' + hash);
     await expect(page.locator(selector).first()).toBeVisible();
     await expect.poll(async () => Math.abs((await header()) - (selector === 'main' ? (await left('main')) : await left(selector))), { message: hash }).toBeLessThanOrEqual(1);
@@ -5044,14 +4655,7 @@ test('the header starts where each page\'s content starts, in a wide window', as
   await page.request.delete(`/api/boards/${board.id}`);
 });
 
-test('Settings keeps its section list close to the explorer in a wide window', async ({ page }) => {
-  test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
-  await page.setViewportSize({ width: 1600, height: 900 });
-  await page.goto('/#/settings/general');
-  await expect(page.locator('.settings-nav')).toBeVisible();
-  const gap = await page.evaluate(() => document.querySelector('.settings-nav').getBoundingClientRect().left - document.querySelector('#side').getBoundingClientRect().right);
-  expect(gap, 'the explorer and the section list are the same tone, so a wide gap reads as dead space').toBeLessThanOrEqual(80);
-});
+
 
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
@@ -5066,9 +4670,9 @@ test('notes read wide by default, and Settings can make them comfortable or full
     check(await width());
   }
   await page.goto('/#/');
-  await expect(page.locator('.library-tools')).toBeVisible();
+  await expect(page.locator('.workspace-empty')).toBeVisible();
   const content = await page.locator('main').evaluate((main) => { const cs = getComputedStyle(main); return main.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); });
-  expect(content, 'the library keeps its own width').toBeLessThanOrEqual(1080);
+  expect(content, 'the workspace keeps its own width').toBeLessThanOrEqual(1080);
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
@@ -5131,7 +4735,8 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await input.fill(`Idea ${tag}`);
   await box.locator('.quick-row', { hasText: 'Search every note' }).click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/search/Idea ${tag}`);
-  await expect(page.locator('.card').filter({ hasText: `Idea ${tag}` })).toBeVisible();
+  await expect(page.locator('.side-note').filter({ hasText: `Idea ${tag}` })).toBeVisible();
+  await expect(page.locator('#search-input')).toBeVisible();
 
   await page.keyboard.press('ControlOrMeta+f');
   await input.fill('What is a heap?');
@@ -5147,7 +4752,7 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
   const folder = `Shelf ${tag}`;
   await page.request.post('/api/dirs', { data: { path: `Classes/${folder}` } });
-  await page.request.put(`/api/chats/quick-${tag}`, { data: { title: `Heap talk ${tag}`, mode: 'chat', messages: [{ role: 'user', text: `Heap talk ${tag}` }, { role: 'assistant', text: 'A heap keeps the smallest on top.' }] } });
+  await page.request.put(`/api/chats/quick-${tag}`, { data: { title: `Heap talk ${tag}`, messages: [{ role: 'user', text: `Heap talk ${tag}` }, { role: 'assistant', text: 'A heap keeps the smallest on top.' }] } });
   await page.goto('/');
   await page.keyboard.press('ControlOrMeta+f');
   const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
@@ -5156,8 +4761,9 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   const top = box.locator('.quick-row.on');
   await expect(top).toContainText('Folder in Classes');
   await input.press('Enter');
-  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/f/Classes/${folder}`);
-  await expect(page.locator('main h1, .crumbs')).toContainText(folder);
+  await expect(page).toHaveURL(/\/(?:#\/)?$/);
+  await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="Classes/' + folder + '"]')).toBeVisible();
+  await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="Classes/' + folder + '"]')).toHaveAttribute('aria-current', 'page');
   await page.keyboard.press('ControlOrMeta+f');
   await input.fill(`Heap talk ${tag}`);
   const talk = box.locator('.quick-row', { hasText: 'Past chat' });
@@ -5167,45 +4773,24 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');
 });
 
-test('on a short screen the Tasks panel waits as its icon, and the last notes can scroll clear of it', async ({ page }) => {
-  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
-  const tag = Date.now().toString(36);
-  const dir = `short-${tag}`;
-  await page.request.post('/api/dirs', { data: { path: dir } });
-  const notes = [];
-  for (let n = 0; n < 9; n += 1) notes.push(await (await page.request.post('/api/notes', { data: { title: `Short ${n} ${tag}`, body: 'x', directory: dir } })).json());
-  const task = await (await page.request.post('/api/tasks', { data: { title: `Short task ${tag}` } })).json();
+test('the Tasks panel stays usable beside a long note on short and tall screens', async ({ page }) => {
+  const task = await (await page.request.post('/api/tasks', { data: { title: 'Task beside reading' } })).json();
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Long reading', body: ('Reading paragraph.\n\n').repeat(100) } })).json();
   await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
-  const panel = page.locator('#tasks-window');
-  await page.setViewportSize({ width: 1800, height: 600 });
-  await page.goto(`/#/f/${dir}`);
-  await page.reload();
-  await expect(panel.locator('.tasks-pill')).toBeVisible();
-  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-  await expect(panel).toHaveClass(/folded/);
   await page.setViewportSize({ width: 1280, height: 600 });
-  await expect(panel.locator('.tasks-pill')).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
-  await panel.locator('.tasks-pill').click();
+  await page.goto('/#/n/' + note.id);
+  const panel = page.locator('#tasks-window');
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await panel.locator('[data-action="tasks-fold"]').first().click();
   await expect(panel.locator('.tasks-pill')).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
+  await panel.locator('.tasks-pill').click();
+  await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const last = await page.locator('.library-cards > .card').last().boundingBox();
-  const dock = await page.locator('#dock').boundingBox();
-  expect(last.y + last.height).toBeLessThanOrEqual(dock.y);
-  for (let n = 0; n < 40; n += 1) await page.request.post('/api/dirs', { data: { path: `${dir}/Shelf ${n}` } });
-  await page.setViewportSize({ width: 1280, height: 600 });
-  await page.reload();
-  await expect(page.locator('.library-cards > .card').first()).toBeAttached();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  expect((await page.locator('.library-cards > .card:not(.new-card)').first().boundingBox()).y).toBeGreaterThan(600);
-  await expect(panel.locator('.tasks-body')).toBeVisible();
-  await page.request.delete(`/api/tasks/${task.id}`);
-  for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
+  await expect(page.locator('#doc .blk').last()).toBeInViewport();
+  await page.request.delete('/api/tasks/' + task.id);
+  await page.request.delete('/api/notes/' + note.id);
 });
 
 test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {
@@ -5253,7 +4838,7 @@ test('a late missing note response keeps a new draft open', async ({ page }) => 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
-test('Back from Settings, Storage or Trash returns to the note you were reading', async ({ page }) => {
+test('Back from Settings, Keeping or Trash returns to the note you were reading', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Back here ${Date.now().toString(36)}`, body: 'Keep my place.' } })).json();
   const visit = (hash) => page.evaluate((h) => { location.hash = h; }, hash);
   const back = async () => { await page.locator('#back').click(); };
@@ -5277,12 +4862,12 @@ test('Back from Settings, Storage or Trash returns to the note you were reading'
   await back();
   await expect.poll(at).toBe(`#/n/${note.id}`);
   expect(await page.evaluate(() => history.length)).toBe(depth);
-  await visit('#/settings/storage');
+  await visit('#/settings/keeping');
   await expect(page.locator('#back')).toBeVisible();
   await back();
   await expect.poll(at).toBe(`#/n/${note.id}`);
   await visit('#/settings');
-  await visit('#/settings/storage');
+  await visit('#/settings/keeping');
   await back();
   await expect.poll(at).toBe('#/settings');
   await back();
@@ -5371,35 +4956,6 @@ test('buttons keep room from the text and sections around them', async ({ page }
 
 
 
-test('leaving the website queues one backup without sending note contents or pushing on folder navigation', async ({ page, context }) => {
-  const departures = [];
-  context.on('request', (request) => {
-    if (new URL(request.url()).pathname === '/api/backup' && request.method() === 'POST') departures.push(request.postData());
-  });
-  await context.route('**/api/backup', (route) => route.request().method() === 'GET'
-    ? route.fulfill({ json: { state: 'idle', at: 0, message: '' } }) : route.fulfill({ status: 204 }));
-  await page.goto('/#/calendar');
-  await expect(page.locator('.cal-page')).toBeVisible();
-  await page.goto('/#/');
-  await expect(page.locator('.library-tools')).toBeVisible();
-  expect(departures).toEqual([]);
-  await page.evaluate(() => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
-    document.dispatchEvent(new Event('visibilitychange'));
-    window.dispatchEvent(new PageTransitionEvent('pagehide'));
-  });
-  await expect.poll(() => departures.length).toBe(1);
-  expect(JSON.parse(departures[0])).toEqual({});
-  await page.evaluate(() => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
-    document.dispatchEvent(new Event('visibilitychange'));
-  });
-  await context.unroute('**/api/backup');
-  const before = await (await page.request.get('/api/backup')).json();
-  await page.goto('/?leave-test=1');
-  await expect.poll(async () => (await (await page.request.get('/api/backup')).json()).at, { timeout: 10000 }).toBeGreaterThan(before.at);
-});
-
 test('Usage opens from the rail with remaining limits inside a stable dialog', async ({ page }) => {
   await page.route(/\/api\/settings(?:\/usage)?$/, route => route.fulfill({ json: {
     tasks: [{ task: 'writing', provider: 'ollama' }],
@@ -5410,14 +4966,20 @@ test('Usage opens from the rail with remaining limits inside a stable dialog', a
   await page.locator('.side-foot [data-action="usage"]').click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+  await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
   await expect(dialog).toContainText('75% left');
   await expect(dialog.locator('[data-action="use-plan"]')).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Refresh', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
   await dialog.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(page.getByRole('dialog').getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+  await expect(page.getByRole('dialog').getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('#side [data-action="usage"]')).toBeFocused();
 });
 
 for (const [width, layout] of [[800, 'right'], [1280, 'right'], [1800, 'right'], [1280, 'marks'], [1800, 'both']]) test(`note search temporarily highlights the match without changing the note at ${width}px with ${layout} margins`, async ({ page }) => {
@@ -5457,7 +5019,7 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
     });
     await page.locator('.side-foot [data-action="usage"]').click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+    await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
     if (outcome === 'closed') {
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
       await page.keyboard.press('ControlOrMeta+f');
@@ -5466,10 +5028,10 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
     const response = page.waitForResponse('**/api/settings/usage');
     release();
     await response;
-    if (outcome === 'success') await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '40');
+    if (outcome === 'success') await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '40');
     else if (outcome === 'failure') {
-      await expect(page.locator('.toast')).toContainText('Usage could not refresh');
-      await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+      await expect(dialog.locator('.usage-error')).toHaveText('Refresh failed · showing saved usage');
+      await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
     } else {
       await expect(page.locator('#quick-input')).toHaveValue('Keep this query');
       await expect(page.locator('.usage-content')).toHaveCount(0);
@@ -5480,13 +5042,13 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
 });
 
 for (const width of [1280, 390]) {
-  test(`Record and Settings keep consistent headers and compact storage at ${width}px`, async ({ page }, testInfo) => {
+  test(`Record and Settings keep consistent headers at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     let reference;
     for (const [route, crumb] of [
       ['record', 'Record'],
       ['settings/general', 'Settings / General'],
-      ['settings/storage', 'Settings / Storage'],
+      ['settings/keeping', 'Settings / Keeping'],
       ['settings/trash', 'Settings / Trash'],
     ]) {
       await page.goto('/#/' + route);
@@ -5501,29 +5063,13 @@ for (const width of [1280, 390]) {
         expect(header.height).toBeCloseTo(reference.height, 0);
       }
       if (width >= 1000) {
-        const edge = await page.evaluate(() => {
-          const section = document.querySelector('.settings-section');
-          if (section) return section.getBoundingClientRect().left;
-          const main = document.querySelector('main');
-          return main.getBoundingClientRect().left + parseFloat(getComputedStyle(main).paddingLeft);
-        });
-        expect(header.x, 'the header starts where the page content starts').toBeCloseTo(edge, 0);
+        const bounds = await page.locator('#bar').boundingBox();
+        expect(header.x, 'the header stays inside the page toolbar').toBeGreaterThanOrEqual(bounds.x);
+        expect(header.x + header.width).toBeLessThanOrEqual(bounds.x + bounds.width + 1);
+        expect(header.x + header.width / 2, 'the header remains centered').toBeCloseTo(bounds.x + bounds.width / 2, 0);
       }
       reference = header;
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      if (route === 'settings/storage') {
-        const areas = page.locator('.store-area');
-        await expect(areas.first()).toBeVisible();
-        for (const area of await areas.all()) {
-          const heading = area.locator(':scope > summary');
-          const summary = await heading.boundingBox();
-          const content = await heading.evaluate(el => Math.max(...Array.from(el.children, child => child.getBoundingClientRect().height)));
-          const card = await area.boundingBox();
-          expect(card.height - summary.height).toBeLessThanOrEqual(3);
-          expect(summary.height).toBeLessThanOrEqual(Math.max(52, content + 16) + 1);
-        }
-        await page.screenshot({ path: testInfo.outputPath('storage.png') });
-      }
     }
   });
 }

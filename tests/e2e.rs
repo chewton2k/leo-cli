@@ -1,10 +1,9 @@
 //! End-to-end: the real `leo` binary, run as a user would run it.
 //!
 //! Every test gets its own `LEO_HOME`, a scrubbed environment and a PATH holding
-//! only the system directories plus git, so nothing here can read the user's
+//! only the system directories, so nothing here can read the user's
 //! notes, their API keys, their keychain, or reach the network — and no test
 //! can open a microphone, since LEO_NO_MICROPHONE is always set.
-//! `$EDITOR` is a small script that appends a line to whatever file it is given.
 
 #![cfg(unix)]
 
@@ -22,20 +21,6 @@ impl Leo {
         let home = tempfile::tempdir().unwrap();
         let bin = home.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-
-        let editor = bin.join("fake-editor");
-        std::fs::write(
-            &editor,
-            "#!/bin/sh\nprintf 'written in the editor\\n' >> \"$1\"\n",
-        )
-        .unwrap();
-        make_executable(&editor);
-
-        // git, and nothing else from wherever it was installed.
-        if let Some(git) = find_on_path("git") {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(git, bin.join("git")).unwrap();
-        }
         Leo { home, bin }
     }
 
@@ -55,17 +40,12 @@ impl Leo {
             .env("LEO_HOME", self.home.path())
             .env("HOME", self.home.path())
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
-            .env("EDITOR", self.bin.join("fake-editor"))
             .env("NO_COLOR", "1")
             .env("LEO_NO_UPDATE_CHECK", "1")
             .env("LEO_NO_MICROPHONE", "1")
             .env("LEO_NO_OPEN", "1")
             .env("LEO_INSTALL_NO_MODEL", "1")
             .env("LEO_NO_MEANING_MODEL", "1")
-            .env("GIT_AUTHOR_NAME", "leo test")
-            .env("GIT_AUTHOR_EMAIL", "leo@example.com")
-            .env("GIT_COMMITTER_NAME", "leo test")
-            .env("GIT_COMMITTER_EMAIL", "leo@example.com")
             .stdin(Stdio::null());
         cmd
     }
@@ -110,14 +90,6 @@ fn describe(out: &Output) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     )
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|p| p.join(name))
-            .find(|p| p.is_file())
-    })
 }
 
 fn make_executable(path: &Path) {

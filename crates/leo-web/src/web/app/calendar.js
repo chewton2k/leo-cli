@@ -85,7 +85,8 @@ async function loadSchedule(mine = seq) {
   } else {
     cal.polls = 0;
     cal.timer = setTimeout(() => {
-      if (document.visibilityState === 'visible') loadSchedule(mine);
+      if (appVisible()) loadSchedule(mine);
+      else cal.missed = true;
     }, CAL_POLL_MS);
   }
   if (cal.drag || cal.compose) {
@@ -106,9 +107,17 @@ function calSettled() {
   loadSchedule(seq);
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.view === 'calendar' && Date.now() - cal.loadedAt > 120000) loadSchedule(seq);
-});
+function calendarShown() {
+  if (!appVisible()) return;
+  if (state.view === 'calendar' && (cal.missed || Date.now() - cal.loadedAt > 120000)) {
+    cal.missed = false;
+    cal.loadedAt = Date.now();
+    loadSchedule(seq);
+  }
+  if (tasksWin.stale) loadTasksWindow().catch(() => {});
+}
+document.addEventListener('visibilitychange', calendarShown);
+window.addEventListener('leo-visibility', calendarShown);
 
 function calStatus() {
   const d = cal.data;
@@ -258,7 +267,7 @@ function calHead(days) {
       <button type="button" class="icon-btn cal-arrow next" data-action="cal-next" aria-label="Next ${unit}" title="Next ${unit} (J)">${ICON.back}</button>
     </div>
     <div class="cal-status" role="status">${calStatus()}</div>
-    <div class="library-views cal-views" role="group" aria-label="View">${CAL_VIEWS.map(([v, label]) => `<button type="button" class="btn sm plain${cal.view === v ? ' on' : ''}" data-action="cal-view" data-view="${v}" aria-pressed="${cal.view === v}" title="${label} (${label[0]})">${label}</button>`).join('')}</div>
+    <div class="cal-views">${segmented({ label: 'View', action: 'cal-view', key: 'view', current: cal.view, choices: CAL_VIEWS.map(([v, label]) => [v, label, '', `${label} (${label[0]})`]) })}</div>
     <button type="button" class="btn primary sm" data-action="task-new" data-day="${esc(cal.selected)}">${ICON.plus}<span>New</span></button>
   </header>`;
 }
@@ -385,7 +394,9 @@ function drawCalendar() {
   const body = cal.view === 'month' ? calMonth(days, plan, today) : calTimeGrid(days, plan, today);
   const scroll = $('#cal-scroll') || $('.cal-month-grid');
   const keep = scroll ? scroll.scrollTop : null;
+  const views = main.querySelector('.cal-views');
   main.innerHTML = `${calHead(days)}${body}`;
+  if (views?.querySelector('.segment.on')?.dataset.view === cal.view) main.querySelector('.cal-views').replaceWith(views);
   main.dataset.view = cal.view;
   settleNow('cal', (id) => app.querySelector(`.cal-item[data-id="${CSS.escape(id)}"], .cal-tray-row[data-id="${CSS.escape(id)}"]`));
   const box = $('#cal-scroll') || $('.cal-month-grid');
@@ -428,6 +439,8 @@ function calGo() {
 
 function calSetView(view) {
   if (!CAL_VIEWS.some(([v]) => v === view) || view === cal.view) return;
+  const from = CAL_VIEWS.findIndex(([v]) => v === cal.view);
+  overlapOut($('#cal-main > :last-child'));
   cal.view = view;
   try {
     localStorage.setItem(CAL_VIEW_KEY, view);
@@ -435,6 +448,9 @@ function calSetView(view) {
     cal.view = view;
   }
   calGo();
+  const views = $('.cal-views .segmented');
+  if (views) syncSegmented(views, from);
+  cascade($('#cal-main'), 'swap-in');
 }
 
 document.addEventListener('keydown', (e) => {
@@ -563,7 +579,10 @@ function calFollow() {
   if (!d || !d.live) return;
   calEdge(d);
   calClearMarks();
-  if (d.ghost) d.ghost.style.transform = `translate(${d.x + 10}px, ${d.y + 6}px)`;
+  if (d.ghost) {
+    const page = app.getBoundingClientRect();
+    d.ghost.style.transform = `translate(${pastEdge(d.x, page.left, page.right) + 10}px, ${pastEdge(d.y, page.top, page.bottom) + 6}px)`;
+  }
   if (d.mode === 'resize') {
     const before = d.task.end ? S.minutesOf(d.task.end) : d.start + d.length;
     const moved = d.y === d.startY ? 0 : calMinutesIn(d.col, d.y) - d.start - d.offset;
@@ -594,6 +613,7 @@ function calDragEnd() {
   if (!d) return;
   clearTimeout(d.timer);
   document.removeEventListener('touchmove', calHoldStill);
+  d.settled = liftedRect(d.ghost);
   d.ghost?.remove();
   d.source?.classList.remove('lifted');
   calClearMarks();
@@ -624,7 +644,7 @@ function calDrop() {
     return calCompose(target.day, target.minutes, target.end);
   }
   const task = d.task;
-  if (d.mode !== 'resize') settleLater('cal', task.id, null);
+  if (d.mode !== 'resize') settleLater('cal', task.id, d.settled);
   let next;
   if (d.mode === 'resize') next = { date: target.day, time: calHM(task.time), end: S.timeOf(target.end) };
   else if (target.minutes === 'keep') next = { date: target.day, time: calHM(task.time), end: calHM(task.end) };
@@ -940,7 +960,7 @@ function calPeekTask(side, id, on) {
     <textarea class="kanban-sheet-title cal-peek-title" id="cal-peek-title" rows="1" maxlength="300" aria-label="Title"${leo ? '' : ' readonly'}>${esc(task.title)}</textarea>
     ${task.found === false ? '<p class="set-note warn">leo could not find this checkbox in the note any more. Open the note to check it.</p>' : ''}
     <label class="set-row cal-peek-done"><span class="set-label">${day ? `Done on ${esc(dayName)}` : 'Done'}</span><input type="checkbox" class="cal-check" data-action="task-done" data-id="${esc(task.id)}"${day ? ` data-on="${esc(day)}"` : ''}${doneNow ? ' checked' : ''}></label>
-    ${repeating ? `<div class="set-row"><span class="set-label">Change</span><div class="library-views" role="group" aria-label="Which days change">${[['one', 'This one'], ['all', 'Every time']].map(([v, label]) => `<button type="button" class="btn sm plain${scope === v ? ' on' : ''}" data-cal-scope="${v}" aria-pressed="${scope === v}">${label}</button>`).join('')}</div></div>` : ''}
+    ${repeating ? `<div class="set-row"><span class="set-label">Change</span>${segmented({ label: 'Which days change', action: 'cal-scope', key: 'cal-scope', current: scope, choices: [['one', 'This one'], ['all', 'Every time']] })}</div>` : ''}
     <div class="set-row column cal-peek-when"><span class="set-label">When</span><span class="cal-peek-times">
       <input class="set-input" type="date" id="cal-peek-date" aria-label="Date" value="${esc(slot.date || '')}">
       <input class="set-input" type="time" id="cal-peek-start" aria-label="Starts" value="${esc(calHM(slot.time) || '')}"${slot.date ? '' : ' disabled'}>
@@ -1004,6 +1024,7 @@ function calPeekTask(side, id, on) {
         o.classList.toggle('on', o === b);
         o.setAttribute('aria-pressed', String(o === b));
       }
+      syncSegmented(b.closest('.segmented'));
     });
   }
   const when = () => {
@@ -1451,7 +1472,7 @@ function finishTaskInWindow(id, done, on) {
   tasksWin.finished.set(id, entry);
   drawTasksWindow();
   const check = tasksBox.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]`);
-  if (check && !stillMotion()) check.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: MOTION_MS, easing: EASE_OUT });
+  pulse(check, { lift: 1.18 });
   entry.timer = setTimeout(() => {
     if (tasksWin.finished.get(id) !== entry) return;
     tasksWin.finished.delete(id);
@@ -1519,7 +1540,7 @@ function tasksFolded() {
 }
 
 function fitTasksWindow() {
-  const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card');
+  const first = app.querySelector('.cards > .card');
   const box = tasksBox.hidden ? null : dock().getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
   const over = Boolean(card && card.left < box.right && card.top + scrollY < box.bottom);
@@ -1565,7 +1586,7 @@ function toggleTasksWindow() {
   const pill = (box) => `inset(${Math.max(0, box.height - 46)}px ${Math.max(0, box.width - 46)}px 0 0 round 23px)`;
   if (folding) {
     tasksBox.dataset.folding = '1';
-    const run = tasksBox.animate([{ clipPath: 'inset(0 0 0 0 round 14px)' }, { clipPath: pill(before) }], { duration: MOTION_MS, easing: EASE_OUT });
+    const run = tasksBox.animate([{ clipPath: 'inset(0 0 0 0 round 14px)' }, { clipPath: pill(before) }], { duration: MOTION_MS * EXIT_SHARE, easing: EASE_EXIT });
     run.onfinish = run.oncancel = () => {
       delete tasksBox.dataset.folding;
       setTasksFolded(true);
@@ -1581,6 +1602,7 @@ async function loadTasksWindow() {
   clearTimeout(tasksWin.timer);
   if (state.view === 'locked') return;
   const mine = ++tasksWin.load;
+  tasksWin.stale = false;
   const revision = tasksWin.revision;
   try {
     const tasks = (await api('/api/tasks')).tasks;
@@ -1596,8 +1618,8 @@ async function loadTasksWindow() {
   if (mine !== tasksWin.load) return;
   drawTasksWindow();
   tasksWin.timer = setTimeout(() => {
-    if (document.visibilityState === 'visible') loadTasksWindow().catch(() => {});
-    else tasksWin.timer = setTimeout(() => loadTasksWindow().catch(() => {}), CAL_POLL_MS);
+    if (appVisible()) loadTasksWindow().catch(() => {});
+    else tasksWin.stale = true;
   }, CAL_POLL_MS);
 }
 

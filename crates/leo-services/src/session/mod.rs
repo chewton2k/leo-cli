@@ -46,8 +46,6 @@ pub struct Manifest {
     pub dir: String,
     #[serde(default)]
     pub screen: bool,
-    #[serde(default)]
-    pub browser: bool,
     pub segment_secs: u64,
     #[serde(default)]
     pub duration_secs: Option<u64>,
@@ -74,7 +72,6 @@ impl Manifest {
             append_to,
             dir: dir.to_string(),
             screen,
-            browser: false,
             segment_secs: SEGMENT_SECS,
             duration_secs: None,
             points: Vec::new(),
@@ -187,6 +184,7 @@ impl Drop for Lock {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
             let _ = thread.join();
         }
         let _ = std::fs::remove_file(&self.path);
@@ -343,17 +341,12 @@ impl Session {
         let thread = std::thread::Builder::new()
             .name("leo-session-lock".into())
             .spawn(move || {
-                let mut waited = Duration::ZERO;
                 while beat.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(50));
+                    std::thread::park_timeout(HEARTBEAT);
                     if !beat.load(Ordering::Relaxed) {
                         break;
                     }
-                    waited += Duration::from_millis(50);
-                    if waited >= HEARTBEAT {
-                        waited = Duration::ZERO;
-                        let _ = file.set_modified(SystemTime::now());
-                    }
+                    let _ = file.set_modified(SystemTime::now());
                 }
             });
         let thread = match thread {
@@ -380,9 +373,7 @@ impl Session {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| e.path())
             .filter(|dir| !locked(dir))
-            .filter(|dir| {
-                Session::open(dir).is_ok_and(|s| !s.manifest.saved && !s.manifest.browser)
-            })
+            .filter(|dir| Session::open(dir).is_ok_and(|s| !s.manifest.saved))
             .collect();
         out.sort();
         out
@@ -686,15 +677,10 @@ mod tests {
         b.save().unwrap();
         let c = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         let _held = c.lock().unwrap();
-        let browser = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
-        let mut metadata = serde_json::to_value(&browser.manifest).unwrap();
-        metadata["browser"] = serde_json::json!(true);
-        std::fs::write(
-            browser.dir.join("session.json"),
-            serde_json::to_vec(&metadata).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(Session::unfinished(tmp.path()), vec![a.dir.clone()]);
+        let older = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
+        let mut expected = vec![a.dir.clone(), older.dir.clone()];
+        expected.sort();
+        assert_eq!(Session::unfinished(tmp.path()), expected);
     }
 
     #[test]

@@ -30,10 +30,10 @@ reaching upward:
 
 | Crate | Holds |
 |-------|-------|
-| `crates/leo-core` | Notes, the on-disk store and undo, git backup, and the command vocabulary (`action/`): parsing, handlers, note resolution. No terminal and no network. |
+| `crates/leo-core` | Notes, the on-disk store and undo, and retention choices. No terminal and no network. |
 | `crates/leo-services` | AI providers and their fallback chains, prompts, config and credentials, recording, and health checks. |
 | `crates/leo-web` | leo's pages and the engine behind them. |
-| `crates/leo-host` | Gives the engine its AI, speech, settings and storage powers; the Playwright test server. |
+| `crates/leo-host` | Gives the engine its AI, speech, settings, recording housekeeping and import powers; the Playwright test server. |
 | `crates/leo-desktop` | The leo app: window, menu bar icon, single instance, open at login. |
 | root `leo` | `leo` (opens the app), `leo update`, `leo uninstall`. |
 
@@ -62,14 +62,12 @@ cargo fmt --all
 What each part covers:
 
 - **Unit tests** sit beside the code in each crate.
-- **The app** (`crates/leo-tui/src/tests.rs`) is driven key by key through a
-  simulated terminal, and checks what is drawn and what reaches disk.
 - **`tests/e2e.rs`** runs the real `leo` binary against a throwaway `LEO_HOME`,
-  with a cleared environment and a PATH of system tools plus git.
-- **`tests/install.rs`** runs `install.sh` into a throwaway home directory.
+  with a cleared environment and a PATH of system tools.
+- **`tests/install_app.rs`** runs the app installers into a throwaway home directory.
 - **`tests/release.rs`** checks the scripts that pick and set the next
   version.
-- **`crates/leo-web/tests/markdown.test.js`** checks the phone page's Markdown
+- **`crates/leo-web/tests/markdown.test.js`** checks the page's Markdown
   renderer (run by `cargo test` through Node; skipped if Node is missing).
 - **`crates/leo-web/tests/saving.test.js`** checks durable drafts, failed saves,
   concurrent edits, and conflict recovery (also run by `cargo test`).
@@ -114,9 +112,7 @@ Before opening a pull request:
 - [ ] `cargo test` passes, including any new tests for your change
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean
 - [ ] `cargo fmt --all` has been run
-- [ ] If the change is something a user would notice: the README, the help
-      screen (`crates/leo-tui/src/view/help.rs`) and the manual note
-      (`crates/leo-core/src/manual.rs`) say so
+- [ ] If the change is something a user would notice: the README says so
 
 CI runs for pull requests and pushes to `main`; branch pushes do not duplicate
 the pull request run. Branches without a pull request can use Actions → CI →
@@ -184,5 +180,5 @@ is used instead. `scripts/next-version.sh` holds the rule and
 ## Reporting bugs
 
 Open an issue with what you did, what you expected, and what happened. Settings, Health in
-leo helps a lot. It checks leo, the notes, the AI, recording and backup, and
+leo helps a lot. It checks leo, the notes, the AI and recording, and
 never includes your API keys.

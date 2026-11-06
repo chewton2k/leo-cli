@@ -1,8 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-#[cfg(test)]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
@@ -18,9 +17,11 @@ pub type Seer = Arc<dyn Fn(&str, &str, Vec<Picture>) -> Result<String> + Send + 
 
 pub const DESCRIBE: &str = "You describe pictures from someone's study notes for a reader who cannot see them. Say what kind of picture it is, then its content: any text, labels and numbers, the structure of a diagram, a chart's axes and trend, code, or the steps shown, and what it explains. Use interpretable language. Two to six sentences. Reply with the description only.";
 const MOST_PICTURE_BYTES: u64 = 20 * 1024 * 1024;
+const RETRY_FAILED_AFTER: Duration = Duration::from_secs(60 * 60);
 
 pub struct Captions {
     db: Arc<crate::db::Db>,
+    failed: Mutex<HashMap<String, Instant>>,
 }
 
 impl Captions {
@@ -49,7 +50,24 @@ impl Captions {
                 crate::db::put_aside(&path);
             }
         }
-        Captions { db }
+        Captions {
+            db,
+            failed: Mutex::default(),
+        }
+    }
+
+    pub fn waiting(&self) -> bool {
+        let mut failed = self.failed.lock().unwrap_or_else(|e| e.into_inner());
+        failed.retain(|_, at| at.elapsed() < RETRY_FAILED_AFTER);
+        !failed.is_empty()
+    }
+
+    fn failed_lately(&self, key: &str) -> bool {
+        self.failed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .is_some_and(|at| at.elapsed() < RETRY_FAILED_AFTER)
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
@@ -72,28 +90,6 @@ impl Captions {
                 [&key, &caption],
             )
         });
-    }
-
-    pub fn path(&self) -> &Path {
-        self.db.path()
-    }
-
-    pub fn bytes(&self) -> u64 {
-        self.db
-            .with(|c| {
-                c.query_row(
-                    "SELECT coalesce(SUM(length(key) + length(caption)), 0) FROM captions",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map_or(0, |n| n.max(0) as u64)
-    }
-
-    pub fn clear(&self) -> bool {
-        self.db
-            .with(|c| c.execute("DELETE FROM captions", []))
-            .is_ok_and(|n| n > 0)
     }
 
     pub fn len(&self) -> usize {
@@ -176,7 +172,8 @@ pub fn uncaptioned(store: &Store, captions: &Captions, most: usize) -> Vec<PathB
             if out.len() >= most {
                 return out;
             }
-            let missing = key_of(&path).is_some_and(|key| captions.get(&key).is_none());
+            let missing = key_of(&path)
+                .is_some_and(|key| !captions.failed_lately(&key) && captions.get(&key).is_none());
             if missing && !out.contains(&path) {
                 out.push(path);
             }
@@ -215,7 +212,14 @@ pub fn caption_paths(paths: &[PathBuf], captions: &Captions, seer: &Seer) -> usi
                 captions.put(key, caption);
                 done += 1;
             }
-            _ => break,
+            _ => {
+                captions
+                    .failed
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(key, Instant::now());
+                break;
+            }
         }
     }
     done
@@ -230,6 +234,35 @@ mod tests {
         bytes.extend_from_slice(&[0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0, 0, 0]);
         bytes.extend_from_slice(&[0; 64]);
         bytes
+    }
+
+    #[test]
+    fn a_picture_that_cannot_be_captioned_is_set_aside_so_the_next_one_gets_its_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        let mut store = Store::load_from(&notes).unwrap();
+        std::fs::create_dir_all(notes.join("attachments")).unwrap();
+        std::fs::write(notes.join("attachments/a.png"), png()).unwrap();
+        let mut other = png();
+        other.push(1);
+        std::fs::write(notes.join("attachments/b.png"), other).unwrap();
+        store
+            .create_note(
+                "Two",
+                "![a](attachments/a.png) ![b](attachments/b.png)",
+                vec![],
+                "",
+            )
+            .unwrap();
+        let captions = Captions::for_notes(&notes);
+        let failing: Seer = Arc::new(|_: &str, _: &str, _: Vec<Picture>| anyhow::bail!("no"));
+        assert!(!captions.waiting());
+        assert_eq!(uncaptioned(&store, &captions, 10).len(), 2);
+        assert_eq!(caption_some(&store, &captions, &failing, 10), 0);
+        assert_eq!(uncaptioned(&store, &captions, 10).len(), 1);
+        assert_eq!(caption_some(&store, &captions, &failing, 10), 0);
+        assert!(uncaptioned(&store, &captions, 10).is_empty());
+        assert!(captions.waiting(), "the loop comes back for them");
     }
 
     #[test]

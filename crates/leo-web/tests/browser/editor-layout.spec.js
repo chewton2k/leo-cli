@@ -693,6 +693,77 @@ test('select all and undo keep checklists rendered and copy their complete Markd
   }, {body});
 });
 
+test('typing a list or checklist marker renders it at once and keeps the caret in the line', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    await page.locator('#doc .blk').first().click();
+    const area = page.locator('#doc textarea');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('- ');
+    await expect(page.locator('#doc li')).toHaveCount(1);
+    await expect(area).toBeFocused();
+    await page.keyboard.type('[ ] ');
+    await expect(page.locator('#doc .task-item input[data-box]')).toHaveCount(1);
+    await page.keyboard.type('buy milk');
+    await expect(area).toHaveValue('buy milk');
+    expect(await page.evaluate(() => doc.source())).toBe('Start\n- [ ] buy milk');
+    await area.evaluate(el => el.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('#doc li')).toHaveCount(0);
+    await expect(area).toHaveValue('buy milk');
+  }, {body: 'Start'});
+});
+
+test('a checked task strikes only its own text, line by line', async ({ browser }) => {
+  const long = 'wrapped words '.repeat(40).trim();
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({width: 900, height: 800});
+    await page.goto(url);
+    const spans = page.locator('#doc .task.done > span');
+    await expect(spans).toHaveCount(3);
+    for (let i = 0; i < 3; i++) {
+      expect(await spans.nth(i).evaluate(el => getComputedStyle(el).textDecorationLine)).toBe('line-through');
+    }
+    const short = await spans.nth(0).evaluate(el => {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      return [el.getBoundingClientRect().width, r.getBoundingClientRect().width];
+    });
+    expect(Math.abs(short[0] - short[1])).toBeLessThan(2);
+    expect(await spans.nth(2).evaluate(el => el.textContent)).toBe('');
+  }, {body: `- [x] Short\n- [x] ${long}\n- [x]`});
+});
+
+test('selecting text in a task line never toggles its checkbox, wherever the drag ends', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    const box = page.locator('#doc input[data-box]');
+    const text = page.locator('#doc .task > span');
+    for (const editing of [false, true]) {
+      if (editing) await text.click();
+      const t = await text.boundingBox();
+      const b = await box.boundingBox();
+      await page.mouse.move(t.x + t.width - 4, t.y + t.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, {steps: 6});
+      await page.mouse.up();
+      await expect(box).not.toBeChecked();
+      await page.mouse.move(t.x + t.width - 4, t.y + t.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x - 2, b.y + b.height / 2, {steps: 6});
+      await page.mouse.up();
+      await expect(box).not.toBeChecked();
+    }
+    expect(await page.evaluate(() => doc.source())).toBe('- [ ] Select across this task text');
+    await box.click();
+    await expect(box).toBeChecked();
+  }, {body: '- [ ] Select across this task text'});
+});
+
 test('list text supports caret clicks, removing formatting, undo and navigation in both directions', async ({ browser }) => {
   const body = 'Before\n  - [x] Task text\n3. Number text\nAfter';
   await editorFixture(browser, async (context, url) => {
@@ -785,7 +856,7 @@ test('heading rail previews magnify nearby bars without opening the whole outlin
   const body = '# Overview\nA **clear** introduction.\n## Details 😀\nA <script>literal</script> preview.\n### Empty\n# Last\nFinal section.';
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.setViewportSize({ width: 2000, height: 900 });
     await page.goto(url);
     const rail = page.getByRole('button', { name: /Jump to heading:/ });
     const preview = page.getByRole('tooltip');
@@ -821,10 +892,41 @@ test('heading rail previews magnify nearby bars without opening the whole outlin
   }, { body });
 });
 
+test('the heading rail and its preview never cover the note text, whatever the width', async ({ browser }) => {
+  const body = ['# One', 'Text '.repeat(80), '## Two', 'More '.repeat(80), '# Three', 'End'].join('\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const width of [960, 1300, 2000]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(url);
+      const ticks = page.locator('.outline-ticks [data-tick]');
+      await expect(ticks).toHaveCount(3);
+      for (let i = 0; i < 3; i++) {
+        await ticks.nth(i).hover();
+        await expect(ticks.nth(i)).toHaveAttribute('data-distance', '0');
+        await page.waitForTimeout(320);
+        const seen = await page.evaluate(() => {
+          const text = document.querySelector('#doc').getBoundingClientRect();
+          const bars = [...document.querySelectorAll('.outline-ticks [data-tick]')].map((span) => { const r = span.getBoundingClientRect(); return r.left + parseFloat(getComputedStyle(span, '::after').width) * (r.width / span.offsetWidth); });
+          const tip = document.querySelector('.outline-preview');
+          const box = tip && !tip.hidden ? tip.getBoundingClientRect() : null;
+          return { left: text.left, right: text.right, bar: Math.max(...bars), tip: box && [box.left, box.right] };
+        });
+        expect(seen.bar, `ticks clear the text at ${width}px`).toBeLessThanOrEqual(seen.left - 6);
+        if (width === 2000) expect(seen.tip, 'a wide window still previews the heading').not.toBeNull();
+        if (!seen.tip) continue;
+        expect(seen.tip[1] <= seen.left || seen.tip[0] >= seen.right, `the preview opens beside the text at ${width}px`).toBe(true);
+        expect(seen.tip[0]).toBeGreaterThanOrEqual(0);
+        expect(seen.tip[1]).toBeLessThanOrEqual(width);
+      }
+    }
+  }, { body });
+});
+
 test('heading previews preserve edits, refresh body text, and release their elements on destroy', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.setViewportSize({ width: 2000, height: 900 });
     await page.goto(url);
     await page.locator('#doc .blk').nth(1).click();
     const editor = page.locator('#doc textarea');
@@ -847,7 +949,7 @@ test('heading rail keeps every marker reachable in a short viewport and tracks r
   const body = Array.from({ length: 300 }, (_, i) => `## Section ${i + 1}\nSome reading material.`).join('\n\n');
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 500 });
+    await page.setViewportSize({ width: 2000, height: 500 });
     await page.goto(url);
     const rail = page.locator('.outline-ticks');
     await expect(rail.locator('[data-tick]')).toHaveCount(300);
@@ -875,7 +977,7 @@ for (const interaction of ['touch', 'disclosure', 'escape']) {
   test('heading rail handles ' + interaction + ' without a prior keyboard selection', async ({ browser }) => {
     await editorFixture(browser, async (context, url) => {
       const page = await context.newPage();
-      await page.setViewportSize({ width: 1600, height: 900 });
+      await page.setViewportSize({ width: 2000, height: 900 });
       await page.goto(url);
       if (interaction === 'touch') {
         await page.locator('.outline-ticks [data-tick]').nth(2).tap();
@@ -922,7 +1024,7 @@ test('heading rail stays vertically centred and its dropdown animates with reduc
       const animate=el.animate.bind(el);
       el.animate=(...args)=>{const run=animate(...args);run.pause();return run;};
     });
-    await summary.click();
+    await summary.focus(); await summary.press('Enter');
     expect(await nav.evaluate(el=>el.getAnimations().some(a=>a.playState==='paused'))).toBe(true);
     await nav.evaluate(el=>{for(const run of el.getAnimations())run.currentTime=90;});
     expect(await nav.evaluate(el=>getComputedStyle(el).clipPath)).not.toBe('none');
@@ -932,7 +1034,7 @@ test('heading rail stays vertically centred and its dropdown animates with reduc
     const menu=await nav.boundingBox();
     expect(menu.y).toBeGreaterThanOrEqual(0);
     expect(menu.y+menu.height).toBeLessThanOrEqual(640);
-    await summary.click();
+    await summary.focus(); await summary.press('Enter');
     expect(await nav.evaluate(el=>el.getAnimations().some(a=>a.playState==='paused'))).toBe(true);
     await nav.evaluate(el=>{for(const run of el.getAnimations())run.finish();});
     await expect(details).not.toHaveAttribute('open','');
@@ -941,11 +1043,250 @@ test('heading rail stays vertically centred and its dropdown animates with reduc
     await expect.poll(()=>nav.evaluate(el=>el.getAnimations().length)).toBe(0);
     await expect(details).toHaveAttribute('open','');
     await page.emulateMedia({reducedMotion:'reduce'});
-    await summary.click();
+    await summary.focus(); await summary.press('Enter');
     await expect(details).not.toHaveAttribute('open','');
     expect(await nav.evaluate(el=>el.getAnimations().length)).toBe(0);
     await page.setViewportSize({width:390,height:844});
     await page.evaluate(()=>scrollTo(0,0));
     expect((await page.locator('.note-outline').boundingBox()).y).toBeLessThan(200);
   },{body:short});
+});
+
+
+test('Enter keeps every continued list item on its marker line and an empty item exits once', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const [source, next] of [['- kung fu hustle', '- '], ['* first', '* '], ['+ first', '+ '], ['2. first', '3. '], ['3) first', '4) '], ['  - nested', '  - '], ['- [x] first', '- [ ] '], ['  2. [ ] nested', '  3. [ ] ']]) {
+      await page.goto(url + '/?body=' + encodeURIComponent(source));
+      await page.locator('#doc .blk').first().click();
+      const area = page.locator('#doc textarea');
+      await area.press('End');
+      await area.press('Enter');
+      expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next);
+      await expect(area).toBeFocused();
+      const geometry = await area.evaluate(el => {
+        const item = el.closest('li');
+        const area = el.getBoundingClientRect();
+        const box = item.getBoundingClientRect();
+        return { top: area.top, itemTop: box.top, height: area.height, itemHeight: box.height, lineHeight: parseFloat(getComputedStyle(el).lineHeight), caret: el.selectionStart, value: el.value };
+      });
+      expect(geometry.top - geometry.itemTop, source).toBeLessThan(2);
+      expect(geometry.itemHeight, source).toBeLessThanOrEqual(geometry.lineHeight + 2);
+      expect(geometry.caret, source).toBe(0);
+      expect(geometry.value, source).toBe('');
+      await area.pressSequentially('Second item');
+      expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next + 'Second item');
+      await area.press('Enter');
+      await area.press('Enter');
+      expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next + 'Second item\n');
+      await expect(area).toBeFocused();
+      await expect(page.locator('#doc .blk').last().locator('li')).toHaveCount(0);
+    }
+  });
+});
+
+
+test('list Enter geometry is correct during keydown and its first frame for fresh and multiline editors', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const path of ['rendered', 'fresh', 'multiline']) {
+      await page.goto(url + '/?body=' + encodeURIComponent(path === 'fresh' ? '' : '- kung fu hustle'));
+      await page.locator('#doc .blk').first().click();
+      const area = page.locator('#doc textarea');
+      if (path === 'fresh') await area.fill('- kung fu hustle');
+      if (path === 'multiline') await area.fill('First item\n- kung fu hustle');
+      await area.press('ControlOrMeta+End');
+      await page.evaluate(() => {
+        window.enterFrames = [];
+        document.addEventListener('keydown', e => {
+          if (e.key !== 'Enter') return;
+          const read = () => {
+            const el = document.querySelector('#doc textarea');
+            const item = el?.closest('li');
+            const box = el?.getBoundingClientRect();
+            const parent = item?.getBoundingClientRect();
+            window.enterFrames.push({ value: el?.value, source: doc.source(), top: box?.top, height: box?.height, itemTop: parent?.top, itemHeight: parent?.height, focused: document.activeElement === el, caret: el?.selectionStart, lineHeight: el && parseFloat(getComputedStyle(el).lineHeight) });
+          };
+          read();
+          requestAnimationFrame(read);
+        }, { once: true });
+      });
+      await area.press('Enter');
+      await page.waitForFunction(() => window.enterFrames.length === 2);
+      const frames = await page.evaluate(() => window.enterFrames);
+      for (const frame of frames) {
+        expect(frame.source, path).toBe((path === 'multiline' ? '- First item\n' : '') + '- kung fu hustle\n- ');
+        expect(frame.value, path).toBe('');
+        expect(frame.caret, path).toBe(0);
+        expect(frame.focused, path).toBe(true);
+        expect(frame.top - frame.itemTop, path).toBeLessThan(2);
+        expect(frame.height, path).toBeGreaterThanOrEqual(frame.lineHeight - 1);
+        expect(frame.itemHeight, path).toBeLessThanOrEqual(frame.lineHeight + 2);
+      }
+    }
+  });
+});
+
+
+test('heading disclosure closes on outside clicks while the destination keeps its click and focus', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const width of [1600, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(url);
+      const details = page.locator('.note-outline details');
+      const summary = details.locator('summary');
+      await page.evaluate(() => {
+        const button = document.createElement('button');
+        button.id = 'outside-outline';
+        button.textContent = 'Outside';
+        button.onclick = () => { window.outsideClicks = (window.outsideClicks || 0) + 1; };
+        document.querySelector('#bar').append(button);
+      });
+      await summary.focus(); await summary.press('Enter');
+      await expect(details).toHaveAttribute('open', '');
+      await page.locator('#outside-outline').click();
+      await expect(details).not.toHaveAttribute('open', '');
+      expect(await page.evaluate(() => window.outsideClicks)).toBe(1);
+      await page.locator('#outside-outline').focus();
+      await expect(page.locator('#outside-outline')).toBeFocused();
+      await summary.focus(); await summary.press('Enter');
+      await expect(details).toHaveAttribute('open', '');
+      await page.locator('#doc .blk').nth(1).click();
+      await expect(details).not.toHaveAttribute('open', '');
+      await expect(page.locator('#doc textarea')).toBeFocused();
+      await page.keyboard.insertText('Kept ');
+      expect(await page.evaluate(() => doc.source())).toContain('Kept ');
+    }
+  }, { body: '# Heading\nParagraph to edit.\n## Subheading\nAnother paragraph.' });
+});
+
+test('virtual Enter continues list items and exits empty markers without adding an unmarked line', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const inputType of ['insertLineBreak', 'insertParagraph']) for (const [source, expected] of [['- kung fu hustle', '- kung fu hustle\n- '], ['2. one', '2. one\n3. '], ['  - [x] nested', '  - [x] nested\n  - [ ] '], ['- first\n- ', '- first\n']]) {
+      await page.goto(url + '/?body=' + encodeURIComponent(source));
+      await page.locator('#doc .blk').last().click();
+      const area = page.locator('#doc textarea');
+      await area.evaluate((el, inputType) => {
+        el.setSelectionRange(el.value.length, el.value.length);
+        const event = new InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true });
+        if (el.dispatchEvent(event)) {
+          el.setRangeText('\n', el.selectionStart, el.selectionEnd, 'end');
+          el.dispatchEvent(new InputEvent('input', { inputType, bubbles: true }));
+        }
+      }, inputType);
+      expect(await page.evaluate(() => doc.source()), `${inputType}: ${source}`).toBe(expected);
+      await expect(area).toBeFocused();
+      expect(await area.inputValue()).toBe('');
+      if (expected.endsWith('- ') || expected.endsWith('3. ') || expected.endsWith('- [ ] ')) expect(await area.evaluate(el => Boolean(el.closest('li')))).toBe(true);
+      else expect(await area.evaluate(el => Boolean(el.closest('li')))).toBe(false);
+    }
+  }, { touch: true });
+});
+
+test('soft Enter and composing input keep their native line-break behavior', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    await page.locator('#doc .blk').click();
+    const area = page.locator('#doc textarea');
+    await area.press('End');
+    await area.press('Shift+Enter');
+    expect(await page.evaluate(() => doc.source())).toBe('- first\n');
+    expect(await area.inputValue()).toBe('first\n');
+    await area.evaluate(el => {
+      const event = new InputEvent('beforeinput', { inputType: 'insertLineBreak', isComposing: true, bubbles: true, cancelable: true });
+      window.composingCancelled = !el.dispatchEvent(event);
+    });
+    expect(await page.evaluate(() => window.composingCancelled)).toBe(false);
+    expect(await page.evaluate(() => doc.source())).toBe('- first\n');
+    await area.evaluate(el => {
+      const event = new InputEvent('beforeinput', { inputType: 'insertParagraph', bubbles: true, cancelable: false });
+      window.nativeCancelled = !el.dispatchEvent(event);
+    });
+    expect(await page.evaluate(() => window.nativeCancelled)).toBe(false);
+  }, { body: '- first' });
+});
+
+test('heading peaks are taller and preview motion opens and closes on a retained tooltip', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 2000, height: 900 });
+    await page.goto(url);
+    const preview = page.locator('.outline-preview');
+    await preview.evaluate(el => {
+      const animate = el.animate.bind(el);
+      el.animate = (...args) => { const run = animate(...args); run.pause(); return run; };
+    });
+    const tick = page.locator('.outline-ticks [data-tick]').nth(1);
+    await tick.hover();
+    const duration = await preview.evaluate(el => el.getAnimations().map(run => run.effect.getTiming().duration));
+    expect(duration).toEqual([240]);
+    await expect(preview).toContainText('Second');
+    await preview.evaluate(el => { for (const run of el.getAnimations()) run.currentTime = 120; });
+    const between = await preview.evaluate(el => parseFloat(getComputedStyle(el).opacity));
+    expect(between).toBeGreaterThan(0);
+    expect(between).toBeLessThan(1);
+    await preview.evaluate(el => { for (const run of el.getAnimations()) run.finish(); });
+    await expect.poll(() => tick.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m22)).toBeCloseTo(3, 1);
+    expect(await tick.evaluate(el => parseFloat(getComputedStyle(el).transitionDuration))).toBeGreaterThanOrEqual(0.24);
+    await page.mouse.move(600, 500);
+    expect(await preview.evaluate(el => el.getAnimations().map(run => run.effect.getTiming().duration))).toEqual([192]);
+    await preview.evaluate(el => { for (const run of el.getAnimations()) run.finish(); });
+    await expect(preview).toBeHidden();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await tick.hover();
+    await expect(preview).toBeVisible();
+    expect(await preview.evaluate(el => el.getAnimations().length)).toBe(0);
+    expect(await tick.evaluate(el => getComputedStyle(el).transitionDuration)).toBe('0s');
+  }, { body: '# First\nA paragraph.\n## Second\nAnother paragraph.\n### Third\nLast paragraph.' });
+});
+
+test('typing a dash then text continues at the next marker through keyboard and text-input Enter', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const size of [16.5, 24, 32]) for (const enter of ['key', 'text-input']) {
+      await page.goto(url);
+      await page.locator('#doc').evaluate((el, size) => { el.style.fontSize = `${size}px`; el.style.fontFamily = size === 24 ? 'Georgia, serif' : 'sans-serif'; }, size);
+      await page.locator('#doc .blk').click();
+      const area = page.locator('#doc textarea');
+      await area.pressSequentially('-');
+      await area.pressSequentially(' ');
+      await area.pressSequentially('kung fu hustle');
+      if (enter === 'key') await area.press('Enter');
+      else await page.keyboard.insertText('\n');
+      expect(await page.evaluate(() => doc.source()), `${size}px ${enter}`).toBe('- kung fu hustle\n- ');
+      await expect(area).toBeFocused();
+      const geometry = await area.evaluate(el => ({ value: el.value, caret: el.selectionStart, top: el.getBoundingClientRect().top, itemTop: el.closest('li').getBoundingClientRect().top, itemHeight: el.closest('li').getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(el).lineHeight) }));
+      expect(geometry.value).toBe('');
+      expect(geometry.caret).toBe(0);
+      expect(geometry.top - geometry.itemTop).toBeLessThan(2);
+      expect(geometry.itemHeight).toBeLessThanOrEqual(geometry.lineHeight + 2);
+    }
+  }, { body: '' });
+});
+
+ test('heading disclosure hover crosses into menu without taking editor focus', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url);
+    await page.locator('#doc .blk').nth(1).click();
+    const editor = page.locator('#doc textarea');
+    const summary = page.locator('.note-outline summary');
+    const nav = page.locator('.note-outline nav');
+    await summary.hover();
+    await expect(nav).toBeVisible();
+    await expect(editor).toBeFocused();
+    await nav.hover();
+    await expect(nav).toBeVisible();
+    await page.mouse.move(1000, 100);
+    await expect(nav).toBeHidden();
+    await summary.focus();
+    await summary.press('Enter');
+    await expect(nav).toBeVisible();
+    await page.mouse.click(1000, 100);
+    await expect(nav).toBeHidden();
+  }, { body: '# One\nParagraph\n## Two\nMore' });
 });

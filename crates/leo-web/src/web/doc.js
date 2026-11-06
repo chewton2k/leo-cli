@@ -153,6 +153,9 @@
     let outlineIndex = null;
     let outlineMotion = null;
     let outlineClosing = false;
+    let outlinePointerType = '';
+    let outlinePreviewMotion = null;
+    let outlinePreviewClosing = false;
     if (outlineTicks) {
       outlineTicks.className = 'outline-ticks';
       outlineTicks.type = 'button';
@@ -168,7 +171,9 @@
     const OUTLINE_WIDE = 900;
     const MOST_PREVIEW_LINES = 24;
     const MOST_PREVIEW_CHARS = 800;
-    const OUTLINE_MOTION_MS = 180;
+    const OUTLINE_MOTION_MS = 240;
+    const OUTLINE_EXIT_MS = OUTLINE_MOTION_MS * .8;
+    const outlineEase = () => getComputedStyle(document.documentElement).getPropertyValue('--ease-arrive').trim() || 'ease-out';
 
     function closeOutline() {
       outlineMotion?.cancel();
@@ -178,10 +183,14 @@
     }
 
     function toggleOutline(e) {
-      if (!outlineWide || !e.target.closest('summary')) return false;
+      if (!e.target.closest('summary')) return false;
       e.preventDefault();
       outlinePeek(null);
-      const open = !outlineDetails.open || outlineClosing;
+      if (!e.detail || outlinePointerType !== 'mouse' || !outlineDetails.open || outlineClosing) moveOutline(!outlineDetails.open || outlineClosing);
+      return true;
+    }
+
+    function moveOutline(open) {
       const from = outlineMotion ? { clipPath: getComputedStyle(outlineNav).clipPath, transform: getComputedStyle(outlineNav).transform } : null;
       outlineMotion?.cancel();
       outlineMotion = null;
@@ -192,10 +201,10 @@
         outlineClosing = false;
         return true;
       }
-      const closed = { clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-4px)' };
+      const closed = { clipPath: 'inset(0 0 100% 0)', transform: 'scale(.95)' };
       const shown = { clipPath: 'inset(0 0 0 0)', transform: 'none' };
       outlineDetails.open = true;
-      const run = outlineNav.animate([from || (open ? closed : shown), open ? shown : closed], { duration: OUTLINE_MOTION_MS, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      const run = outlineNav.animate([from || (open ? closed : shown), open ? shown : closed], { duration: open ? OUTLINE_MOTION_MS : OUTLINE_EXIT_MS, easing: outlineEase() });
       outlineMotion = run;
       run.onfinish = () => {
         if (outlineMotion !== run) return;
@@ -203,7 +212,52 @@
         outlineClosing = false;
         outlineMotion = null;
       };
-      return true;
+    }
+
+    function outlineShowPreview(open) {
+      if (!open && outlinePreview.hidden || open && !outlinePreview.hidden && !outlinePreviewClosing) return;
+      const from = outlinePreviewMotion ? { opacity: getComputedStyle(outlinePreview).opacity, transform: getComputedStyle(outlinePreview).transform } : null;
+      outlinePreviewMotion?.cancel();
+      outlinePreviewMotion = null;
+      outlinePreviewClosing = !open;
+      if (root.matchMedia?.('(prefers-reduced-motion: reduce)').matches || typeof outlinePreview.animate !== 'function') {
+        outlinePreview.hidden = !open;
+        outlinePreviewClosing = false;
+        return;
+      }
+      const closed = { opacity: 0, transform: 'translateX(-6px) scale(.95)' };
+      const shown = { opacity: 1, transform: 'none' };
+      outlinePreview.hidden = false;
+      const run = outlinePreview.animate([from || (open ? closed : shown), open ? shown : closed], { duration: open ? OUTLINE_MOTION_MS : OUTLINE_EXIT_MS, easing: outlineEase(), fill: 'both' });
+      outlinePreviewMotion = run;
+      run.onfinish = () => {
+        if (outlinePreviewMotion !== run) return;
+        outlinePreview.hidden = !open;
+        outlinePreviewClosing = false;
+        outlinePreviewMotion = null;
+        run.cancel();
+      };
+    }
+
+    function outlineDown(e) {
+      outlinePointerType = e.pointerType;
+    }
+
+    function outlineEnter(e) {
+      if (e.pointerType !== 'mouse' || e.buttons) return;
+      outlinePeek(null);
+      if (!outlineDetails.open || outlineClosing) moveOutline(true);
+    }
+
+    function outlineExit(e) {
+      if (e.pointerType !== 'mouse' || outlineDetails.contains(e.relatedTarget)) return;
+      if (outlineDetails.open && !outlineClosing) moveOutline(false);
+    }
+
+    function outlineOutside(e) {
+      if (outline.contains(e.target)) return;
+      if (outlineDetails.open && !outlineClosing) moveOutline(false);
+      outlinePeek(null);
     }
 
     function outlinePeek(index) {
@@ -213,7 +267,8 @@
         else tick.dataset.distance = String(Math.min(3, Math.abs(i - index)));
       }
       const row = index === null ? null : outlineRows[index];
-      outlinePreview.hidden = !row;
+      const room = row ? outlineRoom() : null;
+      outlineShowPreview(Boolean(room));
       if (!row) return;
       if (outlineWide) closeOutline();
       const title = md.plain(row.text);
@@ -228,12 +283,26 @@
       const text = md.plain(excerpt);
       outlinePreview.innerHTML = `<strong>${md.escape(title)}</strong>${text ? `<span>${md.escape(text)}</span>` : ''}`;
       outlineTicks.setAttribute('aria-label', `Jump to heading: ${title}`);
+      if (!room) return;
+      outlinePreview.style.left = `${room.left}px`;
+      outlinePreview.style.width = `${room.width}px`;
       outlinePreview.style.top = '0px';
       const tick = outlineTicks.children[index].getBoundingClientRect();
       const rect = outline.getBoundingClientRect();
       const height = outlinePreview.getBoundingClientRect().height;
       const top = Math.max(0, Math.min(tick.top + tick.height / 2 - rect.top - height / 2, root.innerHeight - rect.top - height - 12));
       outlinePreview.style.top = `${top}px`;
+    }
+
+    function outlineRoom() {
+      const rail = outline.getBoundingClientRect();
+      const text = container.getBoundingClientRect();
+      const end = Math.min(root.innerWidth, outline.parentElement.getBoundingClientRect().right) - 12;
+      const before = text.left - rail.right - 24;
+      const after = end - text.right - 12;
+      if (before >= 220) return { left: rail.width + 12, width: Math.min(280, before) };
+      if (after >= 220) return { left: text.right + 12 - rail.left, width: Math.min(280, after) };
+      return null;
     }
 
     function outlinePointer(y) {
@@ -399,12 +468,16 @@
     }) : null;
     if (outlineNav) {
       outline.addEventListener('click', outlineGo);
+      outlineDetails.addEventListener('pointerdown', outlineDown);
+      outlineDetails.addEventListener('pointerenter', outlineEnter);
+      outlineDetails.addEventListener('pointerleave', outlineExit);
       outlineTicks.addEventListener('pointermove', outlineHover);
       outlineTicks.addEventListener('pointerleave', outlineLeave);
       outlineTicks.addEventListener('focus', outlineFocus);
       outlineTicks.addEventListener('blur', outlineBlur);
       outlineTicks.addEventListener('keydown', outlineKeydown);
       document.addEventListener('keydown', outlineEscape, true);
+      document.addEventListener('pointerdown', outlineOutside, true);
       root.addEventListener('scroll', outlineScroll, { passive: true });
       root.addEventListener('resize', outlineScroll);
       if (outlineResize) outlineResize.observe(outline.closest('.note-layout'));
@@ -500,6 +573,7 @@
       sourcePress = null;
       const { area } = editing;
       area.removeEventListener('input', onInput);
+      area.removeEventListener('beforeinput', onBeforeInput);
       area.removeEventListener('keydown', onKey);
       area.removeEventListener('blur', onBlur);
       area.removeEventListener('pointerdown', onAreaPress);
@@ -560,6 +634,7 @@
       }
       fit(area);
       area.addEventListener('input', onInput);
+      area.addEventListener('beforeinput', onBeforeInput);
       area.addEventListener('keydown', onKey);
       area.addEventListener('blur', onBlur);
       area.addEventListener('pointerdown', onAreaPress);
@@ -783,7 +858,7 @@
       if (index >= 0) edit(index, caret, reveal);
     }
 
-    function onInput() {
+    function onInput(e) {
       if (told) tell();
       const { area, start } = editing;
       editing.initialHeight = null;
@@ -794,6 +869,12 @@
       look(area);
       fit(area);
       changed();
+      const marker = ed.listPrefix(editing.prefix + area.value);
+      if (editing.kind === 'line' && !e.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker) && !marker.includes('\n')) {
+        const caret = editing.prefix.length + area.selectionStart;
+        stop();
+        editLine(start, caret);
+      }
     }
 
     function singleRow(area) {
@@ -802,8 +883,39 @@
       return area.scrollHeight <= lineHeight * 1.6;
     }
 
+    function enterLine() {
+      const { area, start, prefix } = editing;
+      const value = prefix + area.value;
+      const before = value.slice(0, prefix.length + area.selectionStart).split('\n');
+      const after = value.slice(prefix.length + area.selectionEnd);
+      const next = ed.continueLine(before[before.length - 1]);
+      const span = editing.end - start;
+      if (next.exit && !after.trim()) {
+        before[before.length - 1] = '';
+        lines.splice(start, span, ...before);
+        changed();
+        stop();
+        editLine(start + before.length - 1, 'end');
+        return;
+      }
+      lines.splice(start, span, ...before, ...(next.prefix + after).split('\n'));
+      changed();
+      stop();
+      editLine(start + before.length, next.prefix.length);
+    }
+
+    function onBeforeInput(e) {
+      if (!editing) return;
+      const soft = editing.softBreak;
+      editing.softBreak = false;
+      if (!e.cancelable || e.isComposing || soft || editing.kind !== 'line' || !(['insertLineBreak', 'insertParagraph'].includes(e.inputType) || e.inputType === 'insertText' && e.data === '\n')) return;
+      e.preventDefault();
+      enterLine();
+    }
+
     function onKey(e) {
       if (e.isComposing || e.keyCode === 229) return;
+      editing.softBreak = e.key === 'Enter' && e.shiftKey;
       if (historyKey(e)) return;
       const { area, start, kind } = editing;
       const prefix = editing.prefix;
@@ -819,23 +931,7 @@
 
       if (kind === 'line' && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        const before = value.slice(0, pos).split('\n');
-        const after = value.slice(prefix.length + area.selectionEnd);
-        const last = before[before.length - 1];
-        const next = ed.continueLine(last);
-        const span = editing.end - start;
-        if (next.exit && !after.trim()) {
-          before[before.length - 1] = '';
-          lines.splice(start, span, ...before);
-          changed();
-          stop();
-          editLine(start + before.length - 1, 'end');
-          return;
-        }
-        lines.splice(start, span, ...before, ...(next.prefix + after).split('\n'));
-        changed();
-        stop();
-        editLine(start + before.length, next.prefix.length);
+        enterLine();
         return;
       }
 
@@ -940,6 +1036,7 @@
     let dragStart = null;
     let dragAnchor = null;
     let sourcePress = null;
+    let downAt = null;
     const DRAG_CLICK_DISTANCE = 4;
 
     function onAreaPress(e) {
@@ -1012,6 +1109,7 @@
     document.addEventListener('pointercancel', onDragEnd);
 
     container.addEventListener('pointerdown', (e) => {
+      downAt = { x: e.clientX, y: e.clientY };
       pressed = true;
       extended = false;
       clearTimeout(release);
@@ -1057,6 +1155,7 @@
     function boxFor(e) {
       const direct = e.target.closest('input[data-box]');
       if (direct) return direct;
+      if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >= DRAG_CLICK_DISTANCE) return null;
       const item = e.target.closest('.task-item');
       const input = item && item.querySelector('input[data-box]');
       const text = item && item.querySelector('label.task > span');
@@ -1320,17 +1419,22 @@
         stop();
         clearTimeout(outlineTimer);
         outlineMotion?.cancel();
+        outlinePreviewMotion?.cancel();
         cancelAnimationFrame(outlineFrame);
         if (outlineResize) outlineResize.disconnect();
         if (editResize) editResize.disconnect();
         if (outlineNav) {
           outline.removeEventListener('click', outlineGo);
+          outlineDetails.removeEventListener('pointerdown', outlineDown);
+          outlineDetails.removeEventListener('pointerenter', outlineEnter);
+          outlineDetails.removeEventListener('pointerleave', outlineExit);
           outlineTicks.removeEventListener('pointermove', outlineHover);
           outlineTicks.removeEventListener('pointerleave', outlineLeave);
           outlineTicks.removeEventListener('focus', outlineFocus);
           outlineTicks.removeEventListener('blur', outlineBlur);
           outlineTicks.removeEventListener('keydown', outlineKeydown);
           document.removeEventListener('keydown', outlineEscape, true);
+          document.removeEventListener('pointerdown', outlineOutside, true);
           outlineTicks.remove();
           outlinePreview.remove();
         }

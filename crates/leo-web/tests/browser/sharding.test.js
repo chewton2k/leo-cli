@@ -33,7 +33,7 @@ test('desktop shards balance individual tests and cover the complete suite exact
   const shards = Array.from({ length: 4 }, (_, index) => list('desktop', `${index + 1}/4`));
   const counts = shards.map(shard => shard.length);
   assert.ok(Math.max(...counts) - Math.min(...counts) <= 1, `unbalanced shards: ${counts}`);
-  assert.ok(shards.every(shard => shard.some(spec => spec.file === 'flows.spec.js')), 'the large flow file must split across shards');
+  assert.ok(shards.filter(shard => shard.some(spec => spec.file === 'flows.spec.js')).length > 1, 'the large flow file must split across multiple shards');
   const ids = shards.flat().map(spec => spec.id);
   assert.equal(new Set(ids).size, ids.length, 'a test ran in more than one shard');
   assert.deepEqual(ids.sort(), all.map(spec => spec.id).sort(), 'sharding changed the selected coverage');

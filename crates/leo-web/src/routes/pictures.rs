@@ -21,7 +21,7 @@ pub(crate) async fn get_picture(
     State(state): State<AppState>,
     Query(at): Query<PictureAt>,
 ) -> Response {
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };

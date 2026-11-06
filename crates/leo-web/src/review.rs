@@ -3,14 +3,13 @@ use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::chats::{self, Chat, Ref};
 
 pub const DUE_AFTER_HOURS: i64 = 20;
 pub const MOST_MISSED: usize = 20;
 const MOST_REMEMBERED: usize = 2000;
-const FILE: &str = "review.json";
 
 pub fn count(dir: &Path) -> usize {
     chats::db_of(dir)
@@ -22,14 +21,6 @@ pub fn reset(dir: &Path) -> bool {
     chats::db_of(dir)
         .with(|c| c.execute("DELETE FROM reviewed", []))
         .is_ok_and(|n| n > 0)
-}
-
-pub(crate) fn from_file(dir: &Path) -> Vec<String> {
-    std::fs::read_to_string(dir.join(FILE))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Reviewed>(&text).ok())
-        .map(|r| r.reviewed.into_iter().collect())
-        .unwrap_or_default()
 }
 
 pub(crate) fn insert_all(c: &rusqlite::Connection, keys: &[String]) -> rusqlite::Result<()> {
@@ -51,12 +42,6 @@ pub struct Missed {
     pub notes: Vec<Ref>,
     pub at: DateTime<Utc>,
     pub due: bool,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Reviewed {
-    #[serde(default)]
-    reviewed: BTreeSet<String>,
 }
 
 fn fnv(text: &str) -> u64 {
@@ -199,6 +184,7 @@ fn missed_cards(chat: &Chat, message: &serde_json::Value, now: DateTime<Utc>) ->
         .into_iter()
         .flatten()
         .filter(|q| q.get("given").is_some_and(|g| g.is_string()))
+        .filter(|q| q.get("predict").is_none())
         .filter(|q| match q.get("correct") {
             Some(serde_json::Value::Bool(right)) => !right,
             _ => q
@@ -348,7 +334,6 @@ mod tests {
             id,
             chats::Saving {
                 title: String::new(),
-                mode: "study".into(),
                 refs: vec![],
                 messages,
             },
@@ -430,6 +415,27 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].question, "What does BFS use?");
         assert_eq!(found[0].answer, "a stack");
+    }
+
+    #[test]
+    fn a_wrong_prediction_is_never_brought_back_for_review() {
+        let dir = tempfile::tempdir().unwrap();
+        study(
+            dir.path(),
+            "chat-predict-1",
+            vec![
+                said("user", "teach me BFS"),
+                serde_json::json!({
+                    "role": "assistant",
+                    "text": "Before we start, a guess.",
+                    "quizzes": [
+                        { "question": "What will BFS visit first?", "given": "the deepest node", "correct": false, "predict": true }
+                    ]
+                }),
+            ],
+            at(1, 9),
+        );
+        assert!(missed(dir.path(), at(3, 9)).is_empty());
     }
 
     #[test]

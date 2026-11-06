@@ -3,9 +3,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::ai::provider::agent_cli::{Agent, AgentCli, ClaudeSession};
-use crate::ai::provider::anthropic::{self, Anthropic};
 use crate::ai::provider::codex_app::{tool_specs, CodexThread, CodexTurn};
-use crate::ai::provider::codex_exec::CodexExec;
 use crate::ai::provider::mcp;
 use crate::ai::provider::openai::{self, OpenAiChat};
 use crate::ai::provider::Spent;
@@ -107,105 +105,6 @@ struct CodexTalk {
     sent: usize,
 }
 
-const MOST_TRANSCRIPT: usize = 2 * 1024 * 1024;
-
-struct CodexTextTalk {
-    agent: AgentCli,
-    config: Config,
-    provider: String,
-    system: String,
-    transcript: String,
-}
-
-struct CodexExecTalk {
-    exec: CodexExec,
-    config: Config,
-    provider: String,
-}
-
-impl Session for CodexExecTalk {
-    fn native(&self) -> bool {
-        false
-    }
-
-    fn context_chars(&self) -> Option<usize> {
-        Some(self.exec.context_chars())
-    }
-
-    fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
-        let message = if turn.tail.is_empty() {
-            text.to_string()
-        } else {
-            format!("{text}\n\n{}", turn.tail)
-        };
-        let (answer, spent) = self
-            .exec
-            .say(&message, turn.sink, turn.stopped)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok((answer, Some(answered(&self.config, &self.provider, spent))))
-    }
-}
-
-impl Session for CodexTextTalk {
-    fn native(&self) -> bool {
-        false
-    }
-
-    fn context_chars(&self) -> Option<usize> {
-        Some(self.system.len().saturating_add(self.transcript.len()))
-    }
-
-    fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
-        anyhow::ensure!(!(turn.stopped)(), "The answer was stopped.");
-        anyhow::ensure!(
-            self.transcript
-                .len()
-                .saturating_add(text.len())
-                .saturating_add(turn.tail.len())
-                <= MOST_TRANSCRIPT,
-            "This conversation has reached its context limit. Start a new chat to continue."
-        );
-        if !self.transcript.is_empty() {
-            self.transcript.push_str("\n\n");
-        }
-        self.transcript.push_str(text);
-        let prompt = if turn.tail.is_empty() {
-            self.transcript.clone()
-        } else {
-            format!("{}\n\n{}", self.transcript, turn.tail)
-        };
-        let answer = self
-            .agent
-            .controlled(
-                &super::provider::ChatRequest {
-                    system: Some(self.system.clone()),
-                    prompt,
-                    temperature: 0.2,
-                    max_tokens: turn.max_tokens,
-                },
-                turn.sink,
-                turn.stopped,
-            )
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        anyhow::ensure!(
-            self.transcript
-                .len()
-                .saturating_add(answer.len())
-                .saturating_add(32)
-                <= MOST_TRANSCRIPT,
-            "This conversation has reached its context limit. Start a new chat to continue."
-        );
-        self.transcript.push_str("\n\nFelix replied: ");
-        self.transcript.push_str(&answer);
-        Ok((
-            answer,
-            self.agent
-                .spent()
-                .map(|spent| answered(&self.config, &self.provider, spent)),
-        ))
-    }
-}
-
 impl Session for CodexTalk {
     fn native(&self) -> bool {
         true
@@ -248,13 +147,8 @@ impl Session for CodexTalk {
     }
 }
 
-enum Wire {
-    OpenAi(OpenAiChat),
-    Anthropic(Anthropic),
-}
-
 struct ApiTalk {
-    wire: Wire,
+    chat: OpenAiChat,
     provider: String,
     config: Config,
     system: String,
@@ -282,7 +176,7 @@ fn result_for(call: &mut dyn FnMut(&str, &Value) -> String, name: &str, args: &V
 
 impl ApiTalk {
     fn new(
-        wire: Wire,
+        chat: OpenAiChat,
         provider: &str,
         config: &Config,
         system: &str,
@@ -290,22 +184,12 @@ impl ApiTalk {
     ) -> ApiTalk {
         let tools = tools
             .iter()
-            .map(|t| match wire {
-                Wire::OpenAi(_) => openai::function_of(&t.name, &t.description, &t.schema),
-                Wire::Anthropic(_) => anthropic::tool_of(&t.name, &t.description, &t.schema),
-            })
+            .map(|t| openai::function_of(&t.name, &t.description, &t.schema))
             .collect();
-        let history = match wire {
-            Wire::OpenAi(_) => vec![json!({ "role": "system", "content": system })],
-            Wire::Anthropic(_) => Vec::new(),
-        };
-        let max_tokens = match &wire {
-            Wire::OpenAi(chat) => ChatProvider::max_tokens(chat),
-            Wire::Anthropic(api) => ChatProvider::max_tokens(api),
-        }
-        .unwrap_or(0);
+        let history = vec![json!({ "role": "system", "content": system })];
+        let max_tokens = ChatProvider::max_tokens(&chat).unwrap_or(0);
         ApiTalk {
-            wire,
+            chat,
             provider: provider.to_string(),
             config: config.clone(),
             system: system.to_string(),
@@ -316,10 +200,10 @@ impl ApiTalk {
     }
 
     fn model_and_effort(&self) -> (String, Option<String>) {
-        match &self.wire {
-            Wire::OpenAi(chat) => (chat.model().to_string(), chat.effort().map(str::to_string)),
-            Wire::Anthropic(api) => (api.model().to_string(), api.effort().map(str::to_string)),
-        }
+        (
+            self.chat.model().to_string(),
+            self.chat.effort().map(str::to_string),
+        )
     }
 }
 
@@ -374,70 +258,51 @@ impl Session for ApiTalk {
         for _ in 0..=most_calls {
             anyhow::ensure!(!stopped(), "The answer was stopped.");
             let no_tools = calls >= most_calls || tools_done();
-            let (answer, asked) = match &self.wire {
-                Wire::OpenAi(chat) => {
-                    let body = chat.tool_body(&self.history, &self.tools, max_tokens, no_tools);
-                    let round = chat
-                        .stream_round(&body, sink)
-                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                    match round.usage {
-                        Some((input, output, cached)) => {
-                            spent.input += input;
-                            spent.output += output;
-                            spent.cached += cached;
-                        }
-                        None => {
-                            spent.estimated = true;
-                            spent.input += sent_chars.div_ceil(4) as u64;
-                            spent.output += (round.text.len()
-                                + round.calls.iter().map(|c| c.2.len()).sum::<usize>())
-                            .div_ceil(4) as u64;
-                        }
+            let (answer, asked) = {
+                let body = self
+                    .chat
+                    .tool_body(&self.history, &self.tools, max_tokens, no_tools);
+                let round = self
+                    .chat
+                    .stream_round(&body, sink)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                match round.usage {
+                    Some((input, output, cached)) => {
+                        spent.input += input;
+                        spent.output += output;
+                        spent.cached += cached;
                     }
-                    if round.calls.is_empty() {
-                        self.history
-                            .push(json!({ "role": "assistant", "content": round.text }));
-                        (round.text, Vec::new())
-                    } else {
-                        let listed: Vec<Value> = round
-                            .calls
-                            .iter()
-                            .map(|(id, name, args)| {
-                                json!({ "id": id, "type": "function", "function": { "name": name, "arguments": args } })
-                            })
-                            .collect();
-                        self.history.push(json!({
-                            "role": "assistant",
-                            "content": if round.text.is_empty() { Value::Null } else { Value::String(round.text.clone()) },
-                            "tool_calls": listed,
-                        }));
-                        let asked: Vec<(String, String, Value)> = round
-                            .calls
-                            .into_iter()
-                            .map(|(id, name, args)| (id, name, unreadable(&args)))
-                            .collect();
-                        (round.text, asked)
+                    None => {
+                        spent.estimated = true;
+                        spent.input += sent_chars.div_ceil(4) as u64;
+                        spent.output += (round.text.len()
+                            + round.calls.iter().map(|c| c.2.len()).sum::<usize>())
+                        .div_ceil(4) as u64;
                     }
                 }
-                Wire::Anthropic(api) => {
-                    let body = api.body(
-                        &self.system,
-                        &self.history,
-                        &self.tools,
-                        max_tokens,
-                        no_tools,
-                    );
-                    let round = api
-                        .stream(&body, sink)
-                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                    spent.input +=
-                        round.usage.input + round.usage.cache_read + round.usage.cache_write;
-                    spent.output += round.usage.output;
-                    spent.cached += round.usage.cache_read;
-                    spent.cache_written += round.usage.cache_write;
+                if round.calls.is_empty() {
                     self.history
-                        .push(json!({ "role": "assistant", "content": round.blocks }));
-                    (round.text, round.calls)
+                        .push(json!({ "role": "assistant", "content": round.text }));
+                    (round.text, Vec::new())
+                } else {
+                    let listed: Vec<Value> = round
+                    .calls
+                    .iter()
+                    .map(|(id, name, args)| {
+                        json!({ "id": id, "type": "function", "function": { "name": name, "arguments": args } })
+                    })
+                    .collect();
+                    self.history.push(json!({
+                    "role": "assistant",
+                    "content": if round.text.is_empty() { Value::Null } else { Value::String(round.text.clone()) },
+                    "tool_calls": listed,
+                }));
+                    let asked: Vec<(String, String, Value)> = round
+                        .calls
+                        .into_iter()
+                        .map(|(id, name, args)| (id, name, unreadable(&args)))
+                        .collect();
+                    (round.text, asked)
                 }
             };
             if asked.is_empty() {
@@ -461,21 +326,9 @@ impl Session for ApiTalk {
                 sent_chars += result.len();
                 results.push((id.clone(), result));
             }
-            match &self.wire {
-                Wire::OpenAi(_) => {
-                    for (id, result) in results {
-                        self.history
-                            .push(json!({ "role": "tool", "tool_call_id": id, "content": result }));
-                    }
-                }
-                Wire::Anthropic(_) => {
-                    let blocks: Vec<Value> = results
-                        .into_iter()
-                        .map(|(id, result)| json!({ "type": "tool_result", "tool_use_id": id, "content": result }))
-                        .collect();
-                    self.history
-                        .push(json!({ "role": "user", "content": blocks }));
-                }
+            for (id, result) in results {
+                self.history
+                    .push(json!({ "role": "tool", "tool_call_id": id, "content": result }));
             }
         }
         anyhow::bail!(
@@ -546,56 +399,29 @@ pub fn open(
                     .iter()
                     .map(|t| (t.name.clone(), t.description.clone(), t.schema.clone()))
                     .collect();
-                return match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
-                    Ok(thread) => Some(Box::new(CodexTalk {
-                        sent: schemas + systems.native.len(),
-                        thread,
-                        provider: name.clone(),
-                        config: config.clone(),
-                    })),
-                    Err(_) => match CodexExec::start(
-                        AgentCli::new(name.clone(), Agent::Codex, &provider),
-                        systems.text,
-                    ) {
-                        Ok(exec) => Some(Box::new(CodexExecTalk {
-                            exec,
-                            config: config.clone(),
+                match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
+                    Ok(thread) => {
+                        return Some(Box::new(CodexTalk {
+                            sent: schemas + systems.native.len(),
+                            thread,
                             provider: name.clone(),
-                        })),
-                        Err(_) => Some(Box::new(CodexTextTalk {
-                            agent,
                             config: config.clone(),
-                            provider: name.clone(),
-                            system: systems.text.into(),
-                            transcript: String::new(),
-                        })),
-                    },
-                };
+                        }))
+                    }
+                    Err(_) => continue,
+                }
             }
             Some(ProviderKind::Openai) => {
                 let key = match provider.key_env.as_deref() {
                     Some(_) => crate::config::secret::resolve(provider.account(name), store),
                     None => None,
                 };
-                let wire = if provider
-                    .base_url
-                    .as_deref()
-                    .is_some_and(anthropic::is_anthropic)
-                {
-                    let api = Anthropic::new(name.clone(), &provider, key);
-                    if !api.available() {
-                        continue;
-                    }
-                    Wire::Anthropic(api)
-                } else {
-                    let chat = OpenAiChat::new(name.clone(), &provider, key);
-                    if !chat.available() {
-                        continue;
-                    }
-                    Wire::OpenAi(chat)
-                };
+                let chat = OpenAiChat::new(name.clone(), &provider, key);
+                if !chat.available() {
+                    continue;
+                }
                 return Some(Box::new(ApiTalk::new(
-                    wire,
+                    chat,
                     name,
                     config,
                     systems.native,
@@ -749,13 +575,7 @@ mod tests {
             ..ProviderConfig::default()
         };
         let chat = OpenAiChat::new("openai".into(), &cfg, None);
-        let mut talk = ApiTalk::new(
-            Wire::OpenAi(chat),
-            "openai",
-            &Config::default(),
-            "Be Felix.",
-            &tools(),
-        );
+        let mut talk = ApiTalk::new(chat, "openai", &Config::default(), "Be Felix.", &tools());
         let ran = run(&mut talk, 12);
         assert_eq!(ran.answer, "The minimum is at the root [n1].");
         assert_eq!(ran.shown, "Checking.The minimum is at the root [n1].");
@@ -790,77 +610,6 @@ mod tests {
     }
 
     #[test]
-    fn claude_through_the_messages_api_caches_and_keeps_its_thinking_between_tool_calls() {
-        let (url, seen) = serve(vec![
-            sse(&[
-                r#"{"type":"message_start","message":{"usage":{"input_tokens":50,"cache_creation_input_tokens":4000,"cache_read_input_tokens":0,"output_tokens":1}}}"#,
-                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
-                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Search first."}}"#,
-                r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"s1"}}"#,
-                r#"{"type":"content_block_stop","index":0}"#,
-                r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"search_notes","input":{}}}"#,
-                r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"heap\"}"}}"#,
-                r#"{"type":"content_block_stop","index":1}"#,
-                r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":30}}"#,
-            ]),
-            sse(&[
-                r#"{"type":"message_start","message":{"usage":{"input_tokens":80,"cache_creation_input_tokens":0,"cache_read_input_tokens":4000,"output_tokens":1}}}"#,
-                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"At the root [n1]."}}"#,
-                r#"{"type":"content_block_stop","index":0}"#,
-                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":12}}"#,
-            ]),
-        ]);
-        let store = MemoryStore::default();
-        store.set("anthropic", "sk-ant-test").unwrap();
-        let cfg = ProviderConfig {
-            kind: Some(ProviderKind::Openai),
-            base_url: Some(url),
-            model: Some("claude-sonnet-5-5".into()),
-            effort: Some("high".into()),
-            key_env: Some("ANTHROPIC_API_KEY".into()),
-            ..ProviderConfig::default()
-        };
-        let key = crate::config::secret::resolve("anthropic", &store);
-        let api = Anthropic::new("anthropic".into(), &cfg, key);
-        let mut talk = ApiTalk::new(
-            Wire::Anthropic(api),
-            "anthropic",
-            &Config::default(),
-            "Be Felix.",
-            &tools(),
-        );
-        let ran = run(&mut talk, 12);
-        assert_eq!(ran.answer, "At the root [n1].");
-        assert_eq!(ran.restarts, 0);
-        assert_eq!(
-            ran.calls,
-            [("search_notes".to_string(), json!({ "query": "heap" }))]
-        );
-        assert_eq!(ran.answered.cached, 4000);
-        assert_eq!(ran.answered.input, 50 + 4000 + 80 + 4000);
-        assert_eq!(ran.answered.effort.as_deref(), Some("high"));
-        let seen = seen.lock().unwrap();
-        assert!(seen[0].0.to_lowercase().contains("x-api-key: sk-ant-test"));
-        assert!(seen[0]
-            .0
-            .to_lowercase()
-            .contains("anthropic-version: 2023-06-01"));
-        let first = &seen[0].1;
-        assert_eq!(first["system"][0]["text"], "Be Felix.");
-        assert_eq!(first["output_config"]["effort"], "high");
-        assert_eq!(first["tools"][0]["input_schema"]["type"], "object");
-        let second = &seen[1].1["messages"];
-        assert_eq!(
-            second[1]["content"][0]["signature"], "s1",
-            "thinking is sent back as it came"
-        );
-        assert_eq!(second[1]["content"][1]["input"], json!({ "query": "heap" }));
-        assert_eq!(second[2]["content"][0]["type"], "tool_result");
-        assert_eq!(second[2]["content"][0]["tool_use_id"], "t1");
-    }
-
-    #[test]
     fn once_the_calls_run_out_the_model_is_told_to_answer_without_tools() {
         let (url, seen) = serve(vec![
             sse(&[
@@ -873,7 +622,7 @@ mod tests {
             ..ProviderConfig::default()
         };
         let mut talk = ApiTalk::new(
-            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            OpenAiChat::new("ollama".into(), &cfg, None),
             "ollama",
             &Config::default(),
             "",
@@ -899,7 +648,7 @@ mod tests {
             ..ProviderConfig::default()
         };
         let mut talk = ApiTalk::new(
-            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            OpenAiChat::new("ollama".into(), &cfg, None),
             "ollama",
             &Config::default(),
             "",
@@ -937,7 +686,7 @@ mod tests {
             ..ProviderConfig::default()
         };
         let mut talk = ApiTalk::new(
-            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            OpenAiChat::new("ollama".into(), &cfg, None),
             "ollama",
             &Config::default(),
             "",
@@ -983,7 +732,7 @@ mod tests {
             ..ProviderConfig::default()
         };
         let mut talk = ApiTalk::new(
-            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            OpenAiChat::new("ollama".into(), &cfg, None),
             "ollama",
             &Config::default(),
             "",
@@ -1013,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn api_providers_get_native_tool_sessions_and_claude_gets_the_messages_api() {
+    fn api_providers_get_native_tool_sessions() {
         let store = MemoryStore::default();
         store.set("anthropic", "sk-ant").unwrap();
         let mut config = Config::default();
@@ -1030,76 +779,5 @@ mod tests {
             open(&config, &store, &systems, &tools()).is_none(),
             "no key, no session"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn isolated_codex_text_sessions_keep_context_and_cancel_without_another_process() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("codex");
-        let log = dir.path().join("requests");
-        std::fs::write(&bin, format!(r##"#!/bin/sh
-if [ "$1" = features ]; then echo 'shell_tool stable true'; exit 0; fi
-if [ "$2" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi
-cat >> '{}'
-printf '%s\n' '{{"type":"item.completed","item":{{"type":"agent_message","text":"maple"}}}}'
-printf '%s\n' '{{"type":"turn.completed","usage":{{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10}}}}'
-"##, log.display())).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut config = Config::default();
-        config.chat.chain = vec!["codex".into()];
-        config.providers.get_mut("codex").unwrap().bin = Some(bin.to_string_lossy().into());
-        let mut talk = open(
-            &config,
-            &MemoryStore::default(),
-            &Systems {
-                native: "Use interpretable language.",
-                text: "Use interpretable language.",
-            },
-            &[],
-        )
-        .unwrap();
-        assert!(!talk.native());
-        for text in ["The sample is maple.", "Remember the sample."] {
-            let (answer, spent) = talk
-                .say(
-                    text,
-                    Turn {
-                        tail: "",
-                        max_tokens: 100,
-                        most_calls: 0,
-                        sink: &mut |_| {},
-                        restart: &mut || {},
-                        call: &mut |_, _| String::new(),
-                        stopped: &|| false,
-                        tools_done: &|| true,
-                    },
-                )
-                .unwrap();
-            assert_eq!(answer, "maple");
-            assert_eq!(spent.unwrap().cached, 80);
-        }
-        let before = std::fs::read_to_string(&log).unwrap();
-        assert!(
-            talk.context_chars().unwrap() > "The sample is maple.\n\nRemember the sample.".len()
-        );
-        assert_eq!(before.matches("The sample is maple.").count(), 2);
-        assert!(before.contains("Felix replied: maple"));
-        let result = talk.say(
-            "Stop this.",
-            Turn {
-                tail: "",
-                max_tokens: 100,
-                most_calls: 0,
-                sink: &mut |_| {},
-                restart: &mut || {},
-                call: &mut |_, _| String::new(),
-                stopped: &|| true,
-                tools_done: &|| true,
-            },
-        );
-        assert!(result.unwrap_err().to_string().contains("stopped"));
-        assert_eq!(std::fs::read_to_string(log).unwrap(), before);
     }
 }

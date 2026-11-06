@@ -1,12 +1,8 @@
 (function (root) {
   'use strict';
 
-  const SEND_EVERY = 1000;
   const WANTS_SAVE_AFTER = 900;
-  const UPLOAD_SAMPLES = 32000;
-  const UPLOADS_PER_SEND = 60;
   const POLL_EVERY = 1000;
-  const RATE = 16000;
 
   function clock(secs) {
     const s = Math.max(0, Math.floor(secs || 0));
@@ -15,53 +11,6 @@
     const pad = (n) => String(n).padStart(2, '0');
     return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
   }
-
-  function join(chunks) {
-    const total = chunks.reduce((n, c) => n + c.length, 0);
-    const out = new Int16Array(total);
-    let at = 0;
-    for (const c of chunks) {
-      out.set(c, at);
-      at += c.length;
-    }
-    return out;
-  }
-
-  function bytesOf(samples) {
-    const view = new DataView(new ArrayBuffer(samples.length * 2));
-    samples.forEach((s, i) => view.setInt16(i * 2, s, true));
-    return new Uint8Array(view.buffer);
-  }
-
-  function trimHeld(chunks, mostSamples) {
-    let total = chunks.reduce((n, c) => n + c.length, 0);
-    let dropped = 0;
-    while (chunks.length > 1 && total > mostSamples) {
-      const gone = chunks.shift();
-      total -= gone.length;
-      dropped += gone.length;
-    }
-    return dropped;
-  }
-
-  function micReady(env) {
-    if (!env.isSecureContext) return 'insecure';
-    if (!env.mediaDevices || typeof env.mediaDevices.getUserMedia !== 'function') return 'unsupported';
-    if (typeof env.AudioWorkletNode !== 'function') return 'unsupported';
-    return 'ok';
-  }
-
-  function micProblem(reason) {
-    const name = typeof reason === 'string' ? reason : reason && reason.name;
-    if (name === 'insecure') return 'The microphone is not available to this window. Record from this computer instead.';
-    if (name === 'unsupported') return 'This browser cannot record here. Try a current Safari, Chrome, Edge or Firefox.';
-    if (name === 'NotAllowedError' || name === 'SecurityError') return 'The browser was not allowed to use the microphone. Allow it for this site (the icon by the address), then try again.';
-    if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No microphone was found on this device.';
-    if (name === 'NotReadableError' || name === 'AbortError') return 'The microphone is busy or switched off. Close other apps using it, then try again.';
-    return 'The microphone could not be opened' + (reason && reason.message ? ` (${reason.message})` : '') + '.';
-  }
-
-  const fedByBrowser = (source) => source === 'browser' || source === 'tab' || source === 'call';
 
   const QUIET = 0.2;
   const WAVE_STEP_MS = 60;
@@ -109,42 +58,8 @@
     if (paused) return 'Paused: nothing is being recorded';
     if (state === 'sound') return 'Hearing sound';
     if (state === 'waiting' || state === 'quiet') return 'Listening…';
-    if (source === 'tab') return 'No sound for a while: is the tab playing, with “Share tab audio” on?';
     if (source === 'screen') return 'No sound for a while: is something playing on the computer?';
     return 'No sound for a while: is the right microphone chosen, and not muted?';
-  }
-
-  function canShareSound(env) {
-    return Boolean(env.isSecureContext && env.mediaDevices && typeof env.mediaDevices.getDisplayMedia === 'function' && typeof env.AudioWorkletNode === 'function');
-  }
-
-  function sharingProblem(reason) {
-    const name = typeof reason === 'string' ? reason : reason && reason.name;
-    if (name === 'no-audio') return 'The share had no sound. Share again and turn on “Share tab audio” (or “Share system audio”) in the browser’s window.';
-    if (name === 'unsupported') return 'This browser cannot share a tab’s sound. Use Chrome or Edge on a computer, or record the computer’s sound from the page open on that computer.';
-    if (name === 'NotAllowedError' || name === 'AbortError') return 'Nothing was shared, so nothing is recording.';
-    return 'The tab’s sound could not be shared' + (reason && reason.message ? ` (${reason.message})` : '') + '.';
-  }
-
-  function connectCapture(context, stream, micStream, node) {
-    const source = context.createMediaStreamSource(stream);
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 2048;
-    let feed = source;
-    if (micStream) {
-      const merger = context.createChannelMerger(2);
-      const mic = context.createMediaStreamSource(micStream);
-      mic.connect(merger, 0, 0);
-      source.connect(merger, 0, 1);
-      feed = merger;
-    }
-    feed.connect(analyser);
-    feed.connect(node);
-    const silent = context.createGain();
-    silent.gain.value = 0;
-    node.connect(silent);
-    silent.connect(context.destination);
-    return analyser;
   }
 
   function stateWord(view) {
@@ -203,36 +118,23 @@
   }
 
   function create(deps) {
-    const { api, esc, toast, go, noteHash, felix, icons, noteReady, encodePicture } = deps;
+    const { api, esc, toast, go, noteHash, felix, icons, noteReady, encodePicture, noteFields } = deps;
     const s = {
       view: null,
       dismissed: (() => { try { return root.sessionStorage.getItem('leo-record-dismissed'); } catch (e) { return null; } })(),
       overview: null,
-      mine: false,
-      stream: null,
-      micStream: null,
-      seq: 0,
-      pending: 0,
       config: null,
       calendar: null,
       event: null,
       eventChosen: false,
-      context: null,
-      node: null,
-      held: [],
       wave: [],
       queue: [],
       smooth: 0,
       lastStep: 0,
       lastFed: 0,
       fedUpTo: 0,
-      samples: null,
-      analyser: null,
       raf: 0,
       heard: '',
-      sending: false,
-      lost: 0,
-      deviceLost:false,
       showHeard: (() => {
         try {
           return root.localStorage.getItem('leo-rec-heard') === 'open';
@@ -244,85 +146,12 @@
       wantsState: '',
       wantsTimer: 0,
       poll: 0,
-      send: 0,
-      wake: null,
       container: null,
       follow: true,
     };
 
-    const audioQueue = root.leoAudioQueue && root.leoAudioQueue.pick();
-    const env = () => ({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
     const shown = (message) => Object.assign(new Error(message), { shown: true });
 
-    async function openMic() {
-      throw shown('This older recording has saved recovery audio. Recover it, then start a new recording to use Leo’s microphone.');
-    }
-
-    function closeMic() {
-      if (s.node) s.node.port.onmessage = null;
-      if (s.stream) s.stream.getTracks().forEach((t) => { t.onended=null; t.stop(); });
-      if (s.micStream) s.micStream.getTracks().forEach((t) => { t.onended=null; t.stop(); });
-      s.micStream=null;
-      if (s.context) s.context.close().catch(() => {});
-      s.stream = null;
-      s.context = null;
-      s.node = null;
-      s.analyser = null;
-    }
-
-    async function keepAwake() {
-      try {
-        if (root.navigator.wakeLock && !s.wake) s.wake = await root.navigator.wakeLock.request('screen');
-      } catch (e) {
-        s.wake = null;
-      }
-    }
-
-    function letSleep() {
-      if (s.wake) s.wake.release().catch(() => {});
-      s.wake = null;
-    }
-
-    async function sendChunk(item) {
-      const controller=new AbortController(); const timer=setTimeout(() => controller.abort(),15000);
-      try {
-        const response=await root.fetch(`/api/record/${item.id}/audio?seq=${item.seq}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/octet-stream'},body:item.bytes,signal:controller.signal});
-        if (!response.ok) throw new Error('Audio is kept on this device until leo reconnects.');
-        return (await response.json()).next_seq;
-      } finally { clearTimeout(timer); }
-    }
-    async function flush(all=false) {
-      if (s.sending || !s.view) return false;
-      s.sending=true;
-      try {
-        if (!audioQueue) throw new Error('Recovery audio storage is unavailable.');
-        if (s.held.length) {
-          const chunks=root.leoAudioQueue.batches(s.held.splice(0), UPLOAD_SAMPLES);
-          const saved=await root.leoAudioQueue.spool(audioQueue,s.view.id,s.seq,chunks,bytesOf);
-          s.seq=saved.next;
-          if (saved.error) { s.held=saved.remaining.concat(s.held); closeMic(); note('Recovery storage could not be written. Capture is stopped; the audio already kept is available. Free space, then reconnect.'); throw saved.error; }
-        }
-        s.pending=await audioQueue.count(s.view.id);
-        await root.leoAudioQueue.drain(audioQueue,s.view.id,sendChunk,all?Infinity:UPLOADS_PER_SEND);
-        s.pending=await audioQueue.count(s.view.id); return s.pending===0;
-      } catch(e) { note(e.message || 'Audio is kept on this device until leo reconnects.'); return false; }
-      finally { s.sending=false; }
-    }
-
-    function detach() {
-      clearInterval(s.send);
-      s.send = 0;
-      closeMic();
-      letSleep();
-      s.mine = false;
-    }
-
-    function attach() {
-      s.mine = true;
-      clearInterval(s.send);
-      s.send = setInterval(() => flush(), SEND_EVERY);
-      keepAwake();
-    }
 
     function note(text) {
       if (!s.view) return;
@@ -340,7 +169,6 @@
       } catch (e) {
         if (!s.view || s.view.id !== id) return;
         if (e.status === 404) {
-          detach();
           s.view = null;
           draw();
           return;
@@ -349,9 +177,11 @@
       schedule();
     }
 
+    const onScreen = () => root.document.visibilityState !== 'hidden' && root.__LEO_VISIBLE__ !== false;
+
     function schedule() {
       clearTimeout(s.poll);
-      if (!fedByBrowser(s.view?.source) && (root.document.visibilityState === 'hidden' || root.__LEO_VISIBLE__ === false)) return;
+      if (!onScreen()) return;
       if (s.view && (live(s.view) || s.view.state === 'writing')) s.poll = setTimeout(pollNow, POLL_EVERY);
     }
 
@@ -360,78 +190,36 @@
       const warnings = before && before.id === view.id ? before.warnings.filter((w) => !view.warnings.includes(w)) : [];
       s.view = { ...view, warnings: [...view.warnings, ...warnings] };
       feedFromServer(view);
-      if (!live(view) && s.mine) {
-        if (view.state !== 'writing' || !s.held.length) detach();
-      }
       if (view.state === 'done' && before && before.state !== 'done') {
-        detach();
         if (s.container && s.container.isConnected) go(noteHash(view.note), { replace: true });
         else if (noteReady) noteReady();
         toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
+        root.leoMotion?.pulse(root.document.querySelector('.toast'));
       }
       draw();
       pill();
     }
 
     async function start(source, directory, title, profile) {
-      if (fedByBrowser(source)) await openMic(source);
-      let made;
-      try {
-        made = await api('/api/record', { method: 'POST', body: { source, directory, title, profile } });
-      } catch (e) {
-        closeMic();
-        throw e;
-      }
+      const made = await api('/api/record', { method: 'POST', body: { source, directory, title, profile } });
       s.view = { id: made.id, source, state: 'starting', secs: 0, step: 'Starting', steps: null, transcript: '', warnings: [], points: [], note: null, error: null };
-      s.lost = 0; s.seq=0; s.pending=0; s.wantsDraft = null; s.wantsState = '';
+      s.wantsDraft = null;
+      s.wantsState = '';
       s.follow = true;
       Object.assign(s, { wave: [], queue: [], smooth: 0, lastStep: 0, lastFed: 0, fedUpTo: 0 });
-      if (fedByBrowser(source)) attach();
       draw();
       pill();
       schedule();
     }
 
-    async function rejoin() {
-      if (!s.view || !fedByBrowser(s.view.source)) return;
-      const queued=audioQueue ? await audioQueue.list(s.view.id) : [];
-      s.seq=Math.max(s.view.next_seq || 0,...queued.map((c) => c.seq+1));
-      await flush();
-      closeMic(); await openMic(s.view.source);
-      attach();
-      draw();
-    }
-
     async function setPaused(paused) {
       if (!s.view) return;
-      if (paused) await flush();
       accept(await api(`/api/record/${s.view.id}/pause`, { method: 'POST', body: { paused } }));
     }
 
     async function stop() {
       if (!s.view) return;
-      if (s.mine) {
-        if (s.context) await s.context.suspend();
-        if (s.node) {
-          const original=s.node.port.onmessage;
-          await new Promise((resolve) => {
-            const timer=setTimeout(resolve,1500);
-            s.node.port.onmessage=(event) => { if (event.data.flushed) { clearTimeout(timer); resolve(); } else if (original) original(event); };
-            s.node.port.postMessage({flush:true});
-          });
-          s.node.port.onmessage=null;
-        }
-        while (s.sending) await new Promise((resolve) => setTimeout(resolve, 50));
-        if (!await flush(true)) throw new Error('Audio is still waiting on this device. Reconnect to leo, then stop again.');
-      } else if (audioQueue && (await audioQueue.list(s.view.id)).length && !await flush()) {
-        throw new Error('Recovery audio is waiting on this device. Reconnect before saving.');
-      }
       const view = await api(`/api/record/${s.view.id}/stop`, { method: 'POST' });
-      closeMic();
-      letSleep();
-      clearInterval(s.send);
-      s.send = 0;
-      s.mine = false;
       accept(view);
       schedule();
     }
@@ -443,18 +231,12 @@
 
     function heardNow() {
       if (!s.view || s.view.state === 'paused') return 0;
-      if (s.mine && s.analyser) {
-        s.analyser.getFloatTimeDomainData(s.samples);
-        let sum = 0;
-        for (const v of s.samples) sum += v * v;
-        return loudness(Math.sqrt(sum / s.samples.length));
-      }
       if (s.queue.length > MOST_LEVEL_QUEUE) s.queue.splice(0, s.queue.length - MOST_LEVEL_QUEUE);
       return s.queue.length ? s.queue.shift() : s.smooth * 0.85;
     }
 
     function feedFromServer(view) {
-      if (s.mine || !view || !Array.isArray(view.levels)) return;
+      if (!view || !Array.isArray(view.levels)) return;
       const { fresh, fedUpTo } = freshLevels(view.levels.map(loudness), view.levels_start || 0, s.fedUpTo);
       s.fedUpTo = fedUpTo;
       const per = Math.round(SERVER_STEP_MS / WAVE_STEP_MS);
@@ -516,11 +298,7 @@
         label.textContent = words;
         label.className = `rec-hear ${paused ? 'paused' : state}`;
       }
-      s.raf = root.requestAnimationFrame(drawWave);
-    }
-
-    function startWave() {
-      if (!s.raf && root.requestAnimationFrame) s.raf = root.requestAnimationFrame(drawWave);
+      if (onScreen()) s.raf = root.requestAnimationFrame(drawWave);
     }
 
     function paintWaveNow() {
@@ -531,74 +309,67 @@
     }
 
     const KINDS = {
-      microphone: { title: 'Microphone', about: 'A lecture, a meeting, or your own voice' },
-      call: { title: 'Call', about: 'Your microphone and computer sound, on separate tracks' },
-      screen: { title: 'Screen', about: 'A video, a call, or anything playing' },
+      microphone: { title: 'Microphone', about: 'A lecture, meeting or your voice' },
+      screen: { title: 'Screen', about: 'Records what this computer plays' },
+      call: { title: 'Call', about: 'You and others, on two tracks' },
     };
+    const WAVE = [4, 9, 14, 7, 11, 16, 9, 5, 10, 13, 7, 4, 9, 12, 6];
 
-    function screenNote() { return 'Records what this computer plays'; }
+    function track(icon, y) {
+      const bars = WAVE.map((h, i) => `M${36 + i * 5} ${y - h / 2}v${h}`).join('');
+      return `${icon.replace('<svg ', `<svg x="12" y="${y - 8}" width="16" height="16" `)}<path class="d-wave" d="${bars}"/>`;
+    }
 
-    function kindChoices(local) {
-      const canShare = canShareSound(env());
-      const icon = { microphone: icons.mic, screen: icons.screen, call: icons.call || icons.mic };
+    function kindChoices() {
+      const art = {
+        microphone: track(icons.mic, 26),
+        screen: track(icons.screen, 26),
+        call: track(icons.mic, 16) + track(icons.screen, 36),
+      };
       return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen', 'call']
-        .map((kind, i) => {
-          const off = false;
-          return `<label class="rec-kind${off ? ' off' : ''}"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}${off ? ' disabled' : ''}>
-            <span class="rec-kind-body"><span class="rec-kind-icon">${icon[kind]}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
-        })
+        .map((kind, i) => `<label class="rec-kind"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}>
+            <span class="rec-kind-body choice-pick"><span class="choice-diagram" aria-hidden="true"><svg viewBox="0 0 120 52">${art[kind]}</svg></span><b class="choice-title">${KINDS[kind].title}</b><span class="sub choice-about">${esc(KINDS[kind].about)}</span></span></label>`)
         .join('')}</div>`;
     }
 
     function drawIdle(folders, here) {
       const ov = s.overview || {};
-      const options = ['', ...folders].map((f) => `<option value="${esc(f)}"${f === here ? ' selected' : ''}>${esc(f || 'All notes (top level)')}</option>`).join('');
       const upcoming = (s.calendar && s.calendar.events) || [];
       const picked = s.event !== null ? upcoming[s.event] : null;
       const pending = ov.pending || [];
-      const ready = micReady(env());
-      const insecure = false ? `<p class="set-note warn">${esc(micProblem(ready))}</p>` : '';
       const event = upcoming.length
-        ? `<label class="set-row"><span class="set-label">Calendar event</span><span class="select-control"><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></label>
-          ${picked ? '<p class="set-note rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
+        ? `<div class="field">${icons.calendar}<span class="select-control"><select id="rec-event" aria-label="Calendar event"><option value="">No calendar event</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></div>
+          ${picked ? '<p class="hint rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
         : '';
-      const connect = s.calendar && !s.calendar.connected ? '<p class="set-note">Name recordings after your classes and meetings: <a href="#/settings">connect a calendar in Settings</a>.</p>' : '';
+      const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes.</p>' : '';
       const recover = pending.length
-        ? `<div class="rec-recover">${pending.map((p) => `<button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button>`).join('')}</div>`
+        ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
         : '';
       return `<div class="rec rec-idle">
         <div class="section-title">Record</div>
         ${recover ? `<section class="set-card"><header><h3>Not saved yet</h3></header>${recover}</section>` : ''}
         <section class="set-card rec-card">
           <header><h3>New recording</h3></header>
-          <p class="hint">leo writes down what is said as you go and turns it into a note when you stop.</p>
-          ${kindChoices(ov.local)}
-          <label class="set-row"><span class="set-label">Folder</span><span class="select-control"><select id="rec-dir">${options}</select>${icons.chevron}</span></label>
-          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="set-input rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
-          ${event}
-          <label class="set-row column"><span class="set-label">What you want from the notes</span><textarea id="rec-wants" class="set-input" rows="2" maxlength="4000" placeholder="Optional. For example: focus on what will be on the exam, keep it short"></textarea></label>
+          ${kindChoices()}
+          ${noteFields({ id: 'rec', folders, here, most: 4000, before: event })}
           ${connect}
-          ${insecure}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
             <span class="rec-start-label">Start recording</span>
+            <p class="hint rec-tip">Keeps recording if you close the window. Open Leo from the menu bar to return.</p>
           </div>
         </section>
-        <p class="hint rec-tip">Recording continues when you close the window. Open Leo from the menu bar to return.</p>
       </div>`;
     }
 
     function drawLive() {
       const v = s.view;
       const paused = v.state === 'paused';
-      const orphan = fedByBrowser(v.source) && !s.mine && live(v);
       const transcript = v.transcript ? esc(v.transcript) : `<span class="hint">${paused ? 'Paused.' : 'Listening… words appear here after a few seconds.'}</span>`;
       const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="rec-at">${clock(at)}</span><span class="rec-point-said">${esc(text)}</span></li>`).join('')}</ul>` : '';
-      const warnings = v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="set-note warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
-      const kind = (v.source === 'call' || v.source === 'nativecall') ? 'Call · You + Others' : v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
-      const controls = orphan
-        ? `<p class="set-note warn">This recording lost its microphone when the page reloaded.</p><div class="rec-controls"><button class="btn plain" data-action="rec-rejoin">Keep recording here</button><button class="btn primary" data-action="rec-stop">Stop and save</button></div>`
-        : `<div class="rec-buttons">
+      const warnings = v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('');
+      const kind = v.source === 'nativecall' ? 'Call · You + Others' : v.source === 'microphone' ? 'Microphone' : 'Screen';
+      const controls = `<div class="rec-buttons">
             <button class="rec-round plain" data-action="rec-pause" aria-label="${paused ? 'Resume' : 'Pause'}">${paused ? '<svg viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z" fill="currentColor"/></svg>' : '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg>'}<span>${paused ? 'Resume' : 'Pause'}</span></button>
             <button class="rec-round stop rec-stop" data-action="rec-stop" aria-label="Stop and save"><span class="rec-square"></span><span>Stop and save</span></button>
           </div>`;
@@ -607,11 +378,9 @@
         <section class="set-card rec-live-card">
           <div class="rec-live-top"><span class="rec-state"><span class="rec-dot"></span><span id="rec-word">${esc(stateWord(v))}</span></span><span class="rec-meta">${kind}</span></div>
           <div class="rec-clock"><span id="rec-time">${clock(v.secs)}</span></div>
-          ${orphan ? '' : `<div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused))}</p>`}
+          <div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused))}</p>
           ${controls}
-          ${s.deviceLost?'<button class="btn plain" data-action="rec-rejoin">Reconnect audio</button>':''}
           ${warnings}
-          ${s.pending ? `<p class="hint">${s.pending === 1 ? 'A second' : `${s.pending} seconds`} of audio kept on this device, waiting to reach leo.</p>` : ''}
         </section>
         <section class="set-card rec-notepad">
           <header><h3>Your notes</h3></header><p class="hint">Take a screenshot and paste it here to keep it with this recording.</p>
@@ -665,7 +434,7 @@
         <div class="section-title">Recording</div>
         <section class="set-card rec-done-card rec-failed-card">${felix.felix(64, 'droop')}<h3>${esc(failure.title)}</h3>
           <p class="hint">${esc(failure.message)}</p>
-          <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${(v.source === 'call' || v.source === 'nativecall') ? 'Call' : 'Recording'}</span></div>
+          <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${v.source === 'nativecall' ? 'Call' : 'Recording'}</span></div>
           ${failure.details.length ? `<details class="rec-error-details source-more"><summary>${icons.chevron}<span>Error details</span></summary>${failure.details.map((w) => `<p>${esc(w)}</p>`).join('')}</details>` : ''}
           <div class="buttons"><button class="btn primary sm" data-action="rec-again">Record again</button><button class="btn sm plain danger" data-action="rec-discard" data-id="${esc(v.id)}">Delete recording</button></div>
           <button class="btn plain sm" data-action="rec-dismiss">Dismiss warning</button>
@@ -730,14 +499,26 @@
       const old = box.querySelector('#rec-transcript');
       if (old) s.follow = old.scrollTop + old.clientHeight >= old.scrollHeight - 24;
       const form = idleForm(box);
-      if (!v || v.state === 'done') box.innerHTML = drawIdle(folders, here);
-      else if (live(v)) {
-        box.innerHTML = drawLive();
-        s.heard = '';
-        paintWaveNow();
-      }
-      else if (v.state === 'writing') box.innerHTML = drawWriting();
-      else box.innerHTML = drawFailed();
+      const motion = root.leoMotion;
+      const page = !v || v.state === 'done' ? 'idle' : live(v) ? 'live' : v.state === 'writing' ? 'writing' : 'failed';
+      const moved = s.page && s.page !== page;
+      const paused = page === 'live' && s.paused !== undefined && s.paused !== (v.state === 'paused');
+      if (moved) motion?.overlapOut(box);
+      s.page = page;
+      s.paused = page === 'live' ? v.state === 'paused' : undefined;
+      const paint = () => {
+        if (page === 'idle') box.innerHTML = drawIdle(folders, here);
+        else if (page === 'live') {
+          box.innerHTML = drawLive();
+          s.heard = '';
+          paintWaveNow();
+        }
+        else if (page === 'writing') box.innerHTML = drawWriting();
+        else box.innerHTML = drawFailed();
+      };
+      if (paused && motion) motion.iconSwap(box, paint, '.rec-round.plain svg');
+      else paint();
+      if (moved) motion?.cascade(box, 'settling');
       const heard = box.querySelector('#rec-heard');
       if (heard) {
         heard.addEventListener('toggle', () => {
@@ -847,7 +628,6 @@
       s.overview = await api('/api/record');
       const job = s.overview.job;
       if (job && job.id !== s.dismissed && job.state !== 'done') {
-        if (!s.view || s.view.id !== job.id) s.mine = false;
         accept(job);
         schedule();
       } else if (s.view && !live(s.view) && s.view.state !== 'writing') {
@@ -869,19 +649,11 @@
         .finally(() => { pasting = false; });
     });
 
-    root.addEventListener('beforeunload', (e) => {
-      if (s.mine && live(s.view)) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    });
-
     function recordingVisibility() {
-      if (root.document.visibilityState === 'visible' && s.mine && live(s.view)) keepAwake();
-      if (!fedByBrowser(s.view?.source)) {
-        clearTimeout(s.poll);
-        if (root.document.visibilityState !== 'hidden' && root.__LEO_VISIBLE__ !== false) pollNow();
-      }
+      clearTimeout(s.poll);
+      if (!onScreen()) return;
+      pollNow();
+      paintWaveNow();
     }
     root.document.addEventListener('visibilitychange', recordingVisibility);
     root.addEventListener('leo-visibility', recordingVisibility);
@@ -911,7 +683,6 @@
         const picked = box.querySelector('input[name="rec-kind"]:checked');
         const kind = picked ? picked.value : 'microphone';
         const source = sourceFor(kind);
-        if (!source) throw Object.assign(new Error(sharingProblem('unsupported')), { shown: true });
         const button = box.querySelector('[data-action="rec-start"]');
         if (button) button.disabled = true;
         try {
@@ -926,9 +697,7 @@
       pause: () => setPaused(!(s.view && s.view.state === 'paused')),
       stop,
       async finishAvailable() { if (s.view) { await api(`/api/record/${s.view.id}/finish`,{method:'POST'}); note('Queued transcription is skipped; any unfinished audio is kept for retry.'); } },
-      rejoin,
       async recover(id) {
-        if (audioQueue) await root.leoAudioQueue.drain(audioQueue,id,sendChunk);
         await api(`/api/record/${id}/recover`,{method:'POST'}); await refresh();
       },
 
@@ -937,25 +706,20 @@
         if (!s.view || s.view.state !== 'failed') return;
         s.dismissed = s.view.id;
         try { root.sessionStorage.setItem('leo-record-dismissed', s.dismissed); } catch (e) {}
-        detach();
         clearTimeout(s.poll);
         s.view = null;
         draw();
         pill();
       },
       async discard(id) {
-        if (!s.view || s.view.id !== id || s.view.state !== 'failed') throw shown('This recording is no longer on the error page. Refresh and try again.');
-        if (s.sending) throw shown('Audio is still reaching Leo. Wait a moment, then try again.');
-        detach();
+        const waiting = !s.view && (s.overview?.pending || []).some((p) => p.id === id);
+        if (!waiting && (!s.view || s.view.id !== id || s.view.state !== 'failed')) throw shown('This recording is no longer on the error page. Refresh and try again.');
         clearTimeout(s.poll);
-        if (audioQueue) await audioQueue.clear(id);
         await api(`/api/record/${id}`, { method: 'DELETE' });
-        s.dismissed = id;
-        try { root.sessionStorage.setItem('leo-record-dismissed', id); } catch (e) {}
-        if (s.view && s.view.id === id) {
+        if (!waiting) {
+          s.dismissed = id;
+          try { root.sessionStorage.setItem('leo-record-dismissed', id); } catch (e) {}
           s.view = null;
-          s.held = [];
-          s.pending = 0;
         }
         await refresh();
         draw();
@@ -970,5 +734,5 @@
     };
   }
 
-  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, connectCapture, failureOf, fedByBrowser, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, stateWord, failureOf, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

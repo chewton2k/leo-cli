@@ -1,10 +1,10 @@
 //! The menu bar icon: quick actions (record, copy the last dictation, Settings,
 //! updates) and what Leo is using right now (speech model, writing AI and its
 //! plan limits, AI use since launch, version). The status rows are disabled
-//! items whose text a background thread refreshes, so opening the menu never
-//! waits on the disk or an agent.
+//! items whose text a background thread refreshes when the icon is clicked, so
+//! opening the menu never waits on the disk or an agent.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,11 +15,10 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::app_settings::UpdateApi;
 
-/// How often the status rows are read again.
-const REFRESH: Duration = Duration::from_secs(20);
-/// Codex's limits need an app-server round trip, so they are asked every five
-/// minutes (`usage::STALE_AFTER`), not every refresh.
-const WRITING_EVERY: u32 = 15;
+/// How often the status rows are read again when nobody clicks the icon.
+/// Codex's limits need an app-server round trip, so they are asked only after
+/// a click, and then at most every five minutes (`usage::STALE_AFTER`).
+const REFRESH: Duration = Duration::from_secs(5 * 60);
 
 /// A menu command is offered to the page this many times, this far apart.
 const ASK_TRIES: u32 = 10;
@@ -30,6 +29,7 @@ struct Status {
     writing: MenuItem<Wry>,
     limits: MenuItem<Wry>,
     used: MenuItem<Wry>,
+    clicked: AtomicBool,
 }
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
@@ -44,6 +44,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         writing: info("writing", "Writing: …")?,
         limits: info("limits", "Plan use: unknown")?,
         used: info("used", "No AI requests since Leo started")?,
+        clicked: AtomicBool::new(false),
     });
     let settings = item("settings", "Settings…")?;
     let updates = item("updates", "Check for updates…")?;
@@ -93,29 +94,38 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon().cloned() {
         tray = tray.icon(icon);
     }
-    #[cfg(target_os = "macos")]
-    let tray = tray
-        .show_menu_on_left_click(false)
-        .on_tray_icon_event(move |tray, event| {
-            if matches!(
-                event,
-                tauri::tray::TrayIconEvent::Click {
-                    button_state: tauri::tray::MouseButtonState::Down,
-                    ..
-                }
-            ) {
-                popup(tray, menu.clone());
+    let handle = app.clone();
+    let rows = Arc::clone(&status);
+    let refresher = std::thread::Builder::new()
+        .name("leo-tray-status".into())
+        .spawn(move || refresh(handle, rows))?
+        .thread()
+        .clone();
+    let tray = tray.on_tray_icon_event(move |tray, event| {
+        if matches!(event, tauri::tray::TrayIconEvent::Click { .. }) {
+            status.clicked.store(true, Ordering::Release);
+            refresher.unpark();
+        }
+        #[cfg(target_os = "macos")]
+        if matches!(
+            event,
+            tauri::tray::TrayIconEvent::Click {
+                button_state: tauri::tray::MouseButtonState::Down,
+                ..
             }
-        });
+        ) {
+            popup(tray, menu.clone());
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = tray;
+    });
+    #[cfg(target_os = "macos")]
+    let tray = tray.show_menu_on_left_click(false);
     let built = tray.build(app)?;
     #[cfg(target_os = "macos")]
     built.with_inner_tray_icon(|tray| tray.set_show_menu_on_right_click(false))?;
     #[cfg(not(target_os = "macos"))]
     let _ = built;
-    let handle = app.clone();
-    std::thread::Builder::new()
-        .name("leo-tray-status".into())
-        .spawn(move || refresh(handle, status))?;
     Ok(())
 }
 
@@ -188,15 +198,14 @@ fn copy_last_dictation(app: &AppHandle) {
 }
 
 fn refresh(app: AppHandle, status: Arc<Status>) {
-    let mut round = 0u32;
     loop {
+        let clicked = status.clicked.swap(false, Ordering::AcqRel);
         let speech = leo_services::speech::library::library()
             .ok()
             .and_then(|library| library.selected_name())
             .unwrap_or_else(|| "no model chosen".into());
         let _ = status.speech.set_text(format!("Speech: {speech}"));
-        let writing =
-            leo_services::web_settings::writing_status(round.is_multiple_of(WRITING_EVERY));
+        let writing = leo_services::web_settings::writing_status(clicked);
         let _ = status.writing.set_text(format!("Writing: {}", writing.0));
         let _ = status
             .limits
@@ -211,8 +220,9 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
         if let Some(used) = used {
             let _ = status.used.set_text(used);
         }
-        round = round.wrapping_add(1);
-        std::thread::sleep(REFRESH);
+        if !status.clicked.load(Ordering::Acquire) {
+            std::thread::park_timeout(REFRESH);
+        }
     }
 }
 

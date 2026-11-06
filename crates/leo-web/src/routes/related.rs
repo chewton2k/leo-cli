@@ -4,7 +4,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use leo_core::notes::Note;
 use leo_core::store::Store;
 use serde::Deserialize;
 
@@ -18,10 +17,6 @@ const MOST_ANCHOR_BYTES: usize = 1_024;
 pub(crate) struct RelatedQuery {
     #[serde(default)]
     pub(crate) limit: Option<usize>,
-}
-
-fn is_manual(note: &Note) -> bool {
-    note.tags.iter().any(|t| t == "manual")
 }
 
 fn linked_titles(body: &str) -> Vec<String> {
@@ -50,18 +45,14 @@ pub(crate) fn related(
     seen.insert(id.to_string());
     let mut out = Vec::new();
     for (note, _kind, why) in crate::chat::connected(store, cache, id) {
-        if is_manual(note) || !seen.insert(note.id.clone()) {
+        if !seen.insert(note.id.clone()) {
             continue;
         }
         out.push(serde_json::json!({ "id": note.id, "title": note.title, "folder": note.directory, "why": why }));
     }
     if let Some(this) = store.notes.iter().find(|n| n.id == id) {
         for title in linked_titles(&this.body) {
-            if let Some(note) = store
-                .notes
-                .iter()
-                .find(|n| n.title.to_lowercase() == title && !is_manual(n))
-            {
+            if let Some(note) = store.notes.iter().find(|n| n.title.to_lowercase() == title) {
                 if seen.insert(note.id.clone()) {
                     out.push(serde_json::json!({ "id": note.id, "title": note.title, "folder": note.directory, "why": "Linked from this note" }));
                 }
@@ -80,7 +71,7 @@ pub(crate) async fn related_notes(
     let limit = query.limit.unwrap_or(4).clamp(1, MOST_RELATED);
     let graphs = Arc::clone(&state.graphs);
     let found = state
-        .with_store(move |store| {
+        .read_store(move |store| {
             if !store.notes.iter().any(|n| n.id == id) {
                 return Err(StatusCode::NOT_FOUND);
             }

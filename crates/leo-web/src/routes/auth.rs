@@ -38,19 +38,6 @@ pub(crate) async fn same_host(port: u16, request: Request, next: Next) -> Respon
     next.run(request).await
 }
 
-fn site(gate: &sessions::Gate) -> String {
-    gate.site_for(true, false)
-}
-
-pub(crate) fn user_agent(request: &Request) -> String {
-    request
-        .headers()
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string()
-}
-
 pub(crate) async fn auth_middleware(
     State(state): State<AppState>,
     request: Request,
@@ -69,18 +56,13 @@ pub(crate) async fn auth_middleware(
         .map(str::to_string);
     if let Some(given) = query_param(query, "token") {
         if state.gate.token_matches(given) {
-            let secret =
-                match &signed_in {
-                    Some(secret) => secret.clone(),
-                    None => match state.gate.sessions.start(
-                        &user_agent(&request),
-                        &site(&state.gate),
-                        now,
-                    ) {
-                        Ok(secret) => secret,
-                        Err(_) => return session_error(),
-                    },
-                };
+            let secret = match &signed_in {
+                Some(secret) => secret.clone(),
+                None => match state.gate.sessions.start(now) {
+                    Ok(secret) => secret,
+                    Err(_) => return session_error(),
+                },
+            };
             let mut response =
                 if request.method() == axum::http::Method::GET && request.uri().path() == "/" {
                     Redirect::to("/").into_response()
@@ -95,22 +77,6 @@ pub(crate) async fn auth_middleware(
     if signed_in.is_some() {
         return next.run(request).await;
     }
-    let legacy = sessions::cookie_value(&cookies, sessions::LEGACY_COOKIE)
-        .is_some_and(|v| state.gate.token_matches(v));
-    if legacy {
-        let secret = match state
-            .gate
-            .sessions
-            .start(&user_agent(&request), &site(&state.gate), now)
-        {
-            Ok(secret) => secret,
-            Err(_) => return session_error(),
-        };
-        let mut response = next.run(request).await;
-        set_session_cookies(&mut response, &secret);
-        return response;
-    }
-
     if request.uri().path() == "/" {
         return (StatusCode::UNAUTHORIZED, Html(LOCKED)).into_response();
     }
@@ -118,20 +84,13 @@ pub(crate) async fn auth_middleware(
 }
 
 fn set_session_cookies(response: &mut Response, secret: &str) {
-    for cookie in [
-        format!(
-            "{}={secret}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
-            sessions::COOKIE,
-            COOKIE_DAYS * 24 * 3600
-        ),
-        format!(
-            "{}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
-            sessions::LEGACY_COOKIE
-        ),
-    ] {
-        if let Ok(value) = HeaderValue::from_str(&cookie) {
-            response.headers_mut().append(header::SET_COOKIE, value);
-        }
+    let cookie = format!(
+        "{}={secret}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
+        sessions::COOKIE,
+        COOKIE_DAYS * 24 * 3600
+    );
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().append(header::SET_COOKIE, value);
     }
 }
 

@@ -18,6 +18,7 @@ const MOST_REQUESTS: usize = 1024;
 const MOST_BATCH: usize = 32;
 const WRITE_LIMIT: Duration = Duration::from_secs(5);
 const STOP_POLL: Duration = Duration::from_millis(50);
+const READ_POLL: Duration = Duration::from_secs(1);
 const WAKE_LIMIT: Duration = Duration::from_millis(250);
 
 pub enum Incoming {
@@ -301,7 +302,7 @@ fn respond(stream: &mut TcpStream, status: &str, body: Option<&Value>) -> std::i
 
 impl Served {
     fn connection(&self, stream: TcpStream) {
-        if stream.set_read_timeout(Some(STOP_POLL)).is_err()
+        if stream.set_read_timeout(Some(READ_POLL)).is_err()
             || stream.set_write_timeout(Some(WRITE_LIMIT)).is_err()
         {
             return;

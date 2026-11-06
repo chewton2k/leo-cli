@@ -284,10 +284,6 @@ pub fn filtered_rows(raw: &[u8], width: usize, height: usize, channels: usize) -
     encoder.finish().ok()
 }
 
-pub fn from_pdf(doc: &lopdf::Document) -> Vec<Figure> {
-    from_pdf_prepared(doc, &mut HashMap::new())
-}
-
 pub(crate) fn from_pdf_prepared(
     doc: &lopdf::Document,
     prepared: &mut HashMap<lopdf::ObjectId, Vec<u8>>,
@@ -467,7 +463,7 @@ mod tests {
         );
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
         doc.trailer.set("Root", catalog);
-        let found = from_pdf(&doc);
+        let found = from_pdf_prepared(&doc, &mut HashMap::new());
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].place, "page 1");
         assert_eq!(

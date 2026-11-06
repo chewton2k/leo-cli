@@ -41,6 +41,14 @@ fn fallback(raw: &str) -> Option<String> {
     }
     Some(Hotkey::new(widened, hotkey.key).ok()?.to_handy_string())
 }
+fn tapped(shortcut: &str, permission: bool, recording: bool, windows: bool) -> bool {
+    let exact = shortcut
+        .parse::<Hotkey>()
+        .ok()
+        .zip(fallback(shortcut))
+        .is_some_and(|(key, shadow)| key.to_handy_string() == shadow);
+    permission && (!windows || recording || !exact)
+}
 enum Command {
     Configure(String, mpsc::SyncSender<Result<(), String>>),
     Record(mpsc::SyncSender<Result<(), String>>),
@@ -134,6 +142,7 @@ fn run(
     let mut candidate = String::new();
     let mut permission = false;
     let mut secure = false;
+    let mut system = false;
     let mut carbon: Option<String> = None;
     let mut carbon_cancel = false;
     let cancel_active = Arc::new(AtomicBool::new(false));
@@ -148,7 +157,12 @@ fn run(
             first = false;
             Some(Command::Wake)
         } else {
-            rx.recv_timeout(shortcut_events::IDLE).ok()
+            let wait = if recorder_since.is_some() {
+                shortcut_events::IDLE
+            } else {
+                crate::secure_input::user_idle().clamp(shortcut_events::IDLE, shortcut_events::AWAY)
+            };
+            rx.recv_timeout(wait).ok()
         };
         let mut key = None;
         match command {
@@ -162,7 +176,7 @@ fn run(
             Some(Command::Record(done)) => {
                 if crate::secure_input::enabled() {
                     let _ = done.send(Err("Close the password field or quit the app holding Secure Input, then record your shortcut again.".into()));
-                } else if feed.is_none() {
+                } else if !permission {
                     let _ = done.send(Err("Allow Leo in System Settings → Privacy & Security → Accessibility, then try again.".into()));
                 } else {
                     recorder_since = Some(Instant::now());
@@ -207,7 +221,12 @@ fn run(
             carbon = None;
             carbon_cancel = false;
             problem.clear();
-            if permission {
+            if tapped(
+                &shortcut,
+                permission,
+                recorder_since.is_some(),
+                cfg!(windows),
+            ) {
                 let sender = tx.clone();
                 let source = epoch;
                 match Feed::start(move |event, stop| {
@@ -217,7 +236,8 @@ fn run(
                     Err(error) => problem = error,
                 }
             }
-            if recorder_since.is_none() && (secure || !permission) {
+            system = secure || !permission || (cfg!(windows) && feed.is_none());
+            if recorder_since.is_none() && system {
                 if let Some(shadow) = fallback(&shortcut) {
                     let active = carbon_active.clone();
                     let action = input.clone();
@@ -246,7 +266,7 @@ fn run(
             let _ = done.send(result);
         }
         let wants_escape = recorder_since.is_none() && capturing.load(Ordering::Acquire);
-        let wants_carbon_cancel = wants_escape && (secure || !permission);
+        let wants_carbon_cancel = wants_escape && system;
         if wants_carbon_cancel && !carbon_cancel {
             let active = cancel_active.clone();
             let action = input.clone();
@@ -317,5 +337,26 @@ mod tests {
         assert!(super::fallback("option+space").is_some());
         assert!(super::fallback("fn").is_none());
         assert!(super::fallback("option").is_none());
+    }
+
+    #[test]
+    fn windows_taps_keys_only_when_the_system_hotkey_cannot_do_the_job() {
+        use super::tapped;
+        assert!(!tapped("ctrl+space", true, false, true));
+        assert!(
+            tapped("ctrl+space", true, true, true),
+            "recording a shortcut"
+        );
+        assert!(tapped("option", true, false, true), "modifier only");
+        assert!(tapped("fn", true, false, true));
+        assert!(
+            tapped("ctrl_left+space", true, false, true),
+            "one side only"
+        );
+        assert!(
+            tapped("ctrl+space", true, false, false),
+            "macOS keeps the tap"
+        );
+        assert!(!tapped("ctrl+space", false, false, false), "no permission");
     }
 }

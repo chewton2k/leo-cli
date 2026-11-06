@@ -206,6 +206,26 @@ struct Seen {
     path: PathBuf,
     disk: u64,
     model: u64,
+    fields: u64,
+}
+
+const TIDY_TRASH_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+fn hash_note(note: &Note) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (
+        &note.id,
+        &note.title,
+        &note.body,
+        &note.tags,
+        note.created_at,
+        note.updated_at,
+        note.pinned,
+        serde_yaml::to_string(&note.extra).unwrap_or_default(),
+    )
+        .hash(&mut hasher);
+    hasher.finish()
 }
 
 fn hash_str(text: &str) -> u64 {
@@ -280,11 +300,6 @@ fn notes_dir_path() -> Result<PathBuf> {
     crate::paths::contained_path(&crate::paths::data_dir()?, Path::new("notes"))
 }
 
-/// Legacy notes.json path — used only for migration detection.
-fn old_data_path() -> Result<PathBuf> {
-    Ok(crate::paths::data_dir()?.join("notes.json"))
-}
-
 fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
     let path = crate::paths::contained_path(notes_dir, Path::new("directories.json"))?;
     if path.exists() {
@@ -297,7 +312,11 @@ fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
 
 fn save_directories(notes_dir: &Path, directories: &[String]) -> Result<()> {
     let path = crate::paths::contained_path(notes_dir, Path::new("directories.json"))?;
-    write_atomic(&path, &serde_json::to_string_pretty(directories)?)?;
+    let text = serde_json::to_string_pretty(directories)?;
+    if fs::read_to_string(&path).is_ok_and(|saved| saved == text) {
+        return Ok(());
+    }
+    write_atomic(&path, &text)?;
     Ok(())
 }
 
@@ -479,6 +498,7 @@ fn index_notes(
                 path: relative,
                 disk: hash_str(&content),
                 model,
+                fields: hash_note(&note),
             },
         );
         notes.push(note);
@@ -511,11 +531,6 @@ pub enum Undoable {
     },
     /// A checkbox that was toggled. Toggling is its own inverse.
     Toggled { id: String, n: usize, title: String },
-    /// Changes made by one command, taken back together.
-    Batch {
-        changes: Vec<Undoable>,
-        what: String,
-    },
 }
 
 impl Undoable {
@@ -531,7 +546,6 @@ impl Undoable {
                 };
                 format!("Moved \"{title}\" back to {place}")
             }
-            Undoable::Batch { what, .. } => what.clone(),
             Undoable::Toggled { title, n, .. } => {
                 format!("Un-toggled box {n} in \"{title}\"")
             }
@@ -561,37 +575,13 @@ pub struct Store {
     undo: Vec<Undoable>,
     seen: std::cell::RefCell<HashMap<String, Seen>>,
     fingerprint: std::cell::Cell<u64>,
+    tidied: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 impl Store {
-    pub fn read_snapshot(&self) -> Self {
-        Self {
-            notes: self.notes.clone(),
-            directories: self.directories.clone(),
-            notes_dir: self.notes_dir.clone(),
-            unreadable: self.unreadable.clone(),
-            undo: Vec::new(),
-            seen: std::cell::RefCell::new(HashMap::new()),
-            fingerprint: std::cell::Cell::new(self.fingerprint.get()),
-        }
-    }
-
     /// Load notes from the platform data directory.
-    /// Automatically migrates from legacy notes.json on first run.
     pub fn load() -> Result<Self> {
         let notes_dir = notes_dir_path()?;
-        let old_path = old_data_path()?;
-        // Treat notes_dir as empty if it doesn't exist, or if it exists but
-        // contains no .md files (handles the case where sync init ran first
-        // and created notes_dir with .git/ before migration could fire).
-        let notes_dir_empty = !notes_dir.exists() || {
-            let mut md_paths = std::collections::HashSet::new();
-            collect_md_paths(&notes_dir, &mut md_paths).unwrap_or(());
-            md_paths.is_empty()
-        };
-        if old_path.exists() && notes_dir_empty {
-            migrate_from_json(&old_path, &notes_dir)?;
-        }
         Self::load_from(&notes_dir)
     }
 
@@ -620,6 +610,7 @@ impl Store {
         Ok(Store {
             seen: std::cell::RefCell::new(seen),
             fingerprint: std::cell::Cell::new(fingerprint_of(notes_dir)),
+            tidied: std::cell::Cell::new(Some(std::time::Instant::now())),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -629,13 +620,7 @@ impl Store {
     }
 
     pub fn save(&self) -> Result<()> {
-        self.save_files()?;
-        if crate::sync::is_initialized(&self.notes_dir) {
-            if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
-                crate::diag::warn(format!("sync auto-commit failed: {e}"));
-            }
-        }
-        Ok(())
+        self.save_files()
     }
 
     pub fn save_files(&self) -> Result<()> {
@@ -654,9 +639,17 @@ impl Store {
         for note in &self.notes {
             let target = targets[&note.id].clone();
             crate::paths::contained_path(&self.notes_dir, target.strip_prefix(&self.notes_dir)?)?;
+            let fields = hash_note(note);
+            let previous = seen.get(&note.id).cloned();
+            if let Some(previous) = &previous {
+                if previous.fields == fields
+                    && crate::paths::contained_path(&self.notes_dir, &previous.path)? == target
+                {
+                    continue;
+                }
+            }
             let content = note_to_markdown(note)?;
             let model = hash_str(&content);
-            let previous = seen.get(&note.id).cloned();
 
             if let Some(previous) = &previous {
                 let old_path = crate::paths::contained_path(&self.notes_dir, &previous.path)?;
@@ -668,10 +661,14 @@ impl Store {
                         self.conflict_copy(note)?;
                         if let Some(entry) = seen.get_mut(&note.id) {
                             entry.model = model;
+                            entry.fields = fields;
                         }
                     }
                     continue;
                 }
+            }
+            if previous.is_none() {
+                self.tidied.set(None);
             }
 
             if let Some(parent) = target.parent() {
@@ -694,6 +691,7 @@ impl Store {
                     path: relative,
                     disk: model,
                     model,
+                    fields,
                 },
             );
         }
@@ -713,7 +711,14 @@ impl Store {
             }
         }
         drop(seen);
-        tidy_trash(&self.notes_dir, &live);
+        if self
+            .tidied
+            .get()
+            .is_none_or(|at| at.elapsed() >= TIDY_TRASH_EVERY)
+        {
+            tidy_trash(&self.notes_dir, &live);
+            self.tidied.set(Some(std::time::Instant::now()));
+        }
 
         save_directories(&self.notes_dir, &self.directories)?;
         self.fingerprint.set(fingerprint_of(&self.notes_dir));
@@ -909,42 +914,6 @@ impl Store {
         notes
     }
 
-    /// Find a note by numeric index, full ID, unique prefix, or title.
-    pub fn find_by_index_or_prefix(&self, input: &str) -> Option<&Note> {
-        if let Ok(n) = input.parse::<usize>() {
-            let list = self.list_notes(None, 20);
-            if n >= 1 && n <= list.len() {
-                return Some(list[n - 1]);
-            }
-        }
-        if let Some(note) = self.find_note(input) {
-            return Some(note);
-        }
-        let title_matches = self.find_by_title(input);
-        if title_matches.len() == 1 {
-            return Some(title_matches[0]);
-        }
-        None
-    }
-
-    /// Mutable version of find_by_index_or_prefix.
-    pub fn find_by_index_or_prefix_mut(&mut self, input: &str) -> Option<&mut Note> {
-        let id = self.find_by_index_or_prefix(input)?.id.clone();
-        self.notes.iter_mut().find(|note| note.id == id)
-    }
-
-    /// Find notes whose title contains the query (case-insensitive), newest first.
-    pub fn find_by_title(&self, query: &str) -> Vec<&Note> {
-        let q = query.to_lowercase();
-        let mut matches: Vec<&Note> = self
-            .notes
-            .iter()
-            .filter(|n| n.title.to_lowercase().contains(&q))
-            .collect();
-        matches.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
-        matches
-    }
-
     /// Find a note by full ID or unique prefix.
     pub fn find_note(&self, id_prefix: &str) -> Option<&Note> {
         let matches: Vec<&Note> = self
@@ -1082,15 +1051,6 @@ impl Store {
         self.undo.push(change);
     }
 
-    /// Whether there is anything to take back.
-    ///
-    /// Used by tests to assert that a no-op records nothing; the handler asks
-    /// [`Store::undo`] directly, since it needs the description anyway.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
-    }
-
     /// Take back the most recent change, returning what was done.
     ///
     /// `None` when there is nothing to undo, so the caller can say so rather
@@ -1128,11 +1088,6 @@ impl Store {
                 // A toggle is its own inverse, so this must not record itself.
                 if let Some(note) = self.find_note_mut(&id) {
                     note.toggle_checkbox(n);
-                }
-            }
-            Undoable::Batch { changes, .. } => {
-                for change in changes.into_iter().rev() {
-                    self.revert(change);
                 }
             }
         }
@@ -1208,13 +1163,13 @@ impl Store {
         tags
     }
 
-    /// Toggle the Nth checkbox in a note. Returns the new state text.
-    pub fn toggle_checkbox(&mut self, id_prefix: &str, n: usize) -> Option<String> {
+    /// Toggle the Nth checkbox in a note. Returns whether it is now ticked.
+    pub fn toggle_checkbox(&mut self, id_prefix: &str, n: usize) -> Option<bool> {
         let note = self.find_note_mut(id_prefix)?;
         let (id, title) = (note.id.clone(), note.title.clone());
-        let label = note.toggle_checkbox(n)?;
+        let ticked = note.toggle_checkbox(n)?;
         self.remember(Undoable::Toggled { id, n, title });
-        Some(label)
+        Some(ticked)
     }
 
     // ── Directory operations ───────────────────────────────────────────────
@@ -1364,31 +1319,6 @@ impl Store {
         counts
     }
 
-    /// Move several notes as one undoable change. Returns the titles moved.
-    pub fn move_notes(&mut self, ids: &[String], new_dir: &str) -> Vec<String> {
-        let mut changes = Vec::new();
-        let mut titles = Vec::new();
-        for id in ids {
-            if self.move_note(id, new_dir).is_some() {
-                changes.push(self.undo.pop().expect("move_note records its change"));
-                titles.push(
-                    self.find_note(id)
-                        .map(|n| n.title.clone())
-                        .unwrap_or_default(),
-                );
-            }
-        }
-        match changes.len() {
-            0 => {}
-            1 => self.remember(changes.pop().unwrap()),
-            n => self.remember(Undoable::Batch {
-                changes,
-                what: format!("Moved {n} notes back"),
-            }),
-        }
-        titles
-    }
-
     pub fn move_dir(&mut self, from: &str, into: &str) -> Option<String> {
         let from = from.trim_matches('/');
         let into = into.trim_matches('/');
@@ -1487,60 +1417,6 @@ impl Store {
         });
         Some(title)
     }
-}
-
-// ── Migration ───────────────────────────────────────────────────────────────
-
-fn migrate_from_json(old_path: &Path, notes_dir: &Path) -> Result<()> {
-    check_notes_root(notes_dir)?;
-    let raw = fs::read_to_string(old_path)
-        .with_context(|| format!("failed to read {}", old_path.display()))?;
-
-    #[derive(serde::Deserialize)]
-    struct LegacyStore {
-        notes: Vec<Note>,
-        #[serde(default)]
-        directories: Vec<String>,
-    }
-
-    let (notes, directories): (Vec<Note>, Vec<String>) = if raw.trim_start().starts_with('[') {
-        let notes: Vec<Note> = serde_json::from_str(&raw)?;
-        (notes, Vec::new())
-    } else {
-        let data: LegacyStore = serde_json::from_str(&raw)?;
-        (data.notes, data.directories)
-    };
-
-    let count = notes.len();
-    fs::create_dir_all(notes_dir)?;
-
-    for note in &notes {
-        crate::paths::validate_directory(&note.directory)?;
-        if note.id.is_empty() || note.id.contains(['/', '\\']) || note.id == "." || note.id == ".."
-        {
-            anyhow::bail!("legacy note has an unsafe id");
-        }
-        let file_path = if note.directory.is_empty() {
-            notes_dir.join(format!("{}.md", note.id))
-        } else {
-            let dir = crate::paths::contained_path(notes_dir, Path::new(&note.directory))?;
-            fs::create_dir_all(&dir)?;
-            dir.join(format!("{}.md", note.id))
-        };
-        crate::paths::contained_path(notes_dir, file_path.strip_prefix(notes_dir)?)?;
-        write_atomic(&file_path, &note_to_markdown(note)?)?;
-    }
-
-    let valid_dirs: Vec<String> = directories
-        .into_iter()
-        .filter(|dir| crate::paths::validate_directory(dir).is_ok())
-        .collect();
-    save_directories(notes_dir, &valid_dirs)?;
-
-    fs::rename(old_path, old_path.with_extension("json.bak"))?;
-
-    crate::diag::warn(format!("migrated {count} notes to {}", notes_dir.display()));
-    Ok(())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1670,8 +1546,15 @@ mod tests {
         // Untouched neighbours.
         assert!(store.dir_exists("cs162"));
         assert_eq!(store.notes.len(), 2);
-        assert!(store.find_by_title("Root note").len() == 1);
-        assert!(store.find_by_title("In cs162").len() == 1);
+        assert!(
+            store
+                .notes
+                .iter()
+                .filter(|n| n.title == "Root note")
+                .count()
+                == 1
+        );
+        assert!(store.notes.iter().filter(|n| n.title == "In cs162").count() == 1);
 
         // And it survives a reload: the files are gone from disk.
         store.save().unwrap();
@@ -1685,7 +1568,10 @@ mod tests {
         let (mut store, _d) = store_with_tree();
         assert_eq!(store.delete_dir_recursive("cs130/lec"), (2, 1));
         assert!(store.dir_exists("cs130"), "the parent must survive");
-        assert_eq!(store.find_by_title("In cs130").len(), 1);
+        assert_eq!(
+            store.notes.iter().filter(|n| n.title == "In cs130").count(),
+            1
+        );
     }
 
     /// "Delete everything" is not something any keypress should be able to mean.
@@ -1781,6 +1667,113 @@ mod tests {
     }
 
     #[test]
+    fn a_change_to_any_field_of_a_saved_note_reaches_its_file() {
+        type Change = fn(&mut Note);
+        let changes: [Change; 7] = [
+            |n| n.title = "Renamed".into(),
+            |n| n.body = "new body".into(),
+            |n| n.tags = vec!["tagged".into()],
+            |n| n.created_at -= chrono::Duration::days(1),
+            |n| n.updated_at += chrono::Duration::days(1),
+            |n| n.pinned = true,
+            |n| {
+                n.extra
+                    .insert("rating".into(), serde_yaml::Value::from(1.5));
+            },
+        ];
+        for change in changes {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let notes_dir = tmp.path().join("notes");
+            let mut store = Store::load_from(&notes_dir).unwrap();
+            store.create_note("Kept", "body", vec![], "").unwrap();
+            store.notes[0]
+                .extra
+                .insert("rating".into(), serde_yaml::Value::from(4.5));
+            store.save().unwrap();
+            change(&mut store.notes[0]);
+            store.save().unwrap();
+            let saved = &Store::load_from(&notes_dir).unwrap().notes[0];
+            let wanted = &store.notes[0];
+            assert_eq!(
+                (
+                    &saved.title,
+                    &saved.body,
+                    &saved.tags,
+                    saved.created_at,
+                    saved.updated_at,
+                    saved.pinned,
+                    &saved.extra
+                ),
+                (
+                    &wanted.title,
+                    &wanted.body,
+                    &wanted.tags,
+                    wanted.created_at,
+                    wanted.updated_at,
+                    wanted.pinned,
+                    &wanted.extra
+                )
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_restored_note_leaves_the_trash_even_when_its_save_failed_midway() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut store, _tmp) = temp_store();
+        let b = store
+            .create_note("B", "b", vec![], "sub")
+            .unwrap()
+            .id
+            .clone();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let a = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.delete_note(&a);
+        store.save().unwrap();
+        assert_eq!(store.trashed().len(), 1);
+        store.undo().unwrap();
+        store.find_note_mut(&b).unwrap().body = "b2".into();
+        let sub = store.notes_dir.join("sub");
+        let open = std::fs::metadata(&sub).unwrap().permissions();
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = store.save();
+        std::fs::set_permissions(&sub, open).unwrap();
+        assert!(failed.is_err());
+        store.save().unwrap();
+        assert!(store.find_note(&a).is_some());
+        assert!(store.trashed().is_empty());
+    }
+
+    #[test]
+    fn saving_again_with_nothing_changed_rewrites_no_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        let mut store = Store::load_from(&notes_dir).unwrap();
+        store.create_note("Kept", "body", vec![], "").unwrap();
+        store.save().unwrap();
+        let stamp = |name: &str| {
+            std::fs::metadata(notes_dir.join(name))
+                .unwrap()
+                .modified()
+                .unwrap()
+        };
+        let (note, folders) = (stamp("Kept.md"), stamp("directories.json"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        store.save().unwrap();
+        assert_eq!(stamp("Kept.md"), note);
+        assert_eq!(stamp("directories.json"), folders);
+        store.notes[0].body = "changed".into();
+        store.save().unwrap();
+        assert_ne!(stamp("Kept.md"), note);
+        assert_eq!(stamp("directories.json"), folders);
+        assert!(std::fs::read_to_string(notes_dir.join("Kept.md"))
+            .unwrap()
+            .ends_with("changed"));
+    }
+
+    #[test]
     fn test_save_writes_md_files() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
@@ -1790,6 +1783,7 @@ mod tests {
             undo: Vec::new(),
             seen: Default::default(),
             fingerprint: Default::default(),
+            tidied: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -1800,7 +1794,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_notes_root_symlink_is_refused_on_read_save_and_migration() {
+    fn a_notes_root_symlink_is_refused_on_read_and_save() {
         let dir = tempfile::tempdir().unwrap();
         let outside = dir.path().join("outside");
         fs::create_dir(&outside).unwrap();
@@ -1810,73 +1804,7 @@ mod tests {
         let mut store = Store::load_from(&dir.path().join("real")).unwrap();
         store.notes_dir = linked.clone();
         assert!(store.save_files().is_err());
-        let legacy = dir.path().join("notes.json");
-        fs::write(&legacy, "[]").unwrap();
-        assert!(migrate_from_json(&legacy, &linked).is_err());
-        assert!(legacy.exists());
         assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn test_migrate_from_json() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let old_path = tmp.path().join("notes.json");
-        let json = serde_json::json!({
-            "notes": [{
-                "id": "550e8400-e29b-41d4-a716-446655440000",
-                "title": "Migrated Note",
-                "body": "content",
-                "tags": ["rust"],
-                "directory": "",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-02T00:00:00Z"
-            }],
-            "directories": []
-        });
-        std::fs::write(&old_path, serde_json::to_string(&json).unwrap()).unwrap();
-
-        let notes_dir = tmp.path().join("notes");
-        assert!(!notes_dir.exists());
-
-        migrate_from_json(&old_path, &notes_dir).unwrap();
-
-        assert!(notes_dir.exists());
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-        assert!(!old_path.exists(), "notes.json should be renamed");
-        assert!(tmp.path().join("notes.json.bak").exists());
-    }
-
-    #[test]
-    fn test_save_auto_commits_when_initialized() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        std::fs::create_dir_all(&notes_dir).unwrap();
-
-        crate::sync::init(&notes_dir).unwrap();
-
-        let store = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            seen: Default::default(),
-            fingerprint: Default::default(),
-            notes: vec![make_note()],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-        };
-        store.save().unwrap();
-
-        let log = std::process::Command::new("git")
-            .args(["log", "--oneline"])
-            .current_dir(&notes_dir)
-            .output()
-            .unwrap();
-        let log_str = String::from_utf8(log.stdout).unwrap();
-        assert!(
-            log_str.contains("update notes"),
-            "expected auto-commit, got: {log_str}"
-        );
     }
 
     // ── undo ────────────────────────────────────────────────────────────────
@@ -1981,28 +1909,14 @@ mod tests {
         assert_eq!(store.notes.len(), 1);
         assert_eq!(store.undo().as_deref(), Some("Restored 2 notes"));
         assert!(store.find_note(&a).is_some() && store.find_note(&b).is_some());
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     #[test]
     fn deleting_nothing_records_nothing() {
         let (mut store, _d) = temp_store();
         assert_eq!(store.delete_notes(&["nope".to_string()]), 0);
-        assert!(!store.can_undo());
-    }
-
-    #[test]
-    fn moving_several_notes_is_one_undo() {
-        let (mut store, _d) = temp_store();
-        store.create_dir("cs130");
-        let a = store.create_note("A", "", vec![], "").unwrap().id.clone();
-        let b = store.create_note("B", "", vec![], "").unwrap().id.clone();
-        let moved = store.move_notes(&[a.clone(), b.clone()], "cs130");
-        assert_eq!(moved, vec!["A".to_string(), "B".to_string()]);
-        store.undo().unwrap();
-        assert_eq!(store.find_note(&a).unwrap().directory, "");
-        assert_eq!(store.find_note(&b).unwrap().directory, "");
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     /// A file leo cannot read is skipped, never deleted: it is the user's text,
@@ -2172,8 +2086,9 @@ mod tests {
         assert!(store.dir_exists("cs130/week1"));
         // And each note is back where it lived.
         let a = store
-            .find_by_title("A")
-            .first()
+            .notes
+            .iter()
+            .find(|n| n.title == "A")
             .map(|n| n.directory.clone());
         assert_eq!(a.as_deref(), Some("cs130"));
     }
@@ -2227,10 +2142,10 @@ mod tests {
             .clone();
 
         store.toggle_checkbox(&id, 1);
-        assert!(store.can_undo());
+        assert!(!store.undo.is_empty());
         store.undo();
         assert!(
-            !store.can_undo(),
+            store.undo.is_empty(),
             "undo pushed its own inverse onto the stack"
         );
     }
@@ -2254,13 +2169,13 @@ mod tests {
 
         store.undo();
         assert!(store.find_note(&a).is_some());
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     #[test]
     fn undoing_nothing_says_so_rather_than_doing_nothing_silently() {
         let (mut store, _d) = temp_store();
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
         assert!(store.undo().is_none());
     }
 
@@ -2271,7 +2186,7 @@ mod tests {
         let (mut store, _d) = temp_store();
         store.create_note("A", "a", vec![], "").unwrap();
         assert!(!store.delete_note("does-not-exist"));
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     #[test]
@@ -2279,7 +2194,7 @@ mod tests {
         let (mut store, _d) = temp_store();
         store.create_note("A", "a", vec![], "").unwrap();
         assert_eq!(store.delete_dir_recursive(""), (0, 0));
-        assert!(!store.can_undo());
+        assert!(store.undo.is_empty());
     }
 
     /// The stack is bounded, or a long session holds every note ever deleted.
@@ -2516,6 +2431,7 @@ mod tests {
                 &crate::keep::Keep {
                     trash_days: days,
                     chat_days: None,
+                    ..Default::default()
                 },
             )
             .unwrap()
@@ -2925,32 +2841,6 @@ mod tests {
 
         let ids: HashSet<String> = store.trashed().into_iter().map(|t| t.id).collect();
         assert_eq!(ids, HashSet::from([first, second]));
-    }
-
-    #[test]
-    fn upgrading_a_backup_leaves_a_clean_tree_with_the_renames_committed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("notes");
-        fs::create_dir_all(&dir).unwrap();
-        let note = Note::new("Graphs", "BFS", vec![], "");
-        fs::write(
-            dir.join(format!("{}.md", note.id)),
-            note_to_markdown(&note).unwrap(),
-        )
-        .unwrap();
-        crate::sync::init(&dir).unwrap();
-
-        let store = Store::load_from(&dir).unwrap();
-        store.save().unwrap();
-
-        assert_eq!(note_files(&store), ["Graphs.md"]);
-        let status = std::process::Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        let dirty = String::from_utf8_lossy(&status.stdout);
-        assert!(dirty.trim().is_empty(), "uncommitted: {dirty}");
     }
 
     fn parse(name: &str, text: &str) -> Note {

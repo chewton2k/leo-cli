@@ -1,4 +1,3 @@
-mod backup;
 mod board_tools;
 mod boards;
 mod browse;
@@ -17,12 +16,12 @@ pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
+mod keeping;
 pub mod margin;
 mod originals;
 mod progress;
 mod read_cache;
 pub mod record;
-mod record_journal;
 pub mod reply;
 pub mod review;
 mod routes;
@@ -31,8 +30,6 @@ pub mod sessions;
 mod shutdown;
 pub mod speech;
 pub mod steer;
-pub mod storage;
-mod storage_saved;
 mod tasks;
 #[cfg(test)]
 mod tests;
@@ -56,10 +53,9 @@ use axum::{
 };
 use leo_core::store::Store;
 
-use crate::routes::activity::activity;
+use crate::routes::activity::{activity, page_visible};
 use crate::routes::assets::{
-    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recorder_js, recording_js,
-    saving_js,
+    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recording_js, saving_js,
 };
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
@@ -68,7 +64,7 @@ use crate::routes::felix::{
     get_review, list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
     steer_answer,
 };
-use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
+use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
     move_note, rename_dir, search_notes, toggle_checkbox, update_note,
@@ -91,12 +87,6 @@ pub trait SettingsApi: Send + Sync {
     fn refresh_usage(&self) {}
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
-    fn setup_backup(&self, _notes: &std::path::Path, _name: &str) -> Result<String> {
-        anyhow::bail!("Backup setup is unavailable. Reopen Leo and try again.")
-    }
-    fn backup(&self, _notes_dir: &std::path::Path) -> Result<Option<std::process::Command>> {
-        Ok(None)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,23 +97,6 @@ pub struct UploadFile {
 }
 
 pub type Room = Arc<dyn Fn() -> usize + Send + Sync>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WebHit {
-    pub title: String,
-    pub url: String,
-    pub snippet: String,
-}
-
-pub type WebSearch = Arc<dyn Fn(&str) -> Result<Vec<WebHit>> + Send + Sync>;
-pub type WebPage = Arc<dyn Fn(&str) -> Result<String> + Send + Sync>;
-
-#[derive(Clone)]
-pub struct Web {
-    pub search: WebSearch,
-    pub page: WebPage,
-    pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
-}
 
 pub struct Fetched {
     pub body: Option<Vec<u8>>,
@@ -187,11 +160,10 @@ pub struct Powers {
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
     pub calendar_access: Option<Arc<dyn CalendarAccess>>,
-    pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    pub housekeeper: Option<Arc<dyn record::Housekeeper>>,
     pub reader: Option<Reader>,
     pub room: Option<Room>,
     pub context: Option<Room>,
-    pub web: Option<Web>,
     pub converse: Option<chat::Converser>,
     pub seer: Option<captions::Seer>,
     pub meaning: Option<vectors::Meaning>,
@@ -200,6 +172,9 @@ pub struct Powers {
 #[derive(Clone)]
 struct AppState {
     visible: Arc<std::sync::atomic::AtomicBool>,
+    shown: Arc<tokio::sync::Notify>,
+    covered: Arc<std::sync::atomic::AtomicBool>,
+    page_seen: Arc<std::sync::atomic::AtomicU64>,
     refresh_requested: Arc<std::sync::atomic::AtomicBool>,
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
@@ -218,8 +193,6 @@ struct AppState {
     speech: Option<Arc<dyn speech::SpeechApi>>,
     dictation: Option<Arc<dyn dictation::DictationApi>>,
     app_settings: Option<Arc<dyn app_settings::AppApi>>,
-    backups: Arc<backup::Backups>,
-    backup_setups: Arc<tokio::sync::Semaphore>,
     usage_refreshes: Arc<tokio::sync::Semaphore>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
@@ -235,11 +208,10 @@ struct AppState {
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
     chats: std::path::PathBuf,
-    housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    housekeeper: Option<Arc<dyn record::Housekeeper>>,
     reader: Option<Reader>,
     room: Option<Room>,
     context: Option<Room>,
-    web: Option<Web>,
     converse: Option<chat::Converser>,
     seer: Option<captions::Seer>,
     captions: Arc<captions::Captions>,
@@ -279,13 +251,13 @@ impl Activity {
 }
 
 fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
-    if !path.starts_with("/api/") {
+    if !path.starts_with("/api/") || path == "/api/visible" {
         return false;
     }
     let polling = path == "/api/activity"
         || matches!(
             path,
-            "/api/app" | "/api/dictation" | "/api/speech" | "/api/backup" | "/api/tasks"
+            "/api/app" | "/api/dictation" | "/api/speech" | "/api/tasks"
         )
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
@@ -308,8 +280,10 @@ const PICTURES_PER_TICK: usize = 4;
 
 async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut read_at = None;
     let mut graphed_at = None;
+    let mut stuck = None;
     let mut swept_at = None;
     loop {
         tick.tick().await;
@@ -321,8 +295,12 @@ async fn keep_graph_current(state: AppState) {
                 .await;
         }
         if !state.visible.load(std::sync::atomic::Ordering::Acquire)
-            || state.capture_activity.busy()
+            || state.covered.load(std::sync::atomic::Ordering::Acquire)
         {
+            let _ = tokio::time::timeout(margin::SWEEP_EVERY, state.shown.notified()).await;
+            continue;
+        }
+        if state.capture_activity.busy() {
             continue;
         }
         let Ok(seen) = state.read_store(|store| Ok(store.fingerprint())).await else {
@@ -352,7 +330,12 @@ async fn keep_graph_current(state: AppState) {
             }
         }
         let idle = state.activity.idle();
-        if idle < graph::UPDATE_WHEN_IDLE || graphed_at == Some(seen) {
+        if idle < graph::UPDATE_WHEN_IDLE
+            || graphed_at == Some(seen)
+            || stuck.is_some_and(|(at, when): (_, std::time::Instant)| {
+                at == seen && when.elapsed() < graph::RETRY_AUTO_AFTER
+            })
+        {
             continue;
         }
         let Ok(sources) = state
@@ -362,8 +345,12 @@ async fn keep_graph_current(state: AppState) {
             continue;
         };
         let graphs = Arc::clone(&state.graphs);
-        let Ok(mut settled) = tokio::task::spawn_blocking(move || {
-            !graphs.update_if_due(sources.clone(), idle) && graphs.settled(&sources)
+        let Ok((mut settled, mut busy)) = tokio::task::spawn_blocking(move || {
+            let started = graphs.update_if_due(sources.clone(), idle);
+            (
+                !started && graphs.settled(&sources),
+                started || graphs.building().is_some(),
+            )
         })
         .await
         else {
@@ -382,14 +369,17 @@ async fn keep_graph_current(state: AppState) {
             };
             if !paths.is_empty() {
                 settled = false;
-                let _ = tokio::task::spawn_blocking(move || {
+                busy |= tokio::task::spawn_blocking(move || {
                     captions::caption_paths(&paths, &captions, &seer)
                 })
-                .await;
+                .await
+                .is_ok_and(|done| done > 0);
             }
         }
-        if settled {
+        if settled && !state.captions.waiting() {
             graphed_at = Some(seen);
+        } else if !busy {
+            stuck = Some((seen, std::time::Instant::now()));
         }
     }
 }
@@ -451,7 +441,7 @@ impl AppState {
                 store.reload = false;
             }
             let result = work(&mut store);
-            if result.is_err() {
+            if writing && result.is_err() {
                 store.reload = true;
             }
             result
@@ -485,8 +475,6 @@ pub(crate) struct Places {
 pub struct Running {
     port: u16,
     token: String,
-    notes: std::path::PathBuf,
-    runtime: tokio::runtime::Handle,
     state: AppState,
     stop: tokio::sync::oneshot::Sender<()>,
     server: tokio::task::JoinHandle<std::io::Result<()>>,
@@ -496,12 +484,14 @@ pub struct Running {
 struct Background {
     graph: tokio::task::JoinHandle<()>,
     idle: tokio::task::JoinHandle<()>,
+    expiry: tokio::task::JoinHandle<()>,
 }
 
 impl Background {
     fn stop(&self) {
         self.graph.abort();
         self.idle.abort();
+        self.expiry.abort();
     }
 }
 
@@ -522,6 +512,10 @@ impl Running {
             self.state
                 .refresh_requested
                 .store(true, std::sync::atomic::Ordering::Release);
+            self.state
+                .covered
+                .store(false, std::sync::atomic::Ordering::Release);
+            self.state.shown.notify_one();
         }
         changed
     }
@@ -540,24 +534,14 @@ impl Running {
         self.state.usage.line()
     }
 
-    pub fn back_up(&self) {
-        let Some(settings) = self.state.settings.clone() else {
-            return;
-        };
-        let _entered = self.runtime.enter();
-        let _ = self.state.backups.queue(settings, self.notes.clone());
-    }
-
     pub async fn stop(self) {
         let Running {
-            notes,
             state,
             stop,
             server,
             background,
             ..
         } = self;
-        let settings = state.settings.clone();
         background.stop();
         let _ = stop.send(());
         shutdown::drain(shutdown::GRACE, server).await;
@@ -566,16 +550,6 @@ impl Running {
         drop(state);
         let cleanup = tokio::task::spawn_blocking(move || warm.clear());
         let _ = tokio::time::timeout(shutdown::CLEANUP, cleanup).await;
-        if let Some(settings) = settings {
-            let prepared = tokio::time::timeout(
-                shutdown::LAST_BACKUP,
-                tokio::task::spawn_blocking(move || settings.backup(&notes)),
-            )
-            .await;
-            if let Ok(Ok(Ok(Some(mut command)))) = prepared {
-                let _ = leo_core::children::quiet(&mut command).spawn();
-            }
-        }
     }
 }
 
@@ -617,7 +591,6 @@ pub(crate) async fn start_in(
     let housekeeper = powers.housekeeper;
     let reader = powers.reader;
     let room = powers.room;
-    let web = powers.web;
     let converse = powers.converse;
     let seer = powers.seer;
     let meaning = powers.meaning;
@@ -634,6 +607,9 @@ pub(crate) async fn start_in(
         toolless_chat,
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        shown: Default::default(),
+        covered: Default::default(),
+        page_seen: Default::default(),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
             changes: Some(store_refresh::Changes::new(&notes)),
@@ -653,8 +629,6 @@ pub(crate) async fn start_in(
         speech: powers.speech,
         dictation: powers.dictation,
         app_settings: powers.app_settings,
-        backups: Default::default(),
-        backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
         importer,
         imports: Default::default(),
@@ -674,7 +648,6 @@ pub(crate) async fn start_in(
         reader,
         room,
         context: powers.context,
-        web,
         converse,
         seer,
         captions,
@@ -685,9 +658,21 @@ pub(crate) async fn start_in(
         vectors,
     };
 
+    let expiry = tokio::spawn({
+        let state = state.clone();
+        async move {
+            let mut daily = tokio::time::interval(std::time::Duration::from_secs(86_400));
+            loop {
+                daily.tick().await;
+                keeping::expire_now(&state).await;
+            }
+        }
+    });
+
     let background = Background {
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
+        expiry,
     };
     let app = router(state.clone()).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
@@ -708,8 +693,6 @@ pub(crate) async fn start_in(
     Ok(Running {
         port,
         token: options.token,
-        notes,
-        runtime: tokio::runtime::Handle::current(),
         state,
         stop,
         server,
@@ -749,12 +732,6 @@ async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/api/backup", get(backup::status).post(backup::leave))
-        .route(
-            "/api/backup/setup",
-            axum::routing::post(routes::settings::setup_backup)
-                .layer(axum::extract::DefaultBodyLimit::max(4096)),
-        )
         .route("/api/notes", get(list_notes).post(create_note))
         .route(
             "/api/notes/{id}",
@@ -889,7 +866,6 @@ fn router(state: AppState) -> Router {
         .route("/theme.js", get(routes::assets::theme_js))
         .route("/chat.js", get(chat_js))
         .route("/pane-resize.js", get(routes::assets::pane_resize_js))
-        .route("/api/progress/{key}", get(routes::progress::get))
         .route("/api/chat", post(chat_reply))
         .route("/api/quiz/mark", post(routes::felix::mark_quiz))
         .route(
@@ -913,8 +889,11 @@ fn router(state: AppState) -> Router {
             "/api/chats/{id}/files/{doc}",
             axum::routing::delete(remove_chat_file),
         )
-        .route("/api/storage", get(get_storage).post(change_storage))
         .route("/api/keep", get(get_keep).post(set_keep))
+        .route(
+            "/api/keep/preview",
+            post(routes::housekeeping::preview_keep),
+        )
         .route("/api/export", get(export_zip))
         .route(
             "/api/chats/{id}",
@@ -937,6 +916,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/import/{id}", get(import_status))
         .route("/api/activity", get(activity))
+        .route("/api/visible", post(page_visible))
         .route("/api/image", get(get_picture))
         .route(
             "/api/images",
@@ -966,10 +946,6 @@ fn router(state: AppState) -> Router {
             "/api/record/{id}",
             get(record::status).delete(record::discard),
         )
-        .route(
-            "/api/record/{id}/audio",
-            post(record::audio).layer(axum::extract::DefaultBodyLimit::max(record::AUDIO_BYTES)),
-        )
         .route("/api/record/{id}/pause", post(record::pause))
         .route("/api/record/{id}/point", post(record::point))
         .route("/api/record/{id}/wants", post(record::wants))
@@ -982,12 +958,6 @@ fn router(state: AppState) -> Router {
         .route("/api/record/{id}/stop", post(record::stop))
         .route("/api/record/{id}/finish", post(record::finish_available))
         .route("/api/record/{id}/recover", post(record::recover))
-        .route("/recorder.js", get(recorder_js))
-        .route("/audio-queue.js", get(routes::assets::audio_queue_js))
-        .route(
-            "/browser-storage.js",
-            get(routes::assets::browser_storage_js),
-        )
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
         .route(
@@ -1014,6 +984,9 @@ async fn stop_idle_sessions(warm: Arc<warm::Slot>) {
     let mut every = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         every.tick().await;
+        if !warm.holding() {
+            continue;
+        }
         let warm = Arc::clone(&warm);
         let _ = tokio::task::spawn_blocking(move || warm.tidy()).await;
     }
@@ -1062,7 +1035,6 @@ mod activity_tests {
             "/api/app",
             "/api/dictation",
             "/api/speech",
-            "/api/backup",
             "/api/tasks",
             "/api/activity",
             "/api/record/r1",

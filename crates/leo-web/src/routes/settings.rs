@@ -17,7 +17,7 @@ pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
@@ -60,7 +60,7 @@ pub(crate) async fn change_setting(
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
@@ -109,44 +109,5 @@ pub(crate) async fn test_setting(
         )
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-pub(crate) async fn setup_backup(
-    State(state): State<AppState>,
-    body: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
-) -> Response {
-    let Some(settings) = state.settings.clone() else {
-        return no_settings();
-    };
-    let Ok(Json(body)) = body else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error":"Enter a GitHub repository name to set up Backup."})),
-        )
-            .into_response();
-    };
-    let Some(name) = body["name"]
-        .as_str()
-        .filter(|s| s.len() <= 201)
-        .map(str::to_owned)
-    else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error":"Use a repository name such as leo-notes."})),
-        )
-            .into_response();
-    };
-    let Ok(permit) = state.backup_setups.clone().try_acquire_owned() else {
-        return (StatusCode::CONFLICT,Json(serde_json::json!({"error":"Backup setup is already running. Let it finish, then try again."}))).into_response();
-    };
-    let notes = match state.with_store(|s| Ok(s.notes_dir.clone())).await {
-        Ok(notes) => notes,
-        Err(status) => return status.into_response(),
-    };
-    match tokio::task::spawn_blocking(move || { let _permit=permit; settings.setup_backup(&notes,&name).map(|message|(message,settings.describe(&notes))) }).await {
-        Ok(Ok((message,page)))=>Json(serde_json::json!({"message":message,"settings":page})).into_response(),
-        Ok(Err(e))=>(StatusCode::BAD_REQUEST,Json(serde_json::json!({"error":e.to_string()}))).into_response(),
-        Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,Json(serde_json::json!({"error":"Backup setup stopped unexpectedly. Check Health and try again."}))).into_response(),
     }
 }

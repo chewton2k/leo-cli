@@ -1,0 +1,371 @@
+const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
+
+let counter = 0;
+const name = () => `Review ${Date.now()} ${counter++}`;
+const noteRow = (page, id, host = '#side') => page.locator(`${host} .side-note[data-id="${id}"]`);
+const folderRow = (page, dir, host = '#side') => page.locator(`${host} .side-row[data-action="open-folder"][data-dir="${dir}"]`);
+const twist = (page, dir) => page.locator(`#side [data-action="side-twist"][data-dir="${dir}"]`);
+const newHash = (dir) => (dir ? `#/new/${encodeURIComponent(dir)}` : '#/new');
+async function createNote(page, directory = '', title = `! ${name()}`) {
+  const response = await page.request.post('/api/notes', { data: { title, body: 'A saved note for the review.', directory } });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+async function createFolder(page, dir = name()) {
+  const response = await page.request.post('/api/dirs', { data: { path: dir } });
+  expect(response.ok()).toBe(true);
+  return dir;
+}
+async function openNote(page, note) {
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#title')).toHaveText(note.title);
+}
+async function options(page, row, label) {
+  await row.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: label, exact: true }).click();
+}
+async function moveChoices(page, row) {
+  await options(page, row, 'Move');
+  await expect(page.locator('.sheet h3')).toContainText('Move');
+  return page.locator('.sheet [data-explorer-move]').evaluateAll(els => els.map(el => el.dataset.explorerMove));
+}
+async function menuFor(page, locator) {
+  await locator.dispatchEvent('contextmenu', { clientX: 200, clientY: 300 });
+  await expect(page.locator('.explorer-menu')).toBeVisible();
+}
+const items = (page) => page.getByRole('menuitem').allTextContents();
+async function folders(page) {
+  await page.locator('#menu').click();
+  await page.locator('.sheet [data-action="folders"]').click();
+  await expect(page.locator('#folders-sheet')).toBeVisible();
+}
+const noteDir = async (page, id) => (await (await page.request.get(`/api/notes/${id}`)).json()).directory;
+
+test.beforeEach(async ({ page }) => {
+  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
+  await page.goto(`/?token=${token}`);
+  await expect(page.locator('#app')).not.toBeEmpty();
+});
+
+for (const where of ['chip', 'breadcrumb']) test(`desktop ${where} folder click unfolds a hidden explorer`, async ({ page }) => {
+  const dir = await createFolder(page);
+  const note = await createNote(page, dir);
+  await openNote(page, note);
+  await page.locator('#side .side-fold').click();
+  await expect(page.locator('body')).toHaveClass(/side-mini/);
+  await expect(page.locator('#side .side-explorer')).toBeHidden();
+  const control = where === 'chip' ? page.locator(`#app [data-action="open-folder"][data-dir="${dir}"]`) : page.locator(`#crumbs [data-action="open-folder"][data-dir="${dir}"]`);
+  await control.click();
+  await expect(page.locator('body')).not.toHaveClass(/side-mini/);
+  await expect(page.locator('#side .side-explorer')).toBeVisible();
+  await expect(folderRow(page, dir)).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('leo-side'))).toBe('wide');
+});
+
+test('a passive folder reveal keeps the explorer hidden and opens no sheet', async ({ page }) => {
+  const dir = await createFolder(page);
+  await page.evaluate(() => localStorage.setItem('leo-side', 'mini'));
+  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
+  await page.reload();
+  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.locator('body')).toHaveClass(/side-mini/);
+  await page.evaluate(() => localStorage.setItem('leo-side', 'wide'));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
+  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.locator('#folders-sheet')).toHaveCount(0);
+  await expect(page.locator('.scrim')).toHaveCount(0);
+});
+
+test('compact folder chip opens Folders with that folder revealed and Escape returns to More', async ({ page }) => {
+  const dir = await createFolder(page);
+  const note = await createNote(page, dir);
+  await openNote(page, note);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(`#app [data-action="open-folder"][data-dir="${dir}"]`).click();
+  await expect(page.locator('#folders-sheet')).toBeVisible();
+  await expect(folderRow(page, dir, '#folders-sheet')).toBeVisible();
+  await expect(folderRow(page, dir, '#folders-sheet')).toHaveAttribute('aria-expanded', 'true');
+  await expect(noteRow(page, note.id, '#folders-sheet')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#folders-sheet')).toHaveCount(0);
+  await expect(page.locator('#menu')).toBeFocused();
+});
+
+for (const home of ['root', 'folder']) test(`folder then note: opening a note in the ${home} replaces the folder scope for New, Record and Upload`, async ({ page }) => {
+  const picked = await createFolder(page);
+  const other = home === 'folder' ? await createFolder(page) : '';
+  const note = await createNote(page, other, `! Scope ${name()}`);
+  await page.goto('/#/');
+  if (other) await twist(page, other).click();
+  await folderRow(page, picked).click();
+  await expect(page.locator('#side .side-group [data-action="new"]')).toHaveAttribute('data-dir', picked);
+  await noteRow(page, note.id).click();
+  await expect(page.locator('#title')).toHaveText(note.title);
+  await expect(page.locator('#side [data-action="record"]')).toHaveAttribute('data-dir', other);
+  await expect(page.locator('#side [data-action="upload"]')).toHaveAttribute('data-dir', other);
+  await page.locator('#side .side-group [data-action="new"]').click();
+  await expect.poll(() => new URL(page.url()).hash).toBe(newHash(other));
+});
+
+for (const home of ['root', 'folder']) test(`note then folder: a folder click after opening a ${home} note wins for New, Record and Upload`, async ({ page }) => {
+  const picked = await createFolder(page);
+  const other = home === 'folder' ? await createFolder(page) : '';
+  const note = await createNote(page, other);
+  await openNote(page, note);
+  await folderRow(page, picked).click();
+  await expect(page.locator('#title')).toHaveText(note.title);
+  await expect(page.locator('#side [data-action="record"]')).toHaveAttribute('data-dir', picked);
+  await expect(page.locator('#side [data-action="upload"]')).toHaveAttribute('data-dir', picked);
+  await page.locator('#side .side-group [data-action="new"]').click();
+  await expect.poll(() => new URL(page.url()).hash).toBe(newHash(picked));
+});
+
+test('context menu regions: blank tree is root, heading follows the scope, status and kids use their folder', async ({ page }) => {
+  const dir = await createFolder(page);
+  const empty = await createFolder(page);
+  const note = await createNote(page, dir);
+  const current = await createNote(page);
+  await openNote(page, current);
+  await menuFor(page, page.locator('#side .side-tree'));
+  expect(await items(page)).toEqual(['New note', 'New folder']);
+  await page.keyboard.press('Escape');
+  await menuFor(page, page.locator('#side .side-group'));
+  expect(await items(page)).toEqual(['New note', 'New folder']);
+  await page.keyboard.press('Escape');
+  await folderRow(page, dir).click();
+  await expect(noteRow(page, note.id)).toBeVisible();
+  await menuFor(page, page.locator(`#side .side-group`));
+  expect(await items(page)).toEqual(['New note here', 'New folder here']);
+  await page.keyboard.press('Escape');
+  await menuFor(page, page.locator(`#side .side-kids[data-kids="${dir}"]`));
+  expect(await items(page)).toEqual(['New note here', 'New folder here']);
+  await page.getByRole('menuitem', { name: 'New note here', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).hash).toBe(newHash(dir));
+  await openNote(page, current);
+  await folderRow(page, empty).click();
+  const status = page.locator(`#side .side-note-status[data-drop-dir="${empty}"]`);
+  await expect(status).toContainText('Empty folder');
+  await menuFor(page, status);
+  expect(await items(page)).toEqual(['New note here', 'New folder here']);
+  await page.getByRole('menuitem', { name: 'New folder here', exact: true }).click();
+  await page.locator('#folder-name').fill('Inner');
+  await page.locator('[data-action="create-folder"]').click();
+  await expect(folderRow(page, `${empty}/Inner`)).toBeVisible();
+});
+
+test('opening a context menu never selects a folder or changes the open note', async ({ page }) => {
+  const dir = await createFolder(page);
+  const current = await createNote(page);
+  await openNote(page, current);
+  const before = page.url();
+  await folderRow(page, dir).click({ button: 'right' });
+  await expect(page.locator('.explorer-menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(folderRow(page, dir)).not.toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('#side .side-group [data-action="new"]')).toHaveAttribute('data-dir', '');
+  await expect(page.locator('#title')).toHaveText(current.title);
+  expect(page.url()).toBe(before);
+});
+
+test('note rename, move and trash sheets return focus to the logical row on desktop', async ({ page }) => {
+  const dir = await createFolder(page);
+  const destination = await createFolder(page);
+  const note = await createNote(page, dir);
+  await page.goto('/#/');
+  await folderRow(page, dir).click();
+  const row = noteRow(page, note.id);
+  await options(page, row, 'Rename');
+  await page.locator('.sheet [data-action="close"]').click();
+  await expect(row).toBeFocused();
+  await options(page, row, 'Rename');
+  await page.getByRole('textbox', { name: 'Note name' }).fill(name());
+  await page.locator('#explorer-rename-save').click();
+  await expect(row).toBeFocused();
+  await moveChoices(page, row);
+  await page.keyboard.press('Escape');
+  await expect(row).toBeFocused();
+  await moveChoices(page, row);
+  await page.locator(`[data-explorer-move="${destination}"]`).click();
+  await expect(page.locator('.toast')).toContainText('Moved');
+  await expect(row).toHaveCount(0);
+  await expect(folderRow(page, destination)).toBeFocused();
+  await folderRow(page, destination).click();
+  await options(page, noteRow(page, note.id), 'Move to trash');
+  await page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+  await expect(noteRow(page, note.id)).toBeFocused();
+  await options(page, noteRow(page, note.id), 'Move to trash');
+  await page.locator('.sheet').getByRole('button', { name: 'Move to trash', exact: true }).click();
+  await expect(noteRow(page, note.id)).toHaveCount(0);
+  await expect(folderRow(page, destination)).toBeFocused();
+});
+
+test('folder rename, move and trash sheets return focus to the logical row on desktop', async ({ page }) => {
+  const dir = await createFolder(page);
+  const destination = await createFolder(page);
+  await page.goto('/#/');
+  await options(page, folderRow(page, dir), 'Rename');
+  await page.locator('.sheet [data-action="close"]').click();
+  await expect(folderRow(page, dir)).toBeFocused();
+  await options(page, folderRow(page, dir), 'Rename');
+  const renamed = name();
+  await page.getByRole('textbox', { name: 'Folder name' }).fill(renamed);
+  await page.locator('[data-action="folder-rename-save"]').click();
+  await expect(folderRow(page, renamed)).toBeFocused();
+  await moveChoices(page, folderRow(page, renamed));
+  await page.locator(`[data-explorer-move="${destination}"]`).click();
+  await expect(page.locator('.toast')).toContainText('Moved');
+  await expect(folderRow(page, destination)).toBeFocused();
+  await folderRow(page, destination).click();
+  const inside = `${destination}/${renamed}`;
+  await expect(folderRow(page, inside)).toBeVisible();
+  await options(page, folderRow(page, inside), 'Move to trash');
+  await page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+  await expect(folderRow(page, inside)).toBeFocused();
+  await options(page, folderRow(page, inside), 'Move to trash');
+  await page.locator('[data-action="folder-delete-now"]').click();
+  await expect(folderRow(page, inside)).toHaveCount(0);
+  await expect(folderRow(page, destination)).toBeFocused();
+});
+
+test('compact nested sheets return to Folders with focus on the logical row', async ({ page }) => {
+  const dir = await createFolder(page);
+  const note = await createNote(page, dir);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await folders(page);
+  const host = '#folders-sheet';
+  await folderRow(page, dir, host).click();
+  await expect(noteRow(page, note.id, host)).toBeVisible();
+  await options(page, noteRow(page, note.id, host), 'Rename');
+  await page.locator('.sheet [data-action="close"]').click();
+  await expect(page.locator(host)).toBeVisible();
+  await expect(noteRow(page, note.id, host)).toBeFocused();
+  await options(page, noteRow(page, note.id, host), 'Rename');
+  await page.getByRole('textbox', { name: 'Note name' }).fill(name());
+  await page.locator('#explorer-rename-save').click();
+  await expect(page.locator(host)).toBeVisible();
+  await expect(noteRow(page, note.id, host)).toBeFocused();
+  await options(page, folderRow(page, dir, host), 'Rename');
+  const renamed = name();
+  await page.getByRole('textbox', { name: 'Folder name' }).fill(renamed);
+  await page.locator('[data-action="folder-rename-save"]').click();
+  await expect(page.locator(host)).toBeVisible();
+  await expect(folderRow(page, renamed, host)).toBeFocused();
+  await options(page, folderRow(page, renamed, host), 'Move to trash');
+  await page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator(host)).toBeVisible();
+  await expect(folderRow(page, renamed, host)).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#menu')).toBeFocused();
+});
+
+test('move choices never offer the folder a note or folder is already in', async ({ page }) => {
+  const parent = await createFolder(page);
+  const child = await createFolder(page, `${parent}/Child`);
+  const sibling = await createFolder(page);
+  const inChild = await createNote(page, child);
+  const atRoot = await createNote(page);
+  await page.goto('/#/');
+  await twist(page, parent).click();
+  await folderRow(page, child).click();
+  const noteChoices = await moveChoices(page, noteRow(page, inChild.id));
+  expect(noteChoices).not.toContain(child);
+  expect(noteChoices).toEqual(expect.arrayContaining(['', parent, sibling]));
+  await page.keyboard.press('Escape');
+  const rootChoices = await moveChoices(page, noteRow(page, atRoot.id));
+  expect(rootChoices).not.toContain('');
+  expect(rootChoices).toEqual(expect.arrayContaining([parent, child, sibling]));
+  await page.keyboard.press('Escape');
+  const nested = await moveChoices(page, folderRow(page, child));
+  expect(nested).not.toContain(parent);
+  expect(nested).not.toContain(child);
+  expect(nested).toEqual(expect.arrayContaining(['', sibling]));
+  await page.keyboard.press('Escape');
+  const top = await moveChoices(page, folderRow(page, sibling));
+  expect(top).not.toContain('');
+  expect(top).not.toContain(sibling);
+  expect(top).toEqual(expect.arrayContaining([parent, child]));
+  expect(await noteDir(page, inChild.id)).toBe(child);
+});
+
+test('note titles keep slashes as text while folder names stay strict', async ({ page }) => {
+  const dir = await createFolder(page);
+  const note = await createNote(page, dir);
+  const current = await createNote(page);
+  await openNote(page, current);
+  await folderRow(page, dir).click();
+  const before = (await (await page.request.get('/api/folders')).json()).map(folder => folder.name).sort();
+  const title = 'Q3/Q4 plan \\ draft';
+  await options(page, noteRow(page, note.id), 'Rename');
+  await page.getByRole('textbox', { name: 'Note name' }).fill(title);
+  await page.locator('#explorer-rename-save').click();
+  await expect(page.locator('.toast')).toContainText('Renamed note');
+  await expect(noteRow(page, note.id)).toHaveText(title);
+  const saved = await (await page.request.get(`/api/notes/${note.id}`)).json();
+  expect(saved.title).toBe(title);
+  expect(saved.directory).toBe(dir);
+  expect((await (await page.request.get('/api/folders')).json()).map(folder => folder.name).sort()).toEqual(before);
+  await expect(page.locator('#title')).toHaveText(current.title);
+  await options(page, folderRow(page, dir), 'Rename');
+  const input = page.getByRole('textbox', { name: 'Folder name' });
+  await input.fill('a/b');
+  await page.locator('[data-action="folder-rename-save"]').click();
+  await expect(page.locator('.toast')).toContainText('cannot contain /');
+  await expect(input).toHaveValue('a/b');
+});
+
+test('compact More new folder shows the new folder revealed in Folders', async ({ page }) => {
+  const dir = await createFolder(page);
+  await page.goto('/#/');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#menu').click();
+  await page.locator('.sheet [data-action="new-folder"]').click();
+  const made = name();
+  await page.locator('#folder-name').fill(made);
+  await page.locator('[data-action="create-folder"]').click();
+  await expect(page.locator('#folders-sheet')).toBeVisible();
+  await expect(folderRow(page, made, '#folders-sheet')).toBeVisible();
+  await expect(folderRow(page, made, '#folders-sheet')).toHaveAttribute('aria-current', 'page');
+  await expect(folderRow(page, dir, '#folders-sheet')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#menu')).toBeFocused();
+});
+
+test('the rail has no Felix or Collapse all control and loaded folders never flash Opening notes', async ({ page }) => {
+  const dir = await createFolder(page);
+  const empty = await createFolder(page, `${dir}/Empty`);
+  await createNote(page, dir);
+  await page.goto('/#/');
+  await expect(page.locator('#side').getByRole('button', { name: 'Ask Felix' })).toHaveCount(0);
+  await expect(page.locator('#chat-toggle')).toBeVisible();
+  await expect(page.locator('[data-action="side-collapse"]')).toHaveCount(0);
+  await folderRow(page, dir).click();
+  await folderRow(page, empty).click();
+  const status = page.locator(`#side .side-note-status[data-drop-dir="${empty}"]`);
+  await expect(status).toContainText('Empty folder');
+  await page.evaluate(() => {
+    window.flashes = [];
+    new MutationObserver(records => {
+      for (const record of records) {
+        if (record.type === 'characterData' && (record.oldValue || '').includes('Opening notes')) window.flashes.push('text');
+        for (const node of [...record.addedNodes, ...record.removedNodes]) if ((node.textContent || '').includes('Opening notes')) window.flashes.push(node.nodeName);
+        if (record.type === 'attributes' && record.attributeName === 'aria-busy') window.flashes.push('busy');
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true, characterDataOldValue: true, attributes: true, attributeFilter: ['aria-busy'] });
+  });
+  for (const section of ['general', 'felix', 'keeping', 'general']) {
+    await page.locator('#side [data-action="settings"]').click();
+    await page.goto(`/#/settings/${section}`);
+    await expect(page.locator('#app')).not.toBeEmpty();
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 120)));
+    await expect(status).toContainText('Empty folder');
+    await folderRow(page, dir).click();
+    await folderRow(page, dir).click();
+    await expect(status).toContainText('Empty folder');
+  }
+  await page.goto('/#/');
+  await expect(status).toContainText('Empty folder');
+  expect(await page.evaluate(() => window.flashes)).toEqual([]);
+});

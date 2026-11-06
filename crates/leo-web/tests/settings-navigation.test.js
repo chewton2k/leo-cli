@@ -9,21 +9,21 @@ function helpers(listeners = {}) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), context);
   return context;
 }
-test('all grouped Settings routes resolve, with Storage and Trash under Data', () => {
+test('all grouped Settings routes resolve, with Keeping and Trash under Data', () => {
   const h = helpers();
-  for (const section of ['general', 'dictation', 'models', 'writing', 'calendar', 'backup', 'storage', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
+  for (const section of ['general', 'dictation', 'models', 'writing', 'calendar', 'keeping', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
   assert.equal(h.settingsSection(''), 'dictation');
   assert.equal(h.settingsSection('../bad'), 'general');
-  const html = h.settingsFrame('storage', '<section>Storage content</section>');
+  const html = h.settingsFrame('keeping', '<section>Keeping content</section>');
   for (const label of ['Leo', 'Your notes', 'Data', 'Trash', 'This app', 'Speech models', 'Updates &amp; about']) assert.ok(html.includes(label), label);
-  assert.ok(html.includes('href="#/settings/storage" aria-current="page"'));
+  assert.ok(html.includes('href="#/settings/keeping" aria-current="page"'));
   assert.ok(!html.includes('Phone'));
-  assert.ok(html.includes('Storage content'));
-  assert.ok(html.includes('<h1>Storage</h1>'));
+  assert.ok(html.includes('Keeping content'));
+  assert.ok(html.includes('<h1>Keeping</h1>'));
   assert.ok(html.includes('<span class="settings-nav-pill" aria-hidden="true"></span>'));
   assert.ok(html.includes('class="settings-section arrive"'));
-  assert.equal((html.match(/class="settings-link/g) || []).length, 11);
-  assert.equal((html.match(/<svg>/g) || []).length, 8, 'the search icon and every section without a shared icon draw their own');
+  assert.equal((html.match(/class="settings-link/g) || []).length, 10);
+  assert.equal((html.match(/<svg>/g) || []).length, 7, 'the search icon and every section without a shared icon draw their own');
   assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections">'));
   assert.ok(html.includes('id="settings-search" type="text" role="combobox" aria-label="Search settings"'));
   assert.ok(html.includes('<div class="settings-results" id="settings-results"></div>'));
@@ -47,12 +47,12 @@ test('switches stay checkboxes and segmented choices carry their value', () => {
 });
 test('every Settings section names its current page in the same breadcrumb', () => {
   const h = helpers();
-  for (const [id, title] of [['general', 'General'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['backup', 'Backup'], ['storage', 'Storage'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
+  for (const [id, title] of [['general', 'General'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['keeping', 'Keeping'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
     assert.equal(h.settingsCrumbs(id), `<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button aria-current="page">${title}</button>`);
   }
 });
 
-const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'storage.js', 'trash.js', 'margin-notes.js'].map(name => fs.readFileSync(path.join(__dirname, '../src/web/app', name), 'utf8')).join('\n');
+const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'keeping.js', 'trash.js', 'margin-notes.js'].map(name => fs.readFileSync(path.join(__dirname, '../src/web/app', name), 'utf8')).join('\n');
 test('every searchable setting names a real section and a target the page draws', () => {
   const h = helpers();
   const index = vm.runInContext('SETTINGS_INDEX', h);
@@ -110,7 +110,7 @@ test('choice cards are real radios in a group, with a hidden field that fires ch
   const radios = ['both', 'right', 'none'].map((value, i) => ({ value, checked: i === 1 }));
   const picks = radios.map(radio => ({ classList: { on: false, toggle(_, on) { this.on = on; }, contains() { return this.on; } }, querySelector: () => radio }));
   const set = {}, field = { value: 'right', heard: [], dispatchEvent(e) { this.heard.push([e.type, e.bubbles]); } }, ring = { style: {}, offsetWidth: 0 };
-  const box = { querySelectorAll: () => picks, querySelector: selector => (selector.includes('hidden') ? field : ring), style: { setProperty: (key, value) => { set[key] = value; } } };
+  const box = { querySelectorAll: () => picks, querySelector: selector => (selector.includes('hidden') ? field : ring), style: { getPropertyValue: (key) => set[key], setProperty: (key, value) => { set[key] = value; } } };
   h.syncChoiceCards(box);
   assert.equal(set['--at'], 1);
   field.value = 'none';

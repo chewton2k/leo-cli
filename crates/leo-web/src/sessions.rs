@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::token;
 
 pub const COOKIE: &str = "leo_session";
-pub const LEGACY_COOKIE: &str = "leo_token";
 pub const KEEP_DAYS: i64 = 30;
 const TOUCH_EVERY_SECS: i64 = 300;
 const MOST: usize = 50;
@@ -16,99 +15,13 @@ const MOST: usize = 50;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
     pub secret: String,
-    pub device: String,
     pub created_at: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
-    #[serde(default)]
-    pub site: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Seen {
-    pub handle: String,
-    pub device: String,
-    pub created_at: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-    pub current: bool,
-    pub place: String,
-}
-
-const LINK_DOMAIN: &str = ".trycloudflare.com";
-
-pub fn site_of(host: &str) -> String {
-    let host = host.trim().to_ascii_lowercase();
-    if host.starts_with('[') {
-        return host
-            .split(']')
-            .next()
-            .map(|h| format!("{h}]"))
-            .unwrap_or_default();
-    }
-    host.split(':').next().unwrap_or("").to_string()
-}
-
-pub fn place_of(site: &str) -> String {
-    match site {
-        "" => String::new(),
-        "localhost" | "127.0.0.1" | "[::1]" => "on this computer".into(),
-        ON_THE_NETWORK => "on your Wi-Fi".into(),
-        s if s.ends_with(LINK_DOMAIN) => "through the link from any network".into(),
-        _ => "on your Wi-Fi".into(),
-    }
 }
 
 pub struct Sessions {
     path: Option<PathBuf>,
     list: Mutex<Vec<Session>>,
-}
-
-pub fn handle_of(secret: &str) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in format!("leo-session:{secret}").bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
-}
-
-pub fn device_of(user_agent: &str) -> String {
-    let ua = user_agent.to_lowercase();
-    let system = if ua.contains("iphone") {
-        "iPhone"
-    } else if ua.contains("ipad") {
-        "iPad"
-    } else if ua.contains("android") {
-        "Android"
-    } else if ua.contains("windows") {
-        "Windows"
-    } else if ua.contains("mac os x") || ua.contains("macintosh") {
-        "Mac"
-    } else if ua.contains("cros") {
-        "ChromeOS"
-    } else if ua.contains("linux") {
-        "Linux"
-    } else {
-        ""
-    };
-    let browser = if ua.contains("edg/") {
-        "Edge"
-    } else if ua.contains("firefox/") || ua.contains("fxios/") {
-        "Firefox"
-    } else if ua.contains("opr/") {
-        "Opera"
-    } else if ua.contains("chrome/") || ua.contains("crios/") {
-        "Chrome"
-    } else if ua.contains("safari/") {
-        "Safari"
-    } else {
-        ""
-    };
-    match (browser, system) {
-        ("", "") => "A browser".to_string(),
-        ("", system) => format!("A browser on {system}"),
-        (browser, "") => browser.to_string(),
-        (browser, system) => format!("{browser} on {system}"),
-    }
 }
 
 impl Sessions {
@@ -166,7 +79,7 @@ impl Sessions {
         Ok(out)
     }
 
-    pub fn start(&self, user_agent: &str, site: &str, now: DateTime<Utc>) -> Result<String> {
+    pub fn start(&self, now: DateTime<Utc>) -> Result<String> {
         let secret = format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
@@ -174,10 +87,8 @@ impl Sessions {
         );
         let session = Session {
             secret: secret.clone(),
-            device: device_of(user_agent),
             created_at: now,
             last_seen: now,
-            site: site_of(site),
         };
         self.change(|list| {
             list.retain(|s| now - s.last_seen < Duration::days(KEEP_DAYS));
@@ -206,89 +117,19 @@ impl Sessions {
         })
         .unwrap_or(false)
     }
-
-    pub fn list(&self, current: Option<&str>, now: DateTime<Utc>) -> Vec<Seen> {
-        let list = self.list.lock().unwrap_or_else(|e| e.into_inner());
-        let mut out: Vec<Seen> = list
-            .iter()
-            .filter(|s| now - s.last_seen < Duration::days(KEEP_DAYS))
-            .map(|s| Seen {
-                handle: handle_of(&s.secret),
-                device: s.device.clone(),
-                created_at: s.created_at,
-                last_seen: s.last_seen,
-                current: current.is_some_and(|c| token::same(c, &s.secret)),
-                place: place_of(&s.site),
-            })
-            .collect();
-        out.sort_by(|a, b| {
-            b.current
-                .cmp(&a.current)
-                .then(b.last_seen.cmp(&a.last_seen))
-        });
-        out
-    }
-
-    pub fn end(&self, handle: &str) -> Result<bool> {
-        self.change(|list| {
-            let before = list.len();
-            list.retain(|s| handle_of(&s.secret) != handle);
-            let gone = list.len() != before;
-            (gone, gone)
-        })
-    }
-
-    pub fn end_others(&self, current: &str) -> Result<usize> {
-        self.change(|list| {
-            let before = list.len();
-            list.retain(|s| token::same(&s.secret, current));
-            let gone = before - list.len();
-            (gone, gone > 0)
-        })
-    }
-
-    pub fn end_all(&self) -> Result<usize> {
-        self.change(|list| {
-            let gone = list.len();
-            list.clear();
-            (gone, gone > 0)
-        })
-    }
 }
 
 pub struct Gate {
     token: std::sync::RwLock<String>,
     pub sessions: Sessions,
-    link: std::sync::RwLock<Option<String>>,
 }
-
-pub const ON_THIS_COMPUTER: &str = "localhost";
-pub const ON_THE_NETWORK: &str = "lan";
 
 impl Gate {
     pub fn new(token: String, sessions: Sessions) -> Gate {
         Gate {
             token: std::sync::RwLock::new(token),
             sessions,
-            link: std::sync::RwLock::new(None),
         }
-    }
-
-    pub fn set_link(&self, host: Option<&str>) {
-        let mut link = self.link.write().unwrap_or_else(|e| e.into_inner());
-        *link = host.map(site_of);
-    }
-
-    pub fn site_for(&self, from_this_computer: bool, through_link: bool) -> String {
-        if !from_this_computer {
-            return ON_THE_NETWORK.into();
-        }
-        if through_link {
-            if let Some(link) = self.link.read().unwrap_or_else(|e| e.into_inner()).clone() {
-                return link;
-            }
-        }
-        ON_THIS_COMPUTER.into()
     }
 
     pub fn token_matches(&self, given: &str) -> bool {
@@ -315,65 +156,43 @@ mod tests {
     }
 
     #[test]
-    fn each_browser_gets_its_own_session_and_one_can_be_signed_out() {
+    fn each_sign_in_gets_its_own_session_that_survives_a_restart() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("serve-sessions.json");
+        let path = tmp.path().join("app-sessions.json");
         let sessions = Sessions::load(&path).unwrap();
-        let phone = sessions.start(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1", "127.0.0.1:8742",
-            at(0),
-        ).unwrap();
-        let laptop = sessions
-            .start(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36",
-                "127.0.0.1:8742",
-                at(1),
-            )
-            .unwrap();
-        assert_ne!(phone, laptop);
-        assert_eq!(phone.len(), 64);
-        assert!(sessions.check(&phone, at(2)));
+        let first = sessions.start(at(0)).unwrap();
+        let second = sessions.start(at(1)).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(sessions.check(&first, at(2)));
         assert!(!sessions.check("nope", at(2)));
 
-        let seen = sessions.list(Some(&laptop), at(3));
-        assert_eq!(seen.len(), 2);
-        assert_eq!(
-            (seen[0].device.as_str(), seen[0].current),
-            ("Chrome on Mac", true)
-        );
-        assert_eq!(seen[1].device, "Safari on iPhone");
-        assert!(
-            !seen.iter().any(|s| s.handle == phone || s.handle == laptop),
-            "secrets never leave"
-        );
-
-        assert!(sessions.end(&seen[1].handle).unwrap());
-        assert!(!sessions.check(&phone, at(4)));
-        assert!(sessions.check(&laptop, at(4)));
-
         let again = Sessions::load(&path).unwrap();
-        assert!(again.check(&laptop, at(5)), "sessions survive a restart");
-        assert!(!again.check(&phone, at(5)));
+        assert!(again.check(&second, at(5)), "sessions survive a restart");
     }
 
     #[test]
-    fn signing_out_the_others_keeps_this_browser_and_old_sessions_expire() {
+    fn a_session_file_with_unknown_fields_still_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("app-sessions.json");
+        std::fs::write(
+            &path,
+            r#"[{"secret":"abc","created_at":"2026-10-08T12:00:00Z","last_seen":"2026-10-08T12:00:00Z","extra":"ignored"}]"#,
+        )
+        .unwrap();
+        assert!(Sessions::load(&path).unwrap().check("abc", at(1)));
+    }
+
+    #[test]
+    fn old_sessions_expire() {
         let sessions = Sessions::in_memory();
-        let mine = sessions
-            .start("Firefox/131.0 (Windows NT 10.0)", "127.0.0.1:8742", at(0))
-            .unwrap();
-        let other = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
-        assert_eq!(sessions.end_others(&mine).unwrap(), 1);
-        assert!(!sessions.check(&other, at(1)));
+        let mine = sessions.start(at(0)).unwrap();
         assert!(sessions.check(&mine, at(1)));
         let month = KEEP_DAYS * 24 * 60;
         assert!(
             !sessions.check(&mine, at(month + 10)),
             "a session unused for a month expires"
         );
-        let a = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
-        assert_eq!(sessions.end_all().unwrap(), 1);
-        assert!(!sessions.check(&a, at(1)));
     }
 
     #[test]
@@ -381,7 +200,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("s.json");
         let sessions = Sessions::load(&path).unwrap();
-        let id = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
+        let id = sessions.start(at(0)).unwrap();
         let written = std::fs::metadata(&path).unwrap().modified().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(sessions.check(&id, at(1)));
@@ -390,7 +209,10 @@ mod tests {
             written
         );
         assert!(sessions.check(&id, at(6)));
-        assert_eq!(sessions.list(None, at(6))[0].last_seen, at(6));
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            written
+        );
     }
 
     #[cfg(unix)]
@@ -407,7 +229,7 @@ mod tests {
             0o600
         );
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let secret = sessions.start("", "localhost", at(0)).unwrap();
+        let secret = sessions.start(at(0)).unwrap();
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -422,16 +244,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("serve-sessions.json");
         let sessions = Sessions::load(&path).unwrap();
-        let secret = sessions.start("", "localhost", at(0)).unwrap();
+        let secret = sessions.start(at(0)).unwrap();
         let target = tmp.path().join("example-file");
         std::fs::write(&target, "[]").unwrap();
         std::fs::remove_file(&path).unwrap();
         symlink(&target, &path).unwrap();
         assert!(Sessions::load(&path).is_err());
-        assert!(sessions.start("", "localhost", at(1)).is_err());
-        assert_eq!(sessions.list(None, at(1)).len(), 1);
+        assert!(sessions.start(at(1)).is_err());
         assert!(!sessions.check(&secret, at(6)));
-        assert!(sessions.end(&handle_of(&secret)).is_err());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "[]");
     }
 
@@ -449,24 +269,9 @@ mod tests {
     }
 
     #[test]
-    fn devices_are_named_the_way_people_say_them() {
-        let cases = [
-            ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36 Edg/130.0", "Edge on Windows"),
-            ("Mozilla/5.0 (Linux; Android 14; Pixel 7) Chrome/130.0 Mobile Safari/537.36", "Chrome on Android"),
-            ("Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) CriOS/130.0 Mobile Safari/604.1", "Chrome on iPad"),
-            ("Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0", "Firefox on Linux"),
-            ("curl/8.0", "A browser"),
-        ];
-        for (ua, want) in cases {
-            assert_eq!(device_of(ua), want, "{ua}");
-        }
-    }
-
-    #[test]
     fn cookies_are_read_by_exact_name() {
-        let header = "leo_token=old; leo_session=abc; other=1";
+        let header = "leo_session=abc; other=1";
         assert_eq!(cookie_value(header, COOKIE), Some("abc"));
-        assert_eq!(cookie_value(header, LEGACY_COOKIE), Some("old"));
         assert_eq!(cookie_value("xleo_session=bad", COOKIE), None);
     }
 }

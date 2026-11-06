@@ -1,12 +1,11 @@
 //! Live transcription over a recording that is still being written.
 //!
-//! The rolling loop cuts the tail off the growing WAV every [`ROLL_INTERVAL`]
-//! and sends it through the normal transcribe chain, so this works over Groq or
-//! a local whisper.cpp with no provider-specific code. The transcript is shown
-//! as it grows; there is no AI summary in between, which is what keeps it fast.
+//! The rolling loop re-transcribes the tail of the recording every
+//! [`ROLL_INTERVAL`] through the local speech model. The transcript is shown as
+//! it grows; there is no AI summary in between, which is what keeps it fast.
 //!
 //! Only the scheduling and text-stitching decisions live here, as pure
-//! functions; the caller (the TUI's worker thread) performs the effects.
+//! functions; the recording session performs the effects.
 
 use std::time::Duration;
 
@@ -33,10 +32,6 @@ pub const MAX_ROLL_INTERVAL: Duration = Duration::from_secs(24);
 /// silent room still reads around 0.001, while a muted or unpermitted one reads
 /// below 0.0001. This sits between them.
 pub const SILENCE_CEILING: f64 = 0.0005;
-/// How far back each slice starts before the previous cursor, so a word spoken
-/// across a boundary is not cut in half. The overlap is removed from the text
-/// again by [`stitch`].
-pub const OVERLAP: Duration = Duration::from_secs(1);
 /// How many leading words of a new segment may be treated as repetition.
 ///
 /// Generous on purpose. The nominal overlap is one second — a handful of
@@ -131,32 +126,6 @@ pub fn is_silence_artifact(text: &str) -> bool {
     ];
     let cleaned = text.trim().to_lowercase();
     ARTIFACTS.contains(&cleaned.as_str())
-}
-
-/// Where the next slice should start and how long it should be.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Slice {
-    pub start_secs: u64,
-    pub duration_secs: u64,
-}
-
-/// Plan the next slice given how far we have already transcribed and how long
-/// the recording currently is.
-///
-/// Returns `None` when there is not yet enough new audio to be worth a
-/// request — a slice shorter than the overlap would be almost entirely
-/// material we have already seen.
-pub fn next_slice(cursor_secs: u64, recorded_secs: u64) -> Option<Slice> {
-    let overlap = OVERLAP.as_secs();
-    let min_new = overlap + 1;
-    if recorded_secs <= cursor_secs || recorded_secs - cursor_secs < min_new {
-        return None;
-    }
-    let start = cursor_secs.saturating_sub(overlap);
-    Some(Slice {
-        start_secs: start,
-        duration_secs: recorded_secs - start,
-    })
 }
 
 /// Reduce text to comparable characters: letters and digits only, lowercased.
@@ -321,36 +290,6 @@ mod tests {
                 "dropped real speech: {speech:?}"
             );
         }
-    }
-
-    #[test]
-    fn the_first_slice_starts_at_zero() {
-        let s = next_slice(0, 15).unwrap();
-        assert_eq!(s.start_secs, 0);
-        assert_eq!(s.duration_secs, 15);
-    }
-
-    #[test]
-    fn later_slices_reach_back_by_the_overlap() {
-        let s = next_slice(15, 30).unwrap();
-        assert_eq!(s.start_secs, 14, "one second of back-overlap");
-        assert_eq!(s.duration_secs, 16);
-        assert_eq!(s.start_secs + s.duration_secs, 30, "covers up to now");
-    }
-
-    #[test]
-    fn no_slice_until_there_is_new_audio_worth_sending() {
-        assert_eq!(next_slice(15, 15), None);
-        assert_eq!(next_slice(15, 16), None, "one second is all overlap");
-        assert!(next_slice(15, 17).is_some());
-    }
-
-    /// A recording that somehow reports shorter than the cursor must not
-    /// produce a negative or wrapped duration.
-    #[test]
-    fn a_shrinking_recording_yields_no_slice() {
-        assert_eq!(next_slice(30, 10), None);
-        assert_eq!(next_slice(0, 0), None);
     }
 
     // ── stitching ───────────────────────────────────────────────────────────

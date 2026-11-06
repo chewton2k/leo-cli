@@ -1,5 +1,4 @@
 mod auth;
-mod backup;
 mod boards;
 mod calendar;
 mod combine;
@@ -65,6 +64,9 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         toolless_chat: None,
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        shown: Default::default(),
+        covered: Default::default(),
+        page_seen: Default::default(),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
             changes: None,
@@ -87,8 +89,6 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         speech: None,
         dictation: None,
         app_settings: None,
-        backups: Default::default(),
-        backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
         importer: None,
         imports: Default::default(),
@@ -108,7 +108,6 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         reader: None,
         room: None,
         context: None,
-        web: None,
         converse: None,
         seer: None,
         captions: Arc::new(captions::Captions::at(dir.path().join("captions.json"))),

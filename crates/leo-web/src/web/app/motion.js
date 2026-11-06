@@ -54,7 +54,7 @@ function flipPlay(els, keyOf, before, ms) {
   for (const el of els) {
     const move = moves.get(keyOf(el));
     if (!move || typeof el.animate !== 'function') continue;
-    el.animate([{ transform: `translate(${move.dx}px, ${move.dy}px)` }, { transform: 'none' }], { duration: ms, easing: 'ease-out' });
+    el.animate([{ transform: `translate(${move.dx}px, ${move.dy}px)` }, { transform: 'none' }], { duration: ms, easing: EASE_MOVE });
     played++;
   }
   return played;
@@ -67,10 +67,6 @@ function flipList(root, selector, keyOf, change, { ms = FLIP_MS, changed = true 
   const result = change();
   flipPlay([...root.querySelectorAll(selector)], keyOf, before, ms);
   return result;
-}
-
-function sameKeys(a, b) {
-  return a.length === b.length && a.every((key, i) => key === b[i]);
 }
 
 function transitionSkip({ reduced, sheet, same, first }) {
@@ -154,6 +150,16 @@ document.addEventListener('click', (e) => {
   drawn.at = Date.now();
 }, true);
 
+const ARC_STEPS = 12;
+
+function arcPoints() {
+  const ease = (t) => t * t * (3 - 2 * t);
+  return Array.from({ length: ARC_STEPS + 1 }, (_, i) => {
+    const x = ease(i / ARC_STEPS);
+    return { x, y: x ** 1.6 };
+  });
+}
+
 function settleOffset(from, to) {
   if (!from) return { dx: 0, dy: 0 };
   return { dx: from.left - to.left, dy: from.top - to.top };
@@ -161,16 +167,57 @@ function settleOffset(from, to) {
 
 function settle(el, { from = null, elapsed = 0, ms = SETTLE_MS } = {}) {
   if (!el || stillMotion() || typeof el.animate !== 'function' || elapsed >= ms) return null;
-  const { dx, dy } = settleOffset(from, el.getBoundingClientRect());
-  const run = el.animate([
-    { transform: `translate(${dx}px, ${dy}px) scale(${SETTLE_SCALE})`, boxShadow: '0 10px 28px rgba(0, 0, 0, .18), 0 2px 6px rgba(0, 0, 0, .1)' },
-    { transform: 'none', boxShadow: '0 0 0 rgba(0, 0, 0, 0)' },
-  ], { duration: ms, easing: EASE_OUT });
+  const to = el.getBoundingClientRect();
+  const { dx, dy } = settleOffset(from, to);
+  settleLayer?.cancel();
+  const flyer = from && clippedBy(el) ? settleCarrier(el, to) : null;
+  const frames = arcPoints().map(({ x, y }) => ({ transform: `translate(${dx * (1 - x)}px, ${dy * (1 - y)}px) scale(${1 + Number(((SETTLE_SCALE - 1) * (1 - x)).toFixed(4))})` }));
+  frames[0].boxShadow = '0 10px 28px rgba(0, 0, 0, .18), 0 2px 6px rgba(0, 0, 0, .1)';
+  frames[ARC_STEPS] = { transform: 'none', boxShadow: '0 0 0 rgba(0, 0, 0, 0)' };
+  const run = (flyer || el).animate(frames, { duration: ms, easing: 'linear' });
   run.currentTime = elapsed;
+  if (flyer) {
+    settleLayer = run;
+    run.onfinish = run.oncancel = () => {
+      flyer.remove();
+      el.style.visibility = '';
+      if (settleLayer === run) settleLayer = null;
+    };
+  }
   return run;
 }
 
+function clippedBy(el) {
+  for (let up = el.parentElement; up && up !== document.body; up = up.parentElement) if (getComputedStyle(up).overflow !== 'visible') return true;
+  return false;
+}
+
+function settleCarrier(el, to) {
+  const flyer = ghostOf(el);
+  const look = getComputedStyle(el);
+  Object.assign(flyer.style, { position: 'fixed', zIndex: 1000, left: `${to.left}px`, top: `${to.top}px`, width: `${to.width}px`, height: `${to.height}px`, margin: 0, pointerEvents: 'none', background: look.backgroundColor, borderRadius: look.borderRadius });
+  document.body.appendChild(flyer);
+  el.style.visibility = 'hidden';
+  return flyer;
+}
+
+function flyInto(ghost, target) {
+  if (!ghost) return;
+  if (!target || stillMotion() || typeof ghost.animate !== 'function') return ghost.remove();
+  const from = ghost.getBoundingClientRect(), to = target.getBoundingClientRect();
+  const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+  const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+  const shrink = Math.min(1, to.height / from.height, to.width / from.width);
+  const left = from.left + (from.width - ghost.offsetWidth) / 2, top = from.top + (from.height - ghost.offsetHeight) / 2;
+  const frames = arcPoints().map(({ x, y }) => ({ transform: `translate(${left + dx * x}px, ${top + dy * y}px) scale(${1 + (shrink - 1) * x})`, opacity: x < .7 ? .96 : .96 * (1 - x) / .3 }));
+  ghost.animate(frames, { duration: DRAWER_MS, easing: 'linear', fill: 'forwards' }).onfinish = () => {
+    ghost.remove();
+    pulse(target);
+  };
+}
+
 const handoff = { pending: null };
+let settleLayer = null;
 
 function settleLater(kind, id, from) {
   handoff.pending = { kind, id, from, at: performance.now() };
@@ -192,7 +239,7 @@ function settleNow(kind, find) {
   }
 }
 
-const PILL_MS = 220;
+const PILL_MS = DRAWER_MS;
 
 function pillKey(pill) {
   const row = pill && pill.parentElement;
@@ -211,12 +258,12 @@ function pillGlide(from, pill, ms = PILL_MS) {
   return pill.animate([
     { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
     { transform: 'none' },
-  ], { duration: ms, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+  ], { duration: ms, easing: EASE_MOVE });
 }
 
 function lift(el) {
   if (!el || stillMotion() || typeof el.animate !== 'function') return null;
-  return el.animate([{ scale: '1', boxShadow: 'none' }], { duration: 140, easing: EASE_OUT });
+  return el.animate([{ scale: '1', boxShadow: 'none' }], { duration: MOTION_MS * EXIT_SHARE, easing: EASE_OUT });
 }
 
 function liftedRect(el) {
@@ -224,3 +271,5 @@ function liftedRect(el) {
   const r = el.getBoundingClientRect();
   return { left: r.left + (r.width - r.width / SETTLE_SCALE) / 2, top: r.top + (r.height - r.height / SETTLE_SCALE) / 2 };
 }
+
+window.leoMotion = { unfold, fold, cascade, pulse, rubber, iconSwap, overlapOut, stillMotion };

@@ -7,7 +7,7 @@ function refreshKey(node) {
   for (const name of ['id', 'data-refresh-key', 'data-kids', 'data-model-row', 'data-task-card', 'data-settings-section', 'data-dictation', 'data-key-input', 'data-app-pref', 'data-keep', 'data-export']) {
     if (node.hasAttribute(name)) return `${node.nodeName}:${name}:${node.getAttribute(name)}`;
   }
-  if (node.hasAttribute('data-store-item') || node.hasAttribute('data-trash-pick')) return JSON.stringify([node.nodeName, node.getAttribute('data-store-item'), node.getAttribute('data-trash-pick'), node.getAttribute('value')]);
+  if (node.hasAttribute('data-trash-pick')) return JSON.stringify([node.nodeName, node.getAttribute('data-trash-pick'), node.getAttribute('value')]);
   if (node.hasAttribute('data-action') || node.hasAttribute('data-set')) {
     return JSON.stringify([node.nodeName, ...[...node.attributes].filter((attr) => attr.name.startsWith('data-') && !['data-title', 'data-name', 'data-menu'].includes(attr.name)).map((attr) => [attr.name, attr.value]).sort(([a], [b]) => a.localeCompare(b))]);
   }

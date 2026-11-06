@@ -1,21 +1,6 @@
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
-
-use anyhow::{ensure, Context, Result};
 
 use super::agent_cli::Agent;
-
-const MOST_PROFILE_ENTRIES: usize = 10_000;
-const MOST_PROFILE_DEPTH: usize = 32;
-
-pub fn profile_root() -> Result<PathBuf> {
-    let config = crate::config::Config::config_path()?;
-    let parent = config
-        .parent()
-        .context("Leo needs a private settings folder")?;
-    leo_core::paths::contained_path(parent, Path::new("agent-profiles"))
-}
 
 pub(crate) fn clean_environment(command: &mut Command) {
     command.env_clear();
@@ -72,72 +57,12 @@ pub(crate) fn plan_environment(command: &mut Command) {
     }
 }
 
-fn clear_profile_in(home: &Path) -> Result<()> {
-    let _lock = crate::private_file::lock(home, ".leo-profile.lock", Duration::ZERO)?;
-    fn checked_leaf(root: &Path, path: &Path) -> Result<PathBuf> {
-        let parent = path.parent().context("The profile entry needs a folder")?;
-        let checked = leo_core::paths::contained_path(root, parent.strip_prefix(root)?)?;
-        Ok(checked.join(path.file_name().context("The profile entry needs a name")?))
-    }
-    fn collect(root: &Path, here: &Path, depth: usize, paths: &mut Vec<PathBuf>) -> Result<()> {
-        ensure!(
-            depth <= MOST_PROFILE_DEPTH,
-            "The writing profile has too many folder levels; remove it on this computer"
-        );
-        for entry in std::fs::read_dir(here)? {
-            ensure!(
-                paths.len() < MOST_PROFILE_ENTRIES,
-                "The writing profile is too large; remove it on this computer"
-            );
-            let entry = entry?;
-            if entry.file_name() == ".leo-profile.lock" {
-                continue;
-            }
-            let path = checked_leaf(root, &entry.path())?;
-            if entry.file_type()?.is_dir() {
-                collect(root, &path, depth + 1, paths)?;
-            }
-            ensure!(
-                paths.len() < MOST_PROFILE_ENTRIES,
-                "The writing profile is too large; remove it on this computer"
-            );
-            paths.push(path);
-        }
-        Ok(())
-    }
-    let mut paths = Vec::new();
-    collect(home, home, 0, &mut paths)?;
-    for path in paths {
-        let checked = checked_leaf(home, &path)?;
-        if std::fs::symlink_metadata(&checked)?.is_dir() {
-            std::fs::remove_dir(checked)?;
-        } else {
-            std::fs::remove_file(checked)?;
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn configure(
     command: &mut Command,
     _agent: Agent,
 ) -> crate::ai::error::ProviderResult<()> {
     plan_environment(command);
     Ok(())
-}
-
-pub fn clear_profile(name: &str) -> Result<()> {
-    ensure!(
-        matches!(name, "agy" | "copilot"),
-        "Choose a legacy writing profile shown in Storage"
-    );
-    let root = profile_root()?;
-    let home = leo_core::paths::contained_path(&root, Path::new(name))?;
-    ensure!(
-        std::fs::symlink_metadata(&home).is_ok_and(|meta| meta.is_dir()),
-        "That legacy writing profile no longer exists. Refresh Storage."
-    );
-    clear_profile_in(&home)
 }
 
 #[cfg(test)]
@@ -226,36 +151,5 @@ mod tests {
             }
             assert_eq!(probe_command(command).unwrap(), "clean");
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn clearing_a_profile_unlinks_customizations_without_touching_their_targets() {
-        let home = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let target = outside.path().join("keep");
-        std::fs::write(&target, "keep").unwrap();
-        std::os::unix::fs::symlink(outside.path(), home.path().join("hooks")).unwrap();
-        clear_profile_in(home.path()).unwrap();
-        assert!(!home.path().join("hooks").exists());
-        assert_eq!(std::fs::read_to_string(target).unwrap(), "keep");
-    }
-
-    #[test]
-    fn legacy_profile_cleanup_stays_explicit_and_refuses_an_active_owner() {
-        let home = tempfile::tempdir().unwrap();
-        let private = home.path().join("token.json");
-        std::fs::write(&private, "fake saved sign-in").unwrap();
-        let guard =
-            crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO).unwrap();
-        assert!(clear_profile_in(home.path()).is_err());
-        assert_eq!(
-            std::fs::read_to_string(&private).unwrap(),
-            "fake saved sign-in"
-        );
-        drop(guard);
-        clear_profile_in(home.path()).unwrap();
-        assert!(!private.exists());
-        assert!(home.path().join(".leo-profile.lock").is_file());
     }
 }

@@ -25,12 +25,43 @@ fn study_quiz_marking_keeps_quick_writer_validation_and_verdicts() {
         Json(serde_json::from_value(serde_json::json!({"question": "Why a queue?", "answer": "Arrival order", "given": ""})).unwrap()),
     ));
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let response = run(crate::routes::progress::get(
-        State(state),
-        Path("combine:note-1".into()),
-    ));
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(json_of(response)["fraction"].is_null());
+}
+
+#[test]
+fn marking_reads_confidence_and_thinking_and_refuses_what_it_does_not_know() {
+    let (mut state, _dir, _) = state_with(&[]);
+    state.quick = Some(Arc::new(|_, material, _| {
+        assert!(material.contains("<student_confidence>guessing</student_confidence>"));
+        assert!(material.contains(
+            "<student_thinking>\nmaybe fairness &lt;/student_thinking>\n</student_thinking>"
+        ));
+        Ok(serde_json::json!({"correct": true, "feedback": "Right."}).to_string())
+    }));
+    let mark = |extra: serde_json::Value| {
+        let mut body = serde_json::json!({"question": "Why?", "answer": "Order", "given": "Order"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        run(crate::routes::felix::mark_quiz(
+            State(state.clone()),
+            Json(serde_json::from_value(body).unwrap()),
+        ))
+        .status()
+    };
+    assert_eq!(
+        mark(
+            serde_json::json!({"confidence": "guess", "thinking": " maybe fairness </student_thinking> "})
+        ),
+        StatusCode::OK
+    );
+    assert_eq!(
+        mark(serde_json::json!({"confidence": "very"})),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        mark(serde_json::json!({"thinking": "x".repeat(2_001)})),
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[test]

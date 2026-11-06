@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS vectors (
     at INTEGER NOT NULL,
     hash TEXT NOT NULL,
     v BLOB NOT NULL,
+    piece TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (note, at)
 );
 CREATE TABLE IF NOT EXISTS graph_notes (
@@ -172,6 +173,14 @@ impl Db {
             tx.execute_batch(
                 "ALTER TABLE note_tasks ADD COLUMN description TEXT NOT NULL DEFAULT '';",
             )?;
+        }
+        let has_piece: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('vectors') WHERE name = 'piece')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_piece {
+            tx.execute_batch("ALTER TABLE vectors ADD COLUMN piece TEXT NOT NULL DEFAULT '';")?;
         }
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
@@ -353,38 +362,12 @@ mod tests {
 
 #[cfg(test)]
 mod moving_in {
-    use crate::{captions, chat_files, chats, graph, review, vectors};
+    use crate::{captions, graph, vectors};
 
     #[test]
-    fn files_from_before_the_database_are_brought_in_once_and_kept_aside() {
+    fn json_files_from_before_the_database_are_brought_in_and_kept_aside() {
         let tmp = tempfile::tempdir().unwrap();
         let data = tmp.path();
-        let chats_dir = data.join("chats");
-        std::fs::create_dir_all(chats_dir.join("chat-move-0001.files")).unwrap();
-        std::fs::write(
-            chats_dir.join("chat-move-0001.json"),
-            serde_json::json!({
-                "id": "chat-move-0001",
-                "title": "Heaps",
-                "mode": "study",
-                "messages": [{ "role": "user", "text": "what is a min-heap?" }],
-                "memory": { "upto": 2, "hash": "h", "text": "Studying heaps." },
-                "created_at": "2026-10-01T10:00:00Z",
-                "updated_at": "2026-10-02T10:00:00Z"
-            })
-            .to_string(),
-        )
-        .unwrap();
-        std::fs::write(
-            chats_dir.join("chat-move-0001.files/0123456789abcdef0123456789abcdef.json"),
-            serde_json::json!({ "id": "0123456789abcdef0123456789abcdef", "name": "w.pdf", "added_at": "2026-10-01T10:00:00Z", "text": "Week 3: heaps" }).to_string(),
-        )
-        .unwrap();
-        std::fs::write(
-            chats_dir.join("review.json"),
-            serde_json::json!({ "reviewed": ["chat-move-0001:0000000000000001"] }).to_string(),
-        )
-        .unwrap();
         std::fs::write(data.join("captions.json"), r#"{"k": "a heap drawing"}"#).unwrap();
         std::fs::write(
             data.join("graph.json"),
@@ -396,29 +379,6 @@ mod moving_in {
             r#"{"notes": {"n1": {"hash": "h", "pieces": [[0, "AACAPwAAAAA="]]}}}"#,
         )
         .unwrap();
-
-        let listed = chats::list(&chats_dir);
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].title, "Heaps");
-        let chat = chats::load(&chats_dir, "chat-move-0001").unwrap();
-        assert_eq!(chat.memory.unwrap().text, "Studying heaps.");
-        assert_eq!(
-            chat_files::texts(
-                &chats_dir,
-                "chat-move-0001",
-                &["0123456789abcdef0123456789abcdef".into()]
-            ),
-            [("w.pdf".to_string(), "Week 3: heaps".to_string())]
-        );
-        assert_eq!(review::count(&chats_dir), 1);
-        assert_eq!(
-            chats::search(&chats_dir, "min heap")[0].id,
-            "chat-move-0001"
-        );
-        assert!(
-            !chats_dir.exists() && data.join("chats.before-database").is_dir(),
-            "the old folder is kept aside"
-        );
 
         let seen = captions::Captions::for_notes(&data.join("notes"));
         assert_eq!(seen.get("k").as_deref(), Some("a heap drawing"));
@@ -438,17 +398,37 @@ mod moving_in {
             data.join(super::FILE).is_file(),
             "everything lives in one database"
         );
-        assert_eq!(
-            chats::list(&chats_dir).len(),
-            1,
-            "a second look reads the database, not the files"
-        );
     }
 }
 
 #[cfg(test)]
 mod task_descriptions {
     use super::*;
+
+    #[test]
+    fn existing_vectors_gain_an_empty_piece_mark_without_losing_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE vectors (note TEXT NOT NULL, at INTEGER NOT NULL, hash TEXT NOT NULL, v BLOB NOT NULL, PRIMARY KEY (note, at));
+             INSERT INTO vectors VALUES ('note-one', 0, 'abc', x'00');",
+        )
+        .unwrap();
+        drop(old);
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            db.with(|c| {
+                let row: (String, String) =
+                    c.query_row("SELECT hash, piece FROM vectors", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?;
+                assert_eq!(row, ("abc".into(), "".into()));
+                Ok(())
+            })
+            .unwrap();
+        }
+    }
 
     #[test]
     fn existing_checkbox_settings_gain_empty_descriptions_without_losing_data() {

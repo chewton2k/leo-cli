@@ -73,11 +73,12 @@ pub fn run_chat_chain_streaming(
     req: &ChatRequest,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
 ) -> Result<ChainOutcome<String>> {
     run_chat_chain_with(
         providers,
         req,
-        &mut |p, r| p.complete_streaming(r, on_fragment),
+        &mut |p, r| p.complete_streaming_until(r, on_fragment, stopped),
         on_restart,
     )
 }
@@ -499,9 +500,6 @@ mod tests {
                 .clone()
                 .expect("transcribe called on an unavailable provider")
         }
-        fn max_bytes(&self) -> Option<u64> {
-            None
-        }
         fn available(&self) -> bool {
             self.available
         }
@@ -638,6 +636,7 @@ mod tests {
             &req(),
             &mut |f| seen.push(f.to_string()),
             &mut || {},
+            &|| false,
         )
         .unwrap();
 
@@ -672,6 +671,7 @@ mod tests {
                 restarts.set(restarts.get() + 1);
                 shown.borrow_mut().clear();
             },
+            &|| false,
         )
         .unwrap();
 
@@ -684,6 +684,33 @@ mod tests {
         assert_eq!(outcome.value, "the real answer");
         assert_eq!(outcome.provider, "second");
         assert_eq!(outcome.fallbacks.len(), 1);
+    }
+
+    #[test]
+    fn a_stopped_streaming_answer_never_starts_a_provider() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        struct Counted(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+        impl ChatProvider for Counted {
+            fn complete(&self, _: &ChatRequest) -> Result<String, ProviderError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok("late".into())
+            }
+            fn available(&self) -> bool {
+                true
+            }
+            fn name(&self) -> &str {
+                "counted"
+            }
+        }
+        let outcome = run_chat_chain_streaming(
+            vec![Box::new(Counted(calls.clone()))],
+            &req(),
+            &mut |_| {},
+            &mut || {},
+            &|| true,
+        );
+        assert!(outcome.is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     /// A provider that cannot stream must still work, answering in one piece.
@@ -708,6 +735,7 @@ mod tests {
             &req(),
             &mut |f| seen.push(f.to_string()),
             &mut || {},
+            &|| false,
         )
         .unwrap();
 

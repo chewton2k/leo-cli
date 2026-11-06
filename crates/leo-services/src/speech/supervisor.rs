@@ -306,12 +306,6 @@ impl EngineSupervisor {
         Unloading(Some(exited))
     }
 
-    pub fn retry_gpu(&self, reason: &str) {
-        if self.shared.gpu_unavailable.swap(false, Ordering::AcqRel) {
-            info!("Transcription GPU no longer marked unavailable: {}", reason);
-        }
-    }
-
     pub fn loaded(&self) -> Option<LoadedInfo> {
         lock(&self.shared.loaded).clone()
     }

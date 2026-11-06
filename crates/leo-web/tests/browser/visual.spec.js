@@ -49,12 +49,10 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const [name, hash, mask] of [
-  ['folders', '#/', []],
-  ['folder', '#/f/cs130', []],
+  ['workspace', '#/', []],
   ['search', '#/search/queue', []],
   ['trash', '#/trash', []],
   ['settings', '#/settings', []],
-  ['storage', '#/settings/storage', ['.store-big', '.store-size', '.store-key-size', '.store-bar', '.store-count']],
   ['record', '#/record', []],
 ]) {
   test(`${name} looks the same`, async ({ page }) => {

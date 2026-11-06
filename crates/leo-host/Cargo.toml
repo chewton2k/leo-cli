@@ -1,6 +1,6 @@
 [package]
 name = "leo-host"
-description = "Gives leo's built-in engine its AI, speech, settings and storage powers"
+description = "Gives leo's built-in engine its AI, speech, settings and import powers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

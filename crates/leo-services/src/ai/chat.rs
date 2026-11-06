@@ -87,14 +87,6 @@ fn points_block(points: &[Jotted]) -> String {
     format!("<typed_points>\n{list}</typed_points>\n\n")
 }
 
-pub fn build_structure_prompt(transcript: &str) -> Prompt {
-    build_structure_prompt_with(transcript, &[])
-}
-
-pub fn build_append_prompt(transcript: &str, existing_body: &str) -> Prompt {
-    build_append_prompt_with(transcript, existing_body, &[])
-}
-
 /// The prompt that turns a recording into a new note. Typed points, when there
 /// are any, are woven into the sections they belong to.
 pub fn build_structure_prompt_with(transcript: &str, points: &[Jotted]) -> Prompt {
@@ -210,95 +202,6 @@ Reply with the title and summary only: no preamble and no remarks after them."
         .to_string();
     let user = format!(
         "<notes>\n{part_notes}\n</notes>\n\nWrite the title alone on the first line, then the summary."
-    );
-    Prompt { system, user }
-}
-
-fn question_excerpt(question: &str, body: &str, budget: usize) -> String {
-    let chars: Vec<char> = body.chars().collect();
-    if chars.len() <= budget {
-        return body.to_string();
-    }
-    let words = leo_core::notes::question_words(question);
-    let mut chunks: Vec<_> = (0..chars.len())
-        .step_by(500)
-        .filter_map(|start| {
-            let end = (start + 650).min(chars.len());
-            let text: String = chars[start..end].iter().collect();
-            let lower = text.to_lowercase();
-            let score: usize = words
-                .iter()
-                .map(|word| lower.matches(word.as_str()).count())
-                .sum();
-            (score > 0).then_some((score, start, end, text))
-        })
-        .collect();
-    chunks.sort_by_key(|(score, start, _, _)| (std::cmp::Reverse(*score), *start));
-    let mut chosen: Vec<(usize, usize, String)> = Vec::new();
-    for (_, start, end, text) in chunks {
-        if chosen.iter().any(|(a, b, _)| start < *b && end > *a) {
-            continue;
-        }
-        chosen.push((start, end, text));
-        if chosen.len() == 3 {
-            break;
-        }
-    }
-    if chosen.is_empty() {
-        return chars.into_iter().take(budget).collect();
-    }
-    chosen.sort_by_key(|(start, _, _)| *start);
-    chosen
-        .into_iter()
-        .map(|(_, _, text)| text)
-        .collect::<Vec<_>>()
-        .join("\n…\n")
-        .chars()
-        .take(budget)
-        .collect()
-}
-
-/// The prompt that answers a question from a set of the user's notes, given as
-/// (title, directory, body).
-pub fn build_notes_question_prompt(question: &str, notes: &[(&str, &str, &str)]) -> Prompt {
-    // Enough of each note to answer from, while a handful still fits.
-    const PER_NOTE_CHARS: usize = 2000;
-    let system = "\
-You answer a question using only the user's own notes, given below. Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
-- Answer directly and concisely in Markdown.
-- After each fact, name the note it came from in square brackets, like [cs130/Graph traversals]. Include its directory when present so equally named notes are distinguishable.
-- If the notes do not cover the question, say so plainly first; you may then add a short general answer, clearly marked as not from their notes.
-- Reply with the answer only: no preamble, no remarks after it, and do not wrap it in a code block."
-        .to_string();
-    let mut user = String::new();
-    for (title, dir, body) in notes {
-        let body = question_excerpt(question, body, PER_NOTE_CHARS);
-        user.push_str(&format!(
-            "<note title=\"{title}\" directory=\"{dir}\">\n{body}\n</note>\n\n"
-        ));
-    }
-    user.push_str(&format!("<question>\n{question}\n</question>"));
-    Prompt { system, user }
-}
-
-/// The prompt that answers an `@leo` question written inside a note.
-pub fn build_expand_prompt(
-    question: &str,
-    local_context: &str,
-    note_title: &str,
-    full_body: &str,
-) -> Prompt {
-    let system = "\
-You answer a question the user wrote inside their own notes. Your answer is placed in the note directly under the question. Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
-- Answer directly and concisely in Markdown: short paragraphs or bullets.
-- Use the note for context and tie the answer back to it where that helps.
-- Do not repeat what the note already says.
-- Reply with the answer only: no preamble, do not restate the question, no remarks after it, and do not wrap it in a code block."
-        .to_string();
-    let user = format!(
-        "<note title=\"{note_title}\">\n{full_body}\n</note>\n\n\
-         <around_the_question>\n{local_context}\n</around_the_question>\n\n\
-         <question>\n{question}\n</question>"
     );
     Prompt { system, user }
 }
@@ -438,6 +341,7 @@ pub fn complete_streaming(
     max_tokens: u32,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
 ) -> Result<ChainOutcome<String>> {
     let providers = build_chat_chain(cfg, store);
     let req = ChatRequest {
@@ -446,7 +350,7 @@ pub fn complete_streaming(
         temperature: TEMPERATURE,
         max_tokens,
     };
-    crate::ai::chain::run_chat_chain_streaming(providers, &req, on_fragment, on_restart)
+    crate::ai::chain::run_chat_chain_streaming(providers, &req, on_fragment, on_restart, stopped)
 }
 
 #[cfg(test)]
@@ -456,12 +360,10 @@ mod tests {
     #[test]
     fn every_writing_instruction_asks_for_interpretable_language() {
         let prompts = [
-            build_structure_prompt("t"),
-            build_append_prompt("t", "body"),
+            build_structure_prompt_with("t", &[]),
+            build_append_prompt_with("t", "body", &[]),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
             build_summary_prompt("notes"),
-            build_notes_question_prompt("q", &[("n1", "Heaps", "body")]),
-            build_expand_prompt("q", "ctx", "Heaps", "body"),
         ];
         for prompt in prompts {
             assert!(
@@ -475,8 +377,8 @@ mod tests {
     #[test]
     fn recording_notes_follow_the_learning_guide() {
         for prompt in [
-            build_structure_prompt("t"),
-            build_append_prompt("t", "body"),
+            build_structure_prompt_with("t", &[]),
+            build_append_prompt_with("t", "body", &[]),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
         ] {
             assert!(prompt.system.contains(LEARNING), "{}", prompt.system);
@@ -489,8 +391,8 @@ mod tests {
     #[test]
     fn the_last_words_after_a_transcript_ask_for_interpretable_language_again() {
         for prompt in [
-            build_structure_prompt("t"),
-            build_append_prompt("t", "body"),
+            build_structure_prompt_with("t", &[]),
+            build_append_prompt_with("t", "body", &[]),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
         ] {
             let after = prompt.user.rsplit("</transcript>").next().unwrap();
@@ -616,7 +518,7 @@ mod tests {
 
     #[test]
     fn rules_go_in_the_system_message_and_the_transcript_in_the_user_message() {
-        let p = build_structure_prompt("the mitochondria is the powerhouse");
+        let p = build_structure_prompt_with("the mitochondria is the powerhouse", &[]);
         assert!(p.system.contains("first line is the title"), "{}", p.system);
         assert!(!p.system.contains("mitochondria"));
         assert!(
@@ -631,14 +533,14 @@ mod tests {
     /// the essentials are repeated after the material.
     #[test]
     fn the_rules_are_restated_after_the_transcript() {
-        let p = build_structure_prompt("some speech");
+        let p = build_structure_prompt_with("some speech", &[]);
         let after = &p.user[p.user.find("</transcript>").unwrap()..];
         assert!(after.contains("title"), "{}", p.user);
     }
 
     #[test]
     fn the_structure_prompt_asks_for_a_clean_useful_shape() {
-        let s = build_structure_prompt("x").system;
+        let s = build_structure_prompt_with("x", &[]).system;
         for wanted in [
             "misheard",      // fix speech-recognition errors
             "own knowledge", // fill gaps the recording or speaker left
@@ -661,7 +563,7 @@ mod tests {
 
     #[test]
     fn without_typed_points_the_prompt_says_nothing_about_them() {
-        let p = build_structure_prompt("some speech");
+        let p = build_structure_prompt_with("some speech", &[]);
         assert!(!p.system.contains("typed points"));
         assert!(!p.user.contains("<typed_points>"));
     }
@@ -705,88 +607,9 @@ mod tests {
 
     #[test]
     fn an_append_writes_only_the_new_material() {
-        let s = build_append_prompt("new stuff", "## Existing").system;
+        let s = build_append_prompt_with("new stuff", "## Existing", &[]).system;
         assert!(s.contains("No title"), "{s}");
         assert!(s.contains("Do not repeat"), "{s}");
         assert!(s.contains("misheard"), "{s}");
-    }
-
-    // ── a question across the notes ─────────────────────────────────────────
-
-    #[test]
-    fn a_question_across_notes_carries_each_note_and_asks_for_sources() {
-        let notes = [
-            ("Graph traversals", "cs130", "BFS uses a queue."),
-            ("Lecture 4", "", "Dijkstra finds shortest paths."),
-        ];
-        let p = build_notes_question_prompt("what is BFS?", &notes);
-        assert!(
-            p.user.contains("<question>\nwhat is BFS?\n</question>"),
-            "{}",
-            p.user
-        );
-        assert!(
-            p.user
-                .contains("<note title=\"Graph traversals\" directory=\"cs130\">"),
-            "{}",
-            p.user
-        );
-        assert!(p.user.contains("Dijkstra"));
-        assert!(p.system.contains("only"), "{}", p.system);
-        assert!(
-            p.system.contains("[Graph traversals]") || p.system.contains("brackets"),
-            "{}",
-            p.system
-        );
-        assert!(p.system.to_lowercase().contains("say so"), "{}", p.system);
-    }
-
-    /// A long note is trimmed so a handful of notes fits in one request.
-    #[test]
-    fn a_long_note_is_trimmed_in_the_question_prompt() {
-        let body = "word ".repeat(5000);
-        let notes = [("Long", "", body.as_str())];
-        let p = build_notes_question_prompt("q", &notes);
-        assert!(p.user.len() < 12_000, "{}", p.user.len());
-    }
-
-    // ── the @leo prompt ─────────────────────────────────────────────────────
-
-    #[test]
-    fn a_question_prompt_carries_the_note_and_is_not_about_lectures_only() {
-        let p = build_expand_prompt("what is BFS?", "local ctx", "Groceries", "full body here");
-        assert!(!p.system.to_lowercase().contains("lecture"), "{}", p.system);
-        assert!(p.system.contains("no preamble"), "{}", p.system);
-        for part in ["what is BFS?", "local ctx", "Groceries", "full body here"] {
-            assert!(p.user.contains(part), "{part} missing from {}", p.user);
-        }
-    }
-    #[test]
-    fn question_context_includes_matching_passages_late_in_a_long_note() {
-        let body = format!(
-            "{}\nDijkstra finds the shortest path with nonnegative weights.\n{}",
-            "Unrelated introduction. ".repeat(1000),
-            "Unrelated ending. ".repeat(1000)
-        );
-        let prompt = build_notes_question_prompt(
-            "How does Dijkstra find shortest paths?",
-            &[("Algorithms", "cs130", &body)],
-        );
-        assert!(prompt.user.contains("nonnegative weights"));
-        assert!(prompt.user.chars().count() < 2300);
-    }
-
-    #[test]
-    fn excerpt_selection_is_safe_for_unicode_and_keeps_separated_matches() {
-        let body = format!(
-            "{}\nBFS uses a queue.\n{}\nDFS uses a stack.\n{}",
-            "界".repeat(3000),
-            "界".repeat(3000),
-            "界".repeat(3000)
-        );
-        let excerpt = question_excerpt("Compare BFS and DFS", &body, 2000);
-        assert!(excerpt.contains("BFS uses a queue"));
-        assert!(excerpt.contains("DFS uses a stack"));
-        assert!(excerpt.chars().count() <= 2000);
     }
 }

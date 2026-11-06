@@ -7,14 +7,11 @@ const vm = require('node:vm');
 require('../src/web/chat.js');
 const C = globalThis.leoChat;
 
-test('remembered interview style falls back to Chat without losing saved messages', () => {
+test('a remembered interview chat opens without losing saved messages', () => {
   const messages = [{ role: 'assistant', text: 'Saved answer', proposals: [{ kind: 'interview_test' }] }];
   const cached = JSON.stringify({ id: 'retired-chat', mode: 'interview', messages, refs: [] });
   const storage = { getItem: () => cached, setItem: () => assert.fail('reading old state must not rewrite it') };
-  assert.equal(C.modeOf('interview'), 'chat');
-  assert.equal(C.load(storage).mode, 'chat');
   assert.deepEqual(C.load(storage).messages, messages);
-  assert.deepEqual(C.MODES.map(m => m.id), ['chat', 'study']);
 });
 
 test('retired interview cards render a short notice without controls and keep Study cards separate', () => {
@@ -31,7 +28,7 @@ test('retired interview cards render a short notice without controls and keep St
   for (const kind of ['edit', 'create', 'quiz', 'add_task', 'update_board', 'margin_note']) assert.equal(C.retiredPractice({ kind }), false);
 });
 
-test('retired bookmarks and saved last places land in the library without touching stale practice keys', () => {
+test('retired bookmarks and saved last places land in the workspace without touching stale practice keys', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/events.js'), 'utf8');
   const start = source.indexOf("const LAST_PLACE_KEY ="), end = source.indexOf("window.addEventListener('hashchange'", start);
   for (const hash of ['#/interviews', '#/interviews/old-practice']) {

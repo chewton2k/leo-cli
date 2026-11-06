@@ -133,7 +133,7 @@ async function regenerateSource() {
     generatedPreview = { ...preview, note: page.note, previous };
     const box = sheet(`<h3>The note, written again</h3>
       <p>Your current note stays as it is until you use this one.</p>
-      <label class="source-keep"><input type="checkbox" id="regenerate-title" checked> Keep the current title</label>
+      <label class="source-keep"><span class="grow">Keep the current title</span>${settingsSwitch('id="regenerate-title"', true)}</label>
       <div class="prose combine-preview">${md.render(preview.body)}</div>
       <div class="buttons"><button class="btn plain" data-action="source-back">Back</button><button class="btn primary" data-action="source-apply">Use this version</button></div>`);
     $('.sheet', box).classList.add('source-sheet');

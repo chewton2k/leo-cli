@@ -23,6 +23,7 @@ pub type Near = BTreeMap<String, std::collections::BTreeSet<String>>;
 pub struct Entry {
     pub hash: String,
     pub pieces: Vec<(usize, Vec<f32>)>,
+    pub marks: BTreeMap<usize, String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -41,6 +42,32 @@ pub struct Vectors {
     db: Arc<crate::db::Db>,
     known: Mutex<BTreeMap<String, Entry>>,
     version: std::sync::atomic::AtomicU64,
+    held: Mutex<Option<Held>>,
+}
+
+struct Held {
+    most: usize,
+    means: BTreeMap<String, Vec<f32>>,
+    near: Near,
+}
+
+fn nearest_to(
+    id: &str,
+    v: &[f32],
+    means: &BTreeMap<String, Vec<f32>>,
+    most: usize,
+) -> std::collections::BTreeSet<String> {
+    let mut scored: Vec<(f32, &String)> = means
+        .iter()
+        .filter(|(other, _)| other.as_str() != id)
+        .map(|(other, w)| (cosine(v, w), other))
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(b.1)));
+    scored
+        .into_iter()
+        .take(most)
+        .map(|(_, other)| other.clone())
+        .collect()
 }
 
 fn to_blob(vector: &[f32]) -> Vec<u8> {
@@ -66,13 +93,21 @@ fn decode(text: &str) -> Option<Vec<f32>> {
     )
 }
 
-pub fn hash_of(note: &Note) -> String {
+fn fnv(bytes: impl Iterator<Item = u8>) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in note.title.bytes().chain([0]).chain(note.body.bytes()) {
+    for byte in bytes {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     format!("{hash:016x}")
+}
+
+pub fn hash_of(note: &Note) -> String {
+    fnv(note.title.bytes().chain([0]).chain(note.body.bytes()))
+}
+
+fn mark_of(piece: &str) -> String {
+    fnv(piece.bytes())
 }
 
 pub fn pieces_of(note: &Note) -> Vec<(usize, String)> {
@@ -120,6 +155,7 @@ pub struct Work {
     pub id: String,
     pub hash: String,
     pub pieces: Vec<(usize, String)>,
+    pub kept: Vec<(usize, String, Vec<f32>)>,
 }
 
 impl Vectors {
@@ -152,58 +188,36 @@ impl Vectors {
                 crate::db::put_aside(&path);
             }
         }
-        let rows: Vec<(String, i64, String, Vec<u8>)> = db
+        let rows: Vec<(String, i64, String, Vec<u8>, String)> = db
             .with(|c| {
                 let mut found =
-                    c.prepare("SELECT note, at, hash, v FROM vectors ORDER BY note, at")?;
-                let rows =
-                    found.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+                    c.prepare("SELECT note, at, hash, v, piece FROM vectors ORDER BY note, at")?;
+                let rows = found.query_map([], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })?;
                 rows.collect()
             })
             .unwrap_or_default();
         let mut known: BTreeMap<String, Entry> = BTreeMap::new();
-        for (note, at, hash, v) in rows {
+        for (note, at, hash, v, mark) in rows {
             let Some(v) = from_blob(&v) else { continue };
-            known
-                .entry(note)
-                .or_insert_with(|| Entry {
-                    hash: hash.clone(),
-                    pieces: Vec::new(),
-                })
-                .pieces
-                .push((at.max(0) as usize, v));
+            let at = at.max(0) as usize;
+            let entry = known.entry(note).or_insert_with(|| Entry {
+                hash: hash.clone(),
+                pieces: Vec::new(),
+                marks: BTreeMap::new(),
+            });
+            entry.pieces.push((at, v));
+            if !mark.is_empty() {
+                entry.marks.insert(at, mark);
+            }
         }
         Vectors {
             db,
             known: Mutex::new(known),
             version: std::sync::atomic::AtomicU64::new(0),
+            held: Mutex::new(None),
         }
-    }
-
-    pub fn path(&self) -> &Path {
-        self.db.path()
-    }
-
-    pub fn bytes(&self) -> u64 {
-        self.db
-            .with(|c| {
-                c.query_row(
-                    "SELECT coalesce(SUM(length(v) + length(note) + length(hash)), 0) FROM vectors",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map_or(0, |n| n.max(0) as u64)
-    }
-
-    pub fn clear(&self) -> bool {
-        if let Ok(mut known) = self.known.lock() {
-            known.clear();
-        }
-        self.changed();
-        self.db
-            .with(|c| c.execute("DELETE FROM vectors", []))
-            .is_ok_and(|n| n > 0)
     }
 
     pub fn version(&self) -> u64 {
@@ -216,41 +230,68 @@ impl Vectors {
     }
 
     pub fn neighbours(&self, most: usize) -> Near {
-        let Ok(known) = self.known.lock() else {
-            return Near::new();
-        };
-        if known.len() > MOST_FOR_NEIGHBOURS {
-            return Near::new();
-        }
-        let means: Vec<(&String, Vec<f32>)> = known
-            .iter()
-            .filter_map(|(id, entry)| {
-                let width = entry.pieces.first()?.1.len();
-                let mut sum = vec![0f32; width];
-                for (_, v) in &entry.pieces {
-                    sum.iter_mut().zip(v).for_each(|(s, x)| *s += x);
-                }
-                let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt();
-                (norm > 0.0).then(|| (id, sum.into_iter().map(|x| x / norm).collect()))
-            })
-            .collect();
-        let mut near = Near::new();
-        for (id, v) in &means {
-            let mut scored: Vec<(f32, &String)> = means
+        let means: BTreeMap<String, Vec<f32>> = {
+            let Ok(known) = self.known.lock() else {
+                return Near::new();
+            };
+            if known.len() > MOST_FOR_NEIGHBOURS {
+                return Near::new();
+            }
+            known
                 .iter()
-                .filter(|(other, _)| other != id)
-                .map(|(other, w)| (cosine(v, w), *other))
+                .filter_map(|(id, entry)| {
+                    let width = entry.pieces.first()?.1.len();
+                    let mut sum = vec![0f32; width];
+                    for (_, v) in &entry.pieces {
+                        sum.iter_mut().zip(v).for_each(|(s, x)| *s += x);
+                    }
+                    let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    (norm > 0.0).then(|| (id.clone(), sum.into_iter().map(|x| x / norm).collect()))
+                })
+                .collect()
+        };
+        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        let old = held.take().filter(|old| old.most == most);
+        let near: Near = {
+            let moved = |id: &String| {
+                old.as_ref()
+                    .is_none_or(|old| old.means.get(id) != means.get(id))
+            };
+            let changed: Vec<&Vec<f32>> = means
+                .iter()
+                .filter(|(id, _)| moved(id))
+                .map(|(_, v)| v)
                 .collect();
-            scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(b.1)));
-            near.insert(
-                (*id).clone(),
-                scored
-                    .into_iter()
-                    .take(most)
-                    .map(|(_, other)| other.clone())
-                    .collect(),
-            );
-        }
+            means
+                .iter()
+                .map(|(id, v)| {
+                    let kept = old
+                        .as_ref()
+                        .and_then(|old| old.near.get(id))
+                        .filter(|list| {
+                            list.len() == most
+                                && !moved(id)
+                                && list.iter().all(|other| !moved(other))
+                                && {
+                                    let worst = list
+                                        .iter()
+                                        .map(|other| cosine(v, &means[other]))
+                                        .fold(f32::INFINITY, f32::min);
+                                    changed.iter().all(|c| cosine(v, c) < worst)
+                                }
+                        });
+                    let list = kept
+                        .cloned()
+                        .unwrap_or_else(|| nearest_to(id, v, &means, most));
+                    (id.clone(), list)
+                })
+                .collect()
+        };
+        *held = Some(Held {
+            most,
+            means,
+            near: near.clone(),
+        });
         near
     }
 
@@ -270,13 +311,32 @@ impl Vectors {
         let mut pieces = 0;
         for note in &store.notes {
             let hash = hash_of(note);
-            let entry = known.get(&note.id).filter(|e| e.hash == hash);
+            let entry = known.get(&note.id);
+            let current = entry.is_some_and(|e| e.hash == hash);
             let mut found = pieces_of(note);
+            let mut kept = Vec::new();
             if let Some(entry) = entry {
-                found.retain(|(at, _)| !entry.pieces.iter().any(|(indexed, _)| indexed == at));
+                if current {
+                    found.retain(|(at, _)| !entry.pieces.iter().any(|(indexed, _)| indexed == at));
+                } else {
+                    found.retain(|(at, text)| {
+                        let mark = mark_of(text);
+                        let old = entry.marks.iter().find(|(_, known)| **known == mark);
+                        let vector = old.and_then(|(was, _)| {
+                            entry.pieces.iter().find(|(indexed, _)| indexed == was)
+                        });
+                        match vector {
+                            Some((_, v)) => {
+                                kept.push((*at, mark, v.clone()));
+                                false
+                            }
+                            None => true,
+                        }
+                    });
+                }
             }
             found.truncate(most_pieces.saturating_sub(pieces));
-            if found.is_empty() {
+            if found.is_empty() && kept.is_empty() {
                 continue;
             }
             pieces += found.len();
@@ -284,6 +344,7 @@ impl Vectors {
                 id: note.id.clone(),
                 hash,
                 pieces: found,
+                kept,
             });
         }
         out
@@ -324,22 +385,25 @@ impl Vectors {
         };
         let mut given = vectors.into_iter();
         for item in work {
-            let pieces: Vec<(usize, Vec<f32>)> = item
+            let mut fresh: Vec<(usize, String, Vec<f32>)> = item
                 .pieces
                 .iter()
-                .filter_map(|(at, _)| given.next().map(|v| (*at, v)))
+                .filter_map(|(at, text)| given.next().map(|v| (*at, mark_of(text), v)))
                 .collect();
-            if pieces.len() != item.pieces.len() {
+            if fresh.len() != item.pieces.len() {
                 continue;
             }
             let merge = known.get(&item.id).is_some_and(|e| e.hash == item.hash);
+            if !merge {
+                fresh.extend(item.kept.iter().cloned());
+            }
             let saved = self.db.with(|c| {
                 let tx = c.transaction()?;
                 if !merge { tx.execute("DELETE FROM vectors WHERE note = ?1", [&item.id])?; }
-                for (at, v) in &pieces {
+                for (at, mark, v) in &fresh {
                     tx.execute(
-                        "INSERT OR REPLACE INTO vectors (note, at, hash, v) VALUES (?1, ?2, ?3, ?4)",
-                        rusqlite::params![item.id, *at as i64, item.hash, to_blob(v)],
+                        "INSERT OR REPLACE INTO vectors (note, at, hash, v, piece) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![item.id, *at as i64, item.hash, to_blob(v), mark],
                     )?;
                 }
                 tx.commit()
@@ -347,18 +411,20 @@ impl Vectors {
             if saved.is_err() {
                 continue;
             }
-            let mut pieces = pieces;
-            if merge {
-                pieces.extend(known[&item.id].pieces.clone());
-            }
-            pieces.sort_by_key(|(at, _)| *at);
-            known.insert(
-                item.id.clone(),
-                Entry {
+            let mut entry = known
+                .remove(&item.id)
+                .filter(|_| merge)
+                .unwrap_or_else(|| Entry {
                     hash: item.hash.clone(),
-                    pieces,
-                },
-            );
+                    pieces: Vec::new(),
+                    marks: BTreeMap::new(),
+                });
+            for (at, mark, v) in fresh {
+                entry.marks.insert(at, mark);
+                entry.pieces.push((at, v));
+            }
+            entry.pieces.sort_by_key(|(at, _)| *at);
+            known.insert(item.id.clone(), entry);
         }
         drop(known);
         self.changed();
@@ -421,7 +487,12 @@ pub fn read_in(vectors: &Vectors, meaning: &Meaning, work: &[Work]) -> usize {
         .iter()
         .flat_map(|w| w.pieces.iter().map(|(_, t)| t.clone()))
         .collect();
-    match meaning(&texts, false) {
+    let found = if texts.is_empty() {
+        Ok(Vec::new())
+    } else {
+        meaning(&texts, false)
+    };
+    match found {
         Ok(found) if found.len() == texts.len() => {
             vectors.put(work, found);
             work.len()
@@ -467,6 +538,63 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_reads_only_the_pieces_whose_text_changed_even_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+        let part = |c: &str| c.repeat(PIECE_CHARS - 100);
+        let body = |last: &str| format!("{}\n\n{}\n\n{}", part("a"), part("b"), last);
+        let id = store
+            .create_note("Three", body(&part("c")), vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let read = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&read);
+        let counting: Meaning = Arc::new(move |texts: &[String], query: bool| {
+            seen.lock().unwrap().push(texts.len());
+            fake()(texts, query)
+        });
+        let vectors = Vectors::for_notes(&store.notes_dir);
+        catch_up(&store, &vectors, &counting, 100);
+        assert_eq!(*read.lock().unwrap(), [3]);
+
+        store.find_note_mut(&id).unwrap().body = body(&part("d"));
+        catch_up(&store, &vectors, &counting, 100);
+        assert_eq!(*read.lock().unwrap(), [3, 1]);
+        assert_eq!(vectors.known.lock().unwrap()[&id].pieces.len(), 3);
+        assert!(vectors.stale(&store, 100).is_empty());
+
+        let ends = |vectors: &Vectors| {
+            let known = vectors.known.lock().unwrap();
+            let pieces = &known[&id].pieces;
+            (pieces[1].1.clone(), pieces[2].1.clone())
+        };
+        let before = ends(&vectors);
+        store.find_note_mut(&id).unwrap().body = format!("intro\n\n{}", body(&part("d")));
+        catch_up(&store, &vectors, &counting, 100);
+        assert_eq!(
+            *read.lock().unwrap(),
+            [3, 1, 1],
+            "pieces that only moved keep their vectors"
+        );
+        assert_eq!(ends(&vectors), before);
+        assert!(vectors.stale(&store, 100).is_empty());
+
+        let vectors = Vectors::for_notes(&store.notes_dir);
+        store.find_note_mut(&id).unwrap().body = format!("{}\n\n{}", part("a"), part("b"));
+        catch_up(&store, &vectors, &counting, 100);
+        assert_eq!(
+            *read.lock().unwrap(),
+            [3, 1, 1, 1],
+            "only the first piece, which lost its intro, is read again"
+        );
+        assert_eq!(vectors.known.lock().unwrap()[&id].pieces.len(), 2);
+        assert!(vectors.stale(&store, 100).is_empty());
+        let again = Vectors::for_notes(&store.notes_dir);
+        assert_eq!(again.known.lock().unwrap()[&id].pieces.len(), 2);
+    }
+
+    #[test]
     fn long_notes_are_indexed_to_the_end_in_bounded_batches_across_restarts() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
@@ -491,6 +619,55 @@ mod tests {
             close_to(Some(&fake()), &again, "plants and light", 5)[0].0,
             id
         );
+    }
+
+    #[test]
+    fn nearest_notes_updated_after_a_few_changes_match_a_full_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let vectors = Vectors::at(dir.path().join("meaning.json"));
+        let mut seed = 7u32;
+        let mut vector = move || -> Vec<f32> {
+            let mut v: Vec<f32> = (0..8)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+                })
+                .collect();
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            v.iter_mut().for_each(|x| *x /= norm);
+            v
+        };
+        let mut place = |id: String, hash: &str| {
+            let work = Work {
+                id,
+                hash: hash.into(),
+                pieces: vec![(0, "text".into())],
+                kept: Vec::new(),
+            };
+            vectors.put(&[work], vec![vector()]);
+        };
+        for n in 0..60 {
+            place(format!("note-{n:02}"), "first");
+        }
+        let full = |vectors: &Vectors| {
+            *vectors.held.lock().unwrap() = None;
+            vectors.neighbours(5)
+        };
+        assert_eq!(vectors.neighbours(5), full(&vectors));
+        for round in 0..6 {
+            for n in [3 + round, 20 + round * 2, 59 - round] {
+                place(format!("note-{n:02}"), &format!("round-{round}"));
+            }
+            place(format!("new-{round}"), "first");
+            vectors
+                .known
+                .lock()
+                .unwrap()
+                .remove(&format!("note-{:02}", 40 + round));
+            let updated = vectors.neighbours(5);
+            assert_eq!(updated, full(&vectors), "round {round}");
+            assert_eq!(updated.len(), 60);
+        }
     }
 
     #[test]

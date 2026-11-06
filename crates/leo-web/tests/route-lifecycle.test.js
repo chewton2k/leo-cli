@@ -8,7 +8,7 @@ function fixture() {
   const calls = [];
   class Offline extends Error {}
   const noop = () => {};
-  const context = { renderGeneration: 0, hideAskFloat: noop,  clearTimeout: noop, cal: {}, closeSource: noop, document: {body: {classList: {toggle: noop}}}, location: {hash: '#/n/deleted'}, stopLibraryArrival: noop, library: {}, closeSearch: noop, leaveMap: noop, leaveBoards: noop, chat: {setContext: noop}, recorder: {leave: noop}, activity: {}, drawActivity: noop, app: {innerHTML: 'new draft'}, ICON: {cloud: ''}, Offline, empty: () => 'offline', toast: () => calls.push('toast'), go: hash => calls.push(hash), fail: () => calls.push('failure'), loadSideFolders: () => calls.push('sidebar'), newNote: async () => {}, showFolder: async () => {} };
+  const context = { openingNote: null, renderGeneration: 0, hideAskFloat: noop,  clearTimeout: noop, cal: {}, closeSource: noop, document: {body: {classList: {toggle: noop}}}, location: {hash: '#/n/deleted'}, stopPageArrival: noop, library: {}, closeSearch: noop, leaveMap: noop, leaveBoards: noop, chat: {setContext: noop}, recorder: {leave: noop}, activity: {}, drawActivity: noop, app: {innerHTML: 'new draft'}, ICON: {cloud: ''}, Offline, empty: () => 'offline', toast: () => calls.push('toast'), go: hash => calls.push(hash), fail: () => calls.push('failure'), loadSideFolders: () => calls.push('sidebar'), newNote: async () => {}, showFolder: async () => {} };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('async function render()'), source.indexOf("window.addEventListener('online'")), context);
   return {context, calls, Offline};
@@ -50,4 +50,20 @@ test('the active route still handles missing notes and connection errors', async
     assert.deepEqual(calls, kind === 'missing' ? ['toast', '#/'] : kind === 'other' ? ['failure'] : []);
     assert.equal(context.app.innerHTML, kind === 'offline' ? 'offline' : 'new draft');
   }
+});
+
+test('arriving on a page keeps a sheet opened there and closes one left from before', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/app/events.js'), 'utf8');
+  const closed = [];
+  const context = { location: { hash: '#/search/x' }, closeSheet: (now) => closed.push(now), drawn: {}, window: { scrollTo() {} }, render: async () => {}, $: () => open };
+  let open = { openedOn: '#/search/x' };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('async function route('), source.indexOf('const activity =')), context);
+  await context.route(true);
+  assert.deepEqual(closed, []);
+  await context.route();
+  assert.deepEqual(closed, [true]);
+  open = { openedOn: '#/n/before' };
+  await context.route(true);
+  assert.deepEqual(closed, [true, true]);
 });

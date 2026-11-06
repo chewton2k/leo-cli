@@ -1,6 +1,6 @@
 const TASK_TITLE = { writing: 'AI for writing', speech: 'AI for speech' };
 const TASK_USE = {
-  writing: 'Turns recordings into notes, answers @leo questions, powers Felix and note connections.',
+  writing: 'Turns recordings into notes, powers Felix and note connections.',
   speech: 'Turns what was said into text while you record.',
 };
 
@@ -9,7 +9,7 @@ async function showSettings(section) {
   // Trash is a page of notes rather than a setting, so a bare #/settings never reopens it.
   if (section === 'trash') return showTrash();
   try { localStorage.setItem('leo-settings-section', section); } catch (e) {}
-  if (section === 'storage') return showStorage();
+  if (section === 'keeping') return showKeeping();
   const mine = ++seq;
   state = { view: 'settings', dir: '', section };
   scheduleAppStatus(appPollGeneration);
@@ -148,7 +148,7 @@ function togglePicker(el) {
   const menu = el.parentElement.querySelector('.picker-menu');
   closePickers(menu);
   const opening = menu.hidden || Boolean(menu.dataset.folding);
-  if (opening) unfold(menu);
+  if (opening) unfold(menu, el);
   else fold(menu);
   el.setAttribute('aria-expanded', String(opening));
 }
@@ -200,19 +200,29 @@ const PLAN_STALE_MS = 5 * 60 * 1000;
 function planLimits(plan) {
   const limits = plan.limits;
   const now = Date.now();
-  const windows = [['five_hour', '5 hour'], ['seven_day', '7 day']].flatMap(([key, name]) => {
+  const windows = [['five_hour', 'Session', '5 hour'], ['seven_day', 'Weekly', '7 day']].map(([key, name, period]) => {
     const window = limits?.[key];
-    if (!window || !Number.isFinite(window.used)) return [];
-    const reset = Number.isFinite(window.resets_at) ? new Date(window.resets_at * 1000) : null;
+    const used = window?.used;
+    const valid = Number.isFinite(used);
+    const reset = Number.isFinite(window?.resets_at) ? new Date(window.resets_at * 1000) : null;
     const validReset = reset && Number.isFinite(reset.getTime());
     const expired = validReset && reset.getTime() <= now;
-    const percent = expired ? 0 : 100 - Math.round(Math.max(0, Math.min(1, window.used)) * 100);
-    const when = expired ? 'Waiting for the next update' : validReset ? `Resets ${reset.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Reset time unavailable';
-    return [`<div class="plan-window"><div class="plan-metric"><span>${key === 'five_hour' ? 'Session' : 'Weekly'}</span><strong>${expired ? 'Unavailable' : `${percent}% left`}</strong></div><div class="plan-meter${!expired && percent <= 10 ? ' near-limit' : ''}" role="meter" aria-label="${esc(plan.name)} ${name} remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div><span class="hint">${esc(when)}</span></div>`];
-  });
-  const seen = limits && new Date(limits.seen_at).getTime();
-  const age = Number.isFinite(seen) ? `<p class="hint">${now - seen >= PLAN_STALE_MS ? 'Saved usage · ' : ''}Updated ${esc(rel(limits.seen_at))}</p>` : '';
-  return windows.length ? windows.join('') + age : `<p class="hint">${plan.provider === 'claude_code' ? 'Usage appears after Claude Code reports limits during an answer.' : 'Usage unavailable. Refresh to check Codex account limits.'}</p>`;
+    const available = valid && !expired;
+    const percent = available ? Math.max(0, Math.min(100, 100 - Math.round(used * 100))) : null;
+    const when = expired ? 'Waiting for update' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
+    return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong>${available ? `${percent}% <small>left</small>` : 'Unavailable'}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ' aria-valuetext="Unavailable"'}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
+  }).join('');
+  const seenAt = typeof limits?.seen_at === 'string' && limits.seen_at ? limits.seen_at : null;
+  const seen = seenAt ? new Date(seenAt).getTime() : NaN;
+  const stale = Number.isFinite(seen) && now - seen >= PLAN_STALE_MS;
+  const status = Number.isFinite(seen) ? `${stale ? 'Saved · ' : ''}Updated ${esc(rel(seenAt))}` : 'Usage has not been reported yet';
+  return windows + `<p class="hint usage-status" role="status">${status}</p>`;
+}
+
+function duration(ms) {
+  const minutes = Math.max(1, Math.floor(ms / 60000));
+  const days = Math.floor(minutes / 1440), hours = Math.floor((minutes % 1440) / 60), rest = minutes % 60;
+  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${rest}m` : `${rest}m`;
 }
 
 function codingPlans(page, selectable = true) {
@@ -221,23 +231,41 @@ function codingPlans(page, selectable = true) {
   return `<div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selectable && selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
   }).join('')}</div>`;
 }
 
 const APPEARANCE_DEFAULTS = { theme: 'system', felix: 'cute', width: 'wide' };
 const THEME_LABELS = { system: 'Match device', light: 'Light', dark: 'Dark' };
-const THEME_ICONS = { system: 'device', light: 'sun', dark: 'moon' };
+
+const THEME_SURFACES = {
+  light: { ground: '#f2f1ec', page: '#f9f8f5', head: '#1c1c1a', line: '#d9d8d3', side: '#e3e2dc' },
+  dark: { ground: '#141413', page: '#1f1f1e', head: '#ecebe7', line: '#3a3a38', side: '#2a2a28' },
+};
+function themeScene(look) {
+  const c = THEME_SURFACES[look];
+  return `<rect width="120" height="52" fill="${c.ground}"/><rect x="7" y="10" width="15" height="3" rx="1.5" fill="${c.side}"/><rect x="7" y="17" width="11" height="3" rx="1.5" fill="${c.side}"/><rect x="7" y="24" width="13" height="3" rx="1.5" fill="${c.side}"/><rect x="29" y="5" width="96" height="52" rx="5" fill="${c.page}"/><rect x="40" y="14" width="30" height="4" rx="2" fill="${c.head}"/><rect x="40" y="24" width="64" height="3" rx="1.5" fill="${c.line}"/><rect x="40" y="31" width="56" height="3" rx="1.5" fill="${c.line}"/><rect x="40" y="38" width="42" height="3" rx="1.5" fill="${c.line}"/>`;
+}
+const THEME_DIAGRAMS = {
+  system: `<svg viewBox="0 0 120 52">${themeScene('light')}<svg x="60" width="60" height="52" viewBox="60 0 60 52">${themeScene('dark')}</svg></svg>`,
+  light: `<svg viewBox="0 0 120 52">${themeScene('light')}</svg>`,
+  dark: `<svg viewBox="0 0 120 52">${themeScene('dark')}</svg>`,
+};
+const WIDTH_COLUMNS = { comfortable: 44, wide: 70, full: 108 };
+function widthDiagram(width) {
+  const w = WIDTH_COLUMNS[width], x = (120 - w) / 2, line = (share) => Math.round((w - 12) * share);
+  return `<svg viewBox="0 0 120 52"><path class="d-page" d="M${x} 6h${w}v46H${x}z"/><path class="d-head" d="M${x + 6} 15h${line(0.45)}"/><path class="d-text" d="M${x + 6} 24h${line(1)}M${x + 6} 31h${line(0.9)}M${x + 6} 38h${line(0.65)}"/></svg>`;
+}
 
 function themeCard() {
   const now = window.leoTheme.choice();
   const felixNow = window.leoTheme.felix();
-  return `<section class="set-card">
+  const widthNow = window.leoTheme.noteWidth();
+  return `<section class="set-card appearance">
       <header><h3>Appearance</h3></header>
-      <div class="set-row" data-find="theme"><span class="set-label">Theme${settingReset('Theme', 'theme', now !== APPEARANCE_DEFAULTS.theme)}</span>${segmented({ label: 'Theme', action: 'theme-pick', key: 'theme', current: now, choices: window.leoTheme.CHOICES.map((choice) => [choice, THEME_LABELS[choice], ICON[THEME_ICONS[choice]]]) })}</div>
-      <div class="set-row" data-find="felix-look"><span class="set-label">Felix${settingReset('Felix', 'felix', felixNow !== APPEARANCE_DEFAULTS.felix)}</span>${segmented({ label: 'Felix', action: 'felix-pick', key: 'felix', current: felixNow, choices: [['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => [kind, label, felix.felix(22, `felix-preview ${kind}-look`)]) })}</div>
-      <div class="set-row" data-find="note-width"><span class="set-label">Note width${settingReset('Note width', 'width', window.leoTheme.noteWidth() !== APPEARANCE_DEFAULTS.width)}</span>${segmented({ label: 'Note width', action: 'width-pick', key: 'width', current: window.leoTheme.noteWidth(), choices: window.leoTheme.WIDTHS.map((width) => [width, WIDTH_LABELS[width], svg(WIDTH_ICONS[width])]) })}</div>
-      <p class="hint">Kept on this computer. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
+      <div class="set-row column" data-find="theme"><span class="set-label">Theme${settingReset('Theme', 'theme', now !== APPEARANCE_DEFAULTS.theme)}</span>${choiceCards({ label: 'Theme', action: 'theme-pick', key: 'theme', current: now, choices: window.leoTheme.CHOICES.map((choice) => [choice, THEME_LABELS[choice], '', THEME_DIAGRAMS[choice]]) })}</div>
+      <div class="set-row column" data-find="felix-look"><span class="set-label">Felix${settingReset('Felix', 'felix', felixNow !== APPEARANCE_DEFAULTS.felix)}</span>${choiceCards({ label: 'Felix', action: 'felix-pick', key: 'felix', current: felixNow, columns: 3, choices: [['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => [kind, label, '', `<svg viewBox="0 0 120 52">${felix.felix(40, `felix-preview ${kind}-look`).replace('<svg ', '<svg x="40" y="10" ')}</svg>`]) })}</div>
+      <div class="set-row column" data-find="note-width"><span class="set-label">Note width${settingReset('Note width', 'width', widthNow !== APPEARANCE_DEFAULTS.width)}</span>${choiceCards({ label: 'Note width', action: 'width-pick', key: 'width', current: widthNow, choices: window.leoTheme.WIDTHS.map((width) => [width, WIDTH_LABELS[width], '', widthDiagram(width)]) })}</div>
     </section>`;
 }
 
@@ -260,17 +288,12 @@ function pickTheme(el) {
     button.setAttribute('aria-pressed', String(on));
   }
   // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
-  const box = document.querySelector('[data-action="theme-pick"]')?.closest('.segmented');
-  if (box) syncSegmented(box);
+  const box = document.querySelector('[data-action="theme-pick"]')?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
   syncAppearanceResets();
 }
 
 const WIDTH_LABELS = { comfortable: 'Comfortable', wide: 'Wide', full: 'Full width' };
-const WIDTH_ICONS = {
-  comfortable: '<rect x="7" y="4" width="10" height="16" rx="1.5"/><path d="M9.5 8.5h5M9.5 12h5M9.5 15.5h3"/>',
-  wide: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M7 8.5h10M7 12h10M7 15.5h6"/>',
-  full: '<rect x="2" y="4" width="20" height="16" rx="1.5"/><path d="M5 8.5h14M5 12h14M5 15.5h9"/>',
-};
 
 function pickWidth(el) {
   window.leoTheme.setNoteWidth(el.dataset.width);
@@ -280,8 +303,8 @@ function pickWidth(el) {
     button.setAttribute('aria-pressed', String(on));
   }
   // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
-  const box = document.querySelector('[data-action="width-pick"]')?.closest('.segmented');
-  if (box) syncSegmented(box);
+  const box = document.querySelector('[data-action="width-pick"]')?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
   syncAppearanceResets();
 }
 
@@ -293,8 +316,8 @@ function pickFelix(el) {
     button.setAttribute('aria-pressed', String(on));
   }
   // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
-  const box = document.querySelector('[data-action="felix-pick"]')?.closest('.segmented');
-  if (box) syncSegmented(box);
+  const box = document.querySelector('[data-action="felix-pick"]')?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
   syncAppearanceResets();
 }
 
@@ -310,16 +333,6 @@ function felixUsageCard(page) {
   </section>`;
 }
 
-function backupCard(backup) {
-  return `    <section class="set-card" data-find="backup-github">
-      <header><h3>GitHub</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
-      <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet.'}</p>
-      ${!backup.remote ? '<div class="set-row"><input class="set-input grow" id="backup-repository" value="leo-notes" aria-label="GitHub repository name"><button class="btn primary sm" data-action="backup-setup">Set up Backup</button></div><p class="set-note">Uses GitHub CLI. If needed, install gh from <a href="https://cli.github.com" target="_blank" rel="noopener noreferrer">cli.github.com</a> and sign in once with gh auth login.</p>' : ''}
-      <p class="hint">On quit also backs up notes and tasks when you close the leo window or quit leo.</p>
-      <label class="set-row" data-find="backup-push"><span class="set-label">Push changes</span><span class="select-control"><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select>${ICON.chevron}</span></label>
-    </section>
-`;
-}
 function drawSettings(page) {
   const fields = keepSettingsFields(), segments = keepSegmented();
   state.settings = page;
@@ -331,7 +344,6 @@ function drawSettings(page) {
   else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
   else if (section === 'felix') content = felixSettingsCards(state.margin, page);
   else if (section === 'calendar') content = calendarCard(state.calendar);
-  else if (section === 'backup') content = backupCard(page.backup);
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
   else if (section === 'updates') content = `<div id="app-updates">${updatesCard(desktopApp)}</div>`;
   else content = '';
@@ -377,9 +389,7 @@ async function saveKey(account) {
 }
 
 function confirmRemoveKey(el) {
-  sheet(`<h3>Remove the ${esc(el.dataset.name)} key?</h3>
-    <p>leo stops using ${esc(el.dataset.name)} until you add a key again.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="remove-key-now" data-account="${esc(el.dataset.account)}">Remove</button></div>`);
+  confirmSheet({ title: `Remove the ${esc(el.dataset.name)} key?`, text: `leo stops using ${esc(el.dataset.name)} until you add a key again.`, yes: 'Remove', action: 'remove-key-now', data: ` data-account="${esc(el.dataset.account)}"` });
 }
 
 async function testAi(el) {
@@ -494,14 +504,14 @@ function changeSpeechModel(el) {
   if (el.dataset.verb === 'delete_file') {
     const file = (state.speech.extra_files || []).find((file) => file.name === el.dataset.model);
     if (!file) return;
-    sheet(`<h3>Delete ${esc(file.name)}?</h3><p>This removes the model file from this computer.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="speech-delete" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`);
+    confirmSheet({ title: `Delete ${esc(file.name)}?`, text: 'This removes the model file from this computer.', yes: 'Delete', action: 'speech-delete', data: ` data-model="${esc(file.name)}" data-verb="delete_file"` });
     return;
   }
   const model = state.speech.models.find((m) => m.id === el.dataset.model);
   if (!model) return;
   const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' };
   if (change.action === 'delete') {
-    sheet(`<h3>Delete ${esc(model.name)}?</h3><p>The download is removed from this computer. Your notes stay.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="speech-delete" data-model="${esc(model.id)}">Delete</button></div>`);
+    confirmSheet({ title: `Delete ${esc(model.name)}?`, text: 'The download is removed from this computer. Your notes stay.', yes: 'Delete', action: 'speech-delete', data: ` data-model="${esc(model.id)}"` });
     return;
   }
   return speechChange(change);
@@ -512,21 +522,57 @@ app.addEventListener('change', (event) => {
   if (language) speechChange({ action: 'use', id: language.dataset.speechLanguage, language: language.value }).catch(fail);
 });
 
-async function showUsage() {
-  const box = sheet('<h3>Usage</h3><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn" data-action="usage">Refresh</button></div>');
+async function showUsage(trigger = null) {
+  const opener = trigger?.closest?.('.scrim') ? $('#menu') : trigger || document.activeElement;
+  const box = sheet('<header class="usage-head"><h3>Usage</h3><div class="usage-tools"><span aria-current="page">Limits</span><button type="button" class="btn plain sm" data-action="usage-refresh" disabled>Refresh</button><button type="button" class="btn plain sm" data-action="close">Close</button></div></header><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div>');
+  box.returnFocus = opener;
+  trapSheetFocus(box);
   box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
-  let saved = false;
   const mine = seq;
+  let saved = false, refreshing = true;
+  const live = () => mine === seq && box.isConnected && !box.classList.contains('scrim-gone');
+  const content = box.querySelector('.usage-content');
+  const refresh = async () => {
+    if (refreshing || !live()) return;
+    refreshing = true;
+    const button = box.querySelector('[data-action="usage-refresh"]');
+    const focused = document.activeElement === button;
+    button.disabled = true;
+    try {
+      const fresh = await api('/api/settings/usage', { method: 'POST' });
+      if (!live()) return;
+      content.innerHTML = codingPlans(fresh, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+      saved = true;
+    } catch (e) {
+      if (!live()) return;
+      if (!saved) content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
+      else {
+        content.querySelector('.usage-error')?.remove();
+        content.insertAdjacentHTML('beforeend', '<p class="hint usage-error" role="status">Refresh failed · showing saved usage</p>');
+      }
+    } finally {
+      refreshing = false;
+      if (live()) {
+        button.disabled = false;
+        if (focused && document.activeElement === document.body) button.focus();
+      }
+    }
+  };
+  box.addEventListener('click', event => {
+    const button = event.target.closest('[data-action="usage-refresh"]');
+    if (button && !refreshing) { button.focus(); refresh(); }
+  });
   try {
     const page = await api('/api/settings');
-    if (mine !== seq || !box.isConnected || box.classList.contains('scrim-gone')) return;
-    box.querySelector('.usage-content').innerHTML = codingPlans(page, false) || '<p class="hint">No coding accounts detected.</p>';
-    saved = true;
-    const fresh = await api('/api/settings/usage', { method: 'POST' });
-    if (mine !== seq || !box.isConnected || box.classList.contains('scrim-gone')) return;
-    box.querySelector('.usage-content').innerHTML = codingPlans(fresh, false) || '<p class="hint">No coding accounts detected.</p>';
+    if (!live()) return;
+    content.innerHTML = codingPlans(page, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+    saved = Boolean(page.plans?.length);
   } catch (e) {
-    if (mine === seq && box.isConnected && !box.classList.contains('scrim-gone')) { if (!saved) closeSheet(); fail(e); }
+    if (!live()) return;
+    content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
   }
+  refreshing = false;
+  if (live()) box.querySelector('[data-action="usage-refresh"]').disabled = false;
+  refresh();
 }

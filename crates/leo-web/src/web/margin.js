@@ -120,7 +120,7 @@
   const ROOM_RIGHT = TICK_GUTTER + LEAST_COLUMN + MARGIN_GAP + MARGIN_WIDTH + END_GUTTER;
   const ROOM_BOTH = ROOM_RIGHT + MARGIN_WIDTH + MARGIN_GAP;
 
-  function arrangement({ width, setting = 'right', noteWidth = 'wide', panel = false }) {
+  function arrangement({ width, setting = 'both', noteWidth = 'wide', panel = false }) {
     if (setting === 'marks' || noteWidth === 'full' || panel || width < ROOM_RIGHT) return 'marks';
     return setting === 'both' && width >= ROOM_BOTH ? 'both' : 'right';
   }
