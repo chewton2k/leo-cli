@@ -605,6 +605,21 @@ pub fn remove(chats: &Path, id: &str) -> bool {
     write_file(chats, &task).is_ok()
 }
 
+pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
+    let Some(days) = days else {
+        return 0;
+    };
+    let before = now - chrono::Duration::days(i64::from(days));
+    read_all(chats)
+        .into_iter()
+        .filter(|task| task.deleted && task.updated_at < before)
+        .filter(|task| {
+            task_path(chats, &format!("{}.json", task.id))
+                .is_ok_and(|path| std::fs::remove_file(path).is_ok())
+        })
+        .count()
+}
+
 pub fn metas(chats: &Path) -> Vec<Meta> {
     db_of(chats)
         .with(|c| {
@@ -774,6 +789,24 @@ mod tests {
             moved: BTreeMap::new(),
             deleted: false,
         }
+    }
+
+    #[test]
+    fn a_deleted_task_leaves_its_file_only_for_the_trash_period() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let now = Utc::now();
+        put(&chats, &plain("task-0001", "Old", now)).unwrap();
+        put(&chats, &plain("task-0002", "Kept", now)).unwrap();
+        assert!(remove(&chats, "task-0001"));
+        let file = dir.path().join("notes/.leo/tasks/task-0001.json");
+        assert_eq!(forget_deleted(&chats, None, now), 0);
+        assert_eq!(forget_deleted(&chats, Some(30), now), 0);
+        assert!(file.exists());
+        let later = now + chrono::Duration::days(31);
+        assert_eq!(forget_deleted(&chats, Some(30), later), 1);
+        assert!(!file.exists());
+        assert_eq!(load_all(&chats).len(), 1);
     }
 
     #[test]

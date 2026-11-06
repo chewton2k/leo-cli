@@ -1,4 +1,5 @@
 pub fn powers() -> leo_web::Powers {
+    std::thread::spawn(leo_services::ai::tidy_rooms);
     let usage = std::sync::Arc::new(leo_web::usage::Usage::default());
     let writer = crate::felix::writer(
         std::sync::Arc::clone(&usage),

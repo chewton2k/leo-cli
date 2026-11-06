@@ -194,6 +194,7 @@ pub(crate) async fn expire_now(state: &AppState) {
         return;
     };
     let housekeeper = state.housekeeper.clone();
+    let chats = state.chats.clone();
     let active = state
         .recording
         .lock()
@@ -201,6 +202,7 @@ pub(crate) async fn expire_now(state: &AppState) {
         .and_then(|held| held.as_ref().map(|job| job.session_id()));
     let _ = tokio::task::spawn_blocking(move || {
         let now = Utc::now();
+        crate::tasks::forget_deleted(&chats, keep.trash_days, now);
         expire_uploads(&notes_dir, keep.upload_days, now);
         expire_transcripts(&notes_dir, keep.transcript_days, now, active.as_deref());
         if let Some(housekeeper) = housekeeper {

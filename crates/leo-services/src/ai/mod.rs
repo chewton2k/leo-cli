@@ -19,6 +19,22 @@ use crate::config::Config;
 /// Room for a long lecture's notes, for a provider with no cap of its own.
 pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
 
+pub fn tidy_rooms() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if (name.starts_with("leo-writing-") || name.starts_with("leo-usage-"))
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && crate::providers::older_than(&entry, std::time::Duration::from_secs(86_400))
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 pub fn stop_writing() {
     provider::process::stop_writing();
 }

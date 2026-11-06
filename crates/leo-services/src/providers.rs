@@ -159,6 +159,16 @@ pub fn download_verified(
         "the model folder cannot be a symbolic link"
     );
     let target = leo_core::paths::contained_path(dir, std::path::Path::new(name))?;
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let left = entry.file_name();
+        let left = left.to_string_lossy();
+        if left.starts_with(".leo-download-")
+            && left.ends_with(".part")
+            && older_than(&entry, STALE_DOWNLOAD)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
     let partial = tempfile::Builder::new()
         .prefix(".leo-download-")
         .suffix(".part")
@@ -183,9 +193,20 @@ pub fn download_verified(
     } else {
         curl.arg("--progress-bar");
     }
-    let status = curl
-        .status()
-        .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?;
+    let curl = ai::provider::process::Process::new(
+        curl.spawn()
+            .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?,
+    );
+    let status = loop {
+        let ended = match curl.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            Some(running) => running.try_wait()?,
+            None => None,
+        };
+        if let Some(status) = ended {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
     if !status.success() {
         anyhow::bail!("the download failed; try again when online");
     }
@@ -195,6 +216,17 @@ pub fn download_verified(
     }
     partial.persist(&target).map_err(|e| e.error)?;
     Ok(target)
+}
+
+const STALE_DOWNLOAD: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+pub(crate) fn older_than(entry: &std::fs::DirEntry, age: std::time::Duration) -> bool {
+    entry
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|at| at.elapsed().ok())
+        .is_some_and(|since| since >= age)
 }
 
 #[cfg(test)]
@@ -241,9 +273,22 @@ mod tests {
         assert_eq!(good.len(), 64);
 
         let models = dir.path().join("models");
+        std::fs::create_dir_all(&models).unwrap();
+        let stale = models.join(".leo-download-old.part");
+        let fresh = models.join(".leo-download-new.part");
+        std::fs::write(&stale, b"left by a crash").unwrap();
+        std::fs::write(&fresh, b"another download").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - STALE_DOWNLOAD * 2)
+            .unwrap();
         let saved =
             download_verified(&file_url(&source), &good, &models, "ggml-x.bin", true).unwrap();
         assert_eq!(std::fs::read(&saved).unwrap(), b"pretend model");
+        assert!(!stale.exists());
+        assert!(fresh.exists());
         assert!(!models.join("ggml-x.bin.part").exists());
 
         let err = download_verified(
