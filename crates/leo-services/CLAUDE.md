@@ -70,8 +70,7 @@ order. `recover_parts` seals a crash's `.part.wav` and clears `.err` for retry.
 request per group plus a title/summary request; every failure falls back to
 the raw transcript, so it cannot fail. `Session::finish` deletes the folder
 unless a segment failed (then `saved: true` keeps the audio). Unfinished
-sessions are resumed by the TUI at start (`App::resume_interrupted`,
-`App.recordings` is None in tests) and by `leo record` before recording.
+sessions are resumed by the app (`recorder::resume`).
 `session/stress.rs` simulates 3 h and (ignored) 24 h with a flaky provider and
 a crash copy.
 
@@ -182,9 +181,8 @@ fall back to recent local Codex `token_count` rate-limit events without starting
 app-server. This read-only fallback scans bounded recent folders and file tails,
 rejects links, preserves the event timestamp and never exposes conversation text;
 an older event cannot replace newer saved usage. Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
-age past `STALE_AFTER`, a window past its reset reads 0%); the TUI re-asks
-Codex every `task::USAGE_EVERY` (60 s) while Settings is open
-(`App.check_usage`, a no-op fn in tests); doctor adds `<name> limits` with
+age past `STALE_AFTER`, a window past its reset reads 0%); the Usage action in
+Settings asks Codex; doctor adds `<name> limits` with
 reset times. Never `--bare` (it skips the
 OAuth login). Usable = program on PATH (`locate`, `.cmd` on Windows); failures
 are retryable and name the sign-in step; settings shows a sign-in fact row,
@@ -358,8 +356,9 @@ isolation capability checks below. Every call
 goes through Leo's validated `Turn.call`; malformed arguments receive a repair
 message, never execution. Claude Code that cannot open a native session falls back
 to the shared text protocol. A Codex whose app-server cannot start (an old
-version that cannot isolate native sessions) gets a session whose first answer
-fails with "Update Codex, then try again."; there is no stateless fallback.
+version that cannot isolate native sessions) is skipped for native sessions, so
+Felix answers through the same text protocol; the `codex exec` resume and
+stateless Codex sessions are gone.
 Tests use local fake servers, never paid APIs.
 
 Session turns check cancellation before more requests or tools; writing CLI output
@@ -377,8 +376,8 @@ unit length, queries prefixed with `QUERY`. Files pinned to a Hugging Face
 commit with SHA-256s (`MODEL_MANIFEST`), kept in
 `models_dir()/bge-small-en-v1.5`, loaded on demand (`model()`) and unloaded
 after 60 seconds idle once callers release their model handles. `leo update`
-fetches it (`ensure_meaning_model`), and `leo serve` fetches it quietly in
-the background when missing (`web_felix::meaning`). `LEO_INSTALL_NO_MODEL`
+fetches it (`ensure_meaning_model`), and the app fetches it quietly in
+the background when missing (`leo_host::felix::meaning`). `LEO_INSTALL_NO_MODEL`
 or `LEO_NO_MEANING_MODEL` turns that off (e2e and Playwright set them);
 `LEO_MEANING_URL` / `LEO_MEANING_MANIFEST` point tests at file:// stand-ins.
 Doctor's notes section says whether it is ready. The real-model test is
@@ -397,8 +396,7 @@ restated last) while keeping transcript repair, knowledge gap-filling and point
 merging. `web::fetch_public` is the one https fetch for addresses the user gives
 (calendar links): public hosts only, capped size.
 
-Browser-fed manifests are recovered through their browser journal, never by the
-terminal startup scan. Simultaneous tracks allocate session folders with exclusive
+Simultaneous tracks allocate session folders with exclusive
 `create_dir`; metadata uses unique synced temporary files so track startup cannot
 share a directory or race on a fixed temporary name.
 
@@ -454,7 +452,7 @@ are dropped immediately after spawn so EOF remains meaningful; the existing
 output cap and whole-process watchdog cover both streams. A present CLI that
 fails this check reports unverified safety controls, never a missing installation.
 
-Leo serve also uses the existing quick-model configuration for long-chat memory;
+Leo also uses the existing quick-model configuration for long-chat memory;
 chat titles are local. The root wiring meters writing/quick/summary outcomes before
 string-only writer callbacks discard token metadata. Foreground Felix turns and
 hidden grading are metered in leo-web, without recording prompt or reply contents.

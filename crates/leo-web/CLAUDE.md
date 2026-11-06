@@ -681,8 +681,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
   API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
 
-- Export adds `tasks.json`; the Restore tasks control left with the Storage page
-  (2026-11-05); POST `/api/tasks/import` (ids dedupe; a newer local copy is kept).
+- Export adds `tasks.json`; Settings → Keeping's export card has the Restore tasks control; POST `/api/tasks/import` (ids dedupe; a newer local copy is kept).
 
 ## Boards (`boards.rs`, `routes/boards.rs`, `app/boards.js`, 2026-11-02)
 

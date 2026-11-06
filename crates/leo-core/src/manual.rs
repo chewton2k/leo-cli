@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 23;
+const MANUAL_VERSION: u32 = 24;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -122,8 +122,7 @@ him read along as you write.
 
 ## Writing
 
-Tap a line to edit it; everything else stays formatted. Write `@leo` and a
-question on a line, and the answer appears under it.
+Tap a line to edit it; everything else stays formatted.
 
 ## Finding and organising
 

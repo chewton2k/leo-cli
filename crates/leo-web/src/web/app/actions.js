@@ -158,6 +158,7 @@ const actions = {
     if (next) saveKeep(next).catch(fail);
   },
   'keep-cancel': () => closeSheet(),
+  'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,
   'remove-key-now': (el) => {
