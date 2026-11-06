@@ -39,8 +39,9 @@ impl Reads {
         unchanged.then(|| format!("Unchanged: the saved content was rechecked and exactly matches the earlier {name} result for these arguments. Reuse that complete result already in this conversation; no data was changed."))
     }
 
-    pub fn clear(&mut self) {
+    pub fn restart(&mut self, study_rules: bool) {
         self.kept.clear();
+        self.study_rules = study_rules;
     }
 }
 
@@ -67,7 +68,7 @@ mod tests {
         let error = format!("That did not work: {}", a);
         assert!(cache.compact("open_note", "failed", &error).is_none());
         assert!(cache.compact("open_note", "failed", &error).is_none());
-        cache.clear();
+        cache.restart(false);
         assert!(cache.compact("open_note", "first", &a).is_none());
     }
 

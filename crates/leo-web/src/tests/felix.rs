@@ -1044,6 +1044,19 @@ fn the_study_rules_reach_felix_once_however_the_study_starts() {
         role: role.into(),
         text: text.into(),
     };
+    *replies.lock().unwrap() = vec![RULES, RULES, "Done."];
+    chat_lines(&state, "teach me");
+    {
+        let mut said = heard.lock().unwrap();
+        assert!(said[1].contains(MARK));
+        assert!(
+            !said[2].contains(MARK),
+            "a second call does not resend them"
+        );
+        assert!(said[2].contains(tools::RULES_ALREADY));
+        said.clear();
+    }
+
     *replies.lock().unwrap() = vec![QUIZ];
     practice(None, vec![turn("user", "go")]);
     {
@@ -1061,6 +1074,83 @@ fn the_study_rules_reach_felix_once_however_the_study_starts() {
     assert_eq!(said.len(), 2);
     assert!(said[0].contains(MARK));
     assert!(!said[1].contains(MARK), "a warm session has them already");
+}
+
+#[test]
+fn a_failed_session_leaves_the_study_rules_to_be_sent_again() {
+    struct Breaks(u8);
+    impl chat::Conversation for Breaks {
+        fn native(&self) -> bool {
+            false
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            self.0 += 1;
+            anyhow::ensure!(self.0 == 1, "the session broke");
+            let quiz = "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What does a heap keep at its root?\", \"answer\": \"The smallest item\"}</tool>";
+            (exchange.piece)(quiz);
+            Ok(chat::Reply::from(quiz))
+        }
+    }
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    state.converse = Some(Arc::new(|_: &chat::Instructions, _: &[chat::ToolSpec]| {
+        Some(Box::new(Breaks(0)) as Box<dyn chat::Conversation>)
+    }));
+    let (writer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What does a heap keep at its root?\", \"answer\": \"The smallest item\"}</tool>",
+        "Done.",
+    ]);
+    state.chat = Some(writer);
+    chat_lines(&state, "quiz me on heaps");
+    let prompts = prompts.lock().unwrap();
+    assert!(
+        prompts.iter().any(|p| p.contains("Find the edge first")),
+        "the fallback starts fresh, so its first quiz brings the rules"
+    );
+}
+
+#[test]
+fn a_failing_light_writer_gives_way_to_the_chosen_model_and_says_so() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    state.chat = Some(Arc::new(
+        |_: &str,
+         _: &str,
+         _: u32,
+         piece: &mut dyn FnMut(&str),
+         _: &mut dyn FnMut(),
+         _: &dyn Fn() -> bool| {
+            piece("Chosen model.");
+            let mut reply = chat::Reply::from("Chosen model.");
+            reply.spent = Some(chat::Spent {
+                steps: 1,
+                ..Default::default()
+            });
+            Ok(reply)
+        },
+    ));
+    state.light_chat = Some(Arc::new(
+        |_: &str,
+         _: &str,
+         _: u32,
+         _: &mut dyn FnMut(&str),
+         _: &mut dyn FnMut(),
+         _: &dyn Fn() -> bool| anyhow::bail!("rate limited"),
+    ));
+    let lines = chat_lines(&state, "when is lab 3 due?");
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Chosen model.");
+    let spent = lines.iter().find_map(|l| l.get("spent")).unwrap();
+    assert_eq!(spent["auto"], false);
+}
+
+#[test]
+fn no_lighter_model_means_no_routing() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    state.chat = Some(scripted(vec!["Chosen model."]).0);
+    state.light_chat = Some(scripted(vec!["Light model."]).0);
+    state.lighter = Some(Arc::new(|| false));
+    let lines = chat_lines(&state, "when is lab 3 due?");
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Chosen model.");
 }
 
 #[test]

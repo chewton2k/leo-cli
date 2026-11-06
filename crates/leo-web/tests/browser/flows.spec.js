@@ -4580,6 +4580,30 @@ test('Felix shows one live step, then one line, and marks an answer from outside
   await expect(answer.locator('.msg-outside')).toHaveText('Not from your notes');
 });
 
+test('an opened trace stays open through the next reply, and a failed read is not counted', async ({ page }) => {
+  const reply = (lines) => lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: reply([
+    { step: 'Searched your notes for “lab”', tool: 'search_notes', found: [] },
+    { step: 'Looked for “x”', tool: 'open_note', found: [], failed: true },
+    { t: 'Wear goggles.' },
+    { done: true },
+  ]) }));
+  await page.goto('/');
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('what are the lab rules?');
+  await page.locator('#chat-input').press('Enter');
+  const first = page.locator('.msg.leo').first();
+  await expect(first.locator('.msg-trace > summary')).toHaveText('Searched your notes');
+  await expect(first.locator('.msg-outside')).toHaveText('Not from your notes');
+  await first.locator('.msg-trace > summary').click();
+  await expect(first.locator('.msg-trace')).toHaveAttribute('open', '');
+  await page.locator('#chat-input').fill('and the next one?');
+  await page.locator('#chat-input').press('Enter');
+  await expect(page.locator('.msg.leo')).toHaveCount(2);
+  await expect(page.locator('.msg.leo').last()).toContainText('Wear goggles.');
+  await expect(first.locator('.msg-trace')).toHaveAttribute('open', '');
+});
+
 test('choosing the model automatically can be turned off and stays off', async ({ page }) => {
   await page.goto('/#/settings/felix');
   const choice = page.locator('input[data-margin-pref="auto_model"]');

@@ -25,8 +25,8 @@ const OPENINGS: [&str; 24] = [
     "what's on ",
     "what’s on ",
     "what is on ",
-    "how many ",
-    "how much ",
+    "how many notes ",
+    "how many tasks ",
 ];
 const GREETINGS: [&str; 8] = [
     "hi",
@@ -38,7 +38,28 @@ const GREETINGS: [&str; 8] = [
     "okay",
     "got it",
 ];
-const DEEPER: [&str; 25] = [
+const THEIRS: [&str; 19] = [
+    "my",
+    "i",
+    "note",
+    "notes",
+    "due",
+    "deadline",
+    "deadlines",
+    "task",
+    "tasks",
+    "exam",
+    "exams",
+    "midterm",
+    "midterms",
+    "final",
+    "finals",
+    "calendar",
+    "schedule",
+    "today",
+    "tomorrow",
+];
+const DEEPER: [&str; 40] = [
     "why",
     "explain",
     "teach",
@@ -49,21 +70,36 @@ const DEEPER: [&str; 25] = [
     "prove",
     "solve",
     "derive",
+    "derivative",
     "calculate",
     "summar",
     "study",
     "write",
+    "rewrite",
     "draft",
     "plan",
     "fix",
     "change",
     "edit",
+    "update",
     "move",
     "delete",
+    "remove",
+    "replace",
     "rename",
     "create",
     "make",
     "add",
+    "merge",
+    "combine",
+    "restore",
+    "pin",
+    "trash",
+    "translate",
+    "better",
+    "difference",
+    "pros",
+    "mean",
 ];
 
 pub struct Asked<'a> {
@@ -100,9 +136,14 @@ pub fn light(asked: &Asked<'_>) -> bool {
     if GREETINGS.contains(&message.as_str()) {
         return true;
     }
+    let words: Vec<&str> = message
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
     OPENINGS.iter().any(|opening| message.starts_with(opening))
-        && !message
-            .split(|c: char| !c.is_alphanumeric())
+        && words.iter().any(|word| THEIRS.contains(word))
+        && !words
+            .iter()
             .any(|word| DEEPER.iter().any(|deep| word.starts_with(deep)))
 }
 
@@ -135,6 +176,8 @@ mod tests {
             "what's my next deadline?",
             "what’s my next deadline?",
             "how many notes mention enzymes?",
+            "is there a note on enzymes",
+            "when is the final",
             "thanks!",
             "ok",
         ] {
@@ -158,6 +201,14 @@ mod tests {
             "show me how to prove it",
             "where should I move this note?",
             "add a task for friday",
+            "show that the square root of 2 is irrational",
+            "find the derivative of x^2",
+            "how many ways can 5 people sit around a table",
+            "list the pros and cons of microservices",
+            "which is better, thesis a or b",
+            "find my essay and rewrite the intro",
+            "open my bio note and remove the second section",
+            "where does glycolysis happen",
             "wann ist meine prüfung",
             "",
             "show $x^2$",

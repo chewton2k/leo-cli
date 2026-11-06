@@ -39,6 +39,7 @@ pub fn writer(
             .ok()
             .and_then(|outcome| outcome.spent.as_ref())
             .map(|spent| leo_web::Spent {
+                model: spent.model.clone(),
                 input: spent.input,
                 output: spent.output,
                 cached: spent.cached,

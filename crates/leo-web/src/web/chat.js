@@ -122,7 +122,7 @@
       let end = Number.isInteger(item.at) ? Math.max(at, Math.min(value.length, item.at)) : at;
       if (end > 0 && end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1]) && /[\uDC00-\uDFFF]/.test(value[end])) end++;
       if (end > at) parts.push({ text: value.slice(at, end) });
-      const step = { text: item.text, tool: typeof item.tool === 'string' ? item.tool : '', found: Array.isArray(item.found) ? item.found.filter((f) => typeof f === 'string').slice(0, 12) : [] };
+      const step = { text: item.text, tool: typeof item.tool === 'string' ? item.tool : '', failed: item.failed === true, found: Array.isArray(item.found) ? item.found.filter((f) => typeof f === 'string').slice(0, 12) : [] };
       if (parts.at(-1)?.steps) parts.at(-1).steps.push(step);
       else parts.push({ steps: [step] });
       at = end;
@@ -131,28 +131,32 @@
     return parts;
   }
 
+  const openTraces = new WeakSet();
   const OPENING_TOOLS = new Set(['open_note', 'read_document', 'read_transcript', 'read_original']);
-  const SEARCHING_TOOLS = new Set(['search_notes', 'search_chats']);
   const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-  function traceSummary(steps, used, changes) {
+  function traceSummary(steps, usedTitles, changes) {
+    const worked = steps.filter((step) => !step.failed);
     const opened = new Set();
-    for (const step of steps) {
+    for (const step of worked) {
       if (!OPENING_TOOLS.has(step.tool)) continue;
       opened.add(/“(.+?)”/.exec(step.text)?.[1] || step.text);
     }
-    const noun = steps.some((step) => step.tool === 'read_document') ? 'source' : 'note';
+    const noun = worked.some((step) => step.tool === 'read_document') ? 'source' : 'note';
+    const used = usedTitles.filter((title) => opened.has(title)).length;
     let line;
     if (opened.size) line = `Opened ${plural(opened.size, noun)}${used > 0 && used < opened.size ? `, used ${used}` : ''}`;
-    else if (steps.some((step) => SEARCHING_TOOLS.has(step.tool))) line = 'Searched your notes';
+    else if (worked.some((step) => step.tool === 'search_notes')) line = 'Searched your notes';
+    else if (worked.some((step) => step.tool === 'search_chats')) line = 'Searched your chats';
     else line = plural(steps.length, 'step');
     return changes > 0 ? `${line} · made ${plural(changes, 'change')}` : line;
   }
 
   function notFromNotes(steps, shown, used) {
     if (!String(shown).trim() || used > 0 || /beyond your notes/i.test(shown)) return false;
-    if (steps.some((step) => OPENING_TOOLS.has(step.tool) || step.found.length)) return false;
-    return steps.some((step) => step.tool === 'search_notes');
+    const worked = steps.filter((step) => !step.failed);
+    if (worked.some((step) => OPENING_TOOLS.has(step.tool) || step.found.length)) return false;
+    return worked.some((step) => step.tool === 'search_notes');
   }
 
   const QUIZ_KINDS = { multiple_choice: 'Multiple choice', fill_blank: 'Fill in the blank', free_response: 'Free response' };
@@ -349,9 +353,9 @@
       const share = input ? ` (${Math.round(cached / input * 100)}% from the cache)` : '';
       return `${calls.toLocaleString('en-US')} ${calls === 1 ? 'request' : 'requests'} · ${input.toLocaleString('en-US')} in${share} · ${output.toLocaleString('en-US')} out`;
     };
-    const models = rows.slice(0, 12).filter((row) => row && typeof row.model === 'string').map((row) => ({ model: row.model || 'Model not reported', calls: count(row.calls), input: count(row.input), cached: Math.min(count(row.input), count(row.cached)), output: count(row.output) }));
+    const models = rows.filter((row) => row && typeof row.model === 'string').map((row) => ({ model: row.model || 'Model not reported', calls: count(row.calls), input: count(row.input), cached: Math.min(count(row.input), count(row.cached)), output: count(row.output) }));
     const total = models.reduce((sum, row) => ({ calls: sum.calls + row.calls, input: sum.input + row.input, cached: sum.cached + row.cached, output: sum.output + row.output }), { calls: 0, input: 0, cached: 0, output: 0 });
-    return [{ label: 'Last 7 days', detail: line(total.calls, total.input, total.cached, total.output) }, ...models.map((row) => ({ label: row.model, detail: line(row.calls, row.input, row.cached, row.output) }))];
+    return [{ label: 'Last 7 days', detail: line(total.calls, total.input, total.cached, total.output) }, ...models.slice(0, 12).map((row) => ({ label: row.model, detail: line(row.calls, row.input, row.cached, row.output) }))];
   }
 
   function spentLabel(spent) {
@@ -1711,7 +1715,7 @@
       const out = [];
       if (m.role === 'assistant' && writer(m)) {
         const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x));
-        if (before && writer(before) !== writer(m)) out.push(`Now answered by ${writer(m)}, with everything said so far`);
+        if (before && writer(before) !== writer(m) && !before.spent.auto && !m.spent.auto) out.push(`Now answered by ${writer(m)}, with everything said so far`);
       }
       return out.map((t) => `<div class="chat-switch">${escape(t)}</div>`).join('');
     }
@@ -1763,7 +1767,7 @@
         return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
       };
       const trace = !m.pending && taken.length
-        ? `<details class="msg-trace"><summary>${escape(traceSummary(taken, used.length, made))}${stepChevron}</summary><div class="msg-steps">${stepRuns(taken).map((run) => stepLine(run.step, false, run.times)).join('')}</div></details>`
+        ? `<details class="msg-trace" data-i="${i}"${openTraces.has(m) ? ' open' : ''}><summary>${escape(traceSummary(taken, used.map((s) => s.title), made))}${stepChevron}</summary><div class="msg-steps">${stepRuns(taken).map((run) => stepLine(run.step, false, run.times)).join('')}</div></details>`
         : '';
       const words = parts.length ? parts.map((part, k) => part.steps ? (m.pending ? live(part, k) : '') : prose(part.text)).join('') : html ? `<div class="prose">${html}</div>` : '';
       const outside = !m.pending && notFromNotes(taken, shown, used.length) ? '<div class="msg-note msg-outside">Not from your notes</div>' : '';
@@ -2269,6 +2273,13 @@
       state.pickWait = setTimeout(placeAddFloat, 120);
     });
     body.addEventListener('scroll', () => hideAddFloat(), { passive: true });
+    body.addEventListener('toggle', (e) => {
+      if (!e.target.matches?.('.msg-trace')) return;
+      const m = state.messages[Number(e.target.dataset.i)];
+      if (!m) return;
+      if (e.target.open) openTraces.add(m);
+      else openTraces.delete(m);
+    }, true);
 
     async function saveAnswer(i) {
       const m = state.messages[i];
@@ -2543,7 +2554,7 @@
             if (Array.isArray(e.files)) answer.files = e.files;
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
-            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, at: answer.text.length, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
+            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, at: answer.text.length, tool: typeof e.tool === 'string' ? e.tool : '', failed: e.failed === true, found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
             if (e.spent && typeof e.spent === 'object') answer.spent = e.spent;
             if (e.proposal && typeof e.proposal === 'object') {
               const done = e.proposal.state === 'applied';

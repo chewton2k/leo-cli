@@ -147,7 +147,6 @@ CREATE TABLE IF NOT EXISTS usage_days (
     purpose TEXT NOT NULL,
     model TEXT NOT NULL,
     calls INTEGER NOT NULL,
-    failures INTEGER NOT NULL,
     input INTEGER NOT NULL,
     cached INTEGER NOT NULL,
     output INTEGER NOT NULL,

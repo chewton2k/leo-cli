@@ -3,7 +3,8 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, recording housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, room, speech, toolless, toolless_chat).
+reader, seer, meaning, room, speech, toolless, toolless_chat, light_chat,
+lighter).
 
 ## Layout
 
@@ -510,7 +511,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (`MARGIN_KINDS`); it never changes the note. The text manual stays under
   14,500 bytes. `MOST_PROPOSALS` counts every change tool.
 
-- Choosing the model (`routing.rs`, 2026-11-06, the user's call; same shape as Copilot Auto and Cursor Router, with rules instead of a trained classifier because leo has one user and a classifier call would cost tokens): `routing::light` sends only obvious cases (short lookups and greetings, no attachments, files, selection, study or Auto access, at most six turns) to the cheapest model of the chosen AI (`ai::quick_config`, through `Instructions.light` or `Powers.light_chat` when no session opens, as on a Codex without app-server isolation); every doubt stays on the chosen model, and other languages stay there too. The tier is part of the warm key, and `Slot::light` keeps a warm full chat from moving down, since a switch loses the cache: a chat moves up once when it needs to, never down while warm. Settings → Felix → Choose automatically (`Prefs.auto_model`, on by default) turns it off; a routed reply says `Auto` in its usage line.
+- Choosing the model (`routing.rs`, 2026-11-06, the user's call; same shape as Copilot Auto and Cursor Router, with rules instead of a trained classifier because leo has one user and a classifier call would cost tokens): `routing::light` sends only obvious cases (short lookups and greetings, no attachments, files, selection, study or Auto access, at most six turns) to the cheapest model of the chosen AI (`ai::quick_config`, through `Instructions.light` or `Powers.light_chat` when no session opens, as on a Codex without app-server isolation); every doubt stays on the chosen model, and other languages stay there too. `Powers.lighter` turns routing off when the quick tier is the same model and effort, and a failing light writer gives way to the chosen one on the last try, so `Auto` always names who really answered. The tier is part of the warm key, and `Slot::light` keeps a warm full chat from moving down, since a switch loses the cache: a chat moves up once when it needs to, never down while warm. Settings → Felix → Choose automatically (`Prefs.auto_model`, on by default) turns it off; a routed reply says `Auto` in its usage line.
 
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
@@ -1032,7 +1033,7 @@ Study's next `quiz` or `end_session` call may carry the previous answer's struct
 `verdict`, used only on a marking turn. A missing text verdict can use that field
 without another call; conflicting verdicts retain the hidden check. Hidden grading
 accepts only the exact verdict words. Permission and interactive-card rules remain.
-`usage::Usage` keeps content-free counts in memory since server startup, separated
+`usage::Usage` keeps content-free counts in memory since server startup, and saves tokens by day, purpose and model in `usage_days` for 90 days (Settings shows seven), separated
 by answer, continuation, recovery, grading, summary, other writing and quick review.
 Settings shows token/cache counts, unreported/estimated usage, tool failures/reused
 reads, and median/p95 timing from at most 64 samples per category. Native agents

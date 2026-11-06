@@ -925,6 +925,7 @@ document.addEventListener('change', async (e) => {
     const rhythm = $('#felix-rhythm');
     if (rhythm) rhythm.textContent = felixRhythm(view);
   } catch (error) {
+    if (key === 'auto_model') field.checked = !value;
     fail(error);
   }
 });

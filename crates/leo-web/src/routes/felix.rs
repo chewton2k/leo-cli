@@ -445,12 +445,7 @@ pub(crate) async fn mark_quiz(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let Some(writer) = state
-        .quick
-        .clone()
-        .or_else(|| state.graphs.writer())
-        .map(|w| state.usage.counted(w, crate::usage::Purpose::QuickReview))
-    else {
+    let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({"error": "Choose a writing AI in Settings to mark answers."})),
@@ -745,10 +740,14 @@ fn execute_tool(
     {
         crate::routes::organize::run(state, desk, access, call)
     } else if call.name == "study_rules" {
-        desk.reads.study_rules = true;
+        let heard = std::mem::replace(&mut desk.reads.study_rules, true);
         tools::Done {
             step: "Checked how to teach this".into(),
-            result: chat::LEARNING.into(),
+            result: if heard {
+                tools::RULES_ALREADY.into()
+            } else {
+                chat::LEARNING.into()
+            },
             proposal: None,
             found: Vec::new(),
         }
@@ -803,7 +802,12 @@ fn execute_tool(
         desk.reads.study_rules = true;
         done.result = format!("{}\n\n{}", done.result, chat::study_rules_block());
     }
-    send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
+    send(serde_json::json!({
+        "step": done.step,
+        "tool": call.name,
+        "found": done.found,
+        "failed": done.result.starts_with("That did not work:"),
+    }));
     let added = desk.take_steering();
     if !added.is_empty() {
         send(serde_json::json!({ "steered": added }));
@@ -1185,10 +1189,7 @@ fn answer(
         session,
     } = ask;
     let light = remember.light;
-    let streamer = match &state.light_chat {
-        Some(cheaper) if light => cheaper,
-        _ => streamer,
-    };
+    let routed = std::cell::Cell::new(light);
     let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
         if value.get("restart").is_some() || value.get("reset").is_some() {
@@ -1200,6 +1201,9 @@ fn answer(
         let _ = tx.send(ndjson(value));
     };
     let finished = |mut spent: Option<chat::Spent>, structured: Option<&'static str>| {
+        if let Some(spent) = spent.as_mut() {
+            spent.auto = routed.get();
+        }
         if tx.is_closed() {
             return spent;
         }
@@ -1336,8 +1340,7 @@ fn answer(
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
                 desk.verdict = None;
-                desk.reads.clear();
-                desk.reads.study_rules = studying;
+                desk.reads.restart(studying);
                 desk.sources = sources.clone();
                 send(serde_json::json!({ "sources": sources }));
             }
@@ -1398,7 +1401,7 @@ fn answer(
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
                 desk.verdict = None;
-                desk.reads.clear();
+                desk.reads.restart(studying);
             }
         }
     }
@@ -1411,9 +1414,18 @@ fn answer(
             send(serde_json::json!({ "reset": true }));
             desk.asked = 0;
         }
-        desk.reads.clear();
+        desk.reads.restart(studying);
         desk.verdict = None;
-        let mut restated = chat::Restated::new(Arc::clone(streamer), text.clone(), last.clone());
+        let cheaper = state
+            .light_chat
+            .as_ref()
+            .filter(|_| light && attempt + 1 < FALLBACK_TRIES);
+        routed.set(cheaper.is_some());
+        let mut restated = chat::Restated::new(
+            Arc::clone(cheaper.unwrap_or(streamer)),
+            text.clone(),
+            last.clone(),
+        );
         let shown = std::cell::Cell::new(false);
         match text_answer(
             state,
@@ -1869,13 +1881,14 @@ pub(crate) async fn chat_reply(
         .chat
         .clone()
         .filter(|id| chats::valid_id(id) && state.converse.is_some());
+    let studying = body.practice || body.mark || body.session.is_some();
     let asked_lightly = crate::routing::light(&crate::routing::Asked {
         message: body.messages.last().map_or("", |t| t.text.as_str()),
         turns: body.messages.len(),
         attached: body.refs.len(),
         documents: documents.len(),
         selected: body.selection.is_some(),
-        studying: body.practice || body.mark || body.session.is_some(),
+        studying,
         access,
     });
     let light = asked_lightly && {
@@ -1883,7 +1896,9 @@ pub(crate) async fn chat_reply(
         let chat = warm_chat.clone();
         tokio::task::spawn_blocking(move || {
             let stays_full = chat.is_some_and(|id| view.warm.light(&id) == Some(false));
-            !stays_full && crate::margin::prefs(&view.chats).auto_model
+            !stays_full
+                && crate::margin::prefs(&view.chats).auto_model
+                && view.lighter.as_ref().is_some_and(|exists| exists())
         })
         .await
         .unwrap_or(false)
@@ -1963,7 +1978,6 @@ pub(crate) async fn chat_reply(
             );
         }
     }
-    let studying = body.practice || body.mark || body.session.is_some();
     if studying {
         user = format!("{}{user}", chat::study_rules_block());
         if let Some(c) = continued.as_mut().filter(|c| !c.warm.reads.study_rules) {
@@ -2008,10 +2022,6 @@ pub(crate) async fn chat_reply(
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {
                 if let Some(spent) = spent {
-                    let spent = chat::Spent {
-                        auto: light,
-                        ..spent
-                    };
                     let _ = tx.send(ndjson(serde_json::json!({ "spent": spent })));
                 }
                 serde_json::json!({ "done": true })

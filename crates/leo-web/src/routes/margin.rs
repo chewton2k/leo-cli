@@ -438,26 +438,27 @@ async fn answered(
     };
     let user = margin::reply_prompt(&note.title, &note.body, thread, question);
     let started = Instant::now();
+    let usage = std::sync::Arc::clone(&state.usage);
     let reply = blocking(move || {
         let _foreground = foreground;
-        streamer(
+        let reply = streamer(
             margin::REPLY_SYSTEM,
             &user,
             margin::REPLY_TOKENS,
             &mut |_| {},
             &mut || {},
             &|| false,
-        )
+        );
+        let spent = reply.as_ref().ok().and_then(|r| r.spent.clone());
+        usage.record(
+            Purpose::OtherWriting,
+            spent.as_ref(),
+            started.elapsed(),
+            reply.is_err(),
+        );
+        reply
     })
     .await?;
-    let failed = reply.is_err();
-    let spent = reply.as_ref().ok().and_then(|r| r.spent.clone());
-    state.usage.record(
-        Purpose::OtherWriting,
-        spent.as_ref(),
-        started.elapsed(),
-        failed,
-    );
     let text = reply.map(|r| r.text).unwrap_or_default();
     let text: String = text.trim().chars().take(margin::MOST_REPLY).collect();
     let text = margin::without_open_fence(&text);

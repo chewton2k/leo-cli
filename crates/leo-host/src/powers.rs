@@ -91,6 +91,7 @@ pub fn powers() -> leo_web::Powers {
         usage,
         chat: Some(streamer),
         light_chat: Some(light_chat),
+        lighter: Some(std::sync::Arc::new(leo_services::ai::lighter_model_exists)),
         toolless_chat: Some(toolless_chat),
         dictation: None,
         app_settings: None,

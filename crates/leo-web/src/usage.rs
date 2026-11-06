@@ -84,7 +84,7 @@ impl Usage {
         let _ = self.saved_in.set(chats);
     }
 
-    fn save(&self, purpose: Purpose, spent: Option<&Spent>, failed: bool) {
+    fn save(&self, purpose: Purpose, spent: Option<&Spent>) {
         let Some(chats) = self.saved_in.get() else {
             return;
         };
@@ -104,11 +104,10 @@ impl Usage {
         });
         let saved = crate::db::for_chats(chats).with(|c| {
             c.execute(
-                "INSERT INTO usage_days (day, purpose, model, calls, failures, input, cached, output)
-                 VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)
+                "INSERT INTO usage_days (day, purpose, model, calls, input, cached, output)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)
                  ON CONFLICT (day, purpose, model) DO UPDATE SET
                    calls = calls + 1,
-                   failures = failures + excluded.failures,
                    input = input + excluded.input,
                    cached = cached + excluded.cached,
                    output = output + excluded.output",
@@ -116,7 +115,6 @@ impl Usage {
                     today,
                     purpose.as_str().unwrap_or(""),
                     model,
-                    i64::from(failed),
                     input as i64,
                     cached as i64,
                     output as i64
@@ -163,22 +161,8 @@ impl Usage {
         self.tools.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    pub(crate) fn counted(
-        self: &std::sync::Arc<Self>,
-        writer: crate::graph::Writer,
-        purpose: Purpose,
-    ) -> crate::graph::Writer {
-        let usage = std::sync::Arc::clone(self);
-        std::sync::Arc::new(move |system, user, most| {
-            let started = std::time::Instant::now();
-            let reply = writer(system, user, most);
-            usage.record(purpose, None, started.elapsed(), reply.is_err());
-            reply
-        })
-    }
-
     pub fn record(&self, purpose: Purpose, spent: Option<&Spent>, elapsed: Duration, failed: bool) {
-        self.save(purpose, spent, failed);
+        self.save(purpose, spent);
         let mut held = self.rows.lock().unwrap_or_else(|e| e.into_inner());
         let row = held.entry(purpose).or_default();
         row.calls = row.calls.saturating_add(1);
@@ -385,7 +369,7 @@ mod tests {
         let usage = Usage::default();
         usage.save_in(chats.clone());
         let db = crate::db::for_chats(&chats);
-        let row = "INSERT INTO usage_days VALUES (?1, 'answer', 'old', 1, 0, 10, 0, 1)";
+        let row = "INSERT INTO usage_days VALUES (?1, 'answer', 'old', 1, 10, 0, 1)";
         db.with(|c| c.execute(row, [day_of(WEEK_DAYS).unwrap()]))
             .unwrap();
         db.with(|c| c.execute(row, [day_of(KEPT_DAYS + 1).unwrap()]))
@@ -410,19 +394,5 @@ mod tests {
         usage.record(Purpose::Answer, None, Duration::ZERO, false);
         assert_eq!(usage.snapshot().len(), 1);
         assert!(usage.week().is_empty());
-    }
-
-    #[test]
-    fn quick_model_calls_are_counted_as_quick_review() {
-        let usage = std::sync::Arc::new(Usage::default());
-        let fine: crate::graph::Writer = std::sync::Arc::new(|_, _, _| Ok("ok".into()));
-        let broken: crate::graph::Writer = std::sync::Arc::new(|_, _, _| anyhow::bail!("down"));
-        let fine = usage.counted(fine, Purpose::QuickReview);
-        let broken = usage.counted(broken, Purpose::QuickReview);
-        assert_eq!(fine("s", "u", 10).unwrap(), "ok");
-        assert!(broken("s", "u", 10).is_err());
-        let held = usage.rows.lock().unwrap();
-        let row = &held[&Purpose::QuickReview];
-        assert_eq!((row.calls, row.failures), (2, 1));
     }
 }

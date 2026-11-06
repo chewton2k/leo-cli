@@ -146,6 +146,22 @@ pub fn quick_config(cfg: &Config) -> Config {
     quick
 }
 
+fn lighter_in(cfg: &Config) -> bool {
+    let quick = quick_config(cfg);
+    let tier = |c: &Config, name: &str| {
+        c.provider(name)
+            .map(|p| (p.model.clone(), p.effort.clone()))
+    };
+    cfg.chat
+        .chain
+        .iter()
+        .any(|name| tier(cfg, name) != tier(&quick, name))
+}
+
+pub fn lighter_model_exists() -> bool {
+    lighter_in(&Config::load())
+}
+
 pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
     let (cfg, store) = context();
     chat::complete(&quick_config(&cfg), &store, prompt, max_tokens)
@@ -396,6 +412,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_lighter_model_exists_only_when_the_quick_tier_differs() {
+        let mut cfg = Config::default();
+        cfg.chat.chain = vec!["claude_code".into()];
+        let mut chosen = Config::built_in_provider("claude_code").unwrap();
+        chosen.model = Some("claude-opus-5-5".into());
+        chosen.effort = Some("high".into());
+        cfg.providers.insert("claude_code".into(), chosen.clone());
+        assert!(lighter_in(&cfg));
+        chosen.model = Some("claude-haiku-5-5".into());
+        chosen.effort = Some("low".into());
+        cfg.providers.insert("claude_code".into(), chosen);
+        assert!(!lighter_in(&cfg));
+        cfg.chat.chain = vec!["ollama".into()];
+        assert!(!lighter_in(&cfg));
+    }
 
     #[test]
     fn the_quick_model_is_the_cheapest_model_of_the_same_ai_at_low_effort() {

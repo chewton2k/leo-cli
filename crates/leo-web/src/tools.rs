@@ -149,6 +149,9 @@ pub const FRESH: Param = Param {
     about: "yes to repeat the full result if an earlier result is no longer available; otherwise unchanged reads return a short reference",
 };
 
+pub const RULES_ALREADY: &str =
+    "You already have the study rules in this conversation. Keep following them.";
+
 pub const SPECS: [Spec; 32] = [
     Spec {
         name: "search_notes",
