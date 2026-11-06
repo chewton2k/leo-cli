@@ -883,23 +883,17 @@ test('R18 Chats history has no New chat, a smaller title and an animated X to De
   const row = page.locator('#chat-history .chat-history-row').first();
   const x = row.locator('.chat-history-x');
   const watch = () => x.evaluate((el) => new Promise((done) => {
-    const widths = [];
-    const t0 = performance.now();
-    const tick = () => {
-      widths.push(el.getBoundingClientRect().width);
-      if (performance.now() - t0 < 700) requestAnimationFrame(tick); else done(widths);
-    };
-    requestAnimationFrame(tick);
     el.click();
+    el.getBoundingClientRect();
+    const moving = el.getAnimations().map((run) => run.transitionProperty);
+    setTimeout(() => done({ moving, end: el.getBoundingClientRect().width }), 700);
   }));
   await row.hover();
   const resting = (await x.boundingBox()).width;
-  const widths = await watch();
+  const { moving, end } = await watch();
   await expect(x).toHaveClass(/sure/);
-  const end = widths.at(-1);
   expect(end, 'Delete is wider than X').toBeGreaterThan(resting + 4);
-  const between = widths.filter((w) => w > resting + 1 && w < end - 1);
-  expect(between.length, 'the width animates through intermediate frames').toBeGreaterThanOrEqual(2);
+  expect(moving, 'the width animates').toContain('width');
   await expect(x.locator('.chat-delete-label')).toBeVisible();
   await still(page, 'r18-history-delete-confirm');
   await page.locator('#chat-history-search').click();
@@ -907,9 +901,8 @@ test('R18 Chats history has no New chat, a smaller title and an animated X to De
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await row.hover();
   const snapped = await watch();
-  const snappedBetween = snapped.filter((w) => w > resting + 1 && w < snapped.at(-1) - 1);
-  expect(snappedBetween.length, 'Reduced Motion snaps the width').toBeLessThanOrEqual(1);
+  expect(snapped.moving, 'Reduced Motion snaps the width').not.toContain('width');
   await page.locator('#chat-history-search').click();
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  record('R18', { ...env(page), titlePx: size, restingWidth: resting, endWidth: end, animatedFrames: between.length, reducedFrames: snappedBetween.length });
+  record('R18', { ...env(page), titlePx: size, restingWidth: resting, endWidth: end, animated: moving, reduced: snapped.moving });
 });

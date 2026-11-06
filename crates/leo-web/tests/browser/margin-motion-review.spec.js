@@ -425,20 +425,27 @@ test.describe('reading-mode menu', () => {
   test('opening and closing animate, reverse mid-flight, and snap with reduced motion', async ({ browser }) => {
     await fixture(browser, async (page) => {
       const menu = page.locator('#margin-mode-menu');
-      const timeline = await frames(page, 500, () => {
+      const pressAndSeek = () => page.evaluate(() => {
+        document.querySelector('#margin-mode').click();
         const el = document.querySelector('#margin-mode-menu');
-        const clip = getComputedStyle(el).clipPath;
-        const m = clip.match(/inset\(([^)]*)\)/);
-        return { hidden: el.hidden, bottom: m ? parseFloat(m[1].trim().split(/\s+/)[2]) : 0, running: el.getAnimations().length };
-      }, [[30, 'document.querySelector("#margin-mode").click()']]);
-      expect(timeline.some((f) => !f.hidden && f.running > 0 && f.bottom > 5 && f.bottom < 95)).toBe(true);
-      expect(timeline[timeline.length - 1]).toMatchObject({ hidden: false, running: 0 });
-      const closing = await frames(page, 500, () => {
-        const el = document.querySelector('#margin-mode-menu');
-        const m = getComputedStyle(el).clipPath.match(/inset\(([^)]*)\)/);
-        return { hidden: el.hidden, bottom: m ? parseFloat(m[1].trim().split(/\s+/)[2]) : 0, running: el.getAnimations().length };
-      }, [[30, 'document.querySelector("#margin-mode").click()']]);
-      expect(closing.some((f) => !f.hidden && f.running > 0 && f.bottom > 5 && f.bottom < 95)).toBe(true);
+        const [run] = el.getAnimations();
+        run.pause();
+        run.currentTime = 30;
+        const bottom = parseFloat(getComputedStyle(el).clipPath.match(/inset\(([^)]*)\)/)[1].trim().split(/\s+/)[2]);
+        run.play();
+        return { hidden: el.hidden, bottom };
+      });
+      const settledMenu = () => menu.evaluate((el) => el.getAnimations().length);
+      const opening = await pressAndSeek();
+      expect(opening.hidden).toBe(false);
+      expect(opening.bottom).toBeGreaterThan(5);
+      expect(opening.bottom).toBeLessThan(95);
+      await expect.poll(settledMenu).toBe(0);
+      await expect(menu).toBeVisible();
+      const closing = await pressAndSeek();
+      expect(closing.hidden).toBe(false);
+      expect(closing.bottom).toBeGreaterThan(5);
+      expect(closing.bottom).toBeLessThan(95);
       await expect(menu).toBeHidden();
       await page.evaluate(() => {
         const button = document.querySelector('#margin-mode');
