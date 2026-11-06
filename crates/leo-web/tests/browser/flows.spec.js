@@ -3437,7 +3437,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
   });
 });
 
-test.describe('switching models and styles mid-chat', () => {
+test.describe('switching models mid-chat', () => {
   test('the next model is told what the last one looked up, and the switch is shown', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {
@@ -3458,7 +3458,7 @@ test.describe('switching models and styles mid-chat', () => {
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo').last()).toContainText('Building on that');
     const before = asked[1].messages[1].text;
-    expect(before).toContain('[Written by Codex · gpt-6.1-sol, in chat style]');
+    expect(before).toContain('[Written by Codex · gpt-6.1-sol]');
     expect(before).toContain('[What Felix did for this answer: Searched your notes for “queue” (found: Graph traversals)]');
     expect(before.endsWith('BFS uses a queue.')).toBe(true);
     expect(asked[1].recent).toEqual(['x1']);
@@ -3467,7 +3467,7 @@ test.describe('switching models and styles mid-chat', () => {
 });
 
 test.describe('past chats', () => {
-  test('chats are found by what was said in them, and switching style does not reorder them', async ({ page }) => {
+  test('chats are found by what was said in them, and opening one does not reorder them', async ({ page }) => {
     const tag = `${test.info().project.name}${Date.now().toString(36)}`;
     const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, mode: 'chat', messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
     await put(`chat-dij-${tag}`, `how does dijkstra${tag} relax edges`, `Shortest paths ${tag}`);
