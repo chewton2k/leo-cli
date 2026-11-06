@@ -4504,7 +4504,7 @@ test('Felix permission changes reach an active reply and Ask first keeps later e
   expect(await page.locator('#chat-access').textContent()).toContain('Ask first');
 });
 
-test('Felix tool activity stays between the response passages it belongs to after reload', async ({ page }) => {
+test('Felix keeps his passages in order with his tool activity folded above them after reload', async ({ page }) => {
   const events = [{ t: 'I will read your submitted code first.\n\n' }, { step: 'Read your submitted attempt', tool: 'open_note' }, { t: 'Your sliding-window approach fits the problem.\n\n' }, { step: 'Searched your notes', tool: 'search_notes' }, { step: 'Read your saved notes', tool: 'open_note' }, { t: 'Next, check repeated categories and ties.' }, { done: true }];
   await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: events.map((event) => JSON.stringify(event)).join('\n') + '\n' }));
   await page.goto('/');
@@ -4514,8 +4514,10 @@ test('Felix tool activity stays between the response passages it belongs to afte
   const answer = page.locator('.msg.leo').last();
   await expect(answer).toContainText('Next, check repeated categories and ties.');
   const ordered = async () => {
+    const trace = answer.locator('.msg-trace');
+    if (!(await trace.evaluate((node) => node.open))) await trace.locator('> summary').click();
     const content = await answer.innerText();
-    const pieces = ['I will read your submitted code first.', 'Read your submitted attempt', 'Your sliding-window approach fits the problem.', 'Searched your notes', 'Read your saved notes', 'Next, check repeated categories and ties.'];
+    const pieces = ['Read your submitted attempt', 'Searched your notes', 'Read your saved notes', 'I will read your submitted code first.', 'Your sliding-window approach fits the problem.', 'Next, check repeated categories and ties.'];
     for (let i = 1; i < pieces.length; i++) expect(content.indexOf(pieces[i])).toBeGreaterThan(content.indexOf(pieces[i - 1]));
   };
   await ordered();
