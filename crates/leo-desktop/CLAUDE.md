@@ -24,16 +24,15 @@ a test, or leave it unset to see the user's own data.
    `html[data-app="mac"]`, which hides the sidebar wordmark and makes room for
    the buttons (2026-10-31, the user found the grey title strip ugly). `#bar`
    and `.side-head` are `data-tauri-drag-region="deep"`. The icon rail stays
-   visible when the explorer is hidden; the sidebar toggle sits fixed right after
-   the window buttons whether the explorer is shown or hidden, and the folded
-   toolbar leaves room for both.
+   visible when the explorer is hidden; the sidebar toggle stays over the rail below the window controls, whether the
+   explorer is shown or hidden.
 
 ## Behaviour
 
-- Close hides the window and queues a backup; Dock click and "Open leo" show
+- Close hides the window; Dock click and "Open leo" show
   it; on macOS, Leo's Quit menu items or ⌘Q need a second attempt within three seconds
   (the first shows a prompt). Update restarts and error exits bypass this guard.
-  `RunEvent::Exit` backs up and stops the engine (6 s cap).
+  `RunEvent::Exit` stops the engine (6 s cap), without committing or pushing notes.
   The macOS app menu replaces the predefined native Quit item with a regular
   ⌘Q item routed through `app.exit(0)`, so it reaches the guard and update actor.
   Tauri's default menu supplies Edit (⌘C/⌘V/⌘Z/⌘A)

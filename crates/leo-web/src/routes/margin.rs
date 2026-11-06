@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -50,12 +50,13 @@ pub(crate) struct PrefsBody {
     layout: Option<String>,
     pace: Option<String>,
     cap: Option<u32>,
+    gap: Option<u32>,
 }
 
 struct ReadFacts {
     along: bool,
     cap: u32,
-    spoke_soon: bool,
+    gap: u32,
     full: bool,
 }
 
@@ -161,6 +162,8 @@ fn settings_view(state: &AppState) -> serde_json::Value {
         "pace": prefs.pace,
         "cap": prefs.cap,
         "caps": margin::DAILY_CAPS,
+        "gap": prefs.gap,
+        "gaps": margin::READ_GAPS,
         "today": margin::reads_today(&state.chats, prefs.cap),
         "problem": state.margin.problem(),
     })
@@ -201,6 +204,12 @@ fn changed(mut prefs: Prefs, body: PrefsBody) -> Option<Prefs> {
             return None;
         }
         prefs.cap = cap;
+    }
+    if let Some(gap) = body.gap {
+        if !margin::READ_GAPS.contains(&gap) {
+            return None;
+        }
+        prefs.gap = gap;
     }
     Some(prefs)
 }
@@ -274,13 +283,14 @@ pub(crate) async fn read(
         let id = id.clone();
         let created = note.created;
         let held = chats.clone();
-        let facts = blocking(move || ReadFacts {
-            along: margin::mode_of(&held, &id, created) == "along",
-            cap: margin::prefs(&held).cap,
-            spoke_soon: margin::last_read_note(&held, &id).is_some_and(|at| {
-                Utc::now() - at < chrono::Duration::minutes(margin::NOTE_GAP_MINUTES)
-            }),
-            full: margin::open_on(&held, &id).len() >= margin::MOST_OPEN,
+        let facts = blocking(move || {
+            let prefs = margin::prefs(&held);
+            ReadFacts {
+                along: margin::mode_of(&held, &id, created) == "along",
+                cap: prefs.cap,
+                gap: prefs.gap,
+                full: margin::open_on(&held, &id).len() >= margin::MOST_OPEN,
+            }
         })
         .await;
         match facts {
@@ -309,20 +319,16 @@ pub(crate) async fn read(
             "Felix is answering you.",
         );
     }
-    if facts.spoke_soon {
-        return said(
-            StatusCode::TOO_MANY_REQUESTS,
-            "soon",
-            "Felix spoke here a moment ago.",
-        );
-    }
     if facts.full {
         return silent();
     }
     let Some(writer) = state.toolless.clone() else {
         return failed(&state);
     };
-    let reading = match state.margin.begin(&id) {
+    let reading = match state
+        .margin
+        .begin(&id, Duration::from_secs(facts.gap.into()))
+    {
         Ok(reading) => reading,
         Err(Refused::Busy) => {
             return said(
@@ -372,10 +378,18 @@ pub(crate) async fn read(
             return failed(&state);
         }
     };
-    state.margin.set_problem(None);
-    let Some(found) = margin::parsed(&reply) else {
-        return silent();
+    let found = match margin::parsed(&reply) {
+        margin::ReadAnswer::Silent => {
+            state.margin.set_problem(None);
+            return silent();
+        }
+        margin::ReadAnswer::Note(found) => found,
+        margin::ReadAnswer::Invalid => {
+            state.margin.forget_blocks(&id, &blocks);
+            return failed(&state);
+        }
     };
+    state.margin.set_problem(None);
     let now = match open_note(&state, &id).await {
         Ok(now) => now,
         Err(_) => return silent(),
@@ -439,7 +453,8 @@ async fn answered(
         failed,
     );
     let text = reply.map(|r| r.text).unwrap_or_default();
-    let text = text.trim();
+    let text: String = text.trim().chars().take(margin::MOST_REPLY).collect();
+    let text = margin::without_open_fence(&text);
     if text.is_empty() {
         return Err(Box::new(said(
             StatusCode::BAD_GATEWAY,
@@ -447,7 +462,7 @@ async fn answered(
             "Felix could not answer just now. Try again.",
         )));
     }
-    Ok(text.chars().take(margin::MOST_REPLY).collect())
+    Ok(text.to_string())
 }
 
 pub(crate) async fn ask(

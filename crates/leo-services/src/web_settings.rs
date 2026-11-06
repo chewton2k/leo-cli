@@ -2,17 +2,14 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use toml_edit::{DocumentMut, Item, Table};
+use toml_edit::DocumentMut;
 
 use crate::ai::provider::agent_cli::{self, Agent, AgentCli};
 use crate::ai::provider::ChatProvider;
 use crate::config::choice::{self, Local};
 use crate::config::edit::{self, Task};
 use crate::config::secret::{self, SecretStore};
-use crate::config::sync::AutoPush;
 use crate::config::Config;
-
-const AUTO_PUSH: [AutoPush; 3] = [AutoPush::Off, AutoPush::OnQuit, AutoPush::WhenIdle];
 
 fn task_named(name: &str) -> Option<Task> {
     match name {
@@ -170,17 +167,11 @@ pub fn describe(
     usage: &crate::usage::Seen,
     notes_dir: Option<&Path>,
 ) -> Value {
-    let remote = notes_dir.and_then(leo_core::sync::remote_url);
     json!({
         "tasks": [
             task_view(cfg, store, local, usage, Task::Chat),
             task_view(cfg, store, local, usage, Task::Transcribe),
         ],
-        "backup": {
-            "auto_push": cfg.sync.auto_push.as_str(),
-            "options": AUTO_PUSH.iter().map(|a| json!({ "id": a.as_str(), "label": a.label() })).collect::<Vec<_>>(),
-            "remote": remote,
-        },
         "paths": {
             "notes": notes_dir.map(|p| p.display().to_string()),
             "config": Config::config_path().ok().map(|p| p.display().to_string()),
@@ -324,19 +315,6 @@ pub fn apply(
             choice::write_effort(&mut doc, &selection.provider, effort);
             edit::save_document(config_path, &doc)?;
             Ok(format!("Effort set to {value}."))
-        }
-        "auto_push" => {
-            let value = text(change, "value")?;
-            let Some(chosen) = AUTO_PUSH.iter().find(|a| a.as_str() == value) else {
-                bail!("{value} is not a backup setting");
-            };
-            let mut doc = open(config_path)?;
-            let sync = doc.entry("sync").or_insert(Item::Table(Table::new()));
-            if let Some(table) = sync.as_table_mut() {
-                table.insert("auto_push", toml_edit::value(chosen.as_str()));
-            }
-            edit::save_document(config_path, &doc)?;
-            Ok(format!("Backing up {}.", chosen.label()))
         }
         other => bail!("{other} is not a setting"),
     }
@@ -677,29 +655,38 @@ mod tests {
     }
 
     #[test]
-    fn backup_timing_is_one_of_three() {
-        let (_d, path) = setup("[chat]\nchain = []\n");
+    fn retired_backup_settings_are_ignored_and_cannot_be_changed() {
+        let legacy = "[chat]\nchain = [\"ollama\"]\n[sync]\nauto_push = \"when_idle\"\nidle_secs = 1\n[theme]\npreset = \"coral\"\n[calendar]\nkept = true\n";
+        let (_d, path) = setup(legacy);
         let store = MemoryStore::default();
-        let local = Local::default();
-        assert_eq!(
-            apply(
-                &json!({"set": "auto_push", "value": "when_idle"}),
-                &path,
-                &store,
-                &local
-            )
-            .unwrap(),
-            "Backing up when idle, and on quit."
-        );
-        assert_eq!(Config::load_from(&path).sync.auto_push, AutoPush::WhenIdle);
+        let cfg = Config::parse_with_built_ins(legacy).unwrap();
+        assert_eq!(cfg.chat.chain, ["ollama"]);
+        assert_eq!(cfg.theme.preset.as_deref(), Some("coral"));
+        let page = describe(&cfg, &store, &Local::default(), &Default::default(), None);
+        assert!(page.get("backup").is_none());
         assert!(apply(
-            &json!({"set": "auto_push", "value": "hourly"}),
+            &json!({"set": "auto_push", "value": "off"}),
             &path,
             &store,
-            &local
+            &Local::default()
         )
         .is_err());
-        assert!(apply(&json!({"set": "theme"}), &path, &store, &local).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), legacy);
+        apply(
+            &json!({"set": "provider", "task": "writing", "value": "claude_code"}),
+            &path,
+            &store,
+            &Local::default(),
+        )
+        .unwrap();
+        let retained = std::fs::read_to_string(&path)
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        assert_eq!(retained["sync"]["auto_push"].as_str(), Some("when_idle"));
+        assert_eq!(retained["theme"]["preset"].as_str(), Some("coral"));
+        assert_eq!(retained["calendar"]["kept"].as_bool(), Some(true));
+        assert!(!Config::default_toml().contains("[sync]"));
     }
 
     #[test]

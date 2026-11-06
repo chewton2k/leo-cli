@@ -15,7 +15,7 @@ async function sidebarFixture(browser, run) {
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     ${icons}
     const chat={button:()=>ICON.chat}, felix={NOTE_DRAG:'application/x-leo-note'};
-    let seq=0,state={view:'folder',dir:''};
+    let seq=0,state={view:'workspace',dir:''};
     const folders=[{name:'Course',notes:2},{name:'Course/Week 1',notes:1},{name:'Course/Week 1/Lab',notes:0},{name:'Personal',notes:1},...Array.from({length:50},(_,i)=>({name:'Reading '+i,notes:0}))];
     const folderLabel=dir=>dir.split('/').pop()||'Top level', folderHash=dir=>dir?'#/f/'+encodeURIComponent(dir):'#/', noteHash=id=>'#/n/'+encodeURIComponent(id);
     const closeSheet=()=>{}, go=hash=>{location.hash=hash;}, fail=error=>window.errors.push(error.message);
@@ -50,20 +50,19 @@ async function sidebarFixture(browser, run) {
     ${read('app/motion.js')}
     ${read('app/side.js')}
     ${drag}
-    const folderClick=${open};
+    const folderClick=typeof openFolder==='function'?${open}:el=>twistFolder(el.dataset.dir,el);
     document.addEventListener('click',event=>{
       const el=event.target.closest('[data-action]');if(!el)return;
       const action=el.dataset.action;
       if(action==='open-folder') folderClick(el);
       else if(action==='side-twist') twistFolder(el.dataset.dir,el);
-      else if(action==='side-collapse') collapseFolders();
       else if(action==='side-fold') foldSide();
       else if(action==='side-notes') loadSideNotes(el.dataset.dir,Number(el.dataset.offset||0),true);
       else if(action==='open-note') go(noteHash(el.dataset.id));
       else if(action==='home') go('#/');
     });
     window.errors=[];
-    window.audit={moves,draw:drawSide,side,refresh:loadSideFolders,note:(id,dir)=>{seq++;state={view:'note',dir,session:{note:{id}}};drawSide();},dragging,drop:el=>dirOf(dropTargetOf(el)),stop:endDrag,rename:title=>{notes.Course[0].title=title;},route:(dir)=>{seq++;state={view:'folder',dir};drawSide();},mac:on=>{document.documentElement.dataset.app=on?'mac':'';},broken:dir=>{broken=dir;},hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});}};
+    window.audit={moves,draw:drawSide,side,refresh:loadSideFolders,note:(id,dir)=>{seq++;state={view:'note',dir,session:{note:{id}}};drawSide();},dragging,drop:el=>dirOf(dropTargetOf(el)),stop:endDrag,rename:title=>{notes.Course[0].title=title;},route:(dir)=>{seq++;state={view:'workspace',dir:''};side.revealed.clear();side.open.clear();drawSide();revealFolder(dir);},mac:on=>{document.documentElement.dataset.app=on?'mac':'';},broken:dir=>{broken=dir;},hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});}};
     loadSideFolders().catch(fail);`;
   const server = http.createServer((req,res) => {
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
@@ -95,14 +94,16 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       const railBox = await rail.boundingBox(), explorerBox = await explorer.boundingBox();
       expect(railBox.width).toBeLessThanOrEqual(60);
       expect(railBox.x+railBox.width).toBeLessThanOrEqual(explorerBox.x+1);
-      const add = await rail.getByRole('button',{name:'New note',exact:true}).boundingBox();
-      const search = await rail.getByRole('button',{name:'Search',exact:true}).boundingBox();
-      expect(search.y-add.y-add.height).toBeGreaterThanOrEqual(6);
+      await expect(explorer.getByRole('button',{name:'New note',exact:true})).toBeInViewport();
+      await expect(explorer.getByRole('button',{name:'New folder',exact:true})).toBeInViewport();
+      await expect(rail.getByRole('button',{name:'New note',exact:true})).toHaveCount(0);
       await expect(rail.getByRole('button',{name:'Quick Leo',exact:true}),'search and Quick Leo are one button').toHaveCount(0);
       await expect(rail.locator('kbd')).toHaveCount(0);
       // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
       await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
-      for(const label of ['New note','Ask Felix','Search','Record','Note from a file','Calendar','Boards','Settings']) {
+      await expect(rail.getByRole('button',{name:'Ask Felix',exact:true}),'Felix opens from the toolbar, not the rail').toHaveCount(0);
+      await expect(page.locator('[data-action="side-collapse"]'),'there is no Collapse all').toHaveCount(0);
+      for(const label of ['Search','Record','Note from a file','Calendar','Boards','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();
         await expect(button).toHaveAttribute('title',/.+/);
@@ -132,10 +133,10 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       await page.getByRole('button',{name:'Hide folders',exact:true}).click();
       await page.setViewportSize({width:1000,height:640});
       await page.evaluate(()=>document.body.classList.add('on-note'));
-      expect((await page.locator('.bar-row').boundingBox()).x).toBeGreaterThanOrEqual(84);
+      expect((await page.locator('.side-fold').boundingBox()).x).toBeLessThan(52);
       await page.getByRole('button',{name:'Show folders',exact:true}).click();
       expect((await page.locator('.side-rail-main').boundingBox()).y).toBeGreaterThanOrEqual(50);
-      await page.setViewportSize({width:1280,height:420});
+      await page.setViewportSize({width:1280,height:320});
       await expect(settings).toBeInViewport();
       const railMain=page.locator('.side-rail-main');
       await railMain.evaluate(el=>el.scrollTop=el.scrollHeight);
@@ -174,7 +175,7 @@ test('sidebar and page header rows align across desktop layouts', async ({ brows
       expect(toggle.y+toggle.height).toBeLessThanOrEqual(head.y+head.height);
       const row=await page.locator('.bar-row').boundingBox();
       expect(row.height).toBeGreaterThanOrEqual(40);
-      if(mac&&mini)expect(row.x).toBeGreaterThanOrEqual(84);
+      if(mac)expect(toggle.x).toBeLessThan(52);
       const settings=await page.locator('.settings-nav').evaluate(el=>({top:parseFloat(getComputedStyle(el).top),gap:parseFloat(getComputedStyle(el.parentElement).columnGap)}));
       expect(settings.top).toBe(bar.height+settings.gap);
     }
@@ -210,7 +211,7 @@ test('clicking parent folder labels toggles descendants without navigating or di
     await row('Course').click();
     await expect(row('Course/Week 1')).toBeVisible();
     await expect(row('Course')).toHaveAttribute('aria-expanded','true');
-    await expect(page.locator('.side-rail [data-action="new"]')).toHaveAttribute('data-dir','Course');
+    await expect(page.locator('.side-group [data-action="new"]')).toHaveAttribute('data-dir','Course');
     await expect(page.locator('.side-rail [data-action="record"]')).toHaveAttribute('data-dir','Course');
     await expect(page.locator('.side-rail [data-action="upload"]')).toHaveAttribute('data-dir','Course');
     expect(new URL(page.url()).hash).toBe('');
@@ -252,13 +253,12 @@ test('explorer loads direct notes, escapes titles, pages large folders and recov
     await expect(page.locator('.side-note[data-id^="personal-"]')).toHaveCount(100);
     await page.locator('[data-action="side-notes"][data-dir="Personal"]').filter({hasText:'Next'}).click();
     await expect(page.locator('.side-note[data-id="personal-104"]')).toBeVisible();
-    await page.evaluate(()=>audit.route('Personal'));
+    await page.evaluate(()=>{seq++;drawSide();});
     await expect(page.locator('.side-note[data-id="personal-104"]')).toBeVisible();
     await expect(page.locator('.side-note[data-id^="personal-"]')).toHaveCount(5);
     await page.evaluate(()=>audit.note('personal-104','Personal'));
     await expect(page.locator('.side-note[data-id="personal-104"]')).toHaveAttribute('aria-current','page');
-    await expect(row('Personal')).not.toHaveAttribute('aria-current','page');
-    await expect(page.locator('#side .side-folder.on')).toHaveCount(0);
+    await expect(row('Personal')).toHaveAttribute('aria-current','page');
     expect(await row('Personal').evaluate(el=>{const style=getComputedStyle(el);return style.userSelect==='none'||style.webkitUserSelect==='none';})).toBe(true);
     await page.evaluate(()=>audit.refresh());
     await expect(page.locator('.side-note[data-id="personal-104"]')).toBeVisible();
@@ -358,6 +358,43 @@ test('explorer refresh keeps file rows and a click in progress intact', async ({
   });
 });
 
+test('loaded folders never flash Opening notes while pages change or folders are clicked', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url);
+    const twist=dir=>page.locator('[data-action="side-twist"][data-dir="'+dir+'"]');
+    await twist('Course').click();
+    await twist('Course/Week 1').click();
+    await twist('Course/Week 1/Lab').click();
+    await expect(page.locator('[data-kids="Course/Week 1/Lab"]')).toContainText('Empty folder');
+    await expect(page.locator('.side-note[data-id="week-note"]')).toBeVisible();
+    await expect(page.locator('.side-note[data-id="root-note"]')).toBeVisible();
+    await page.evaluate(()=>{
+      window.flashes=[];
+      const mentions=node=>(node.textContent||'').includes('Opening notes');
+      new MutationObserver(records=>{
+        for(const record of records) {
+          if(record.type==='characterData'&&(record.oldValue||'').includes('Opening notes')) window.flashes.push('text');
+          for(const node of [...record.addedNodes,...record.removedNodes]) if(mentions(node)) window.flashes.push(node.nodeName);
+        }
+      }).observe(document.body,{childList:true,subtree:true,characterData:true,characterDataOldValue:true});
+    });
+    for(let round=0;round<6;round++) {
+      await page.evaluate(()=>{seq++;drawSide();});
+      await page.evaluate(()=>audit.refresh());
+      await twist('Course/Week 1').click();
+      await twist('Course/Week 1').click();
+      await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+      await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+      await expect(page.locator('[data-kids="Course/Week 1/Lab"]')).toContainText('Empty folder');
+      await page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,40)));
+    }
+    expect(await page.evaluate(()=>window.flashes)).toEqual([]);
+    await expect(page.locator('.side-note[data-id="week-note"]')).toBeVisible();
+    expect(await page.evaluate(()=>window.errors)).toEqual([]);
+  });
+});
+
 test('nested folders start closed and the explorer reopens as the user left it, not as browsing unfolded it', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page = await context.newPage({viewport:{width:1280,height:800}});
@@ -385,20 +422,14 @@ test('nested folders start closed and the explorer reopens as the user left it, 
   });
 });
 
-test('Collapse all closes every folder for good, and the open note is scrolled into the explorer once', async ({ browser }) => {
+test('the open note is scrolled into the explorer once', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page = await context.newPage({viewport:{width:1280,height:600}});
     await page.goto(url);
     const row = dir=>page.locator('.side-tree .side-row[data-dir="'+dir+'"]');
-    const kept = ()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leo-side-folders')||'[]'));
     await page.locator('[data-action="side-twist"][data-dir="Course"]').click();
     await page.locator('[data-action="side-twist"][data-dir="Course/Week 1"]').click();
     await expect(row('Course/Week 1/Lab')).toBeVisible();
-    await page.locator('.side-group [data-action="side-collapse"]').click();
-    await expect(row('Course/Week 1')).toHaveCount(0);
-    expect(await kept()).toEqual([]);
-    await page.reload();
-    await expect(row('Course')).toHaveAttribute('aria-expanded','false');
 
     const tree = page.locator('.side-tree');
     await page.evaluate(()=>audit.note('personal-90','Personal'));
@@ -414,7 +445,7 @@ test('Collapse all closes every folder for good, and the open note is scrolled i
   });
 });
 
-test('old saved folders are dropped, and after Collapse all a newly opened note still shows its folder', async ({ browser }) => {
+test('old saved folders are dropped, and after its folder is closed a newly opened note still shows it', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page = await context.newPage({viewport:{width:1280,height:800}});
     await page.goto(url);
@@ -425,10 +456,10 @@ test('old saved folders are dropped, and after Collapse all a newly opened note 
     expect(await page.evaluate(()=>localStorage.getItem('leo-side-open'))).toBeNull();
     await page.evaluate(()=>audit.note('course-note','Course'));
     await expect(page.locator('.side-note[data-id="course-note"]')).toHaveCount(1);
-    await page.locator('.side-group [data-action="side-collapse"]').click();
+    await page.locator('[data-action="side-twist"][data-dir="Course"]').click();
     await expect(row('Course')).toHaveAttribute('aria-expanded','false');
     await page.evaluate(()=>audit.draw());
-    await expect(row('Course'), 'a redraw does not undo Collapse all').toHaveAttribute('aria-expanded','false');
+    await expect(row('Course'), 'a redraw does not reopen a folder the user closed').toHaveAttribute('aria-expanded','false');
     await page.evaluate(()=>audit.note('escaped-note','Course'));
     await expect(page.locator('.side-note[data-id="escaped-note"]'), 'another note in the same folder unfolds it again').toHaveCount(1);
   });
@@ -723,5 +754,23 @@ test('sidebar folding waits for the actual transition rather than a timer', asyn
     await body.evaluate(el=>{for(const run of el.getAnimations())if(run.transitionProperty==='--side')run.finish();});
     await expect(body).not.toHaveClass(/side-folding/);
     expect((await side.boundingBox()).width).toBe(284);
+  });
+});
+
+test('explorer blank context menu offers creation and stays inside the viewport', async ({ browser }) => {
+  await sidebarFixture(browser, async (context, url) => {
+    const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(url);
+    await expect(page.locator('.side-note[data-id="root-note"]')).toBeVisible();
+    await page.locator('.side-tree').dispatchEvent('contextmenu', { clientX: 1279, clientY: 799 });
+    await expect(page.getByRole('menuitem', { name: 'New note', exact: true })).toBeFocused();
+    await expect(page.getByRole('menuitem')).toHaveCount(2);
+    const box = await page.getByRole('menu', { name: 'Folder options' }).boundingBox();
+    expect(box.x + box.width).toBeLessThanOrEqual(1280);
+    expect(box.y + box.height).toBeLessThanOrEqual(800);
+    await page.keyboard.press('End');
+    await expect(page.getByRole('menuitem', { name: 'New folder', exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.side-tree')).toBeFocused();
   });
 });

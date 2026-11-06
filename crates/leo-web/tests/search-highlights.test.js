@@ -22,7 +22,7 @@ function fixture(texts, supported = true) {
   vm.createContext(context);
   const start = source.indexOf('const SEARCH_HIGHLIGHT_MS');
   assert.notEqual(start, -1, 'search highlighting helper exists');
-  vm.runInContext(source.slice(start, source.indexOf('function go(', start)), context);
+  vm.runInContext(source.slice(start, source.indexOf('async function go(', start)), context);
   return { ...context, registry, timers };
 }
 
@@ -58,21 +58,21 @@ test('highlighting bounds repeated matches and handles missing matches and suppo
   assert.equal(fixture(['math'], false).highlightSearch({}, 'math'), false);
 });
 
-test('search result and Quick Leo navigation carry their own query only to a note', () => {
+test('search result and Quick Leo navigation carry their own query only to a note', async () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../src/web/app/core.js'), 'utf8');
   const start = source.indexOf('const SEARCH_HIGHLIGHT_MS');
   const end = source.indexOf('const folderHash', start);
   const value = fixture([]);
-  Object.assign(value, { state: { view: 'search', query: 'math' }, location: { hash: '#/search/math' }, route() {} });
+  Object.assign(value, { seq: 0, history: { pushState() {}, replaceState() {} }, saving: { flush: async () => true }, state: { view: 'search', query: 'math' }, location: { hash: '#/search/math' }, route() {} });
   vm.createContext(value);
   vm.runInContext(source.slice(start, end) + '\nconst pending = () => searchPassage;', value);
-  vm.runInContext("go('#/n/one');", value);
+  await vm.runInContext("go('#/n/one');", value);
   assert.equal(vm.runInContext('pending().query', value), 'math');
-  vm.runInContext("state = { view: 'note' }; go('#/n/two', { search: 'physics' });", value);
+  await vm.runInContext("state = { view: 'note' }; go('#/n/two', { search: 'physics' });", value);
   assert.equal(vm.runInContext('pending().query', value), 'physics');
-  vm.runInContext("go('#/n/three');", value);
+  await vm.runInContext("go('#/n/three');", value);
   assert.equal(vm.runInContext('pending()', value), null);
-  vm.runInContext("go('#/calendar', { search: 'math' });", value);
+  await vm.runInContext("go('#/calendar', { search: 'math' });", value);
   assert.equal(vm.runInContext('pending()', value), null);
 });
 

@@ -177,6 +177,7 @@ async fn read_along_is_off_on_a_fresh_install() {
     let (_, settings) = engine.get("/api/margin").await;
     assert_eq!(settings["default_mode"], "ask");
     assert_eq!(settings["cap"], margin::DAILY_CAP);
+    assert_eq!(settings["gap"], margin::READ_GAP);
     assert_eq!(settings["today"], 0);
     let (_, made) = engine
         .post(
@@ -247,6 +248,7 @@ async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
     assert_eq!(status, 400);
     for bad in [
         serde_json::json!({ "cap": 7 }),
+        serde_json::json!({ "gap": 7 }),
         serde_json::json!({ "layout": "left" }),
         serde_json::json!({ "pace": "fast" }),
         serde_json::json!({ "default_mode": "x" }),
@@ -287,7 +289,7 @@ async fn a_read_saves_one_note_anchored_in_the_text() {
 
 #[tokio::test]
 async fn silence_is_a_success_and_saves_nothing() {
-    for answer in ["{}", "", "No note needed."] {
+    for answer in ["{}", "", "```json\n{}\n```"] {
         let (engine, calls) = reading(answer).await;
         let (id, version) = engine.note("Quiet", PASSAGE).await;
         let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
@@ -296,6 +298,33 @@ async fn silence_is_a_success_and_saves_nothing() {
         assert!(engine.get("/api/margin").await.1["problem"].is_null());
         let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
         assert!(view["threads"].as_array().unwrap().is_empty());
+        engine.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn malformed_reads_report_failure_instead_of_successful_silence() {
+    for answer in [
+        "No note needed.",
+        "{bad json}",
+        r#"{"quote":3,"text":"Hm."}"#,
+    ] {
+        let (engine, calls) = reading(answer).await;
+        let (id, version) = engine.note("Invalid", PASSAGE).await;
+        let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+        assert_eq!(status, 200);
+        assert_eq!(read["failed"], true);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            engine.get("/api/margin").await.1["problem"],
+            margin::PROBLEM
+        );
+        assert!(
+            engine.get(&format!("/api/notes/{id}/margin")).await.1["threads"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         engine.stop().await;
     }
 }
@@ -324,7 +353,7 @@ async fn reads_wait_a_while_and_only_changed_blocks_reach_the_model() {
 }
 
 #[tokio::test]
-async fn a_note_that_just_spoke_keeps_quiet_for_a_few_minutes() {
+async fn a_recent_comment_does_not_add_a_five_minute_read_lockout() {
     let (engine, calls) = reading(SAYS).await;
     let (id, version) = engine.note("Spoke", PASSAGE).await;
     let held = margin::new_thread(
@@ -335,9 +364,45 @@ async fn a_note_that_just_spoke_keeps_quiet_for_a_few_minutes() {
         vec![margin::felix_says("Hm.")],
     );
     assert!(margin::put(&engine.chats(), &held));
-    let (status, why) = engine.read(&id, &version, &[PASSAGE]).await;
-    assert_eq!((status, why["why"].as_str()), (429, Some("soon")));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let (status, reply) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!(status, 200);
+    assert!(reply["note"].is_object());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_useful_diagram_survives_the_read_and_saved_thread() {
+    let text = "Chloroplasts make sugar; mitochondria release its energy.\n\n```mermaid\nflowchart TD\n Sun-->Sugar\n Sugar-->Energy\n```";
+    let answer = r#"{"quote":"just checks if it matches","text":"Chloroplasts make sugar; mitochondria release its energy.\n\n```mermaid\nflowchart TD\n Sun-->Sugar\n Sugar-->Energy\n```"}"#;
+    let (engine, calls) = reading(answer).await;
+    let (id, version) = engine.note("Diagram", PASSAGE).await;
+    let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!(status, 200);
+    assert_eq!(read["note"]["messages"][0]["text"], text);
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(view["threads"][0]["messages"][0]["text"], text);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn no_daily_limit_keeps_reading_past_the_old_cap() {
+    let (engine, calls) = reading("{}").await;
+    let (status, view) = engine
+        .post(
+            "/api/margin",
+            serde_json::json!({ "cap": margin::NO_CAP, "gap": 300 }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(view["cap"], margin::NO_CAP);
+    assert_eq!(view["gap"], 300);
+    assert!(margin::spend_read(&engine.chats(), margin::NO_CAP));
+    let (id, version) = engine.note("One", PASSAGE).await;
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(margin::reads_today(&engine.chats(), margin::NO_CAP), 2);
     engine.stop().await;
 }
 

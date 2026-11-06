@@ -3,10 +3,8 @@
 //!
 //! Each board and each card is its own file, `<notes>/.leo/boards/<id>.json` and
 //! `<notes>/.leo/cards/<id>.json`, stored like standalone tasks: one JSON line per
-//! save, written atomically, merged by union in the notes' git backup, and read
-//! as the line with the newest `updated_at`. A card moved on two computers
-//! therefore never conflicts, and cards edited on different computers both keep
-//! their edits. Deleting writes a tombstone line, never removes the file.
+//! save, written atomically, and read as the line with the newest `updated_at`.
+//! Deleting writes a tombstone line, never removes the file.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -259,7 +257,7 @@ fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> {
         "That is too large to save. Shorten its description and try again."
     );
     let path = file_path(chats, T::DIR, &format!("{}.json", item.id()))?;
-    // `.<random>.tmp`, which the notes' .gitignore leaves out of the backup.
+    // Keep temporary files hidden beside their destination.
     let mut temp = tempfile::Builder::new()
         .prefix(".")
         .suffix(".tmp")

@@ -35,6 +35,21 @@
   const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
   const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
 
+  function containChatPickWheel(list, event) {
+    if (event.ctrlKey || !event.deltaY) return;
+    const max = list.scrollHeight - list.clientHeight;
+    if (max <= 0 || (event.deltaY < 0 && list.scrollTop <= 0) || (event.deltaY > 0 && list.scrollTop >= max)) event.preventDefault();
+  }
+
+  function revealChatPick(list) {
+    const selected = list.querySelector('.chat-pick-row.on');
+    if (!selected) return;
+    const top = selected.offsetTop - list.offsetTop;
+    const bottom = top + selected.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }
+
   function felix(width, extra = '') {
     return `<svg class="felix ${extra}" viewBox="-2 -10 50 42" width="${width}" height="${Math.round((width * 42) / 50)}" shape-rendering="crispEdges" aria-hidden="true">
       <g class="felix-spark"><rect x="-1" y="-6" width="2" height="2"/><rect x="42" y="-4" width="2" height="2"/><rect x="21" y="-8" width="2" height="2"/></g>
@@ -718,13 +733,13 @@
     panel.setAttribute('aria-label', 'Ask Felix');
     panel.innerHTML = `
       <nav class="chat-history" id="chat-history" aria-label="Your chats">
-        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b><button class="chat-history-new" data-chat="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New chat</button></div>
+        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b></div>
         <div class="chat-history-find"><input id="chat-history-search" type="search" placeholder="Search your chats" autocomplete="off" aria-label="Search your chats"></div>
         <div class="chat-history-list" id="chat-history-list"></div>
       </nav>
       <section class="chat-main">
       <header class="chat-head">
-        <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+        <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
         <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
         <div class="chat-menu">
@@ -1052,9 +1067,10 @@
         if (state.sidebar === null && !panel.hidden) {
           const on = sidebarOpen();
           const before = panel.classList.contains('with-history');
-          panel.classList.toggle('with-history', on);
-          if (on && !before) loadChats();
+          syncSidebar(on);
+          if (on && !before && !state.chats) loadChats();
         }
+        syncSidebar(panel.classList.contains('with-history'));
         historyResize.fit();
       });
       historySize.observe(panel);
@@ -1071,6 +1087,21 @@
       return false;
     }
 
+    function syncSidebar(on) {
+      const overlay = !wide() || sourceNarrow();
+      const button = panel.querySelector('.chat-history-toggle');
+      const main = panel.querySelector('.chat-main');
+      const back = !on && history.contains(document.activeElement);
+      const enter = on && overlay && main.contains(document.activeElement);
+      main.inert = on && overlay;
+      history.inert = !on;
+      history.setAttribute('aria-hidden', String(!on));
+      button.setAttribute('aria-expanded', String(on));
+      panel.classList.toggle('with-history', on);
+      if (back) button.focus({ preventScroll: true });
+      else if (enter) history.querySelector('.chat-history-back').focus({ preventScroll: true });
+    }
+
     function showSidebar(on) {
       state.sidebar = on;
       if (wide()) {
@@ -1080,10 +1111,12 @@
           state.sidebar = on;
         }
       }
-      panel.classList.toggle('with-history', on);
+      syncSidebar(on);
       historyResize.fit();
-      if (on) loadChats();
+      if (on && !state.chats) loadChats();
     }
+
+    syncSidebar(false);
 
     function stored() {
       return state.messages.filter((m) => !m.pending);
@@ -1208,7 +1241,7 @@
     }
 
     function chatRow(c) {
-      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`;
+      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button></div>`;
     }
 
     let resumeSeq = 0;
@@ -1277,18 +1310,39 @@
       return true;
     }
 
+    function syncChatDelete() {
+      for (const button of panel.querySelectorAll('.chat-history-x')) {
+        const sure = state.doomed === button.dataset.id;
+        button.classList.toggle('sure', sure);
+        const title = (button.getAttribute('aria-label') || '').replace(/^(?:Confirm delete|Delete) /, '');
+        button.setAttribute('aria-label', `${sure ? 'Confirm delete' : 'Delete'} ${title}`);
+      }
+    }
+
     async function forget(id) {
+      const button = [...panel.querySelectorAll('.chat-history-x')].find((item) => item.dataset.id === id);
       if (state.doomed !== id) {
         state.doomed = id;
-        drawChats();
+        syncChatDelete();
+        button?.focus({ preventScroll: true });
         return;
+      }
+      if (button?.disabled) return;
+      const focused = document.activeElement === button;
+      if (button) button.disabled = true;
+      try {
+        const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+        if (!response.ok) throw new Error('delete failed');
+      } catch (e) {
+        notify('Leo could not delete that conversation. Try again.');
+        return;
+      } finally {
+        if (button?.isConnected) {
+          button.disabled = false;
+          if (focused && document.activeElement === document.body) button.focus({ preventScroll: true });
+        }
       }
       state.doomed = null;
-      try {
-        await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
-      } catch (e) {
-        return;
-      }
       state.chats = (state.chats || []).filter((c) => c.id !== id);
       if (id === state.id) begin();
       else drawChats();
@@ -1297,12 +1351,15 @@
     function spare(e) {
       if (!state.doomed || e.target.closest?.('.chat-history-x.sure')) return;
       state.doomed = null;
-      for (const x of panel.querySelectorAll('.chat-history-x.sure')) {
-        x.classList.remove('sure');
-        x.textContent = '×';
-        x.setAttribute('aria-label', x.getAttribute('aria-label').replace(/^Confirm delete/, 'Delete'));
-      }
+      syncChatDelete();
     }
+    panel.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !state.doomed) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      state.doomed = null;
+      syncChatDelete();
+    });
     document.addEventListener('pointerdown', spare, true);
     document.addEventListener('focusin', spare, true);
 
@@ -1465,8 +1522,12 @@
         box.innerHTML = `${wantsSearch ? `<input class="chat-pick-search" id="chat-pick-search" placeholder="Find a note…" autocomplete="off" value="${escape(p.query)}">` : ''}<div class="chat-pick-list" role="listbox" aria-label="Notes"></div>`;
         field = $('#chat-pick-search');
         list = box.querySelector('.chat-pick-list');
+        list.addEventListener('wheel', (event) => {
+          if (state.pick?.from === 'mention') containChatPickWheel(list, event);
+        }, { passive: false });
       }
       list.innerHTML = rows;
+      revealChatPick(list);
       if (field && p.focusSearch) {
         field.focus();
         field.setSelectionRange(field.value.length, field.value.length);
@@ -2530,7 +2591,7 @@
         onToggle(false);
       }
       if (state.open) {
-        panel.classList.toggle('with-history', sidebarOpen());
+        syncSidebar(sidebarOpen());
         historyResize.fit();
         if (sidebarOpen()) loadChats();
         drawModes();
@@ -2541,7 +2602,10 @@
         loadReview();
         mood('wave', 1500);
         awake();
-        if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) input.focus();
+        if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) {
+          if (sidebarOpen() && (!wide() || sourceNarrow())) history.querySelector('.chat-history-back').focus({ preventScroll: true });
+          else input.focus();
+        }
       }
     }
 

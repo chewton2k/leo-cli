@@ -1,7 +1,6 @@
 const actions = {
   'app-command': (el) => appChange({action:el.dataset.appAction}),
   'health-refresh': loadHealth,
-  'backup-setup': setupBackup,
   'onboarding-next': finishOnboarding,
   'onboarding-model': onboardingModel,
   'onboarding-skip': skipOnboarding,
@@ -94,7 +93,6 @@ const actions = {
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),
   'set-effort': (el) => changeSetting({ set: 'effort', value: el.dataset.effort === 'default' ? '' : el.dataset.effort }),
   'side-twist': (el) => twistFolder(el.dataset.dir, el),
-  'side-collapse': () => collapseFolders(),
   'side-notes': (el) => loadSideNotes(el.dataset.dir, Number(el.dataset.offset || 0), true),
   'open-title': (el) => openTitle(el.dataset.title || ''),
   'toggle-search': () => toggleQuickLeo(),
@@ -119,11 +117,12 @@ const actions = {
   'source-apply': () => applyGenerated().catch(fail),
   'rec-finish': () => recorder.finishAvailable().catch(fail),
   'rec-recover': (el) => recorder.recover(el.dataset.id).catch(fail),
-  close: closeSheet,
+  close: () => closeSheet(),
   'open-folder': openFolder,
-  'open-note': (el) => go(noteHash(el.dataset.id)),
+  'open-note': openExplorerNote,
+  'explorer-menu': explorerMenu,
+  folders: showFolders,
   'pin-card': pinCard,
-  'library-view': changeLibraryView,
   'theme-pick': (el) => pickTheme(el),
   'segment-pick': (el) => pickSegment(el),
   'felix-pick': (el) => pickFelix(el),
@@ -133,19 +132,17 @@ const actions = {
   'quick-leo': () => quickLeo(),
   'quick-run': (el) => quickGo(Number(el.dataset.at)),
   'quick-done': (el) => quickDone(el),
-  'library-show-all': () => changeLibrary('show', 'all'),
   'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {
-    closeSheet();
-    go(el.dataset.dir ? `#/new/${enc(el.dataset.dir)}` : '#/new');
+    const dir = creationDir(el.dataset.dir);
+    closeSheet(true);
+    go(dir ? `#/new/${enc(dir)}` : '#/new');
   },
   'new-folder': newFolder,
-  'folder-options': folderOptions,
-  'folder-rename': renameFolderSheet,
+  'folder-rename': () => renameFolderSheet(),
   'folder-rename-save': renameFolder,
-  'folder-delete': deleteFolderAsk,
+  'folder-delete': () => deleteFolderAsk(),
   'folder-delete-now': deleteFolderNow,
-  'folder-root': () => { const from = state.dir; closeSheet(); return dropFolder(from, ''); },
   'create-folder': createFolder,
   settings: () => {
     closeSheet();
@@ -215,29 +212,10 @@ const actions = {
     route();
   },
   move: () => moveSheet(),
-  'move-to': (el) => moveTo(el.dataset.dir),
   share,
-  delete: confirmDelete,
+  delete: () => confirmDelete(),
   'delete-now': deleteNow,
   restore: (el) => restore(el.dataset.id, false),
-  'folder-select': () => {
-    state.selecting = !state.selecting;
-    state.picked = new Set();
-    drawFolder();
-  },
-  'folder-pick': (el) => {
-    const key = el.dataset.key;
-    const focused = document.activeElement === el;
-    if (state.picked.has(key)) state.picked.delete(key);
-    else state.picked.add(key);
-    drawFolder();
-    if (focused) {
-      const again = app.querySelector(`[data-key="${CSS.escape(key)}"]`);
-      if (again) again.focus();
-    }
-  },
-  'folder-trash': folderTrashAsk,
-  'folder-trash-now': () => folderTrashNow().catch(fail),
   'trash-select': () => {
     state.selecting = !state.selecting;
     state.picked = new Set();

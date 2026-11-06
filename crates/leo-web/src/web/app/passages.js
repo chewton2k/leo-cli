@@ -198,12 +198,12 @@ function readingTop() {
 }
 
 function blockText(block) {
-  return (block.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  return (block.textContent || '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
 }
 
 function readingAnchor() {
   const top = readingTop();
-  const first = [...document.querySelectorAll('#doc .blk')].find((b) => b.getBoundingClientRect().bottom > top);
+  const first = [...document.querySelectorAll('#doc .blk')].find((b) => blockText(b) && b.getBoundingClientRect().bottom > top);
   if (!first) return null;
   return { line: Number(first.dataset.start) || 0, text: blockText(first), dy: Math.round(top - first.getBoundingClientRect().top) };
 }

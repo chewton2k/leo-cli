@@ -74,6 +74,7 @@ mod tests {
 
     #[test]
     fn old_cloud_speech_names_and_aliases_load_as_local() {
+        let _guard = super::super::tests::ENV_LOCK.lock().unwrap();
         for (name, kind) in [
             ("openai_whisper", "openai_transcribe"),
             ("gemini_speech", "chat_audio"),

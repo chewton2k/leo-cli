@@ -7,58 +7,46 @@ const start = source.indexOf('const unsaved =');
 const end = source.indexOf("window.addEventListener(\n  'scroll',", start);
 assert.ok(start > 0 && end > start);
 
-function environment({ beacon = true, draft = false } = {}) {
-  const windows = {}, documents = {}, sent = [], notices = [], saved = [];
+function environment({ draft = false } = {}) {
+  const windows = {}, documents = {}, sent = [], saved = [], places = [];
+  let rendered = 0;
   const context = {
+    navigationRequest: 0, seq: 0,
     window: { addEventListener: (name, fn) => { windows[name] = fn; } },
     document: { visibilityState: 'visible', activeElement: null, body: {}, addEventListener: (name, fn) => { documents[name] = fn; } },
-    state: { view: 'folder', session: null },
+    state: { view: 'workspace', session: null },
     app: { contains: () => false },
     saving: { unsaved: () => draft, retry: () => { saved.push('notes'); return Promise.resolve([]); } },
-    navigator: { sendBeacon: (url, body) => { if (beacon === 'throw') throw new Error('Unavailable'); sent.push({ url, body, beacon: true }); return beacon; } },
-    fetch: (url, options) => { sent.push({ url, ...options }); return Promise.resolve({ status: 204 }); },
-    api: async () => context.backup,
-    backup: { state: 'idle', at: 0, message: '' },
-    toast: (message) => notices.push(message),
-    route: () => {}, render: async () => {}, fail: () => {}, marginLeave: () => {},
+    navigator: { sendBeacon: (...args) => { sent.push(args); return true; } },
+    fetch: (...args) => { sent.push(args); return Promise.resolve({ status: 204 }); },
+    api: (...args) => { sent.push(args); return Promise.resolve({}); },
     Blob,
+    location: { hash: '#/n/kept' },
+    localStorage: { setItem: (...args) => places.push(args) },
+    route: () => {}, render: async () => { rendered++; }, fail: () => {}, marginLeave: () => {},
   };
   vm.createContext(context);
   vm.runInContext(source.slice(start, end), context);
-  return { context, windows, documents, sent, notices, saved };
+  return { context, windows, documents, sent, saved, places, rendered: () => rendered };
 }
 
-const tick = () => new Promise((resolve) => setImmediate(resolve));
-
-test('leaving flushes note work and sends one tiny beacon per departure', async () => {
+test('hide, departure and return save work and remember the note without backup traffic', async () => {
   const e = environment({ draft: true });
-  e.context.document.visibilityState = 'hidden';
-  e.documents.visibilitychange();
-  e.windows.pagehide();
-  assert.deepEqual(e.saved, ['notes', 'notes']);
-  assert.equal(e.sent.length, 1);
-  assert.equal(e.sent[0].url, '/api/backup');
-  assert.equal(e.sent[0].body.type, 'application/json');
-  assert.equal(await e.sent[0].body.text(), '{}');
-  e.context.document.visibilityState = 'visible';
-  e.documents.visibilitychange();
-  e.windows.pagehide();
-  assert.equal(e.sent.length, 2);
-});
-
-test('a refused or unsupported beacon falls back to a same-origin keepalive request', () => {
-  for (const beacon of [false, 'throw']) {
-    const e = environment({ beacon });
+  for (let i = 0; i < 3; i++) {
+    e.context.document.visibilityState = 'hidden';
+    e.documents.visibilitychange();
     e.windows.pagehide();
-    const request = e.sent.at(-1);
-    assert.equal(request.url, '/api/backup');
-    assert.equal(request.method, 'POST');
-    assert.equal(request.keepalive, true);
-    assert.equal(request.credentials, 'same-origin');
+    e.context.document.visibilityState = 'visible';
+    e.documents.visibilitychange();
   }
+  assert.deepEqual(e.saved, Array(6).fill('notes'));
+  assert.equal(e.places.length, 6);
+  assert.deepEqual(e.places[0], ['leo-last-place', '#/n/kept']);
+  assert.equal(e.rendered(), 3);
+  assert.deepEqual(e.sent, []);
 });
 
-test('unsaved note work warns before closing but a cancelled close does not request a push', () => {
+test('unsaved work retains the close warning and retry while a clean page closes quietly', () => {
   for (const draft of [false, true]) {
     const e = environment({ draft });
     let prevented = false;
@@ -69,30 +57,29 @@ test('unsaved note work warns before closing but a cancelled close does not requ
   }
 });
 
-test('internal navigation never requests a backup and a restored page can leave again', () => {
+test('navigation still flushes the departing draft before routing without backup traffic', async () => {
   const e = environment();
-  e.windows.hashchange();
-  assert.equal(e.sent.length, 0);
-  e.windows.pagehide();
-  e.windows.pageshow();
-  e.windows.pagehide();
-  assert.equal(e.sent.length, 2);
+  const calls = [];
+  const session = { doc: { stop: () => calls.push('stop'), destroy: () => calls.push('destroy') } };
+  e.context.state.session = session;
+  e.context.flush = async (leaving) => { assert.equal(leaving, session); calls.push('flush'); };
+  e.context.route = () => calls.push('route');
+  await e.windows.hashchange();
+  assert.deepEqual(calls, ['stop', 'flush', 'destroy', 'route']);
+  assert.deepEqual(e.sent, []);
 });
 
-test('backup failures appear once when returning and failed status reads stay quiet', async () => {
-  const e = environment();
-  e.context.backup = { state: 'failed', at: 10, message: 'Run leo backup to retry.' };
+test('returning to a note being edited keeps its draft and focus intact', () => {
+  const e = environment({ draft: true });
+  e.context.state = { view: 'note', session: { note: { id: 'kept' } } };
   e.documents.visibilitychange();
-  await tick();
-  e.documents.visibilitychange();
-  await tick();
-  assert.deepEqual(e.notices, ['Run leo backup to retry.']);
-  e.context.backup.at = 11;
-  e.documents.visibilitychange();
-  await tick();
-  assert.equal(e.notices.length, 2);
-  e.context.api = async () => { throw new Error('Offline'); };
-  e.documents.visibilitychange();
-  await tick();
-  assert.equal(e.notices.length, 2);
+  assert.equal(e.rendered(), 0);
+  assert.deepEqual(e.sent, []);
+});
+
+test('startup and settings actions have no retired backup hooks', () => {
+  for (const name of ['events.js', 'app-settings.js', 'actions.js']) {
+    const script = fs.readFileSync(require('node:path').join(__dirname, '../src/web/app', name), 'utf8');
+    assert.doesNotMatch(script, /checkWebsiteBackup|setupBackup|\/api\/backup/);
+  }
 });

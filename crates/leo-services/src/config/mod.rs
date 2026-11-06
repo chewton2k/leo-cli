@@ -4,7 +4,6 @@ pub mod file_store;
 pub mod provider;
 pub mod secret;
 pub mod speech_migration;
-pub mod sync;
 pub mod theme;
 pub mod tidy;
 
@@ -25,8 +24,6 @@ pub struct Config {
     pub providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     pub theme: theme::ThemeConfig,
-    #[serde(default)]
-    pub sync: sync::SyncConfig,
 }
 
 pub const DEFAULT_CHAT_CHAIN: [&str; 1] = ["ollama"];
@@ -101,13 +98,6 @@ chain = [{chat}]
 chain = [{transcribe}]
 
 #
-# Backing up to git happens on every save once backup is set up in Settings. Pushing is
-# separate, because it needs the network:
-#
-#   [sync]
-#   auto_push = "on_quit"    # off, on_quit, when_idle
-#   idle_secs = 45           # for when_idle: how long the notes must be quiet
-#
 # To change the Ollama server or writing model, override only those fields:
 #
 #   [providers.ollama]
@@ -181,8 +171,7 @@ kind = "parakeet"
     }
 
     /// `~/.config/leo/config.toml`. Deliberately not beside the notes
-    /// directory: notes are git-synced by sync.rs, and this file holds
-    /// machine-local values (ports, model paths).
+    /// directory: this file holds machine-local values (ports, model paths).
     pub fn config_path() -> Result<std::path::PathBuf> {
         Ok(leo_core::paths::config_dir()?.join("config.toml"))
     }
@@ -656,7 +645,7 @@ kind = "telepathy"
     use std::sync::Mutex;
 
     /// Env vars are process-global; serialize the tests that mutate them.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn load_from_missing_path_returns_defaults() {

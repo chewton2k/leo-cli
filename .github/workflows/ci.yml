@@ -15,8 +15,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: never
   RUST_BACKTRACE: 1
-  # The store commits to git on save, and the backup tests push to a local
-  # bare repository; both need an identity.
+  # Retirement tests seed local repositories to verify their history survives.
   GIT_AUTHOR_NAME: leo-ci
   GIT_AUTHOR_EMAIL: ci@example.com
   GIT_COMMITTER_NAME: leo-ci

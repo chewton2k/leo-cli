@@ -11,7 +11,8 @@ function helpers(listeners = {}) {
 }
 test('all grouped Settings routes resolve, with Storage and Trash under Data', () => {
   const h = helpers();
-  for (const section of ['general', 'dictation', 'models', 'writing', 'calendar', 'backup', 'storage', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
+  for (const section of ['general', 'dictation', 'models', 'writing', 'calendar', 'storage', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
+  assert.equal(h.settingsSection('backup'), 'general', 'legacy Backup route resolves to General');
   assert.equal(h.settingsSection(''), 'dictation');
   assert.equal(h.settingsSection('../bad'), 'general');
   const html = h.settingsFrame('storage', '<section>Storage content</section>');
@@ -22,8 +23,8 @@ test('all grouped Settings routes resolve, with Storage and Trash under Data', (
   assert.ok(html.includes('<h1>Storage</h1>'));
   assert.ok(html.includes('<span class="settings-nav-pill" aria-hidden="true"></span>'));
   assert.ok(html.includes('class="settings-section arrive"'));
-  assert.equal((html.match(/class="settings-link/g) || []).length, 11);
-  assert.equal((html.match(/<svg>/g) || []).length, 8, 'the search icon and every section without a shared icon draw their own');
+  assert.equal((html.match(/class="settings-link/g) || []).length, 10);
+  assert.equal((html.match(/<svg>/g) || []).length, 7, 'the search icon and every section without a shared icon draw their own');
   assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections">'));
   assert.ok(html.includes('id="settings-search" type="text" role="combobox" aria-label="Search settings"'));
   assert.ok(html.includes('<div class="settings-results" id="settings-results"></div>'));
@@ -47,7 +48,7 @@ test('switches stay checkboxes and segmented choices carry their value', () => {
 });
 test('every Settings section names its current page in the same breadcrumb', () => {
   const h = helpers();
-  for (const [id, title] of [['general', 'General'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['backup', 'Backup'], ['storage', 'Storage'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
+  for (const [id, title] of [['general', 'General'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['storage', 'Storage'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
     assert.equal(h.settingsCrumbs(id), `<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button aria-current="page">${title}</button>`);
   }
 });
@@ -56,6 +57,8 @@ const sources = ['settings.js', 'app-settings.js', 'dictation.js', 'storage.js',
 test('every searchable setting names a real section and a target the page draws', () => {
   const h = helpers();
   const index = vm.runInContext('SETTINGS_INDEX', h);
+  assert.ok(!index.some(entry => entry.section === 'backup'));
+  assert.ok(!sources.includes('function backupCard('));
   const sections = vm.runInContext('settingsItems()', h).map(([id]) => id);
   const ids = new Set();
   for (const entry of index) {

@@ -389,18 +389,6 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         },
     });
 
-    let history = notes_dir.join(".git");
-    if history.is_dir() {
-        out.push(Area {
-            id: "backup".into(),
-            title: "Backup history".into(),
-            about: "Every saved version of your notes, used by backup. leo manages it; it is not deleted from here.".into(),
-            path: history.display().to_string(),
-            bytes: size_of(&history),
-            items: Vec::new(),
-            actions: Vec::new(),
-        });
-    }
     out
 }
 
@@ -629,7 +617,7 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
         out.push(Area {
             id: "margin".into(),
             title: "Felix's margin notes".into(),
-            about: "What Felix wrote beside your notes, with the replies. Kept on this computer, never in the note files or your backup.".into(),
+            about: "What Felix wrote beside your notes, with the replies. Kept on this computer, never in the note files.".into(),
             path: chats::db_of(chats_dir).path().display().to_string(),
             bytes,
             items: Vec::new(),
@@ -647,7 +635,7 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
         out.push(Area {
             id: "tasks".into(),
             title: "Tasks you added in leo".into(),
-            about: "Tasks made on the Calendar page or by Felix, kept beside your notes for backup and Export. Deleting a task keeps a small deletion marker for backup; Erase deleted tasks removes those markers. Checkboxes from notes stay in the notes.".into(),
+            about: "Tasks made on the Calendar page or by Felix, kept beside your notes for Export. Deleting a task keeps a small deletion marker; Erase deleted tasks removes those markers. Checkboxes from notes stay in the notes.".into(),
             path: crate::tasks::tasks_dir(chats_dir).display().to_string(),
             bytes: task_bytes,
             items: tasks
@@ -670,7 +658,7 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
                 })
                 .collect(),
             actions: vec![
-                act("delete", "Delete the selected tasks", Some("Selected tasks are removed from Calendar. Small deletion markers stay in the backup until you erase them."), true),
+                act("delete", "Delete the selected tasks", Some("Selected tasks are removed from Calendar. Small deletion markers stay until you erase them."), true),
                 act("erase-deleted", "Erase deleted tasks", Some("Deleted task records, including their titles, are erased from this computer. Old backups may still contain them and can bring them back when restored or merged. Active tasks stay."), false),
                 act(
                     "delete-done",
@@ -1119,7 +1107,7 @@ fn pictures_area(store: &Store) -> Area {
     Area {
         id: "pictures".into(),
         title: "Pictures in notes".into(),
-        about: "Pictures you pasted into notes, and figures kept from uploaded slides, PDFs and photos. They sit beside your notes, so backups include them.".into(),
+        about: "Pictures you pasted into notes, and figures kept from uploaded slides, PDFs and photos. They sit beside your notes and are included in Export.".into(),
         path: dir.display().to_string(),
         bytes: size_of(&dir),
         items,

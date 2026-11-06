@@ -629,13 +629,7 @@ impl Store {
     }
 
     pub fn save(&self) -> Result<()> {
-        self.save_files()?;
-        if crate::sync::is_initialized(&self.notes_dir) {
-            if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
-                crate::diag::warn(format!("sync auto-commit failed: {e}"));
-            }
-        }
-        Ok(())
+        self.save_files()
     }
 
     pub fn save_files(&self) -> Result<()> {
@@ -1849,34 +1843,74 @@ mod tests {
     }
 
     #[test]
-    fn test_save_auto_commits_when_initialized() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        std::fs::create_dir_all(&notes_dir).unwrap();
-
-        crate::sync::init(&notes_dir).unwrap();
-
-        let store = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            seen: Default::default(),
-            fingerprint: Default::default(),
-            notes: vec![make_note()],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
+    fn saving_in_an_existing_git_repository_keeps_history_and_remote_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let notes = tmp.path().join("notes");
+        fs::create_dir(&notes).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&notes)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
         };
-        store.save().unwrap();
-
-        let log = std::process::Command::new("git")
-            .args(["log", "--oneline"])
-            .current_dir(&notes_dir)
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "Existing history",
+        ]);
+        let remote = tmp.path().join("remote.git");
+        let initialized = std::process::Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
             .output()
             .unwrap();
-        let log_str = String::from_utf8(log.stdout).unwrap();
-        assert!(
-            log_str.contains("update notes"),
-            "expected auto-commit, got: {log_str}"
+        assert!(initialized.status.success());
+        git(&["remote", "add", "origin", remote.to_str().unwrap()]);
+        let head = git(&["rev-parse", "HEAD"]);
+        let config = fs::read(notes.join(".git/config")).unwrap();
+        let mut store = Store::load_from(&notes).unwrap();
+        let id = store
+            .create_note("Kept", "Durable edit", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        assert_eq!(
+            Store::load_from(&notes)
+                .unwrap()
+                .find_note(&id)
+                .unwrap()
+                .body,
+            "Durable edit"
         );
+        store.delete_note(&id);
+        store.save().unwrap();
+        assert_eq!(store.trashed().len(), 1);
+        store.undo().unwrap();
+        store.save().unwrap();
+        assert!(Store::load_from(&notes).unwrap().find_note(&id).is_some());
+        assert_eq!(git(&["rev-parse", "HEAD"]), head);
+        assert_eq!(fs::read(notes.join(".git/config")).unwrap(), config);
+        assert!(!notes.join(".gitignore").exists());
+        assert!(!notes.join(".gitattributes").exists());
+        assert!(!remote.join("refs/heads/main").exists());
     }
 
     // ── undo ────────────────────────────────────────────────────────────────
@@ -2928,7 +2962,7 @@ mod tests {
     }
 
     #[test]
-    fn upgrading_a_backup_leaves_a_clean_tree_with_the_renames_committed() {
+    fn renaming_legacy_note_files_preserves_existing_git_history() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("notes");
         fs::create_dir_all(&dir).unwrap();
@@ -2938,7 +2972,31 @@ mod tests {
             note_to_markdown(&note).unwrap(),
         )
         .unwrap();
-        crate::sync::init(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            out.stdout
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "Original names",
+        ]);
+        let head = git(&["rev-parse", "HEAD"]);
 
         let store = Store::load_from(&dir).unwrap();
         store.save().unwrap();
@@ -2950,7 +3008,8 @@ mod tests {
             .output()
             .unwrap();
         let dirty = String::from_utf8_lossy(&status.stdout);
-        assert!(dirty.trim().is_empty(), "uncommitted: {dirty}");
+        assert!(!dirty.trim().is_empty(), "expected local filename changes");
+        assert_eq!(git(&["rev-parse", "HEAD"]), head);
     }
 
     fn parse(name: &str, text: &str) -> Note {

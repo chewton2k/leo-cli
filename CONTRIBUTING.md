@@ -30,7 +30,7 @@ reaching upward:
 
 | Crate | Holds |
 |-------|-------|
-| `crates/leo-core` | Notes, the on-disk store and undo, git backup, and the command vocabulary (`action/`): parsing, handlers, note resolution. No terminal and no network. |
+| `crates/leo-core` | Notes, the on-disk store and undo, and the command vocabulary (`action/`): parsing, handlers, note resolution. No terminal and no network. |
 | `crates/leo-services` | AI providers and their fallback chains, prompts, config and credentials, recording, and health checks. |
 | `crates/leo-web` | leo's pages and the engine behind them. |
 | `crates/leo-host` | Gives the engine its AI, speech, settings and storage powers; the Playwright test server. |
@@ -184,5 +184,5 @@ is used instead. `scripts/next-version.sh` holds the rule and
 ## Reporting bugs
 
 Open an issue with what you did, what you expected, and what happened. Settings, Health in
-leo helps a lot. It checks leo, the notes, the AI, recording and backup, and
+leo helps a lot. It checks leo, the notes, the AI and recording, and
 never includes your API keys.

@@ -23,3 +23,16 @@ test('Back from a remembered Storage section returns to the note instead of loop
   vm.createContext(context);vm.runInContext(helper,context);
   context.back();assert.equal(target,'#/n/note');
 });
+
+test('retired Backup normalization preserves the history entry', async () => {
+  const settings = fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8');
+  const start = settings.indexOf('async function showSettings(');
+  const script = settings.slice(start, settings.indexOf('  // Trash', start)) + 'return section; }';
+  const entry = { leoAt: 7, kept: true };
+  let result;
+  const context = { settingsSection: () => 'general', location: { hash: '#/settings/backup' }, history: { state: entry, replaceState: (...args) => { result = args; } } };
+  vm.createContext(context); vm.runInContext(script, context);
+  await context.showSettings('backup');
+  assert.equal(result[0], entry);
+  assert.equal(result[2], '#/settings/general');
+});

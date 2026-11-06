@@ -9,6 +9,9 @@ fn the_markdown_renderer_passes_its_tests() {
 fn the_editor_helpers_pass_their_tests() {
     run_node_tests("editing.test.js");
     run_node_tests("margin.test.js");
+    run_node_tests("margin-lifecycle.test.js");
+    run_node_tests("explorer-open.test.js");
+    run_node_tests("routing-review.test.js");
     run_node_tests("drag.test.js");
     run_node_tests("pane-resize.test.js");
 }
@@ -16,6 +19,7 @@ fn the_editor_helpers_pass_their_tests() {
 #[test]
 fn the_chat_with_felix_passes_its_tests() {
     run_node_tests("chat.test.js");
+    run_node_tests("chat-history-review.test.js");
     run_node_tests("study-survival.test.js");
     run_node_tests("retirement.test.js");
 }

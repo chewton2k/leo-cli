@@ -14,16 +14,14 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 23;
+const MANUAL_VERSION: u32 = 24;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
 /// Where the marker lives: the data directory, one level above `notes/`.
 ///
-/// Deliberately not inside the notes directory. That directory is what `sync`
-/// pushes to the user's git remote, so a marker there gets committed and
-/// travels between machines — which also means a second machine would think the
-/// manual was already installed and never create it.
+/// Kept separately from user notes so exports contain their writing, not
+/// machine-local bookkeeping.
 fn marker_path(notes_dir: &std::path::Path) -> std::path::PathBuf {
     match notes_dir.parent() {
         Some(parent) => parent.join(MARKER),
@@ -96,7 +94,7 @@ edit it, or delete it — it will not come back.
 
 ```
 ⌘F        search, ask, remind or jot anything
-New note  top of the sidebar, or the first card in a folder
+New note  file-plus beside Folders (More → Folders in a small window)
 Settings  bottom of the sidebar
 ```
 
@@ -118,7 +116,7 @@ Choose a model, shortcut, microphone and word rules in Settings → Dictation.
 Ask Felix about your notes or have him quiz you in Study.
 He can add tasks and notes, and asks first unless you let him act on his own.
 Select words and press ⌘⇧E for an answer in the margin; Settings → Felix lets
-him read along as you write.
+him read along as you write. Switch modes in the menu above a note's title.
 
 ## Writing
 
@@ -127,15 +125,16 @@ question on a line, and the answer appears under it.
 
 ## Finding and organising
 
-Search finds words and meaning. Drag notes onto folders to move them, or drop
-one note on another to combine them. Felix can follow connections between notes.
+Search finds words and meaning. Open notes from the file explorer. Right-click
+a note or folder, or use its ⋯ button, to rename, move or trash it.
+Felix can follow connections between notes.
 
 ## Where things live
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
-only your account can read. Settings chooses the AI that writes, and backup
-keeps a copy on GitHub.
+only your account can read. Settings chooses the AI that writes.
+Use Settings → Storage → Export to keep a copy of your notes.
 "#,
         notes_dir = "<data dir>/leo/notes/",
         config_path = "<config dir>/leo/config.toml",
@@ -221,11 +220,9 @@ mod tests {
         assert!(install_if_absent(&mut store).unwrap().is_some());
     }
 
-    /// The marker must not sit in the directory `sync` pushes: it is leo's
-    /// bookkeeping, not a note, and committing it also makes a second machine
-    /// think the manual is already installed.
+    /// Installation bookkeeping stays outside the user's notes.
     #[test]
-    fn the_marker_lives_outside_the_synced_notes_directory() {
+    fn the_marker_lives_outside_the_notes_directory() {
         let (mut store, _d) = temp_store();
         install_if_absent(&mut store).unwrap();
 

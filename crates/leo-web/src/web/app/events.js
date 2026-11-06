@@ -27,18 +27,12 @@ document.addEventListener('keydown', (e) => {
     if ($('.scrim')) return closeSheet();
     if (source.note && sourcePane.contains(e.target)) return closeSource();
     if (typing) return e.target.blur();
-    if ((state.view === 'folder' || state.view === 'trash') && state.selecting) {
+    if (state.view === 'trash' && state.selecting) {
       state.selecting = false;
       state.picked = new Set();
-      return state.view === 'folder' ? drawFolder() : drawTrash();
+      return drawTrash();
     }
-    if (state.view === 'map' && mapView && mapView.selected()) return mapView.select(null);
-    if (state.view !== 'folder' || state.dir) return back();
-  }
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.pick-card')) {
-    e.preventDefault();
-    e.target.click();
-    return;
+    if (state.view !== 'workspace') return back();
   }
   if (e.key === 'Enter' && e.target.matches('.card')) {
     e.preventDefault();
@@ -46,45 +40,22 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === 'n' && state.view === 'folder') {
-    go(state.dir ? `#/new/${enc(state.dir)}` : '#/new');
+  if (e.key === 'n' && state.view === 'workspace') {
+    const dir = creationDir();
+    go(dir ? `#/new/${enc(dir)}` : '#/new');
   }
 });
 
 const unsaved = () => saving.unsaved();
-let websiteLeaveSent = false;
-let websiteBackupShown = 0;
 
 function saveWebsiteWork() {
   saving.retry().catch(() => {});
 }
 
-function leaveWebsite() {
-  saveWebsiteWork();
-  if (websiteLeaveSent) return;
-  websiteLeaveSent = true;
-  const body = new Blob(['{}'], { type: 'application/json' });
-  try {
-    if (navigator.sendBeacon('/api/backup', body)) return;
-  } catch (_) {}
-  fetch('/api/backup', { method: 'POST', credentials: 'same-origin', body, keepalive: true }).catch(() => {});
-}
-
-async function checkWebsiteBackup() {
-  try {
-    const backup = await api('/api/backup');
-    if (backup.state === 'failed' && backup.at !== websiteBackupShown) {
-      websiteBackupShown = backup.at;
-      toast(backup.message, { bad: true });
-    }
-  } catch (_) {}
-}
-
 window.addEventListener('pagehide', () => {
   rememberPlace();
-  leaveWebsite();
+  saveWebsiteWork();
 });
-window.addEventListener('pageshow', () => { websiteLeaveSent = false; });
 
 window.addEventListener('beforeunload', (e) => {
   if (!unsaved()) return;
@@ -118,12 +89,23 @@ function reopenLastPlace() {
   } catch (e) {}
 }
 
-window.addEventListener('hashchange', () => {
+window.addEventListener('hashchange', async () => {
+  const request = ++navigationRequest;
   const leaving = state.session;
+  const mine = seq;
+  const hash = location.hash;
+  const current = () => request === navigationRequest && mine === seq && state.session === leaving;
   if (leaving) {
     leaving.doc.stop();
-    flush(leaving).catch(fail);
+    try { await flush(leaving); }
+    catch (error) {
+      if (!current() || location.hash !== hash) return;
+      showSaveFailure(leaving, error, saved => go(hash, { kept: saved }), current);
+      return;
+    }
+    if (!current() || location.hash !== hash) return;
     leaving.doc.destroy();
+    state.session = null;
   }
   marginLeave();
   route();
@@ -137,12 +119,10 @@ const busy = () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     rememberPlace();
-    leaveWebsite();
+    saveWebsiteWork();
     return;
   }
-  websiteLeaveSent = false;
-  checkWebsiteBackup();
-  if (!['folder', 'note', 'search', 'trash'].includes(state.view)) return;
+  if (!['workspace', 'note', 'search', 'trash'].includes(state.view)) return;
   if (state.view === 'note' && (busy() || !state.session.note.id)) return;
   render().catch(fail);
 });
@@ -153,12 +133,8 @@ window.addEventListener(
   { passive: true }
 );
 
-window.addEventListener('resize', () => {
-  if (document.body.classList.contains('on-settings')) fitSettingsEdge();
-});
-
 async function route() {
-  closeSheet();
+  closeSheet(true);
   drawn.top = /^#\/(?:f|n|new)(?:\/|$)|^#?\/?$/.test(location.hash);
   if (!drawn.top) window.scrollTo(0, 0);
   await render();
@@ -275,12 +251,13 @@ async function render() {
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
+  const prepared = kind === 'n' && openingNote?.id === arg.replace(/\/edit$/, '') ? openingNote : null;
+  openingNote = null;
   stopLibraryArrival();
   if (kind && !/^(?:f|n|new)$/.test(kind)) {
     document.body.classList.toggle('on-library', false);
     document.body.classList.toggle('on-note', false);
   }
-  if (library.observer) library.observer.disconnect();
   if (kind !== 'search') closeSearch();
   if (kind !== 'n') chat.setContext(null);
   if (kind !== 'record') recorder.leave();
@@ -288,8 +265,8 @@ async function render() {
   activity.route = kind;
   drawActivity();
   try {
-    if (kind === 'f') await showFolder(arg);
-    else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''));
+    if (kind === 'f') await showWorkspace(arg);
+    else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''), { fresh: prepared });
     else if (kind === 'new') await newNote(arg);
     else if (kind === 'search') await showSearch(arg);
     else if (kind === 'trash') await showTrash();
@@ -297,12 +274,13 @@ async function render() {
     else if (kind === 'boards') await showBoards(arg);
     else if (kind === 'settings') await showSettings(arg);
     else if (kind === 'record') await showRecord(arg);
-    else await showFolder('');
-    if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
+    else await showWorkspace();
+    if (generation !== renderGeneration || (hash !== decodeURI(location.hash || '#/') && !(kind === 'f' && location.hash === '#/'))) return;
     rememberPlace();
     loadSideFolders();
+    if (prepared && state.session?.note.id === prepared.id) state.session.doc.editStart();
   } catch (e) {
-    if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
+    if (generation !== renderGeneration || (hash !== decodeURI(location.hash || '#/') && !(kind === 'f' && location.hash === '#/'))) return;
     if (e.status === 404 && hash.startsWith('#/n/')) {
       toast('That note is not there any more.', { bad: true });
       try { localStorage.setItem(LAST_PLACE_KEY, '#/'); } catch (err) {}
@@ -331,7 +309,6 @@ window.addEventListener('afterprint', () => {
 reopenLastPlace();
 route();
 checkActivity();
-checkWebsiteBackup();
 
 document.addEventListener('paste', (e) => {
   if (e.defaultPrevented) return;
@@ -349,7 +326,7 @@ document.addEventListener('paste', (e) => {
     addPictures(state.session, files);
     return;
   }
-  if (!['folder', 'search'].includes(state.view)) return;
+  if (!['workspace', 'search'].includes(state.view)) return;
   e.preventDefault();
   uploadSheet(pastedFiles(files));
 });

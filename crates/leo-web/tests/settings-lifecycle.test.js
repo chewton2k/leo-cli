@@ -11,7 +11,7 @@ test('late Settings saves cannot redraw a different page on success or failure',
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
     let draws = 0;
     context.drawSettings = () => { draws++; };
-    const pending = context.changeSetting({auto_push:'quit'}).catch(() => {});
+    const pending = context.changeSetting({set:'effort',value:'high'}).catch(() => {});
     context.seq++;
     context.state = {view:'folder',settings:{}};
     finish();

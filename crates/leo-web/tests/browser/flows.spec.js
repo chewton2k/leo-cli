@@ -117,7 +117,7 @@ async function openNote(page, title) {
   return note;
 }
 
-test('retired practice state opens as Chat and old bookmarks return to the library', async ({ page }) => {
+test('retired practice state opens as Chat and old bookmarks return to the workspace', async ({ page }) => {
   const id = `retired-compat-${test.info().project.name}`;
   const messages = [{ role: 'assistant', text: 'An old saved explanation.', proposals: [{ kind: 'interview_test', state: 'applied', title: 'Old check' }] }];
   expect((await page.request.put(`/api/chats/${id}`, { data: { title: 'Saved conversation', mode: 'interview', refs: [], messages } })).ok()).toBe(true);
@@ -133,7 +133,7 @@ test('retired practice state opens as Chat and old bookmarks return to the libra
     await expect(page.locator('#app')).not.toBeEmpty();
     expect(await page.evaluate(() => localStorage.getItem('leo-last-place'))).toBe('#/');
     await page.goto(`/${hash}`);
-    await expect(page).toHaveURL(/#\/$/);
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
   }
   await page.locator('#chat-toggle').click();
   await expect(page.locator('#chat-mode-name')).toHaveText('Chat');
@@ -165,7 +165,7 @@ test('a failed save survives navigation and reload, then saves on reconnection',
   await page.locator('#back').click();
   await expect.poll(() => page.evaluate(() => window.__refusedSaves)).toBeGreaterThan(refused);
   await page.reload();
-  await expect(page.locator('.toast')).toContainText('Saving 1 edit that had not reached leo yet');
+  await expect(page.locator('#save-state')).toContainText('draft kept');
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Keep this phone draft');
   const original = await (await page.request.get(`/api/notes/${note.id}`)).json();
@@ -264,9 +264,9 @@ test('a tap on any checkbox ticks it and saves without moving the note or openin
 test('a click 60 ms after a page change reaches the page, never the root element', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Quick ${test.info().project.name}`, body: '- [ ] first' } })).json();
   await page.goto('/#/');
-  const card = page.locator(`.card[data-id="${note.id}"]`);
+  const card = page.locator(`.side-note[data-id="${note.id}"]`);
   await card.scrollIntoViewIfNeeded();
-  await card.locator('.card-title').click();
+  await card.locator('.side-label').click();
   const seen = await page.evaluate(async () => {
     while (!document.querySelector('.doc input[data-box]')) await new Promise((resolve) => requestAnimationFrame(resolve));
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -282,14 +282,10 @@ test.describe('forced colors', () => {
   test.use({ forcedColors: 'active' });
   test('surfaces keep an edge and every selected state differs from its neighbours', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: `Edge ${test.info().project.name}`, body: 'text' } })).json();
-    await page.goto('/#/');
+    await page.goto('/#/search/' + encodeURIComponent(note.title));
     await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
     const look = (selector) => page.locator(selector).first().evaluate((el) => { const cs = getComputedStyle(el); return { border: parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth), bg: cs.backgroundColor, color: cs.color }; });
     expect((await look('.card')).border, 'library cards have an edge').toBeGreaterThan(0);
-    expect((await look('.library-views')).border, 'the Grid/List group has an edge').toBeGreaterThan(0);
-    const on = await look('.library-views .on');
-    const off = await look('.library-views button:not(.on)');
-    expect(on.bg, 'Grid/List shows which is selected').not.toBe(off.bg);
     await page.goto('/#/settings/general');
     await expect(page.locator('.segment.on').first()).toBeVisible();
     expect((await look('.set-card')).border, 'settings groups have an edge').toBeGreaterThan(0);
@@ -341,9 +337,9 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
   await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-expanded', 'true');
   await expect(page).toHaveURL(/#\/settings$/);
-  await side.locator('[data-action="chat"]').click();
+  await expect(side.locator('[data-action="chat"]')).toHaveCount(0);
+  await page.locator('#chat-toggle').click();
   await expect(page.locator('#chat')).toBeVisible();
-  await expect(side.locator('[data-action="chat"]')).toHaveClass(/\bon\b/);
   await page.locator('[data-chat="close"]').click();
 
   await page.keyboard.press('ControlOrMeta+f');
@@ -670,13 +666,13 @@ test.describe('diagrams', () => {
   });
 });
 
-test('a fresh launch reopens the last note, while reloads and the library stay put', async ({ page, context }) => {
+test('a fresh launch reopens the last note, while reloads and the workspace stay put', async ({ page, context }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Left off ${Date.now().toString(36)}`, body: 'Where I was.' } })).json();
   await page.goto('/');
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Where I was.');
   await page.goto('/');
-  await expect(page, 'going to the library in the same window stays there').toHaveURL(/\/(#\/)?$/);
+  await expect(page, 'going to the workspace in the same window stays there').toHaveURL(/\/(#\/)?$/);
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Where I was.');
   const relaunch = await context.newPage();
@@ -707,32 +703,32 @@ test.describe('drag and drop', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: `Drag me ${tag}`, body: 'x' } })).json();
     const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
     await page.goto('/');
-    const card = page.locator(`.card[data-id="${note.id}"]`);
-    await dragBetween(page, card, page.locator(`main .folder[data-dir="${a}"]`));
+    const card = page.locator(`.side-note[data-id="${note.id}"]`);
+    await dragBetween(page, card, page.locator(`#side .side-row[data-action="open-folder"][data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
     await expect(card).toHaveCount(0);
     await page.locator('.toast button').click();
     await expect(card).toBeVisible();
-    await expect(card.locator('.card-meta')).not.toContainText(a);
+    await expect(card).toHaveAttribute('data-from', '');
     expect(await where()).toBe('');
 
     await dragBetween(page, card, page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
     await expect.poll(where).toBe(b);
     await expect(card).toHaveCount(0);
 
-    await dragBetween(page, page.locator(`main .folder[data-dir="${b}"]`), page.locator(`main .folder[data-dir="${a}"]`));
+    await dragBetween(page, page.locator(`#side .side-row[data-action="open-folder"][data-dir="${b}"]`), page.locator(`#side .side-row[data-action="open-folder"][data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved ${b} into ${a}`);
     expect(await where()).toBe(`${a}/${b}`);
-    await expect(page.locator(`main .folder[data-dir="${b}"]`)).toHaveCount(0);
+    await expect(page.locator(`#side .side-row[data-action="open-folder"][data-dir="${b}"]`)).toHaveCount(0);
     const inside = await (await page.request.get(`/api/dirs?parent=${a}`)).json();
     expect(inside.map((d) => d.name)).toEqual([b]);
     await page.locator('.toast button').click();
-    await expect(page.locator(`main .folder[data-dir="${b}"]`)).toBeVisible();
+    await expect(page.locator(`#side .side-row[data-action="open-folder"][data-dir="${b}"]`)).toBeVisible();
     expect(await where()).toBe(b);
 
     await page.goto(`/#/f/${b}`);
-    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
+    await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
     await expect.poll(where).toBe('');
   });
 
@@ -750,7 +746,7 @@ test.describe('drag and drop', () => {
     await dropFiles(page, '#chat', [{ name: 'for-felix.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
     await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
-    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), chat.locator('#chat-input'));
+    await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), chat.locator('#chat-input'));
     await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
 });
@@ -1055,12 +1051,12 @@ test.describe('Felix', () => {
     await expect(chat.locator('.msg.leo').last()).toContainText(`About second question ${tag}`);
     await openSidebar();
     await second.locator('.chat-history-x').click();
-    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await expect(second.locator('.chat-history-x')).toHaveClass(/sure/);
     const list = await sidebar.locator('#chat-history-list').boundingBox();
     await page.mouse.click(list.x + list.width / 2, list.y + list.height - 6);
-    await expect(second.locator('.chat-history-x')).toHaveText('×');
+    await expect(second.locator('.chat-history-x')).not.toHaveClass(/sure/);
     await second.locator('.chat-history-x').click();
-    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await expect(second.locator('.chat-history-x')).toHaveClass(/sure/);
     await second.locator('.chat-history-x').click();
     await expect(second).toHaveCount(0);
     await expect(chat.locator('.msg')).toHaveCount(0);
@@ -1651,9 +1647,7 @@ test.describe('settings', () => {
     await page.locator('.settings-nav a[href="#/settings/models"]').click();
     await expect(page.getByRole('heading', { name: 'In use', exact: true })).toBeVisible();
     await expect(page.locator('[data-task-card="speech"], [data-key-input]')).toHaveCount(0);
-    await page.locator('.settings-nav a[href="#/settings/backup"]').click();
-    await page.locator('select[data-set="auto_push"]').selectOption('when_idle');
-    await expect(page.locator('.toast')).toContainText('Backing up when idle');
+    await expect(page.locator('.settings-nav a[href="#/settings/backup"]')).toHaveCount(0);
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
     await page.locator('.settings-nav a[href="#/settings/writing"]').click();
@@ -1686,11 +1680,12 @@ test.describe('folders', () => {
     await side.locator(`.side-twist[data-dir="${top}"]`).click();
     await expect(row(`${top}/week1`)).toBeVisible();
     await row(`${top}/week1`).hover();
-    await side.locator(`.side-sub[data-parent="${top}/week1"]`).click();
+    await row(`${top}/week1`).click({ button: 'right' });
+    await page.locator('.explorer-menu [data-explorer-action="folder"]').click();
     await expect(page.locator('.sheet h3')).toHaveText('New folder in week1');
     await page.locator('#folder-name').fill('lab');
     await page.locator('[data-action="create-folder"]').click();
-    await expect.poll(() => decodeURIComponent(page.url())).toMatch(new RegExp(`#/f/${top}/week1/lab$`));
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
     await expect(row(`${top}/week1/lab`)).toHaveAttribute('aria-current', 'page');
     await page.reload();
     await expect(row(`${top}/week1`), 'open folders stay open').toBeVisible();
@@ -1726,78 +1721,16 @@ test.describe('folders', () => {
     }
     await page.locator('#folder-name').fill(name);
     await page.locator('[data-action="create-folder"]').click();
-    await expect(page).toHaveURL(new RegExp(`#/f/${name}$`));
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="' + name + '"]')).toBeVisible();
     await expect(page.locator('.toast.bad')).toHaveCount(0);
     await expect(page.locator('.scrim')).toHaveCount(0);
   });
 
 
-  test('chosen notes and folders move to the trash after asking', async ({ page }) => {
-    const tag = test.info().project.name;
-    const top = `pick-${tag}`;
-    await page.request.post('/api/dirs', { data: { path: top } });
-    await page.request.post('/api/dirs', { data: { path: `${top}/week1` } });
-    const make = async (title, directory) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory } })).json();
-    const loose = await make('Loose note', top);
-    const kept = await make('Keep me', top);
-    const inside = await make('Inside week1', `${top}/week1`);
-    await page.goto(`/#/f/${top}`);
-    await expect(page.locator('.card', { hasText: 'Keep me' })).toBeVisible();
 
-    await page.locator('[data-action="folder-select"]').click();
-    await expect(page.locator('.select-bar')).toContainText('0 selected');
-    await expect(page.locator('[data-action="folder-trash"]')).toBeDisabled();
-    await page.locator('.folder', { hasText: 'week1' }).click();
-    await page.locator('.pick-card', { hasText: 'Loose note' }).click();
-    for (const item of [page.locator('.folder', { hasText: 'week1' }), page.locator('.pick-card', { hasText: 'Loose note' })]) {
-      const box = await item.boundingBox();
-      const tick = await item.locator('.pick-box').boundingBox();
-      expect(box.x + box.width - (tick.x + tick.width), 'the checkbox sits at the right edge').toBeLessThan(24);
-    }
-    await expect(page.locator('.select-bar')).toContainText('2 selected');
-    await expect(page).toHaveURL(new RegExp(`#/f/${top}$`));
 
-    await page.locator('[data-action="folder-trash"]').click();
-    await expect(page.locator('.sheet h3')).toHaveText('Move 1 note and 1 folder (with 1 note inside) to the trash?');
-    await page.locator('[data-action="close"]').click();
-    expect((await page.request.get(`/api/notes/${loose.id}`)).ok()).toBe(true);
 
-    await page.locator('[data-action="folder-trash"]').click();
-    await page.locator('[data-action="folder-trash-now"]').click();
-    await expect(page.locator('.toast')).toContainText('Moved 2 notes and 1 folder to the trash');
-    await expect(page.locator('.select-bar')).toHaveCount(0);
-    await expect(page.locator('.card', { hasText: 'Keep me' })).toBeVisible();
-    await expect(page.locator('.card', { hasText: 'Loose note' })).toHaveCount(0);
-    await expect(page.locator('.folder', { hasText: 'week1' })).toHaveCount(0);
-    const trashed = (await (await page.request.get('/api/trash')).json()).map((t) => t.id);
-    expect(trashed).toEqual(expect.arrayContaining([loose.id, inside.id]));
-    expect((await page.request.get(`/api/notes/${kept.id}`)).ok()).toBe(true);
-
-    await page.locator('[data-action="folder-select"]').click();
-    await page.locator('[data-folder-all]').check();
-    await expect(page.locator('.select-bar')).toContainText('1 selected');
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.select-bar')).toHaveCount(0);
-    await expect(page.locator('.fabs')).toHaveCount(1);
-  });
-
-  test('undo in the toast brings back what was just moved to the trash', async ({ page }) => {
-    const top = `undo-${test.info().project.name}`;
-    for (const dir of [top, `${top}/week2`, `${top}/week2/empty`]) await page.request.post('/api/dirs', { data: { path: dir } });
-    const inside = await (await page.request.post('/api/notes', { data: { title: 'Week 2 notes', body: 'x', directory: `${top}/week2` } })).json();
-    await page.goto(`/#/f/${top}`);
-    await page.locator('[data-action="folder-select"]').click();
-    await page.locator('.folder', { hasText: 'week2' }).click();
-    await page.locator('[data-action="folder-trash"]').click();
-    await page.locator('[data-action="folder-trash-now"]').click();
-    await expect(page.locator('.folder', { hasText: 'week2' })).toHaveCount(0);
-    await page.locator('.toast button', { hasText: 'Undo' }).click();
-    await expect(page.locator('.toast')).toContainText('Brought back');
-    await expect(page.locator('.folder', { hasText: 'week2' })).toBeVisible();
-    expect((await page.request.get(`/api/notes/${inside.id}`)).ok()).toBe(true);
-    const dirs = await (await page.request.get(`/api/dirs?parent=${encodeURIComponent(`${top}/week2`)}`)).json();
-    expect(dirs.map((d) => d.name)).toContain('empty');
-  });
 });
 
 test.describe('pictures', () => {
@@ -1920,31 +1853,7 @@ test('hovering the storage bar names the part and its size, and highlights it', 
 });
 
 test.describe('large libraries', () => {
-  test('a big folder loads in pages as you scroll, and Select all takes every note', async ({ page }) => {
-    test.setTimeout(90000);
-    const dir = `big-${test.info().project.name}-${test.info().retry}-${Date.now().toString(36)}`;
-    await page.request.post('/api/dirs', { data: { path: dir } });
-    for (let i = 0; i < 230; i += 10) {
-      await Promise.all(Array.from({ length: 10 }, (_, j) => page.request.post('/api/notes', { data: { title: `Big note ${String(i + j).padStart(3, '0')}`, body: '- [x] done\n- [ ] not yet', directory: dir } })));
-    }
-    const listed = await page.request.get(`/api/notes?dir=${dir}&limit=200&brief=true`);
-    expect(listed.headers()['x-total']).toBe('230');
-    await page.goto(`/#/f/${dir}`);
-    const cards = page.locator('.cards .card[data-id]');
-    await expect(cards).toHaveCount(200);
-    await expect(page.locator('.section-title', { hasText: 'Notes' })).toHaveText('Notes · 230');
-    await expect(cards.first().locator('.chip.progress')).toContainText('1/2');
-    await page.locator('#more-notes').scrollIntoViewIfNeeded();
-    await expect(cards).toHaveCount(230);
-    await expect(page.locator('#more-notes')).toHaveCount(0);
 
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.reload();
-    await expect(cards).toHaveCount(200);
-    await page.locator('[data-action="folder-select"]').click();
-    await page.locator('[data-folder-all]').check();
-    await expect(page.locator('.select-bar')).toContainText('230 selected');
-  });
 });
 
 test.describe('readability', () => {
@@ -2029,7 +1938,7 @@ test.describe('readability', () => {
       const history = page.locator('.chat-history');
       if (await history.isHidden()) await page.getByRole('button', { name: 'Your chats', exact: true }).click();
       await history.locator(`[data-chat="forget"][data-id="readable-${tag}"]`).click();
-      await expect(history.locator('.chat-history-x.sure')).toHaveText('Delete');
+      await expect(history.locator('.chat-history-x.sure')).toHaveAttribute('aria-label', /^Confirm delete/);
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
     });
@@ -2459,8 +2368,8 @@ test.describe('uploads', () => {
     await page.locator('#upload-go').click();
     await expect.poll(() => sent.length).toBe(1);
     await expect(page.locator('.upload-working')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/f/${dir}`);
-    await expect(page.locator('.card', { hasText: 'Lecture 2' })).toBeVisible();
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('.side-note', { hasText: 'Lecture 2' })).toBeVisible();
     expect(sent[0].each).toBe(true);
     expect(sent[0].title).toBe(null);
     expect(sent[0].files.map((f) => f.name)).toEqual(['lecture 1.txt', 'lecture 2.txt']);
@@ -2485,7 +2394,7 @@ test.describe('uploads', () => {
     await expect(page.locator('.upload-working')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.locator('.scrim')).toHaveCount(0);
-    await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('.side-note', { hasText: title })).toBeVisible({ timeout: 8000 });
     await expect(page.locator('.toast')).toContainText('Your note from the upload is ready.');
     expect(page.url()).not.toContain('#/n/');
   });
@@ -2629,7 +2538,7 @@ test.describe('recording', () => {
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
     await Promise.all([page.waitForResponse('**/api/record/rec-1/stop'), page.locator('[data-action="rec-stop"]').click()]);
     await page.evaluate(() => { location.hash = '#/'; });
-    await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.side-note', { hasText: title })).toBeVisible({ timeout: 10000 });
     await expect(page.locator('.toast')).toContainText('Your recording is now a note.');
     expect(page.url()).not.toContain('#/n/');
   });
@@ -2889,7 +2798,7 @@ test.describe('the kinds of bugs that reached people before', () => {
       ['#/trash', '**/api/trash'],
       ['#/settings/storage', '**/api/storage'],
       ['#/search/slow', '**/api/search?*'],
-      [`#/f/slow-${kind()}`, '**/api/dirs?*'],
+      [`#/f/slow-${kind()}`, '**/api/folders'],
       [`#/n/${note.id}`, `**/api/notes/${note.id}`],
     ];
     for (const [hash, api] of slow) {
@@ -2898,6 +2807,7 @@ test.describe('the kinds of bugs that reached people before', () => {
       const held = new Promise((resolve) => { release = resolve; });
       let seen = false;
       await page.route(api, async (route) => {
+        if (seen) return route.continue();
         seen = true;
         await held;
         await route.continue().catch(() => {});
@@ -3015,7 +2925,8 @@ test.describe('the kinds of bugs that reached people before', () => {
     await page.locator('#folder-name').fill(name);
     await page.locator('#folder-name').press('Enter');
     await page.locator('[data-action="create-folder"]').click({ force: true, timeout: 1000 }).catch(() => {});
-    await expect(page).toHaveURL(new RegExp(`#/f/${name}$`));
+    await expect(page).toHaveURL(/\/(?:#\/)?$/);
+    await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="' + name + '"]')).toBeVisible();
     await page.waitForTimeout(500);
     await expect(page.locator('.toast.bad')).toHaveCount(0);
     const folders = await (await page.request.get('/api/folders')).json();
@@ -3554,7 +3465,7 @@ test('dropping one note on another combines them in the background with progress
     return route.fulfill({ json: job });
   });
   await page.route('**/api/activity', (route) => route.fulfill({ json: { tasks: forgotten ? [] : [{ kind: 'combine', label: `Combining “${a.title}” into “${b.title}”`, step: job.state === 'working' ? 'Felix is writing one note' : 'Ready to review', done: job.state === 'working' ? percent : 100, total: 100, href: `#combine/${job.id}`, ...(job.state === 'working' ? {} : { ready: true }) }] } }));
-  await page.goto(`/#/f/${folder}`);
+  await page.goto('/#/search/' + tag);
   await dragBetween(page, page.locator(`.card[data-id="${a.id}"]`), page.locator(`.card[data-id="${b.id}"]`));
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
@@ -3643,97 +3554,21 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
 
-test('note thumbnails are read only, cards open directly and layout choices persist', async ({ page }) => {
-  const made = await page.request.post('/api/notes', { data: { title: 'Library thumbnail fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
-  expect(made.status()).toBe(201);
-  const note = await made.json();
-  await page.goto('/#/');
-  const card = page.locator(`.library-cards.grid .card[data-id="${note.id}"]`);
+test('Search cards remain read only and open notes directly', async ({ page }) => {
+  const tag = 'search-card-' + Date.now();
+  const note = await (await page.request.post('/api/notes', { data: { title: tag, body: '- [ ] A task stays unticked' } })).json();
+  await page.goto('/#/search/' + tag);
+  const card = page.locator('.card[data-id="' + note.id + '"]');
   await expect(card).toBeVisible();
-  await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
-  await card.scrollIntoViewIfNeeded();
-  await expect(card.locator('.note-thumb img')).toBeVisible();
-  await expect(card.locator('.note-thumb input:enabled')).toHaveCount(0);
-  await expect(page.locator('[data-action="note-preview"]')).toHaveCount(0);
-  const aligned = await page.locator('[data-action="library-view"]').evaluateAll((buttons) => buttons.map((button) => {
-    const icon = button.querySelector('svg').getBoundingClientRect();
-    const text = button.querySelector('span').getBoundingClientRect();
-    const box = button.getBoundingClientRect();
-    return { offsets: [Math.abs(icon.y + icon.height / 2 - text.y - text.height / 2), Math.abs((icon.x + text.right) / 2 - box.x - box.width / 2)], gap: text.left - icon.right };
-  }));
-  for (const item of aligned) {
-    for (const offset of item.offsets) expect(offset).toBeLessThanOrEqual(1);
-    expect(item.gap).toBeGreaterThanOrEqual(8);
-  }
-  await page.locator('[data-action="library-view"][data-view="list"]').click();
-  await expect(page.locator('.library-cards.list')).toBeVisible();
-  await page.reload();
-  await expect(page.locator('.library-cards.list')).toBeVisible();
-  await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
-  await page.locator('[data-action="library-view"][data-view="grid"]').click();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await expect(card.locator('input')).toHaveCount(0);
   await card.click();
-  await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
-  await expect(page.locator('#doc')).toContainText('Homework due Friday');
+  await expect(page).toHaveURL(new RegExp('#/n/' + note.id + '$'));
+  expect((await (await page.request.get('/api/notes/' + note.id)).json()).body).toContain('- [ ]');
 });
 
-test('notes come newest edit first, sort and show choices filter the folder and are remembered', async ({ page }) => {
-  const dir = `library-sort-${Date.now()}`;
-  const make = async (title, body) => (await (await page.request.post('/api/notes', { data: { title, directory: dir, body } })).json()).id;
-  const zebra = await make('Zebra notes', '- [ ] feed the zebra');
-  const apple = await make('Apple notes', 'Nothing to do.');
-  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
-  const ids = () => page.locator('.library-cards .card[data-id]').evaluateAll((els) => els.map((el) => el.dataset.id));
-  await expect.poll(ids).toEqual([apple, zebra]);
-  await page.locator('select[data-library="sort"]').selectOption('title-desc');
-  await expect.poll(ids).toEqual([zebra, apple]);
-  await page.locator('select[data-library="show"]').selectOption('tasks');
-  await expect.poll(ids).toEqual([zebra]);
-  await page.reload();
-  await expect(page.locator('select[data-library="sort"]')).toHaveValue('title-desc');
-  await expect(page.locator('select[data-library="show"]')).toHaveValue('tasks');
-  await expect.poll(ids).toEqual([zebra]);
-  await page.locator('select[data-library="show"]').selectOption('pinned');
-  await expect(page.locator('.library-none')).toBeVisible();
-  await page.locator('[data-action="library-show-all"]').click();
-  await expect.poll(ids).toEqual([zebra, apple]);
-  await page.locator('select[data-library="sort"]').selectOption('updated');
-  await expect.poll(ids).toEqual([apple, zebra]);
-});
 
-test('grid and list keep the library and header width in every layout', async ({ page }) => {
-  const dir = `library-width-${Date.now()}`;
-  await page.request.post('/api/notes', { data: { title: 'Stable library width', directory: dir, body: 'Keep the layout steady.' } });
-  const bounds = () => page.locator('main, .bar-row, .search').evaluateAll((els) => els.map((el) => {
-    const rect = el.getBoundingClientRect();
-    return { left: rect.left, width: rect.width };
-  }));
-  for (const folder of ['', dir]) {
-    await page.goto(folder ? `/#/f/${encodeURIComponent(folder)}` : '/#/');
-    const layouts = test.info().project.name === 'desktop' ? ['wide', 'mini', 'chat'] : ['phone'];
-    for (const layout of layouts) {
-      if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
-      if (layout === 'chat') {
-        await page.locator('[data-action="side-fold"]').click();
-        await expect(page.locator('body')).not.toHaveClass(/side-folding/);
-        await page.locator('#chat-toggle').click();
-        await expect(page.locator('.chat')).toBeVisible();
-      }
-      await expect(page.locator('body')).not.toHaveClass(/side-folding/);
-      for (const views of [['grid', 'list'], ['list', 'grid']]) {
-        await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
-        const before = await bounds();
-        await page.locator(`[data-action="library-view"][data-view="${views[1]}"]`).click();
-        expect(await bounds()).toEqual(before);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-      }
-      if (layout === 'chat') {
-        await page.locator('.chat [data-chat="close"]').click();
-        await expect(page.locator('body')).not.toHaveClass(/chat-open|chat-leaving/);
-      }
-    }
-  }
-});
+
+
 
 test('sidebar folders can move to the top level with their contents and Undo', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'sidebar dragging needs a mouse');
@@ -3747,11 +3582,11 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   await expect(target).toContainText('Folders');
   await dragBetween(page, page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`), target);
   await expect.poll(where).toBe(`${root}/Child`);
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
+  await expect(page).toHaveURL(/\/(?:#\/)?$/);
   await expect(page.locator(`#side [data-action="open-folder"][data-dir="${root}"]`)).toBeVisible();
   await page.locator('.toast button', { hasText: 'Undo' }).last().click();
   await expect.poll(where).toBe(`${from}/Child`);
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(from)}$`));
+  await expect(page).toHaveURL(/\/(?:#\/)?$/);
   const moves = [];
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/dirs/move') moves.push(request.postDataJSON()); });
   const transfer = await page.evaluateHandle(() => new DataTransfer());
@@ -3771,100 +3606,11 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   expect(moves).toEqual([{ from, into: '' }]);
 });
 
-test('folder navigation keeps the header steady while loading and animates only content', async ({ page }) => {
-  const dir = `folder-arrival-${Date.now()}`;
-  await page.request.post('/api/notes', { data: { title: 'Folder arrival fixture', directory: dir, body: 'A smooth arrival.' } });
-  await page.addInitScript(() => {
-    const animate = Element.prototype.animate;
-    window.folderAnimations = [];
-    Element.prototype.animate = function (frames, options) {
-      if (this.id === 'app') window.folderAnimations.push({ frames, options });
-      return animate.call(this, frames, options);
-    };
-  });
-  await page.reload();
-  await page.goto('/#/');
-  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
-  const header = page.locator('.bar-row');
-  const before = await header.boundingBox();
-  let release;
-  const hold = new Promise(resolve => { release = resolve; });
-  let waiting = false;
-  await page.route('**/api/notes?*', async route => {
-    if (new URL(route.request().url()).searchParams.get('dir') === dir) { waiting = true; await hold; }
-    await route.continue();
-  });
-  await page.locator(`main .folder[data-dir="${dir}"]`).click();
-  try {
-    await expect.poll(() => waiting).toBe(true);
-    const loading = await header.boundingBox();
-    expect(loading.width).toBe(before.width);
-    expect(loading.x).toBe(before.x);
-  } finally { release(); }
-  await expect(page.locator('.library-cards')).toContainText('Folder arrival fixture');
-  await expect.poll(() => page.evaluate(() => window.folderAnimations.length)).toBe(1);
-  await page.evaluate(() => { window.keptCrumb = document.querySelector('#crumbs button:last-child'); });
-  for (const view of ['list', 'grid']) await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
-  expect(await page.evaluate(() => window.keptCrumb === document.querySelector('#crumbs button:last-child'))).toBe(true);
-  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.locator('#crumbs [data-action="home"]').click();
-  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
-  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
-});
 
-test('top level and folders show only their own notes and ignore old recency preferences', async ({ page }) => {
-  const dir = `folder-scope-${Date.now()}`;
-  const notes = [];
-  for (const [title, directory] of [['Zebra scope fixture', ''], ['Alpha scope fixture', ''], ['Nested scope fixture', dir], ['Child scope fixture', `${dir}/Child`]]) {
-    notes.push(await (await page.request.post('/api/notes', { data: { title, directory, body: 'Only in its own folder.' } })).json());
-  }
-  await page.addInitScript(() => localStorage.setItem('leo-library', JSON.stringify({ view: 'grid', sort: 'opened' })));
-  await page.reload();
-  await page.goto('/#/');
-  await expect(page.locator(`.card[data-id="${notes[1].id}"]`)).toBeVisible();
-  for (const view of ['grid', 'list']) {
-    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
-    await expect(page.locator(`.card[data-id="${notes[2].id}"], .card[data-id="${notes[3].id}"]`)).toHaveCount(0);
-    const ids = await page.locator('.card[data-id]').evaluateAll(els => els.map(el => el.dataset.id));
-    expect(ids.indexOf(notes[1].id)).toBeLessThan(ids.indexOf(notes[0].id));
-    await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
-  }
-  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
-  await expect(page.locator('.card[data-id]')).toHaveCount(1);
-  await expect(page.locator(`.card[data-id="${notes[2].id}"]`)).toBeVisible();
-});
 
-test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {
-  const original = `folder-controls-${Date.now()}/nested`;
-  const made = await page.request.post('/api/notes', { data: { title: 'Folder controls fixture', directory: original, body: 'Keep this note through renaming and moving.' } });
-  expect(made.status()).toBe(201);
-  const note = await made.json();
-  const renamed = `Renamed-${note.id}`;
-  const full = original.split('/')[0] + '/' + renamed;
-  await page.goto(`/#/f/${encodeURIComponent(original)}`);
-  await page.locator('[data-action="folder-options"]').click();
-  await page.locator('[data-action="folder-rename"]').click();
-  await expect(page.locator('#folder-rename')).toBeFocused();
-  await page.locator('#folder-rename').fill(renamed);
-  await page.locator('#folder-rename').press('Enter');
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(full)}$`));
-  await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
-  if (test.info().project.name === 'desktop') {
-    await dragBetween(page, page.locator(`#crumbs [data-dir="${full}"]`), page.locator('#crumbs [data-action="home"]'));
-  } else {
-    await page.locator('[data-action="folder-options"]').click();
-    await page.locator('[data-action="folder-root"]').click();
-  }
-  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(renamed)}$`));
-  await page.locator('[data-action="folder-options"]').click();
-  await page.locator('[data-action="folder-delete"]').click();
-  await page.locator('[data-action="folder-delete-now"]').click();
-  await expect(page).toHaveURL(/#\/$/);
-  expect((await page.request.get(`/api/notes/${note.id}`)).status()).toBe(404);
-  await page.locator('.toast button', { hasText: 'Undo' }).last().click();
-  await expect(async () => expect((await page.request.get(`/api/notes/${note.id}`)).status()).toBe(200)).toPass();
-});
+
+
+
 
 test('dropdowns and nested disclosures share real icons and keep their native controls', async ({ page }) => {
   const inspect = async () => {
@@ -3894,23 +3640,6 @@ test('dropdowns and nested disclosures share real icons and keep their native co
     expect(issues).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   };
-  await page.goto('/#/');
-  await inspect();
-  const sort = page.locator('select[data-library="sort"]');
-  await sort.focus();
-  await expect(sort).toBeFocused();
-  await sort.selectOption('title');
-  await expect(sort).toHaveValue('title');
-  await page.locator('[data-action="library-view"][data-view="list"]').click();
-  const align = await page.locator('.library-views .btn').evaluateAll(els => els.map(el => {
-    const icon = el.querySelector('svg').getBoundingClientRect();
-    const box = el.getBoundingClientRect();
-    return Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2);
-  }));
-  expect(align.every(offset => offset < 1)).toBe(true);
-  await page.goto('/#/settings/backup');
-  await expect(page.locator('select[data-set="auto_push"]')).toBeVisible();
-  await inspect();
   await page.goto('/#/settings/storage');
   await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
   await inspect();
@@ -4058,6 +3787,7 @@ test.describe('passages', () => {
   });
 
   test('Felix reads along only after an edit, speaks in the margin, and his answer lands in the note', async ({ page }) => {
+    await page.request.post('/api/margin', { data: { layout: 'both' } });
     await page.setViewportSize({ width: 1600, height: 900 });
     const start = 'Save the password in the users table.';
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: start } })).json();
@@ -4072,12 +3802,13 @@ test.describe('passages', () => {
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
     await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
     await page.goto(`/#/n/${note.id}`);
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
     await page.locator('#margin-mode').click();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
-    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'right');
+    await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'both');
     await page.reload();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.waitForTimeout(4500);
     expect(reads, 'opening a note must not read it').toEqual([]);
 
@@ -4085,14 +3816,15 @@ test.describe('passages', () => {
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
     await area.pressSequentially('\n\nThen login just checks if it matches, I think');
-    await expect(page.locator('.margin-reading .felix.think')).toBeVisible({ timeout: 9000 });
+    await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 9000 });
     await expect(page.locator('.margin-note')).toBeVisible({ timeout: 9000 });
     await expect(page.locator('.margin-reading')).toHaveCount(0);
     expect(reads).toHaveLength(1);
     expect(reads[0].blocks).toEqual(['Then login just checks if it matches, I think']);
     await expect(area).toBeFocused();
     await expect(page.locator('.margin-ink .squiggle')).toHaveCount(1);
-    await expect(page.locator('.margin-ink .tether')).toHaveCount(1);
+    await expect(page.locator('.margin-ink .tether')).toHaveCount(0);
+    expect(await page.locator('.margin-ink .squiggle').getAttribute('d')).not.toMatch(/ q| C/);
     await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?');
     const delays = await page.locator('.ink-word').evaluateAll((words) => words.map((word) => parseFloat(word.style.animationDelay)));
     expect(delays.length).toBeGreaterThan(40);
@@ -4111,9 +3843,11 @@ test.describe('passages', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle).toBeFocused();
     await page.locator('.margin-note').click();
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Ask in chat' })).toBeHidden();
     const reply = page.locator('.margin-reply textarea');
     await expect(reply).toBeFocused();
-    expect(await reply.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
+    expect(await reply.evaluate((el) => { const css = getComputedStyle(el); return css.boxShadow.includes('0px 1px 0px') && !css.boxShadow.includes('rgba(0, 0, 0, 0)'); })).toBe(true);
     await reply.fill('So hash it?');
     await reply.press('Enter');
     await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
@@ -4129,7 +3863,8 @@ test.describe('passages', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Real margin', body: 'Save the password in the users table.' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#margin-mode').click();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix reads along');
+    await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.locator('#doc .blk').first().click();
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
@@ -4231,6 +3966,7 @@ test.describe('passages', () => {
   });
 
   test('the note column stays put through a draft, a thread and a dismissal, and Marks only centres it', async ({ page }) => {
+    await page.request.post('/api/margin', { data: { layout: 'right' } });
     await page.setViewportSize({ width: 1700, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Steady column', body: 'A binary heap keeps the minimum at the root.' } })).json();
     await page.goto(`/#/n/${note.id}`);
@@ -4309,7 +4045,7 @@ test.describe('passages', () => {
     await expect(mark).toBeVisible();
     const mouse = await mark.boundingBox();
     expect(Math.min(mouse.width, mouse.height)).toBeGreaterThanOrEqual(24);
-    expect((await mark.locator('svg').boundingBox()).width).toBeLessThanOrEqual(14);
+    expect((await mark.locator('.margin-anchor').boundingBox()).width).toBeLessThanOrEqual(14);
     await page.emulateMedia({ forcedColors: 'active' });
     expect(await page.locator('.margin-ink .squiggle').evaluate((el) => getComputedStyle(el).stroke)).not.toBe('none');
     await page.emulateMedia({ forcedColors: 'none' });
@@ -4339,10 +4075,8 @@ test.describe('passages', () => {
     const newNotes = page.locator('[data-find="felix-new-notes"]');
     await expect(newNotes.locator('.choice-pick.on')).toContainText('When you ask');
     await expect(newNotes).toContainText('the note’s title and the text you change');
-    await page.locator('[data-find="felix-cap"] .segment', { hasText: '20' }).click();
-    await expect(page.locator('#margin-today')).toContainText('of 20 used today');
-    await page.locator('[data-find="felix-cap"] .segment', { hasText: '40' }).click();
-    await expect(page.locator('#margin-today')).toContainText('of 40 used today');
+    await expect(page.locator('#margin-today')).toHaveCount(0);
+    expect((await (await page.request.get('/api/margin')).json()).cap).toBe(40);
     await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Marks only' }).click();
     await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).layout).toBe('marks');
     await page.locator('[data-find="felix-where"] .choice-pick', { hasText: 'Right margin' }).click();
@@ -4879,30 +4613,7 @@ test('Felix tool activity stays between the response passages it belongs to afte
 
 
 
-test('the library starts with a New note card in grid and list, in place of the floating button', async ({ page }) => {
-  const dir = `newcard-${test.info().project.name}-${Date.now().toString(36)}`;
-  await page.request.post('/api/dirs', { data: { path: dir } });
-  await page.goto(`/#/f/${dir}`);
-  const phone = test.info().project.name === 'phone';
-  await expect(page.locator('.new-card')).toHaveCount(0);
-  if (phone) await expect(page.locator('.fab[data-action="new"]')).toBeVisible();
-  const note = await (await page.request.post('/api/notes', { data: { title: `Card ${dir}`, body: 'x', directory: dir } })).json();
-  await page.reload();
-  const tile = page.locator('.library-cards > .new-card');
-  await expect(tile).toBeVisible();
-  expect(await page.locator('.library-cards > *').first().evaluate((el) => el.classList.contains('new-card'))).toBe(true);
-  await expect(page.locator('.fab[data-action="new"]')).toHaveCount(0);
-  if (phone) await expect(page.locator('.fab[data-action="record"]')).toBeVisible();
-  await page.locator('[data-action="library-view"][data-view="list"]').click();
-  await expect(tile).toBeVisible();
-  await page.locator('[data-action="library-view"][data-view="grid"]').click();
-  const small = await tile.boundingBox();
-  expect(small.height).toBeLessThan(48);
-  expect(small.width).toBeLessThan(200);
-  await tile.click();
-  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toContain(`#/new/${dir}`);
-  await page.request.delete(`/api/notes/${note.id}`);
-});
+
 
 test('the same step repeated in a row shows once with how many times', async ({ page }) => {
   const step = (text, tool = 'open_note') => JSON.stringify({ step: text, tool, found: [] });
@@ -4946,30 +4657,7 @@ test('the open Tasks panel stays open and its own size through page changes and 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
-test('the open Tasks panel stays below the first row of notes', async ({ page }) => {
-  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
-  const tag = Date.now().toString(36);
-  const dir = `room-${tag}`;
-  await page.request.post('/api/dirs', { data: { path: dir } });
-  const notes = [];
-  for (const n of [1, 2, 3]) notes.push(await (await page.request.post('/api/notes', { data: { title: `Room ${n} ${tag}`, body: 'x', directory: dir } })).json());
-  const tasks = [];
-  for (let n = 0; n < 14; n += 1) tasks.push(await (await page.request.post('/api/tasks', { data: { title: `Room task ${n} ${tag}` } })).json());
-  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
-  for (const view of ['grid', 'list']) {
-    await page.goto(`/#/f/${dir}`);
-    await page.reload();
-    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
-    const panel = page.locator('#tasks-window');
-    await expect(panel.locator('.tasks-body')).toBeVisible();
-    const first = page.locator('.library-cards > .card:not(.new-card)').first();
-    await expect.poll(async () => (await panel.boundingBox()).y - ((await first.boundingBox()).y + (await first.boundingBox()).height)).toBeGreaterThanOrEqual(0);
-    await first.click();
-    await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
-  }
-  for (const task of tasks) await page.request.delete(`/api/tasks/${task.id}`);
-  for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
-});
+
 
 test('letting go of a picture’s corner outside the page ends the resize and keeps the size', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
@@ -5035,7 +4723,7 @@ test('the header starts where each page\'s content starts, in a wide window', as
   const board = await (await page.request.post('/api/boards', { data: { name: 'Edge' } })).json();
   const header = async () => (await page.locator('.bar-row').boundingBox()).x;
   const left = async (selector) => page.locator(selector).first().evaluate((el) => el.getBoundingClientRect().left + (parseFloat(getComputedStyle(el).paddingLeft) || 0));
-  for (const [hash, selector] of [['#/', '.library-tools'], [`#/n/${note.id}`, '.note-columns > .note'], ['#/calendar', '.cal-head'], ['#/boards', '.kanban-head'], ['#/record', 'main']]) {
+  for (const [hash, selector] of [['#/', '.workspace-empty'], [`#/n/${note.id}`, '.note-columns > .note'], ['#/calendar', '.cal-head'], ['#/boards', '.kanban-head'], ['#/record', 'main']]) {
     await page.goto('/' + hash);
     await expect(page.locator(selector).first()).toBeVisible();
     await expect.poll(async () => Math.abs((await header()) - (selector === 'main' ? (await left('main')) : await left(selector))), { message: hash }).toBeLessThanOrEqual(1);
@@ -5044,14 +4732,7 @@ test('the header starts where each page\'s content starts, in a wide window', as
   await page.request.delete(`/api/boards/${board.id}`);
 });
 
-test('Settings keeps its section list close to the explorer in a wide window', async ({ page }) => {
-  test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
-  await page.setViewportSize({ width: 1600, height: 900 });
-  await page.goto('/#/settings/general');
-  await expect(page.locator('.settings-nav')).toBeVisible();
-  const gap = await page.evaluate(() => document.querySelector('.settings-nav').getBoundingClientRect().left - document.querySelector('#side').getBoundingClientRect().right);
-  expect(gap, 'the explorer and the section list are the same tone, so a wide gap reads as dead space').toBeLessThanOrEqual(80);
-});
+
 
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
@@ -5066,9 +4747,9 @@ test('notes read wide by default, and Settings can make them comfortable or full
     check(await width());
   }
   await page.goto('/#/');
-  await expect(page.locator('.library-tools')).toBeVisible();
+  await expect(page.locator('.workspace-empty')).toBeVisible();
   const content = await page.locator('main').evaluate((main) => { const cs = getComputedStyle(main); return main.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); });
-  expect(content, 'the library keeps its own width').toBeLessThanOrEqual(1080);
+  expect(content, 'the workspace keeps its own width').toBeLessThanOrEqual(1080);
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
@@ -5131,7 +4812,7 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await input.fill(`Idea ${tag}`);
   await box.locator('.quick-row', { hasText: 'Search every note' }).click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/search/Idea ${tag}`);
-  await expect(page.locator('.card').filter({ hasText: `Idea ${tag}` })).toBeVisible();
+  await expect(page.locator('.side-note').filter({ hasText: `Idea ${tag}` })).toBeVisible();
 
   await page.keyboard.press('ControlOrMeta+f');
   await input.fill('What is a heap?');
@@ -5156,8 +4837,9 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   const top = box.locator('.quick-row.on');
   await expect(top).toContainText('Folder in Classes');
   await input.press('Enter');
-  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/f/Classes/${folder}`);
-  await expect(page.locator('main h1, .crumbs')).toContainText(folder);
+  await expect(page).toHaveURL(/\/(?:#\/)?$/);
+  await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="Classes/' + folder + '"]')).toBeVisible();
+  await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="Classes/' + folder + '"]')).toHaveAttribute('aria-current', 'page');
   await page.keyboard.press('ControlOrMeta+f');
   await input.fill(`Heap talk ${tag}`);
   const talk = box.locator('.quick-row', { hasText: 'Past chat' });
@@ -5167,45 +4849,24 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');
 });
 
-test('on a short screen the Tasks panel waits as its icon, and the last notes can scroll clear of it', async ({ page }) => {
-  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
-  const tag = Date.now().toString(36);
-  const dir = `short-${tag}`;
-  await page.request.post('/api/dirs', { data: { path: dir } });
-  const notes = [];
-  for (let n = 0; n < 9; n += 1) notes.push(await (await page.request.post('/api/notes', { data: { title: `Short ${n} ${tag}`, body: 'x', directory: dir } })).json());
-  const task = await (await page.request.post('/api/tasks', { data: { title: `Short task ${tag}` } })).json();
+test('the Tasks panel stays usable beside a long note on short and tall screens', async ({ page }) => {
+  const task = await (await page.request.post('/api/tasks', { data: { title: 'Task beside reading' } })).json();
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Long reading', body: ('Reading paragraph.\n\n').repeat(100) } })).json();
   await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
-  const panel = page.locator('#tasks-window');
-  await page.setViewportSize({ width: 1800, height: 600 });
-  await page.goto(`/#/f/${dir}`);
-  await page.reload();
-  await expect(panel.locator('.tasks-pill')).toBeVisible();
-  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-  await expect(panel).toHaveClass(/folded/);
   await page.setViewportSize({ width: 1280, height: 600 });
-  await expect(panel.locator('.tasks-pill')).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
-  await panel.locator('.tasks-pill').click();
+  await page.goto('/#/n/' + note.id);
+  const panel = page.locator('#tasks-window');
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await panel.locator('[data-action="tasks-fold"]').first().click();
   await expect(panel.locator('.tasks-pill')).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
+  await panel.locator('.tasks-pill').click();
+  await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const last = await page.locator('.library-cards > .card').last().boundingBox();
-  const dock = await page.locator('#dock').boundingBox();
-  expect(last.y + last.height).toBeLessThanOrEqual(dock.y);
-  for (let n = 0; n < 40; n += 1) await page.request.post('/api/dirs', { data: { path: `${dir}/Shelf ${n}` } });
-  await page.setViewportSize({ width: 1280, height: 600 });
-  await page.reload();
-  await expect(page.locator('.library-cards > .card').first()).toBeAttached();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  expect((await page.locator('.library-cards > .card:not(.new-card)').first().boundingBox()).y).toBeGreaterThan(600);
-  await expect(panel.locator('.tasks-body')).toBeVisible();
-  await page.request.delete(`/api/tasks/${task.id}`);
-  for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
+  await expect(page.locator('#doc .blk').last()).toBeInViewport();
+  await page.request.delete('/api/tasks/' + task.id);
+  await page.request.delete('/api/notes/' + note.id);
 });
 
 test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {
@@ -5371,33 +5032,27 @@ test('buttons keep room from the text and sections around them', async ({ page }
 
 
 
-test('leaving the website queues one backup without sending note contents or pushing on folder navigation', async ({ page, context }) => {
-  const departures = [];
-  context.on('request', (request) => {
-    if (new URL(request.url()).pathname === '/api/backup' && request.method() === 'POST') departures.push(request.postData());
-  });
-  await context.route('**/api/backup', (route) => route.request().method() === 'GET'
-    ? route.fulfill({ json: { state: 'idle', at: 0, message: '' } }) : route.fulfill({ status: 204 }));
+test('leaving and returning flushes drafts without any retired backup request', async ({ page, context }) => {
+  const traffic = [];
+  context.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/backup')) traffic.push(request.method()); });
   await page.goto('/#/calendar');
   await expect(page.locator('.cal-page')).toBeVisible();
   await page.goto('/#/');
-  await expect(page.locator('.library-tools')).toBeVisible();
-  expect(departures).toEqual([]);
+  await expect(page.locator('.workspace-empty')).toBeVisible();
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
     document.dispatchEvent(new Event('visibilitychange'));
     window.dispatchEvent(new PageTransitionEvent('pagehide'));
-  });
-  await expect.poll(() => departures.length).toBe(1);
-  expect(JSON.parse(departures[0])).toEqual({});
-  await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  await context.unroute('**/api/backup');
-  const before = await (await page.request.get('/api/backup')).json();
   await page.goto('/?leave-test=1');
-  await expect.poll(async () => (await (await page.request.get('/api/backup')).json()).at, { timeout: 10000 }).toBeGreaterThan(before.at);
+  await expect(page.locator('.workspace-empty')).toBeVisible();
+  expect(traffic).toEqual([]);
+  for (const url of ['/api/backup', '/api/backup/setup']) {
+    expect((await page.request.get(url)).status()).toBe(404);
+    expect((await page.request.post(url, { data: {} })).status()).toBe(404);
+  }
 });
 
 test('Usage opens from the rail with remaining limits inside a stable dialog', async ({ page }) => {
@@ -5410,14 +5065,20 @@ test('Usage opens from the rail with remaining limits inside a stable dialog', a
   await page.locator('.side-foot [data-action="usage"]').click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+  await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
   await expect(dialog).toContainText('75% left');
   await expect(dialog.locator('[data-action="use-plan"]')).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Refresh', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
   await dialog.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(page.getByRole('dialog').getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+  await expect(page.getByRole('dialog').getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('#side [data-action="usage"]')).toBeFocused();
 });
 
 for (const [width, layout] of [[800, 'right'], [1280, 'right'], [1800, 'right'], [1280, 'marks'], [1800, 'both']]) test(`note search temporarily highlights the match without changing the note at ${width}px with ${layout} margins`, async ({ page }) => {
@@ -5457,7 +5118,7 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
     });
     await page.locator('.side-foot [data-action="usage"]').click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+    await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
     if (outcome === 'closed') {
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
       await page.keyboard.press('ControlOrMeta+f');
@@ -5466,10 +5127,10 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
     const response = page.waitForResponse('**/api/settings/usage');
     release();
     await response;
-    if (outcome === 'success') await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '40');
+    if (outcome === 'success') await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '40');
     else if (outcome === 'failure') {
-      await expect(page.locator('.toast')).toContainText('Usage could not refresh');
-      await expect(dialog.getByRole('meter')).toHaveAttribute('aria-valuenow', '75');
+      await expect(dialog.locator('.usage-error')).toHaveText('Refresh failed · showing saved usage');
+      await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
     } else {
       await expect(page.locator('#quick-input')).toHaveValue('Keep this query');
       await expect(page.locator('.usage-content')).toHaveCount(0);
@@ -5501,13 +5162,10 @@ for (const width of [1280, 390]) {
         expect(header.height).toBeCloseTo(reference.height, 0);
       }
       if (width >= 1000) {
-        const edge = await page.evaluate(() => {
-          const section = document.querySelector('.settings-section');
-          if (section) return section.getBoundingClientRect().left;
-          const main = document.querySelector('main');
-          return main.getBoundingClientRect().left + parseFloat(getComputedStyle(main).paddingLeft);
-        });
-        expect(header.x, 'the header starts where the page content starts').toBeCloseTo(edge, 0);
+        const bounds = await page.locator('#bar').boundingBox();
+        expect(header.x, 'the header stays inside the page toolbar').toBeGreaterThanOrEqual(bounds.x);
+        expect(header.x + header.width).toBeLessThanOrEqual(bounds.x + bounds.width + 1);
+        expect(header.x + header.width / 2, 'the header remains centered').toBeCloseTo(bounds.x + bounds.width / 2, 0);
       }
       reference = header;
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
