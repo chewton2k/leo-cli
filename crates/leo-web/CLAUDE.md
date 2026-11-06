@@ -3,7 +3,8 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, recording housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, room, speech, toolless, toolless_chat).
+reader, seer, meaning, room, speech, toolless, toolless_chat, light_chat,
+lighter).
 
 ## Layout
 
@@ -412,6 +413,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   stays for old rows and is kept as it was on save (new rows say `chat`); request
   and saved `mode` fields are ignored. `.chat-switch` keeps only the who-answered
   line. Review shows on the empty chat only when questions are due.
+- `LEARNING` is not in the system prompt (2026-11-06, half of it, about 1,700 tokens off every cold prompt, measured on Codex): Felix calls `study_rules` before teaching, testing or marking. So nothing depends on him remembering, practice, marking and a running session send `<study_rules>` with the prompt, and a first `quiz` or `study_plan` carries it in the tool result; `Reads.study_rules` keeps a session from hearing it twice.
 - Lessons and practice borrow LearnHarness's method, in our own words only
   (AGPL-3.0 against leo's MIT; never paste its prompts or code). A lesson finds
   where understanding stops (ordinary quiz cards before any plan), plans the
@@ -480,7 +482,13 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   unclear). Text written
   before a tool call is kept (a paragraph break, not a restart). A broken
   agent session sends `{"reset"}` and is redone through the text protocol
-  (`FALLBACK_TRIES`). Felix has no web tools of his own; an AI's own web search
+  (`FALLBACK_TRIES`). While Felix works the reply shows only his newest step; a
+  finished reply folds every step into one `.msg-trace` line (`traceSummary`,
+  2026-11-06, the user's call from a six-persona simulation: citations and change
+  cards are what catch mistakes, and the count must agree with the sources). An
+  empty note search with nothing cited adds `Not from your notes`
+  (`notFromNotes`), since that was the one thing only the step lines said. Steps
+  stay in the saved chat and in what Felix is told he did. Felix has no web tools of his own; an AI's own web search
   is left to it.
 
 - Read tools: search_notes, open_note, connected_notes, read_document,
@@ -508,6 +516,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   be in the note; Undo is `remove_margin_note`) redraws the open note's margin
   (`MARGIN_KINDS`); it never changes the note. The text manual stays under
   14,500 bytes. `MOST_PROPOSALS` counts every change tool.
+
+- Choosing the model (`routing.rs`, 2026-11-06, the user's call; same shape as Copilot Auto and Cursor Router, with rules instead of a trained classifier because leo has one user and a classifier call would cost tokens): `routing::light` sends only obvious cases (short lookups and greetings, no attachments, files, selection, study or Auto access, at most six turns) to the cheapest model of the chosen AI (`ai::quick_config`, through `Instructions.light` or `Powers.light_chat` when no session opens, as on a Codex without app-server isolation); every doubt stays on the chosen model, and other languages stay there too. `Powers.lighter` turns routing off when the quick tier is the same model and effort, and a failing light writer gives way to the chosen one on the last try, so `Auto` always names who really answered. The tier is part of the warm key, and `Slot::light` keeps a warm full chat from moving down, since a switch loses the cache: a chat moves up once when it needs to, never down while warm. Settings → Felix → Cheaper model for lookups (`Prefs.auto_model`, on by default) turns it off; a routed reply says `Auto` in its usage line.
 
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
@@ -1029,7 +1039,7 @@ Study's next `quiz` or `end_session` call may carry the previous answer's struct
 `verdict`, used only on a marking turn. A missing text verdict can use that field
 without another call; conflicting verdicts retain the hidden check. Hidden grading
 accepts only the exact verdict words. Permission and interactive-card rules remain.
-`usage::Usage` keeps content-free counts in memory since server startup, separated
+`usage::Usage` keeps content-free counts in memory since server startup, and saves tokens by day, purpose and model in `usage_days` for 90 days (Settings shows seven), separated
 by answer, continuation, recovery, grading, summary, other writing and quick review.
 Settings shows token/cache counts, unreported/estimated usage, tool failures/reused
 reads, and median/p95 timing from at most 64 samples per category. Native agents

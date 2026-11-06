@@ -28,6 +28,29 @@ pub fn powers() -> leo_web::Powers {
             })
         },
     );
+    let light_chat: leo_web::Streamer = std::sync::Arc::new(
+        |system: &str,
+         user: &str,
+         most: u32,
+         piece: &mut dyn FnMut(&str),
+         restart: &mut dyn FnMut(),
+         stopped: &dyn Fn() -> bool| {
+            let (text, answered) = leo_services::ai::quick_streaming(
+                leo_services::ai::chat::Prompt {
+                    system: system.to_string(),
+                    user: user.to_string(),
+                },
+                most,
+                piece,
+                restart,
+                stopped,
+            )?;
+            Ok(leo_web::Reply {
+                text,
+                spent: answered.map(crate::felix::spent_of),
+            })
+        },
+    );
     let toolless_chat: leo_web::Streamer = std::sync::Arc::new(
         |system: &str,
          user: &str,
@@ -67,6 +90,8 @@ pub fn powers() -> leo_web::Powers {
         )),
         usage,
         chat: Some(streamer),
+        light_chat: Some(light_chat),
+        lighter: Some(std::sync::Arc::new(leo_services::ai::lighter_model_exists)),
         toolless_chat: Some(toolless_chat),
         dictation: None,
         app_settings: None,

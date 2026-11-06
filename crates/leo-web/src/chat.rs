@@ -53,6 +53,7 @@ pub struct Instructions<'a> {
     pub native: &'a str,
     pub text: &'a str,
     pub last: &'a str,
+    pub light: bool,
 }
 
 pub type Converser =
@@ -142,6 +143,8 @@ pub struct Spent {
     #[serde(default)]
     pub cached: u64,
     pub steps: u32,
+    #[serde(default)]
+    pub auto: bool,
 }
 
 impl Spent {
@@ -762,7 +765,9 @@ Work out what the user wants from each message; there are no modes to choose. Mo
 - When asked to explain something, give the core idea in plain words, then choose one small worked example or an everyday analogy when useful. Connect it to the precise terms and the misunderstanding most relevant to their question. Do not mechanically include every teaching device in every answer.
 - When the notes are meeting or work notes and the user asks for a review, give a two-sentence summary, decisions made, action items as a checklist (- [ ]) with the owner and due date only when the notes state them, open questions and risks, and draft a short follow-up message when asked. Never invent names, owners, dates or numbers.";
 
-const LEARNING: &str = "\
+const STUDY_FIRST: &str = "Before you teach a lesson, run practice, ask a quiz question or mark an answer, call study_rules once in this chat and follow what it returns. Never call it for an ordinary answer.";
+
+pub const LEARNING: &str = "\
 Lessons and practice share these rules. Start right away: work out the subject from the selected passage, the open or attached notes, documents or the conversation, without asking them to set you up; only when there is nothing to go on, ask what to study with ask_user and a few choices. Do the planning, ordering and fact-checking yourself, so all their effort goes into the material. Ask every question with the quiz tool, one per reply, so it appears as a card the user answers in place; never ask one in plain text. Write questions worth answering: each tests one important idea of the material (a definition only when the term itself matters), is self-contained (give the numbers, code, diagram or context it needs; never “according to the notes”), says what a full answer contains (the value and the step that gets it; two or three sentences; the trade-off and when each side wins), and never turns on trivia such as wording, page numbers, dates of a lecture or who said what. Vary the kind: mostly free response and fill in the blank, multiple choice only when each wrong option is what someone holding a specific wrong idea would pick, and never more than two of the same kind in a row ([Practice question (...)] shows the kinds already asked). Ask about the reasoning, not only the result: how to set a problem up, which step comes first and why, why a step is allowed, what breaks if it is skipped, and how to tell which method a problem calls for. Fit the subject: for objective material (math, circuits, code, science) the steps and the result; for subjective material (design, writing, history, ethics) the principles, criteria and trade-offs, where more than one answer can be right.
 Reading answers: a card may carry how sure the user felt and their thinking; read both, because how they picture the subject matters more than one verdict, and every next move depends on that picture. A right guess is not safe yet: leo keeps that idea open, so test it once more in another form. A wrong answer given as sure is a firm false belief: name it and rebuild from it. A wrong guess needs only a small correction. \"I do not know\" is an honest gap, not a failure. Thinking may be dictated, so forgive slips of speech.
 Marking: Be a demanding marker: an answer is [[correct]] only when the result is right and the reasoning holds; for a subjective question, when it makes a defensible case that uses the relevant principles and weighs what matters, even if it differs from yours, and then your model answer is one strong answer, not the only one. A right result reached by a wrong or missing step, an answer too vague to show understanding, or a skipped step the question asked for is [[incorrect]]. Judge meaning, not notation. Even in a right answer, name every gap, unjustified jump or loose term; praise only what the answer earned. When you judge an answer, the very first characters of your reply are [[correct]] if it was right or [[incorrect]] if it was wrong or incomplete (no words before it), then, if they were right, name the specific reasoning they got right and why it works; if they were wrong, identify the decisive mistake and explain the correct reasoning in a few clear steps (they have already tried, so no hints). Explain a distractor when it exposes their misconception. Use a small worked example or memory cue when it helps; never give only a verdict. Cite the note. After you mark an answer, stop (the card has a button to go on); when the user asks about a question or answer (why, explain, what about step 2), answer that fully and stop, with no new practice question in the same reply. Go on only when the user asks (Next question, next, continue, another one) or leo says to.
@@ -961,6 +966,10 @@ pub fn prompt_within(
     prompt_material(notes, documents, messages, room, room, memory)
 }
 
+pub fn study_rules_block() -> String {
+    format!("<study_rules>\n{LEARNING}\n</study_rules>\n\n")
+}
+
 pub fn prompt_material(
     notes: &str,
     documents: &[(String, String)],
@@ -969,7 +978,7 @@ pub fn prompt_material(
     material_room: usize,
     memory: Option<&crate::chats::Memory>,
 ) -> (String, String) {
-    let system = format!("{BASE}\n\n{REPLY_STYLE}\n\n{HELPING}\n\n{LEARNING}");
+    let system = format!("{BASE}\n\n{REPLY_STYLE}\n\n{HELPING}\n\n{STUDY_FIRST}");
     let zone = iana_time_zone::get_timezone().ok();
     let mut user = documents_within(documents, scaled(DOCS_CHARS, material_room));
     if notes.trim().is_empty() {
@@ -1373,6 +1382,7 @@ mod tests {
             text: "go".into(),
         }];
         let (system, user) = prompt("", &[], &turns);
+        let system = format!("{system}\n{LEARNING}");
         assert!(system.contains("there are no modes to choose"));
         assert!(system.contains("An open note alone is never a request to study it"));
         assert!(system.contains("Never invent names"));
@@ -1385,8 +1395,16 @@ mod tests {
     }
 
     #[test]
-    fn a_lesson_finds_the_edge_then_plans_then_teaches_a_step_at_a_time() {
+    fn the_study_rules_wait_until_felix_needs_them() {
         let (system, _) = prompt("", &[], &[]);
+        assert!(!system.contains("Find the edge first"));
+        assert!(system.contains("call study_rules once"));
+        assert!(study_rules_block().contains("Find the edge first"));
+    }
+
+    #[test]
+    fn a_lesson_finds_the_edge_then_plans_then_teaches_a_step_at_a_time() {
+        let system = LEARNING;
         let at = |rule: &str| {
             system
                 .find(rule)
@@ -1484,6 +1502,7 @@ mod tests {
             text: "Explain every part of the problem.".into(),
         }];
         let (system, user) = prompt("Keep all required reasoning.", &[], &turns);
+        let system = format!("{system}\n{LEARNING}");
         assert_eq!(system.matches(REPLY_STYLE).count(), 1);
         assert!(!user.contains(REPLY_STYLE));
         assert!(system.contains("full explanation, derivation, complete solution"));

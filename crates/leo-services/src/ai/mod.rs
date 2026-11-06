@@ -50,8 +50,10 @@ pub fn writing_budget() -> budget::Budget {
 pub fn open_session(
     systems: &session::Systems,
     tools: &[session::ToolDef],
+    light: bool,
 ) -> Option<Box<dyn session::Session>> {
     let (cfg, store) = context();
+    let cfg = if light { quick_config(&cfg) } else { cfg };
     session::open(&cfg, store.as_ref(), systems, tools)
 }
 
@@ -142,6 +144,22 @@ pub fn quick_config(cfg: &Config) -> Config {
         }
     }
     quick
+}
+
+fn lighter_in(cfg: &Config) -> bool {
+    let quick = quick_config(cfg);
+    let tier = |c: &Config, name: &str| {
+        c.provider(name)
+            .map(|p| (p.model.clone(), p.effort.clone()))
+    };
+    cfg.chat
+        .chain
+        .first()
+        .is_some_and(|name| tier(cfg, name) != tier(&quick, name))
+}
+
+pub fn lighter_model_exists() -> bool {
+    lighter_in(&Config::load())
 }
 
 pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
@@ -259,6 +277,29 @@ pub fn see(prompt: chat::Prompt, images: &[provider::Image], max_tokens: u32) ->
     Ok(chain::run_vision_chain(providers, &req, images)?.value)
 }
 
+pub fn quick_streaming(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
+) -> Result<(String, Option<spend::Answered>)> {
+    let (cfg, store) = context();
+    let outcome = chat::complete_streaming(
+        &quick_config(&cfg),
+        &store,
+        prompt,
+        max_tokens,
+        on_fragment,
+        on_restart,
+        stopped,
+    )?;
+    let answered = outcome
+        .spent
+        .map(|spent| spend::answered(&cfg, &outcome.provider, spent));
+    Ok((outcome.value, answered))
+}
+
 pub fn chat_streaming(
     prompt: chat::Prompt,
     max_tokens: u32,
@@ -371,6 +412,27 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_lighter_model_exists_only_when_the_quick_tier_differs() {
+        let mut cfg = Config::default();
+        cfg.chat.chain = vec!["claude_code".into()];
+        let mut chosen = Config::built_in_provider("claude_code").unwrap();
+        chosen.model = Some("claude-opus-5-5".into());
+        chosen.effort = Some("high".into());
+        cfg.providers.insert("claude_code".into(), chosen.clone());
+        assert!(lighter_in(&cfg));
+        chosen.model = Some("claude-haiku-5-5".into());
+        chosen.effort = Some("low".into());
+        cfg.providers.insert("claude_code".into(), chosen);
+        assert!(!lighter_in(&cfg));
+        cfg.chat.chain = vec!["ollama".into()];
+        assert!(!lighter_in(&cfg));
+        cfg.chat.chain = vec!["ollama".into(), "codex".into()];
+        cfg.providers
+            .insert("codex".into(), Config::built_in_provider("codex").unwrap());
+        assert!(!lighter_in(&cfg));
+    }
 
     #[test]
     fn the_quick_model_is_the_cheapest_model_of_the_same_ai_at_low_effort() {

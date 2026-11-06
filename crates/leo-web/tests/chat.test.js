@@ -183,6 +183,7 @@ test('what an answer cost reads as money for keys, model and effort for plans, f
   assert.equal(C.spentLabel({ by: 'OpenAI', model: 'gpt-5-nano', cost: 0.00042, estimated: true }).text, '≈ $0.0004 · OpenAI · gpt-5-nano');
   assert.equal(C.spentLabel({ by: 'OpenAI', model: 'gpt-5.5', cost: 1.234 }).text, '$1.23 · OpenAI · gpt-5.5');
   assert.equal(C.spentLabel({ by: 'Codex', model: 'gpt-6.1-sol', effort: 'high', plan: true }).text, 'Codex · gpt-6.1-sol · high effort · on your plan');
+  assert.equal(C.spentLabel({ by: 'Codex', model: 'gpt-6-luna', effort: 'low', plan: true, auto: true }).text, 'Auto · Codex · gpt-6-luna · low effort · on your plan');
   assert.equal(C.spentLabel({ by: 'Claude Code', model: 'claude-opus-5-5', plan: true }).text, 'Claude Code · claude-opus-5-5 · default effort · on your plan');
   assert.equal(C.spentLabel({ by: 'Ollama', model: 'qwen3:8b', local: true, cost: 0 }).text, 'Ollama · qwen3:8b · free on this computer');
   assert.equal(C.spentLabel({ by: 'OpenRouter', model: 'x/y' }).text, 'OpenRouter · x/y · price unknown');
@@ -671,6 +672,56 @@ test('actual quiz sends keep the prior model history stable through hints, marki
     if (!hint) quiz = fixture.state.messages.at(-1).quizzes[0];
   }
   assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
+});
+
+test('a finished trace says what was opened, used and changed in one line', () => {
+  const step = (tool, text, found = []) => ({ tool, text, found });
+  const opened = [step('open_note', 'Opened “A”'), step('open_note', 'Read part 2 of 3 of “B” (lines 40–80)'), step('open_note', 'Read part 3 of 3 of “B” (lines 80–120)'), step('open_note', 'Opened “C”'), step('open_note', 'Opened “D”')];
+  assert.equal(C.traceSummary(opened, ['A', 'B', 'C'], 0), 'Opened 4 notes, used 3');
+  assert.equal(C.traceSummary(opened, ['A', 'B', 'C', 'D'], 0), 'Opened 4 notes');
+  assert.equal(C.traceSummary(opened, [], 0), 'Opened 4 notes');
+  assert.equal(C.traceSummary(opened, ['A', 'Not opened'], 0), 'Opened 4 notes, used 1');
+  assert.equal(C.traceSummary(opened.slice(0, 1), ['A'], 1), 'Opened 1 note · made 1 change');
+  assert.equal(C.traceSummary([step('read_document', 'Read “a.pdf”')], [], 0), 'Opened 1 source');
+  assert.equal(C.traceSummary([step('search_notes', 'Searched')], [], 2), 'Searched your notes · made 2 changes');
+  assert.equal(C.traceSummary([step('search_chats', 'Searched')], [], 0), 'Searched your chats');
+  assert.equal(C.traceSummary([step('read_document', 'Read part 1 of 3 of “a.pdf”'), step('read_document', 'Read part 2 of 3 of “a.pdf”')], [], 0), 'Opened 1 source');
+  assert.equal(C.traceSummary([step('read_transcript', 'Looked for “x” in the recording of “T”'), step('read_transcript', 'Looked for “y” in the recording of “T”'), step('open_note', 'Opened “A”')], ['T'], 0), 'Opened 2 notes, used 1');
+  assert.equal(C.traceSummary([step('calculate', 'Worked it out')], [], 0), '1 step');
+  assert.equal(C.traceSummary([{ ...step('open_note', 'Looked for “x”'), failed: true }, step('search_notes', 'Searched')], [], 0), 'Searched your notes');
+});
+
+test('only an empty search with nothing cited is marked as not from the notes', () => {
+  const empty = [{ tool: 'search_notes', text: 'Searched', found: [] }];
+  assert.equal(C.notFromNotes(empty, 'Wear goggles.', 0), true);
+  assert.equal(C.notFromNotes(empty, 'Wear goggles.', 1), false);
+  assert.equal(C.notFromNotes(empty, 'Beyond your notes: wear goggles.', 0), false);
+  assert.equal(C.notFromNotes(empty, '  ', 0), false);
+  assert.equal(C.notFromNotes([], 'Hello.', 0), false);
+  assert.equal(C.notFromNotes([{ tool: 'search_notes', text: 'Searched', found: ['A'] }], 'Wear goggles.', 0), false);
+  assert.equal(C.notFromNotes([...empty, { tool: 'open_note', text: 'Opened “A”', found: [] }], 'Wear goggles.', 0), false);
+  assert.equal(C.notFromNotes([{ tool: 'calculate', text: 'Worked', found: [] }], '4', 0), false);
+  assert.equal(C.notFromNotes([...empty, { tool: 'open_note', text: 'Looked for “x”', found: [], failed: true }], 'Wear goggles.', 0), true);
+});
+
+test('the saved week adds up by model and states the cached share', () => {
+  const [week, big, unknown, bad] = C.usageWeek([
+    { model: 'big', calls: 2, input: 1000, cached: 750, output: 40 },
+    { model: '', calls: 1, input: 0, cached: 0, output: 0 },
+    { model: '<b>', calls: NaN, input: -1, cached: 5, output: Infinity },
+    { calls: 1 },
+  ]);
+  assert.equal(week.label, 'Last 7 days');
+  assert.equal(week.detail, '3 requests · 1,000 in (75% from the cache) · 40 out');
+  assert.equal(big.detail, '2 requests · 1,000 in (75% from the cache) · 40 out');
+  assert.equal(unknown.label, 'Model not reported');
+  assert.equal(unknown.detail, '1 request · 0 in · 0 out');
+  assert.equal(bad.detail, '0 requests · 0 in · 0 out');
+  assert.deepEqual(C.usageWeek(null), []);
+  assert.deepEqual(C.usageWeek([]), []);
+  const many = C.usageWeek(Array.from({ length: 20 }, (_, n) => ({ model: `m${n}`, calls: 1, input: 1, cached: 0, output: 0 })));
+  assert.equal(many.length, 13);
+  assert.ok(many[0].detail.startsWith('20 requests'));
 });
 
 test('usage breakdown separates cached input, failures and unknown counts without accepting arbitrary labels', () => {

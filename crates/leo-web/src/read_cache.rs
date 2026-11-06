@@ -5,7 +5,10 @@ const MOST_BYTES: usize = 256_000;
 const LEAST_BYTES: usize = 512;
 
 #[derive(Clone, Default)]
-pub struct Reads(VecDeque<(String, String)>);
+pub struct Reads {
+    kept: VecDeque<(String, String)>,
+    pub study_rules: bool,
+}
 
 impl Reads {
     pub fn compact(&mut self, name: &str, key: &str, result: &str) -> Option<String> {
@@ -17,27 +20,28 @@ impl Reads {
         }
         let key = format!("{name}:{key}");
         let previous = self
-            .0
+            .kept
             .iter()
             .position(|(known, _)| known == &key)
-            .and_then(|at| self.0.remove(at));
+            .and_then(|at| self.kept.remove(at));
         let unchanged = previous.as_ref().is_some_and(|(_, body)| body == result);
-        self.0.push_back((key, result.into()));
-        while self.0.len() > MOST_READS
+        self.kept.push_back((key, result.into()));
+        while self.kept.len() > MOST_READS
             || self
-                .0
+                .kept
                 .iter()
                 .map(|(key, body)| key.len() + body.len())
                 .sum::<usize>()
                 > MOST_BYTES
         {
-            self.0.pop_front();
+            self.kept.pop_front();
         }
         unchanged.then(|| format!("Unchanged: the saved content was rechecked and exactly matches the earlier {name} result for these arguments. Reuse that complete result already in this conversation; no data was changed."))
     }
 
-    pub fn clear(&mut self) {
-        self.0.clear();
+    pub fn restart(&mut self, study_rules: bool) {
+        self.kept.clear();
+        self.study_rules = study_rules;
     }
 }
 
@@ -64,7 +68,7 @@ mod tests {
         let error = format!("That did not work: {}", a);
         assert!(cache.compact("open_note", "failed", &error).is_none());
         assert!(cache.compact("open_note", "failed", &error).is_none());
-        cache.clear();
+        cache.restart(false);
         assert!(cache.compact("open_note", "first", &a).is_none());
     }
 
@@ -74,10 +78,10 @@ mod tests {
         for n in 0..100 {
             cache.compact("open_note", &n.to_string(), &"x".repeat(40_000));
         }
-        assert!(cache.0.len() <= MOST_READS);
+        assert!(cache.kept.len() <= MOST_READS);
         assert!(
             cache
-                .0
+                .kept
                 .iter()
                 .map(|(key, body)| key.len() + body.len())
                 .sum::<usize>()

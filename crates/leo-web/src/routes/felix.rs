@@ -346,6 +346,7 @@ struct Continued {
 
 struct Remember {
     key: u64,
+    light: bool,
     chat: Option<String>,
     seen: usize,
     history: u64,
@@ -356,6 +357,7 @@ struct Remember {
 }
 
 struct Ask {
+    studying: bool,
     system: String,
     conversation: String,
     continued: Option<Continued>,
@@ -443,12 +445,7 @@ pub(crate) async fn mark_quiz(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let Some(writer) = state
-        .quick
-        .clone()
-        .or_else(|| state.graphs.writer())
-        .map(|w| state.usage.counted(w, crate::usage::Purpose::QuickReview))
-    else {
+    let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({"error": "Choose a writing AI in Settings to mark answers."})),
@@ -742,6 +739,18 @@ fn execute_tool(
     ) || tools::organizes(&call.name)
     {
         crate::routes::organize::run(state, desk, access, call)
+    } else if call.name == "study_rules" {
+        let heard = std::mem::replace(&mut desk.reads.study_rules, true);
+        tools::Done {
+            step: "Checked how to teach this".into(),
+            result: if heard {
+                tools::RULES_ALREADY.into()
+            } else {
+                chat::LEARNING.into()
+            },
+            proposal: None,
+            found: Vec::new(),
+        }
     } else if call.name == "calculate" {
         let steps = call.text("steps");
         let lines = steps.lines().filter(|l| !l.trim().is_empty()).count();
@@ -789,7 +798,16 @@ fn execute_tool(
             done.step = format!("{} again (unchanged)", done.step);
         }
     }
-    send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
+    if matches!(call.name.as_str(), "quiz" | "study_plan") && !desk.reads.study_rules {
+        desk.reads.study_rules = true;
+        done.result = format!("{}\n\n{}", done.result, chat::study_rules_block());
+    }
+    send(serde_json::json!({
+        "step": done.step,
+        "tool": call.name,
+        "found": done.found,
+        "failed": done.result.starts_with("That did not work:"),
+    }));
     let added = desk.take_steering();
     if !added.is_empty() {
         send(serde_json::json!({ "steered": added }));
@@ -935,7 +953,7 @@ fn read_original(
         }
         if hits.is_empty() {
             return Ok(tools::Done {
-                step: format!("Looked for “{}” in {name}", chat::clip(&find, 40)),
+                step: format!("Looked for “{}” in “{name}”", chat::clip(&find, 40)),
                 result: format!("Nothing in {name} mentions \"{}\".", chat::clip(&find, 80)),
                 proposal: None,
                 found: Vec::new(),
@@ -966,7 +984,7 @@ fn read_original(
             })
             .collect();
         return Ok(tools::Done {
-            step: format!("Looked for “{}” in {name}", chat::clip(&find, 40)),
+            step: format!("Looked for “{}” in “{name}”", chat::clip(&find, 40)),
             result: format!(
                 "<file id=\"{tag}\" name=\"{}\" find=\"{}\">\n{}\n</file>\n{cite}",
                 chat::attribute(&name),
@@ -1007,7 +1025,7 @@ fn read_original(
     }
     Ok(tools::Done {
         step: if total > 1 {
-            format!("Read part {part} of {total} of {name}")
+            format!("Read part {part} of {total} of “{name}”")
         } else {
             step
         },
@@ -1157,6 +1175,7 @@ fn answer(
     tx: &crate::reply::Sender,
 ) -> Result<Option<chat::Spent>> {
     let Ask {
+        studying,
         system,
         conversation,
         continued,
@@ -1169,6 +1188,8 @@ fn answer(
         marking,
         session,
     } = ask;
+    let light = remember.light;
+    let routed = std::cell::Cell::new(light);
     let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
         if value.get("restart").is_some() || value.get("reset").is_some() {
@@ -1180,6 +1201,9 @@ fn answer(
         let _ = tx.send(ndjson(value));
     };
     let finished = |mut spent: Option<chat::Spent>, structured: Option<&'static str>| {
+        if let Some(spent) = spent.as_mut() {
+            spent.auto = routed.get();
+        }
         if tx.is_closed() {
             return spent;
         }
@@ -1235,6 +1259,7 @@ fn answer(
         .as_ref()
         .map(|c| c.warm.reads.clone())
         .unwrap_or_default();
+    desk.reads.study_rules |= studying;
     let specs = tools::native_specs(access);
     let keep = |talk: Box<dyn chat::Conversation>,
                 sent: usize,
@@ -1251,6 +1276,7 @@ fn answer(
         {
             state.warm.keep(crate::warm::Warm {
                 key: remember.key,
+                light: remember.light,
                 chat: chat.clone(),
                 seen: remember.seen,
                 history: remember.history,
@@ -1314,7 +1340,7 @@ fn answer(
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
                 desk.verdict = None;
-                desk.reads.clear();
+                desk.reads.restart(studying);
                 desk.sources = sources.clone();
                 send(serde_json::json!({ "sources": sources }));
             }
@@ -1329,6 +1355,7 @@ fn answer(
                 native: &native,
                 text: &text,
                 last: &last,
+                light,
             },
             &specs,
         )
@@ -1374,7 +1401,7 @@ fn answer(
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
                 desk.verdict = None;
-                desk.reads.clear();
+                desk.reads.restart(studying);
             }
         }
     }
@@ -1387,9 +1414,18 @@ fn answer(
             send(serde_json::json!({ "reset": true }));
             desk.asked = 0;
         }
-        desk.reads.clear();
+        desk.reads.restart(studying);
         desk.verdict = None;
-        let mut restated = chat::Restated::new(Arc::clone(streamer), text.clone(), last.clone());
+        let cheaper = state
+            .light_chat
+            .as_ref()
+            .filter(|_| light && attempt + 1 < FALLBACK_TRIES);
+        routed.set(cheaper.is_some());
+        let mut restated = chat::Restated::new(
+            Arc::clone(cheaper.unwrap_or(streamer)),
+            text.clone(),
+            last.clone(),
+        );
         let shown = std::cell::Cell::new(false);
         match text_answer(
             state,
@@ -1845,15 +1881,39 @@ pub(crate) async fn chat_reply(
         .chat
         .clone()
         .filter(|id| chats::valid_id(id) && state.converse.is_some());
+    let studying = body.practice || body.mark || body.session.is_some();
+    let asked_lightly = crate::routing::light(&crate::routing::Asked {
+        message: body.messages.last().map_or("", |t| t.text.as_str()),
+        turns: body.messages.len(),
+        attached: body.refs.len(),
+        documents: documents.len(),
+        selected: body.selection.is_some(),
+        studying,
+        access,
+    });
+    let light = asked_lightly && {
+        let view = state.clone();
+        let chat = warm_chat.clone();
+        tokio::task::spawn_blocking(move || {
+            let stays_full = chat.is_some_and(|id| view.warm.light(&id) == Some(false));
+            !stays_full
+                && crate::margin::prefs(&view.chats).auto_model
+                && view.lighter.as_ref().is_some_and(|exists| exists())
+        })
+        .await
+        .unwrap_or(false)
+    };
     let warm_key = crate::warm::hash_of(&(
         format!("{access:?}"),
         documents_room,
         crate::warm::config_stamp(),
+        light,
     ));
     let documents_seen: std::collections::BTreeSet<u64> =
         documents.iter().map(crate::warm::hash_of).collect();
     let remember = Remember {
         key: warm_key,
+        light,
         chat: warm_chat.clone(),
         seen: body.messages.len(),
         history: crate::warm::history_of(&body.messages),
@@ -1918,6 +1978,12 @@ pub(crate) async fn chat_reply(
             );
         }
     }
+    if studying {
+        user = format!("{}{user}", chat::study_rules_block());
+        if let Some(c) = continued.as_mut().filter(|c| !c.warm.reads.study_rules) {
+            c.text = format!("{}{}", chat::study_rules_block(), c.text);
+        }
+    }
     let marking = body
         .mark
         .then(|| body.messages.last().map(|t| t.text.clone()))
@@ -1940,6 +2006,7 @@ pub(crate) async fn chat_reply(
     tokio::task::spawn_blocking(move || {
         let _foreground = foreground;
         let ask = Ask {
+            studying,
             system,
             conversation: user,
             continued,

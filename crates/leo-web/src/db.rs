@@ -142,6 +142,16 @@ CREATE TABLE IF NOT EXISTS timings (
     kind TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS usage_days (
+    day TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    model TEXT NOT NULL,
+    calls INTEGER NOT NULL,
+    input INTEGER NOT NULL,
+    cached INTEGER NOT NULL,
+    output INTEGER NOT NULL,
+    PRIMARY KEY (day, purpose, model)
+);
 ";
 
 pub struct Db {

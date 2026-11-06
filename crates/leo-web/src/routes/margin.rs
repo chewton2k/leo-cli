@@ -51,6 +51,7 @@ pub(crate) struct PrefsBody {
     pace: Option<String>,
     cap: Option<u32>,
     gap: Option<u32>,
+    auto_model: Option<bool>,
 }
 
 struct ReadFacts {
@@ -164,6 +165,7 @@ fn settings_view(state: &AppState) -> serde_json::Value {
         "caps": margin::DAILY_CAPS,
         "gap": prefs.gap,
         "gaps": margin::READ_GAPS,
+        "auto_model": prefs.auto_model,
         "today": margin::reads_today(&state.chats, prefs.cap),
         "problem": state.margin.problem(),
     })
@@ -210,6 +212,9 @@ fn changed(mut prefs: Prefs, body: PrefsBody) -> Option<Prefs> {
             return None;
         }
         prefs.gap = gap;
+    }
+    if let Some(auto_model) = body.auto_model {
+        prefs.auto_model = auto_model;
     }
     Some(prefs)
 }
@@ -433,26 +438,27 @@ async fn answered(
     };
     let user = margin::reply_prompt(&note.title, &note.body, thread, question);
     let started = Instant::now();
+    let usage = std::sync::Arc::clone(&state.usage);
     let reply = blocking(move || {
         let _foreground = foreground;
-        streamer(
+        let reply = streamer(
             margin::REPLY_SYSTEM,
             &user,
             margin::REPLY_TOKENS,
             &mut |_| {},
             &mut || {},
             &|| false,
-        )
+        );
+        let spent = reply.as_ref().ok().and_then(|r| r.spent.clone());
+        usage.record(
+            Purpose::OtherWriting,
+            spent.as_ref(),
+            started.elapsed(),
+            reply.is_err(),
+        );
+        reply
     })
     .await?;
-    let failed = reply.is_err();
-    let spent = reply.as_ref().ok().and_then(|r| r.spent.clone());
-    state.usage.record(
-        Purpose::OtherWriting,
-        spent.as_ref(),
-        started.elapsed(),
-        failed,
-    );
     let text = reply.map(|r| r.text).unwrap_or_default();
     let text: String = text.trim().chars().take(margin::MOST_REPLY).collect();
     let text = margin::without_open_fence(&text);

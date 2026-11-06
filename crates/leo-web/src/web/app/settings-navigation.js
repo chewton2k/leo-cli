@@ -47,6 +47,7 @@ const SETTINGS_INDEX = [
   { section: 'writing', id: 'writing-activity', label: 'Felix activity', keywords: 'usage tokens cache requests tools calls timing' },
   { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
   { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
+  { section: 'felix', id: 'felix-auto-model', label: 'Cheaper model for lookups', keywords: 'felix model routing auto cheap cheaper cost tokens lookup' },
   { section: 'felix', id: 'felix-pace', label: 'Reading pace', keywords: 'felix margin regular slow pause wait' },
   { section: 'felix', id: 'felix-gap', label: 'Time between reads', keywords: 'felix margin often seconds minutes wait cooldown' },
   { section: 'felix', id: 'felix-cap', label: 'Reads a day', keywords: 'felix margin often daily limit cap budget' },

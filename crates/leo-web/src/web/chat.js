@@ -122,13 +122,41 @@
       let end = Number.isInteger(item.at) ? Math.max(at, Math.min(value.length, item.at)) : at;
       if (end > 0 && end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1]) && /[\uDC00-\uDFFF]/.test(value[end])) end++;
       if (end > at) parts.push({ text: value.slice(at, end) });
-      const step = { text: item.text, tool: typeof item.tool === 'string' ? item.tool : '', found: Array.isArray(item.found) ? item.found.filter((f) => typeof f === 'string').slice(0, 12) : [] };
+      const step = { text: item.text, tool: typeof item.tool === 'string' ? item.tool : '', failed: item.failed === true, found: Array.isArray(item.found) ? item.found.filter((f) => typeof f === 'string').slice(0, 12) : [] };
       if (parts.at(-1)?.steps) parts.at(-1).steps.push(step);
       else parts.push({ steps: [step] });
       at = end;
     }
     if (at < value.length) parts.push({ text: value.slice(at) });
     return parts;
+  }
+
+  const openTraces = new WeakSet();
+  const OPENING_TOOLS = new Set(['open_note', 'read_document', 'read_transcript', 'read_original']);
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+  function traceSummary(steps, usedTitles, changes) {
+    const worked = steps.filter((step) => !step.failed);
+    const opened = new Set();
+    for (const step of worked) {
+      if (!OPENING_TOOLS.has(step.tool)) continue;
+      opened.add(/.*“(.+?)”/.exec(step.text)?.[1] || step.text);
+    }
+    const noun = worked.some((step) => step.tool === 'read_document') ? 'source' : 'note';
+    const used = usedTitles.filter((title) => opened.has(title)).length;
+    let line;
+    if (opened.size) line = `Opened ${plural(opened.size, noun)}${used > 0 && used < opened.size ? `, used ${used}` : ''}`;
+    else if (worked.some((step) => step.tool === 'search_notes')) line = 'Searched your notes';
+    else if (worked.some((step) => step.tool === 'search_chats')) line = 'Searched your chats';
+    else line = plural(steps.length, 'step');
+    return changes > 0 ? `${line} · made ${plural(changes, 'change')}` : line;
+  }
+
+  function notFromNotes(steps, shown, used) {
+    if (!String(shown).trim() || used > 0 || /beyond your notes/i.test(shown)) return false;
+    const worked = steps.filter((step) => !step.failed);
+    if (worked.some((step) => OPENING_TOOLS.has(step.tool) || step.found.length)) return false;
+    return worked.some((step) => step.tool === 'search_notes');
   }
 
   const QUIZ_KINDS = { multiple_choice: 'Multiple choice', fill_blank: 'Fill in the blank', free_response: 'Free response' };
@@ -318,6 +346,18 @@
     });
   }
 
+  function usageWeek(rows) {
+    if (!Array.isArray(rows) || !rows.length) return [];
+    const count = (value) => Number.isSafeInteger(value) && value > 0 ? value : 0;
+    const line = (calls, input, cached, output) => {
+      const share = input ? ` (${Math.round(cached / input * 100)}% from the cache)` : '';
+      return `${calls.toLocaleString('en-US')} ${calls === 1 ? 'request' : 'requests'} · ${input.toLocaleString('en-US')} in${share} · ${output.toLocaleString('en-US')} out`;
+    };
+    const models = rows.filter((row) => row && typeof row.model === 'string').map((row) => ({ model: row.model || 'Model not reported', calls: count(row.calls), input: count(row.input), cached: Math.min(count(row.input), count(row.cached)), output: count(row.output) }));
+    const total = models.reduce((sum, row) => ({ calls: sum.calls + row.calls, input: sum.input + row.input, cached: sum.cached + row.cached, output: sum.output + row.output }), { calls: 0, input: 0, cached: 0, output: 0 });
+    return [{ label: 'Last 7 days', detail: line(total.calls, total.input, total.cached, total.output) }, ...models.slice(0, 12).map((row) => ({ label: row.model, detail: line(row.calls, row.input, row.cached, row.output) }))];
+  }
+
   function spentLabel(spent) {
     if (!spent || typeof spent !== 'object' || typeof spent.by !== 'string') return null;
     const model = typeof spent.model === 'string' && spent.model ? spent.model : '';
@@ -327,10 +367,11 @@
     const cached = Number(spent.cached || 0) > 0 ? ` (${Number(spent.cached).toLocaleString('en-US')} from the cache)` : '';
     const title = `${about}${Number(spent.input || 0).toLocaleString('en-US')} tokens in${cached}, ${Number(spent.output || 0).toLocaleString('en-US')} out${steps}`;
     let parts;
-    if (spent.plan) parts = [spent.by, model, effort || 'default effort', 'on your plan'];
-    else if (spent.local) parts = [spent.by, model, 'free on this computer'];
-    else if (typeof spent.cost === 'number') parts = [`${spent.estimated ? '≈ ' : ''}${money(spent.cost)}`, spent.by, model];
-    else parts = [spent.by, model, 'price unknown'];
+    const by = spent.auto === true ? `Auto · ${spent.by}` : spent.by;
+    if (spent.plan) parts = [by, model, effort || 'default effort', 'on your plan'];
+    else if (spent.local) parts = [by, model, 'free on this computer'];
+    else if (typeof spent.cost === 'number') parts = [`${spent.estimated ? '≈ ' : ''}${money(spent.cost)}`, by, model];
+    else parts = [by, model, 'price unknown'];
     return { text: parts.filter(Boolean).join(' · '), title };
   }
 
@@ -1673,8 +1714,8 @@
       const m = list[i];
       const out = [];
       if (m.role === 'assistant' && writer(m)) {
-        const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x));
-        if (before && writer(before) !== writer(m)) out.push(`Now answered by ${writer(m)}, with everything said so far`);
+        const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x) && !x.spent.auto);
+        if (before && writer(before) !== writer(m) && !m.spent.auto) out.push(`Now answered by ${writer(m)}, with everything said so far`);
       }
       return out.map((t) => `<div class="chat-switch">${escape(t)}</div>`).join('');
     }
@@ -1717,9 +1758,20 @@
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
       const removed = verdict ? m.text.length - shown.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
-      const body = parts.length ? parts.map((part, k) => part.steps
-        ? `<div class="msg-steps">${stepRuns(part.steps).map((run, j, all) => stepLine(run.step, m.pending && k === parts.length - 1 && j === all.length - 1, run.times)).join('')}</div>`
-        : `<div class="prose">${cite(render(part.text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`).join('') : html ? `<div class="prose">${html}</div>` : '';
+      const taken = parts.flatMap((part) => part.steps || []);
+      const newest = parts.findLastIndex((part) => part.steps);
+      const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
+      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`;
+      const live = (part, k) => {
+        const run = stepRuns(part.steps).at(-1);
+        return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
+      };
+      const trace = !m.pending && taken.length
+        ? `<details class="msg-trace" data-i="${i}"${openTraces.has(m) ? ' open' : ''}><summary>${escape(traceSummary(taken, used.map((s) => s.title), made))}${stepChevron}</summary><div class="msg-steps">${stepRuns(taken).map((run) => stepLine(run.step, false, run.times)).join('')}</div></details>`
+        : '';
+      const words = parts.length ? parts.map((part, k) => part.steps ? (m.pending ? live(part, k) : '') : prose(part.text)).join('') : html ? `<div class="prose">${html}</div>` : '';
+      const outside = !m.pending && notFromNotes(taken, shown, used.length) ? '<div class="msg-note msg-outside">Not from your notes</div>' : '';
+      const body = `${trace}${words}${outside}`;
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
@@ -2221,6 +2273,13 @@
       state.pickWait = setTimeout(placeAddFloat, 120);
     });
     body.addEventListener('scroll', () => hideAddFloat(), { passive: true });
+    body.addEventListener('toggle', (e) => {
+      if (!e.target.matches?.('.msg-trace')) return;
+      const m = state.messages[Number(e.target.dataset.i)];
+      if (!m) return;
+      if (e.target.open) openTraces.add(m);
+      else openTraces.delete(m);
+    }, true);
 
     async function saveAnswer(i) {
       const m = state.messages[i];
@@ -2495,7 +2554,7 @@
             if (Array.isArray(e.files)) answer.files = e.files;
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
-            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, at: answer.text.length, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
+            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, at: answer.text.length, tool: typeof e.tool === 'string' ? e.tool : '', failed: e.failed === true, found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
             if (e.spent && typeof e.spent === 'object') answer.spent = e.spent;
             if (e.proposal && typeof e.proposal === 'object') {
               const done = e.proposal.state === 'applied';
@@ -2980,5 +3039,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

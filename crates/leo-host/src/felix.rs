@@ -39,6 +39,7 @@ pub fn writer(
             .ok()
             .and_then(|outcome| outcome.spent.as_ref())
             .map(|spent| leo_web::Spent {
+                model: spent.model.clone(),
                 input: spent.input,
                 output: spent.output,
                 cached: spent.cached,
@@ -63,6 +64,7 @@ pub fn spent_of(answered: Answered) -> leo_web::Spent {
         local: answered.local,
         cached: answered.cached,
         steps: 1,
+        auto: false,
     }
 }
 
@@ -139,7 +141,7 @@ pub fn converser() -> leo_web::Converser {
                 native: given.native,
                 text: given.text,
             };
-            leo_services::ai::open_session(&systems, &tools)
+            leo_services::ai::open_session(&systems, &tools, given.light)
                 .map(|session| Box::new(Talk(session)) as Box<dyn leo_web::Conversation>)
         },
     )

@@ -323,11 +323,14 @@ function pickFelix(el) {
 
 function felixUsageCard(page) {
   const rows = window.leoChat.usageRows(page.felix_usage);
+  const [week, ...models] = window.leoChat.usageWeek(page.felix_week);
   const tools = page.felix_tools || {};
   const count = (value) => Number.isSafeInteger(value) && value > 0 ? value.toLocaleString() : '0';
   return `<section class="set-card" data-find="writing-activity">
     <header><h3>Felix activity</h3></header>
-    <p class="hint">Since this Leo server started. Cached input is part of total input; these counts are not your subscription balance. Provider retries may have unreported usage. Timing shows the latest 64 requests of each kind.</p>
+    ${week ? `<div class="set-row column"><span class="set-label">${esc(week.label)}</span><span class="set-note">${esc(week.detail)}</span></div>` : ''}
+    ${models.length ? `<details class="source-more"><summary>${ICON.chevron}By model</summary>${models.map((row) => `<div class="set-row column"><span class="set-label">${esc(row.label)}</span><span class="set-note">${esc(row.detail)}</span></div>`).join('')}</details>` : ''}
+    <p class="hint">The rest is since this Leo server started. Cached input is part of total input; these counts are not your subscription balance. Provider retries may have unreported usage. Timing shows the latest 64 requests of each kind.</p>
     <div class="set-row column"><span class="set-label">Tools</span><span class="set-note">${count(tools.calls)} calls · ${count(tools.reused)} unchanged reads reused · ${count(tools.failures)} failed calls</span></div>
     ${rows.length ? `<details class="source-more"><summary>${ICON.chevron}Request breakdown</summary>${rows.map((row) => `<div class="set-row column"><span class="set-label">${esc(row.label)}</span><span class="set-note">${esc(row.detail)}</span></div>`).join('')}</details>` : '<p class="set-note">No AI requests recorded yet.</p>'}
   </section>`;
