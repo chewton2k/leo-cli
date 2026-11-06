@@ -85,7 +85,7 @@ async function loadSchedule(mine = seq) {
   } else {
     cal.polls = 0;
     cal.timer = setTimeout(() => {
-      if (document.visibilityState === 'visible') loadSchedule(mine);
+      if (appVisible()) loadSchedule(mine);
     }, CAL_POLL_MS);
   }
   if (cal.drag || cal.compose) {
@@ -106,9 +106,13 @@ function calSettled() {
   loadSchedule(seq);
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.view === 'calendar' && Date.now() - cal.loadedAt > 120000) loadSchedule(seq);
-});
+function calendarShown() {
+  if (!appVisible()) return;
+  if (state.view === 'calendar' && Date.now() - cal.loadedAt > 120000) loadSchedule(seq);
+  if (tasksWin.stale) loadTasksWindow().catch(() => {});
+}
+document.addEventListener('visibilitychange', calendarShown);
+window.addEventListener('leo-visibility', calendarShown);
 
 function calStatus() {
   const d = cal.data;
@@ -1581,6 +1585,7 @@ async function loadTasksWindow() {
   clearTimeout(tasksWin.timer);
   if (state.view === 'locked') return;
   const mine = ++tasksWin.load;
+  tasksWin.stale = false;
   const revision = tasksWin.revision;
   try {
     const tasks = (await api('/api/tasks')).tasks;
@@ -1596,8 +1601,8 @@ async function loadTasksWindow() {
   if (mine !== tasksWin.load) return;
   drawTasksWindow();
   tasksWin.timer = setTimeout(() => {
-    if (document.visibilityState === 'visible') loadTasksWindow().catch(() => {});
-    else tasksWin.timer = setTimeout(() => loadTasksWindow().catch(() => {}), CAL_POLL_MS);
+    if (appVisible()) loadTasksWindow().catch(() => {});
+    else tasksWin.stale = true;
   }, CAL_POLL_MS);
 }
 

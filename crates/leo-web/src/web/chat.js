@@ -780,9 +780,11 @@
     }
 
     const faces = () => [...document.querySelectorAll('.felix:not(.felix-preview)')];
+    const onScreen = () => document.visibilityState !== 'hidden' && root.__LEO_VISIBLE__ !== false;
     let blinkTimer = 0;
     function blink() {
       clearTimeout(blinkTimer);
+      if (!onScreen()) return;
       blinkTimer = setTimeout(() => {
         for (const f of faces()) {
           f.classList.remove('blink');
@@ -808,11 +810,20 @@
       const secs = Math.max(0, Math.round((Date.now() - since) / 1000));
       return `Working · ${secs >= 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : `${secs} s`}`;
     }
-    const ticking = setInterval(() => {
-      if (typeof document === 'undefined') return;
-      for (const el of document.querySelectorAll('.msg-clock[data-since]')) el.textContent = workingFor(Number(el.dataset.since));
-    }, 1000);
-    if (ticking.unref) ticking.unref();
+    let ticking = 0;
+    function tick() {
+      if (ticking) return;
+      ticking = setInterval(() => {
+        const clocks = document.querySelectorAll('.msg-clock[data-since]');
+        if (!clocks.length) {
+          clearInterval(ticking);
+          ticking = 0;
+          return;
+        }
+        for (const el of clocks) el.textContent = workingFor(Number(el.dataset.since));
+      }, 1000);
+      if (ticking.unref) ticking.unref();
+    }
 
     function thinking(on) {
       if (!on) pose(null);
@@ -883,6 +894,8 @@
       }
     }
     blink();
+    document.addEventListener('visibilitychange', blink);
+    root.addEventListener('leo-visibility', blink);
 
     try {
       state.access = accessOf(storage.getItem(ACCESS_KEY));
@@ -1690,6 +1703,7 @@
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
       const since = m.pending ? working.get(m) : 0;
+      if (since) tick();
       const clock = since ? `<div class="msg-note msg-clock" data-since="${since}" role="timer">${workingFor(since)}</div>` : '';
       return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${body}${quizzes}${asks}${offers}${clock}${error}${from}${keep}</div>`;
     }

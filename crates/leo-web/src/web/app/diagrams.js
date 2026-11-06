@@ -149,7 +149,8 @@ async function drawDiagrams() {
   }
 }
 
-function watchDiagrams() {
+function watchDiagrams(records) {
+  if (records && !addsElements(records)) return;
   drawKnownDiagrams();
   clearTimeout(diagrams.timer);
   diagrams.timer = setTimeout(() => drawDiagrams().catch(() => {}), 60);

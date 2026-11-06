@@ -818,7 +818,7 @@ async function marginRead(s) {
     marginPage.again = true;
     return;
   }
-  if (s !== marginPage.s || marginPage.mode !== 'along' || !s.note.id || document.hidden || chat.isBusy()) return;
+  if (s !== marginPage.s || marginPage.mode !== 'along' || !s.note.id || document.hidden || window.__LEO_VISIBLE__ === false || chat.isBusy()) return;
   if (!marginKit.changedBlocks(marginPage.baseline, s.doc.source()).length) return;
   const reading = {};
   marginPage.reading = reading;

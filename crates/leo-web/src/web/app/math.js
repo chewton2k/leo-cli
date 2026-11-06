@@ -66,7 +66,8 @@ async function drawMath() {
   }
 }
 
-new MutationObserver(() => {
+new MutationObserver((records) => {
+  if (!addsElements(records)) return;
   drawKnownMath();
   clearTimeout(math.timer);
   math.timer = setTimeout(() => drawMath().catch(() => {}), 30);
