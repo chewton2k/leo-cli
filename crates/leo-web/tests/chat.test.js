@@ -183,6 +183,7 @@ test('what an answer cost reads as money for keys, model and effort for plans, f
   assert.equal(C.spentLabel({ by: 'OpenAI', model: 'gpt-5-nano', cost: 0.00042, estimated: true }).text, '≈ $0.0004 · OpenAI · gpt-5-nano');
   assert.equal(C.spentLabel({ by: 'OpenAI', model: 'gpt-5.5', cost: 1.234 }).text, '$1.23 · OpenAI · gpt-5.5');
   assert.equal(C.spentLabel({ by: 'Codex', model: 'gpt-6.1-sol', effort: 'high', plan: true }).text, 'Codex · gpt-6.1-sol · high effort · on your plan');
+  assert.equal(C.spentLabel({ by: 'Codex', model: 'gpt-6-luna', effort: 'low', plan: true, auto: true }).text, 'Auto · Codex · gpt-6-luna · low effort · on your plan');
   assert.equal(C.spentLabel({ by: 'Claude Code', model: 'claude-opus-5-5', plan: true }).text, 'Claude Code · claude-opus-5-5 · default effort · on your plan');
   assert.equal(C.spentLabel({ by: 'Ollama', model: 'qwen3:8b', local: true, cost: 0 }).text, 'Ollama · qwen3:8b · free on this computer');
   assert.equal(C.spentLabel({ by: 'OpenRouter', model: 'x/y' }).text, 'OpenRouter · x/y · price unknown');

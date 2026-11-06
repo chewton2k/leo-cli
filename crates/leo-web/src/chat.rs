@@ -53,6 +53,7 @@ pub struct Instructions<'a> {
     pub native: &'a str,
     pub text: &'a str,
     pub last: &'a str,
+    pub light: bool,
 }
 
 pub type Converser =
@@ -142,6 +143,8 @@ pub struct Spent {
     #[serde(default)]
     pub cached: u64,
     pub steps: u32,
+    #[serde(default)]
+    pub auto: bool,
 }
 
 impl Spent {

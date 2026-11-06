@@ -50,8 +50,10 @@ pub fn writing_budget() -> budget::Budget {
 pub fn open_session(
     systems: &session::Systems,
     tools: &[session::ToolDef],
+    light: bool,
 ) -> Option<Box<dyn session::Session>> {
     let (cfg, store) = context();
+    let cfg = if light { quick_config(&cfg) } else { cfg };
     session::open(&cfg, store.as_ref(), systems, tools)
 }
 

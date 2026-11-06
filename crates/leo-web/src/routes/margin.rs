@@ -51,6 +51,7 @@ pub(crate) struct PrefsBody {
     pace: Option<String>,
     cap: Option<u32>,
     gap: Option<u32>,
+    auto_model: Option<bool>,
 }
 
 struct ReadFacts {
@@ -164,6 +165,7 @@ fn settings_view(state: &AppState) -> serde_json::Value {
         "caps": margin::DAILY_CAPS,
         "gap": prefs.gap,
         "gaps": margin::READ_GAPS,
+        "auto_model": prefs.auto_model,
         "today": margin::reads_today(&state.chats, prefs.cap),
         "problem": state.margin.problem(),
     })
@@ -210,6 +212,9 @@ fn changed(mut prefs: Prefs, body: PrefsBody) -> Option<Prefs> {
             return None;
         }
         prefs.gap = gap;
+    }
+    if let Some(auto_model) = body.auto_model {
+        prefs.auto_model = auto_model;
     }
     Some(prefs)
 }

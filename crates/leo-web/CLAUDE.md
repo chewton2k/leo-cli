@@ -509,6 +509,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (`MARGIN_KINDS`); it never changes the note. The text manual stays under
   14,500 bytes. `MOST_PROPOSALS` counts every change tool.
 
+- Choosing the model (`routing.rs`, 2026-11-06, the user's call; same shape as Copilot Auto and Cursor Router, with rules instead of a trained classifier because leo has one user and a classifier call would cost tokens): `routing::light` sends only obvious cases (short lookups and greetings, no attachments, files, selection, study or Auto access, at most six turns) to the cheapest model of the chosen AI (`ai::quick_config`); every doubt stays on the chosen model, and other languages stay there too. The tier is part of the warm key, and `Slot::light` keeps a warm full chat from moving down, since a switch loses the cache: a chat moves up once when it needs to, never down while warm. Settings → Felix → Choose automatically (`Prefs.auto_model`, on by default) turns it off; a routed reply says `Auto` in its usage line.
+
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
 

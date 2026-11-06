@@ -72,6 +72,12 @@ pub struct Prefs {
     pub cap: u32,
     #[serde(default = "read_gap")]
     pub gap: u32,
+    #[serde(default = "auto_model")]
+    pub auto_model: bool,
+}
+
+fn auto_model() -> bool {
+    true
 }
 
 fn read_gap() -> u32 {
@@ -87,6 +93,7 @@ impl Default for Prefs {
             pace: "regular".into(),
             cap: DAILY_CAP,
             gap: READ_GAP,
+            auto_model: true,
         }
     }
 }

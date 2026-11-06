@@ -965,6 +965,102 @@ fn a_session_hears_only_what_is_new_and_a_failed_native_start_falls_back() {
 }
 
 #[test]
+fn a_lookup_starts_on_the_light_model_moves_up_when_needed_and_never_back_down() {
+    struct Quick;
+    impl chat::Conversation for Quick {
+        fn native(&self) -> bool {
+            false
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.piece)("Done.");
+            let mut reply = chat::Reply::from("Done.");
+            reply.spent = Some(chat::Spent {
+                steps: 1,
+                ..Default::default()
+            });
+            Ok(reply)
+        }
+    }
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&opened);
+    state.converse = Some(Arc::new(
+        move |given: &chat::Instructions, _: &[chat::ToolSpec]| {
+            seen.lock().unwrap().push(given.light);
+            Some(Box::new(Quick) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+    let turn = |role: &str, text: &str| chat::Turn {
+        role: role.into(),
+        text: text.into(),
+    };
+    let ask = |chat: &str, messages: &[chat::Turn]| {
+        let body = chat::ChatBody {
+            messages: messages.to_vec(),
+            note: None,
+            refs: vec![],
+            chat: Some(chat.to_string()),
+            files: vec![],
+            access: None,
+            recent: vec![],
+            practice: false,
+            mark: false,
+            selection: None,
+            session: None,
+        };
+        let text = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        });
+        text.lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .find_map(|l| l.get("spent").cloned())
+            .unwrap()
+    };
+    let mut talk = vec![turn("user", "when is lab 3 due?")];
+    assert_eq!(ask("light-chat-0001", &talk)["auto"], true);
+    talk.extend([
+        turn("assistant", "Done."),
+        turn("user", "when is the final?"),
+    ]);
+    assert_eq!(ask("light-chat-0001", &talk)["auto"], true);
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [true],
+        "a warm light chat continues"
+    );
+    talk.extend([
+        turn("assistant", "Done."),
+        turn("user", "explain why it is on that day"),
+    ]);
+    assert_eq!(ask("light-chat-0001", &talk)["auto"], false);
+    assert_eq!(*opened.lock().unwrap(), [true, false], "it moves up once");
+    let mut full = vec![turn("user", "explain the krebs cycle")];
+    assert_eq!(ask("light-chat-0003", &full)["auto"], false);
+    full.extend([
+        turn("assistant", "Done."),
+        turn("user", "when is lab 4 due?"),
+    ]);
+    assert_eq!(ask("light-chat-0003", &full)["auto"], false);
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [true, false, false],
+        "a warm full chat never moves down"
+    );
+
+    let mut prefs = crate::margin::prefs(&state.chats);
+    prefs.auto_model = false;
+    assert!(crate::margin::set_prefs(&state.chats, &prefs));
+    let talk = [turn("user", "when is lab 5 due?")];
+    assert_eq!(ask("light-chat-0002", &talk)["auto"], false);
+    assert_eq!(opened.lock().unwrap().last(), Some(&false));
+}
+
+#[test]
 fn felix_looks_at_a_notes_pictures_and_their_captions_come_along_next_time() {
     let (mut state, dir, ids) = state_with(&[("Heaps", "")]);
     let notes = dir.path().join("notes");

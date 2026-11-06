@@ -363,10 +363,11 @@
     const cached = Number(spent.cached || 0) > 0 ? ` (${Number(spent.cached).toLocaleString('en-US')} from the cache)` : '';
     const title = `${about}${Number(spent.input || 0).toLocaleString('en-US')} tokens in${cached}, ${Number(spent.output || 0).toLocaleString('en-US')} out${steps}`;
     let parts;
-    if (spent.plan) parts = [spent.by, model, effort || 'default effort', 'on your plan'];
-    else if (spent.local) parts = [spent.by, model, 'free on this computer'];
-    else if (typeof spent.cost === 'number') parts = [`${spent.estimated ? '≈ ' : ''}${money(spent.cost)}`, spent.by, model];
-    else parts = [spent.by, model, 'price unknown'];
+    const by = spent.auto === true ? `Auto · ${spent.by}` : spent.by;
+    if (spent.plan) parts = [by, model, effort || 'default effort', 'on your plan'];
+    else if (spent.local) parts = [by, model, 'free on this computer'];
+    else if (typeof spent.cost === 'number') parts = [`${spent.estimated ? '≈ ' : ''}${money(spent.cost)}`, by, model];
+    else parts = [by, model, 'price unknown'];
     return { text: parts.filter(Boolean).join(' · '), title };
   }
 

@@ -4580,6 +4580,18 @@ test('Felix shows one live step, then one line, and marks an answer from outside
   await expect(answer.locator('.msg-outside')).toHaveText('Not from your notes');
 });
 
+test('choosing the model automatically can be turned off and stays off', async ({ page }) => {
+  await page.goto('/#/settings/felix');
+  const choice = page.locator('input[data-margin-pref="auto_model"]');
+  await expect(choice).toBeChecked();
+  await choice.click();
+  await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).auto_model).toBe(false);
+  await page.reload();
+  await expect(choice).not.toBeChecked();
+  await choice.click();
+  await expect.poll(async () => (await (await page.request.get('/api/margin')).json()).auto_model).toBe(true);
+});
+
 test('the same step repeated in a row shows once with how many times', async ({ page }) => {
   const step = (text, tool = 'open_note') => JSON.stringify({ step: text, tool, found: [] });
   await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: [step('Read “Pipelining”'), step('Read “Pipelining” again (unchanged)'), step('Read “Pipelining” again (unchanged)'), step('Read “Pipelining” again (unchanged)'), step('Retried open note: "note" is missing.', 'open_note'), JSON.stringify({ t: 'It overlaps instructions.' }), JSON.stringify({ done: true })].join('\n') + '\n' }));

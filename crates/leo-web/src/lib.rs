@@ -25,6 +25,7 @@ pub mod record;
 pub mod reply;
 pub mod review;
 mod routes;
+mod routing;
 pub mod search;
 pub mod sessions;
 mod shutdown;

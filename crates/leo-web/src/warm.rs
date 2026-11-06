@@ -16,6 +16,7 @@ pub fn context_limit(room: usize, supported: Option<usize>) -> usize {
 
 pub struct Warm {
     pub key: u64,
+    pub light: bool,
     pub chat: String,
     pub seen: usize,
     pub history: u64,
@@ -70,6 +71,13 @@ impl Warm {
 }
 
 impl Slot {
+    pub fn light(&self, chat: &str) -> Option<bool> {
+        let held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        held.iter()
+            .find(|warm| warm.chat == chat && warm.used.elapsed() < IDLE)
+            .map(|warm| warm.light)
+    }
+
     pub fn take(&self, key: u64, chat: &str, messages: &[Turn]) -> Option<Warm> {
         self.tidy();
         let found = {
@@ -287,6 +295,7 @@ mod tests {
 
     fn warm(messages: &[Turn]) -> Warm {
         Warm {
+            light: false,
             key: 7,
             chat: "chat-0001".into(),
             seen: messages.len(),

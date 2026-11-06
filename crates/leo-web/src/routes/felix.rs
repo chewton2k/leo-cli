@@ -346,6 +346,7 @@ struct Continued {
 
 struct Remember {
     key: u64,
+    light: bool,
     chat: Option<String>,
     seen: usize,
     history: u64,
@@ -1169,6 +1170,7 @@ fn answer(
         marking,
         session,
     } = ask;
+    let light = remember.light;
     let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
         if value.get("restart").is_some() || value.get("reset").is_some() {
@@ -1251,6 +1253,7 @@ fn answer(
         {
             state.warm.keep(crate::warm::Warm {
                 key: remember.key,
+                light: remember.light,
                 chat: chat.clone(),
                 seen: remember.seen,
                 history: remember.history,
@@ -1329,6 +1332,7 @@ fn answer(
                 native: &native,
                 text: &text,
                 last: &last,
+                light,
             },
             &specs,
         )
@@ -1845,15 +1849,36 @@ pub(crate) async fn chat_reply(
         .chat
         .clone()
         .filter(|id| chats::valid_id(id) && state.converse.is_some());
+    let asked_lightly = crate::routing::light(&crate::routing::Asked {
+        message: body.messages.last().map_or("", |t| t.text.as_str()),
+        turns: body.messages.len(),
+        attached: body.refs.len(),
+        documents: documents.len(),
+        selected: body.selection.is_some(),
+        studying: body.practice || body.mark || body.session.is_some(),
+        access,
+    });
+    let light = asked_lightly && {
+        let view = state.clone();
+        let chat = warm_chat.clone();
+        tokio::task::spawn_blocking(move || {
+            let stays_full = chat.is_some_and(|id| view.warm.light(&id) == Some(false));
+            !stays_full && crate::margin::prefs(&view.chats).auto_model
+        })
+        .await
+        .unwrap_or(false)
+    };
     let warm_key = crate::warm::hash_of(&(
         format!("{access:?}"),
         documents_room,
         crate::warm::config_stamp(),
+        light,
     ));
     let documents_seen: std::collections::BTreeSet<u64> =
         documents.iter().map(crate::warm::hash_of).collect();
     let remember = Remember {
         key: warm_key,
+        light,
         chat: warm_chat.clone(),
         seen: body.messages.len(),
         history: crate::warm::history_of(&body.messages),
@@ -1955,6 +1980,10 @@ pub(crate) async fn chat_reply(
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {
                 if let Some(spent) = spent {
+                    let spent = chat::Spent {
+                        auto: light,
+                        ..spent
+                    };
                     let _ = tx.send(ndjson(serde_json::json!({ "spent": spent })));
                 }
                 serde_json::json!({ "done": true })
