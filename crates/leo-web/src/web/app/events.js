@@ -116,11 +116,7 @@ const busy = () => {
   return unsaved() || Boolean(active && active !== document.body && app.contains(active));
 };
 
-const tellVisible = () => api('/api/visible', { method: 'POST', body: { visible: document.visibilityState !== 'hidden' } }).catch(() => {});
-setTimeout(tellVisible, 0);
-
 document.addEventListener('visibilitychange', () => {
-  tellVisible();
   if (document.visibilityState === 'hidden') {
     rememberPlace();
     saveWebsiteWork();
@@ -136,6 +132,10 @@ window.addEventListener(
   () => $('#bar').classList.toggle('scrolled', window.scrollY > 4),
   { passive: true }
 );
+
+const tellVisible = () => api('/api/visible', { method: 'POST', body: { visible: document.visibilityState !== 'hidden' } }).catch(() => {});
+document.addEventListener('visibilitychange', tellVisible);
+setTimeout(tellVisible, 0);
 
 async function route() {
   closeSheet(true);
