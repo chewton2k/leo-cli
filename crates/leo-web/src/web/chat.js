@@ -20,20 +20,16 @@
     read: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
 
-  const MODES = [
-    { id: 'chat', label: 'Chat', hint: 'Ask anything, get things explained, or go over meeting notes; type @ to bring in a note', starters: [
-      { text: 'What are the key ideas here?', needs: 'note', ask: 'Which note should I pull the key ideas from?' },
-      { text: 'Explain this simply', needs: 'note', ask: 'Which note should I explain?' },
-      { text: 'Summarize this meeting and list the action items', needs: 'note', ask: 'Which meeting notes should I summarize?' },
-    ] },
-    { id: 'study', label: 'Study', hint: 'Quizzes you one question at a time, with hints, a score and review plans', starters: [
-      { text: 'Start a study session on this note', needs: 'note', ask: 'Which note should the session cover?' },
-      { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
-      { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
-    ] },
+  const HELLO = 'Ask me anything, or tell me what you want to learn and I will teach you or quiz you; type @ to bring in a note';
+  const STARTERS = [
+    { text: 'Teach me this note step by step', needs: 'note', ask: 'Which note should I teach you?' },
+    { text: 'Quiz me on this note', needs: 'note', ask: 'Which note should the quiz cover?' },
+    { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
+    { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
+    { text: 'Summarize this meeting and list the action items', needs: 'note', ask: 'Which meeting notes should I summarize?' },
   ];
-  const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
-  const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
+  const SURE = { sure: 'Sure', think: 'Think so', guess: 'Guessing' };
+  const MOST_THINKING = 2000;
 
   function containChatPickWheel(list, event) {
     if (event.ctrlKey || !event.deltaY) return;
@@ -153,12 +149,19 @@
 
   // stay: the user asked about this answer (Ask Felix why), so Felix explains
   // and stops; the card keeps its Next question button for when they are ready.
+  function aside(quiz) {
+    const how = SURE[quiz.sure] ? ` (how sure I felt: ${SURE[quiz.sure].toLowerCase()})` : '';
+    const why = quiz.thinking ? ` My thinking: ${clipped(quiz.thinking, MOST_THINKING)}` : '';
+    return how + why;
+  }
+
   function quizSay(quiz, given, correct, stay = false) {
+    if (quiz.predict) return [`Prediction. Question: ${quiz.question}`, `My prediction: ${given}`, 'This was my attempt before you taught the step, so do not mark it and do not write a verdict. Start from what I predicted, say what is actually true and why, teach this one step, then end with a check using the quiz tool.'].join('\n');
     const next = stay
       ? 'Only explain this answer: do not ask a new practice question in this reply. I will press Next question when I am ready.'
-      : 'If we are practising, ask the next question with the quiz tool so it appears as a card; never ask a practice question in plain text. If you keep a score, give it once, at the very end of your reply.';
+      : 'If we are practising, ask the next question with the quiz tool so it appears as a card, or in a lesson teach the next step and end with one; never ask a practice question in plain text. If you keep a score, give it once, at the very end of your reply.';
     const right = 'praise me briefly in your own words, then explain why it is right: the idea behind it, and a quick way to see it or remember it next time';
-    const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}`];
+    const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}${aside(quiz)}`];
     if (correct === null) {
       const key = quiz.kind === 'fill_blank' ? `Accepted answers: ${accepted(quiz).join(' or ')}.` : `A model answer to compare with: ${quiz.answer}.`;
       lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]]. Judge what my answer means, not how it is written: the same value or idea in other words or notation counts as right (sin x and sin(x), 1/2 and 0.5, f'(x) and df/dx). Be critical of the reasoning: a right result reached by a wrong or missing step, or an answer too vague to show I understand, is [[incorrect]]. If the question has more than one good answer (design, writing, interpretation), mark me right when I make a defensible case with the relevant principles, and treat the model answer as one strong answer, not the only one. Even if I am right, point out any gap, jump or loose term and what a complete answer would add. ${key} If I am right, ${right}. If I am wrong, I have already tried, so do not give a hint: give the right answer and explain it fully, say where my answer went wrong, and end with an intuitive shortcut or tip for keeping it in mind. ${next}`);
@@ -173,11 +176,11 @@
   function heldSay(quiz, ending) {
     const then = ending
       ? 'That was the last question of this study session: finish it now with end_session and a short recap.'
-      : 'Ask the next question with the quiz tool so it appears as a card, with at most one short sentence before it.';
+      : 'Ask the next question with the quiz tool so it appears as a card, with at most one short sentence before it, unless this is a lesson and the next step needs teaching first.';
     if (quiz.told) return ['Next question, please.', then].join('\n');
     const verdict = quiz.correct === true ? 'right' : `wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}`;
     const shown = quiz.feedback ? 'the explanation and feedback' : 'the explanation';
-    return [`Quiz answer. Question: ${quiz.question}`, `My answer: ${quiz.given}`, `leo marked it ${verdict}, and already showed me ${shown}, so do not repeat or re-mark it.`, then].join('\n');
+    return [`Quiz answer. Question: ${quiz.question}`, `My answer: ${quiz.given}${aside(quiz)}`, `leo marked it ${verdict}, and already showed me ${shown}, so do not repeat or re-mark it.`, then].join('\n');
   }
 
   function hintsOf(quiz) {
@@ -418,7 +421,7 @@
 
   function reviewPrompt(items) {
     const lines = items.map((m, i) => `${i + 1}. ${m.question}${m.answer ? ` (last time I said: ${m.answer})` : ''}`);
-    return `Let's review questions I got wrong before. Ask me each one again, one at a time, and wait for my answer:\n${lines.join('\n')}`;
+    return `Let's review questions I got wrong before. Test each idea again in a new situation, one at a time, and wait for my answer:\n${lines.join('\n')}`;
   }
 
   function mentionAt(text, caret) {
@@ -491,7 +494,7 @@
     if (m.role === 'user') return [passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
     const lines = [];
     const by = m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '';
-    if (by) lines.push(`[Written by ${by}${m.mode ? `, in ${m.mode} style` : ''}]`);
+    if (by) lines.push(`[Written by ${by}]`);
     const steps = (m.steps || []).map((s) => (typeof s === 'string' ? { text: s, found: [] } : s)).filter((s) => s && s.text);
     if (steps.length) {
       lines.push(`[What Felix did for this answer: ${steps.slice(0, 12).map((s) => {
@@ -505,7 +508,7 @@
     for (const q of m.quizzes || []) {
       const how = typeof q.given !== 'string' ? 'not answered yet' : q.correct === true ? `answered “${clipped(q.given, 120)}”, right` : q.correct === false ? `answered “${clipped(q.given, 120)}”, wrong` : `answered “${clipped(q.given, 200)}”`;
       const replied = !canonical && q.reply && q.reply.text ? `; Felix replied: ${clipped(grade(q.reply.text).text, 400)}` : '';
-      lines.push(`[Practice question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}${canonical ? '' : `; ${how}${replied}`}]`);
+      lines.push(`[${q.predict ? 'Prediction' : 'Practice'} question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}${canonical ? '' : `; ${how}${replied}`}]`);
     }
     for (const p of m.proposals || []) {
       const state = p.state === 'applied' ? 'applied' : p.state === 'dismissed' ? 'dismissed by the user' : 'waiting for the user';
@@ -579,19 +582,19 @@
   }
 
   function load(storage) {
-    const fresh = { id: null, mode: 'chat', messages: [], refs: [] };
+    const fresh = { id: null, messages: [], refs: [] };
     try {
       const saved = JSON.parse(storage.getItem(KEY) || 'null');
-      if (saved && Array.isArray(saved.messages)) return { id: typeof saved.id === 'string' ? saved.id : null, mode: modeOf(saved.mode), messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
+      if (saved && Array.isArray(saved.messages)) return { id: typeof saved.id === 'string' ? saved.id : null, messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
     } catch (e) {
       return fresh;
     }
     return fresh;
   }
 
-  function save(storage, mode, messages, refs = [], id = null) {
+  function save(storage, messages, refs = [], id = null) {
     try {
-      storage.setItem(KEY, JSON.stringify({ id, mode, messages: messages.slice(-MOST_KEPT), refs }));
+      storage.setItem(KEY, JSON.stringify({ id, messages: messages.slice(-MOST_KEPT), refs }));
     } catch (e) {
       return;
     }
@@ -725,7 +728,7 @@
   function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
+    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -742,10 +745,7 @@
         <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
         <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
-        <div class="chat-menu">
-          <button type="button" class="chat-pill" id="chat-mode-btn" data-chat="modes" aria-haspopup="menu" aria-expanded="false" aria-controls="chat-mode-menu" title="How Felix helps"><span id="chat-mode-name"></span>${icons.chevron || ''}</button>
-          <div class="chat-popup" id="chat-mode-menu" role="menu" aria-label="How Felix helps" hidden>${MODES.map((m) => `<button type="button" role="menuitemradio" aria-checked="false" class="chat-mode" data-chat="mode" data-mode="${m.id}" title="${escape(m.hint)}">${m.label}${icons.check || ''}</button>`).join('')}<button type="button" role="menuitem" class="chat-leave" data-chat="drop" hidden>Stop reading this note</button></div>
-        </div>
+        <button type="button" class="icon-btn" data-chat="drop" aria-label="Stop reading this note" title="Stop reading this note" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button>
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
@@ -773,11 +773,6 @@
     const $ = (sel) => panel.querySelector(sel);
     const body = $('#chat-body');
     const input = $('#chat-input');
-
-    function closeMode() {
-      $('#chat-mode-menu').hidden = true;
-      $('#chat-mode-btn').setAttribute('aria-expanded', 'false');
-    }
 
     function attachMenu(open) {
       $('#chat-attach-menu').hidden = !open;
@@ -1123,7 +1118,7 @@
     }
 
     function persist() {
-      save(storage, state.mode, stored(), state.refs, state.id);
+      save(storage, stored(), state.refs, state.id);
     }
 
     // Idle compaction: after warm.rs IDLE the warm session and the provider's
@@ -1150,7 +1145,7 @@
 
     let upload = Promise.resolve();
     function snapshot() {
-      return { id: state.id, mode: state.mode, refs: state.refs, messages: stored() };
+      return { id: state.id, refs: state.refs, messages: stored() };
     }
 
     function remember(chat = snapshot()) {
@@ -1158,7 +1153,7 @@
       const messages = chat.messages.filter((m) => !m.pending);
       if (!messages.length) return upload;
       const id = chat.id;
-      const sending = { mode: chat.mode, refs: chat.refs, messages: messages.map(({ pending, ...m }) => m) };
+      const sending = { refs: chat.refs, messages: messages.map(({ pending, ...m }) => m) };
       upload = upload.then(async () => {
         try {
           const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
@@ -1292,7 +1287,6 @@
       }
       state.id = chat.id;
       compactLater();
-      state.mode = modeOf(chat.mode);
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
       state.files = [];
@@ -1302,7 +1296,7 @@
       persist();
       await loadFiles();
       if (mine !== resumeSeq || state.id !== id) return null;
-      drawModes();
+      drawContext();
       drawRefs();
       draw();
       drawChats();
@@ -1591,10 +1585,6 @@
       else if (state.pick && state.pick.from === 'mention') closePick();
     }
 
-    function modeInfo() {
-      return MODES.find((m) => m.id === state.mode) || MODES[0];
-    }
-
     function currentSession() {
       for (let k = state.messages.length - 1; k >= 0; k--) {
         const s = state.messages[k].session;
@@ -1632,17 +1622,6 @@
       return `<div class="session-recap" role="status"><h4>Study session done</h4><p>${parts.join(' · ')}</p>${lines.join('')}<div class="session-acts">${again ? '<button type="button" class="btn primary sm" data-chat="session-again">Study those again</button>' : ''}<button type="button" class="btn plain sm" data-chat="session-done">Done</button></div></div>`;
     }
 
-    function drawModes() {
-      for (const b of panel.querySelectorAll('.chat-mode')) {
-        const on = b.dataset.mode === state.mode;
-        b.classList.toggle('on', on);
-        b.setAttribute('aria-checked', String(on));
-      }
-      $('#chat-mode-name').textContent = modeName(state.mode);
-      drawContext();
-      input.placeholder = state.mode === 'study' ? 'Answer, or ask for a question…' : 'Message Felix, or type @ to add a note…';
-    }
-
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
@@ -1651,26 +1630,16 @@
       $('[data-chat="drop"]').hidden = !ctx;
     }
 
-    const modeName = (id) => (MODES.find((x) => x.id === id) || MODES[0]).label;
     const writer = (m) => (m && m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '');
 
     function switches(list, i) {
       const m = list[i];
       const out = [];
-      if (m.role === 'user' && m.mode) {
-        const before = list.slice(0, i).reverse().find((x) => x.role === 'user' && x.mode);
-        if (before && before.mode !== m.mode) out.push(`Now in ${modeName(m.mode)}`);
-      }
       if (m.role === 'assistant' && writer(m)) {
         const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x));
         if (before && writer(before) !== writer(m)) out.push(`Now answered by ${writer(m)}, with everything said so far`);
       }
       return out.map((t) => `<div class="chat-switch">${escape(t)}</div>`).join('');
-    }
-
-    function lastSwitch() {
-      const last = [...state.messages].reverse().find((x) => x.role === 'user' && x.mode);
-      return last && last.mode !== state.mode ? `<div class="chat-switch">Switched to ${escape(modeName(state.mode))}; the conversation carries on</div>` : '';
     }
 
     function bubble(m, i) {
@@ -1741,25 +1710,22 @@
     }
 
     function welcome() {
-      const info = modeInfo();
       const where = onNote() ? 'this note' : 'your notes';
-      return `<div class="chat-hello" data-hello="${escape(`${state.id}:${state.mode}:${where}`)}">
-        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${info.hint}. I also read ${where}, and the notes connected to it.`, escape)}</p>
+      return `<div class="chat-hello" data-hello="${escape(`${state.id}:${where}`)}">
+        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${HELLO}. I also read ${where}, and the notes connected to it.`, escape)}</p>
         ${reviewCard()}
-        <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
+        <div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}
       </div>`;
     }
 
     function reviewCard() {
-      const all = state.review || [];
-      const due = all.filter((m) => m.due);
-      if (!due.length && !(state.mode === 'study' && all.length)) return '';
-      const n = due.length || all.length;
+      const n = (state.review || []).filter((m) => m.due).length;
+      if (!n) return '';
       const what = `${n} question${n === 1 ? '' : 's'}`;
       return `<div class="chat-review">
-        <b>${due.length ? `Time to review ${what} you missed` : `You missed ${what} recently`}</b>
-        <span>From your study chats. Felix asks ${n === 1 ? 'it' : 'them'} again, one at a time.</span>
+        <b>Time to review ${what} you missed</b>
+        <span>From your earlier chats. Felix asks ${n === 1 ? 'it' : 'them'} again, one at a time.</span>
         <button class="btn primary" data-chat="review">Review now</button>
       </div>`;
     }
@@ -1777,14 +1743,11 @@
 
     async function startReview() {
       const all = state.review || [];
-      const due = all.filter((m) => m.due);
-      const items = (due.length ? due : all).slice(0, 5);
+      const items = all.filter((m) => m.due).slice(0, 5);
       if (!items.length || state.busy) return;
-      state.mode = 'study';
       const refs = [];
       for (const m of items) for (const r of m.notes || []) if (!refs.some((x) => x.id === r.id) && refs.length < MOST_REFS) refs.push(r);
       state.refs = refs;
-      drawModes();
       drawRefs();
       const keys = items.map((m) => m.key);
       state.review = all.filter((m) => !keys.includes(m.key));
@@ -1898,12 +1861,17 @@
         answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       }
       const result = checking.has(q) ? '<div class="quiz-result">Checking your answer…</div>' : marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
+      const open = !done && !q.predict;
+      const writing = thinkingOpen.has(q);
+      const thinking = open && writing ? `<textarea class="quiz-thinking" ${where} rows="2" maxlength="${MOST_THINKING}" placeholder="What are you thinking? Half-formed is fine" aria-label="Your thinking"${off}>${escape(state.drafts[`think:${i}:${k}`] || '')}</textarea>` : '';
+      const sure = open ? `<div class="quiz-sure" role="group" aria-label="How sure are you?">${Object.entries(SURE).map(([id, label]) => `<button type="button" class="quiz-sure-pick${q.sure === id ? ' on' : ''}" data-chat="quiz-sure" ${where} data-sure="${id}" aria-pressed="${q.sure === id}"${off}>${label}</button>`).join('')}${writing ? '' : `<button type="button" class="quiz-hint-ask" data-chat="quiz-think" ${where}${off}>Add your thinking</button>`}</div>${thinking}` : '';
+      const own = done && (SURE[q.sure] || q.thinking) ? `<div class="quiz-own">${[SURE[q.sure], q.thinking].filter(Boolean).map(escape).join(' · ')}</div>` : '';
       const hints = hintsOf(q);
       const hinted = hints
         .map((hint, n) => `<div class="quiz-hint prose">${hints.length > 1 ? `<span class="quiz-hint-n">Hint ${n + 1}</span>` : ''}${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`)
         .join('');
       const waiting = hints.some((h) => h.pending);
-      const askHint = !done && !pending && !waiting ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>${hints.length ? 'Another hint' : 'Get a hint'}</button>` : '';
+      const askHint = open && !pending && !waiting ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>${hints.length ? 'Another hint' : 'Get a hint'}</button>` : '';
       const marked = done && q.correct !== null && q.correct !== undefined;
       const judged = marked && !reply;
       const verdict = judged && q.kind !== 'multiple_choice' ? `<div class="quiz-verdict">${q.correct ? 'Right' : 'Not quite'}</div>` : '';
@@ -1916,7 +1884,7 @@
           : reply.pending ? '<div class="quiz-reply"><span class="typing"><i></i><i></i><i></i></span></div>' : '')
         : '';
       const tone = q.correct === true ? ' right' : q.correct === false ? ' wrong' : '';
-      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${answer}${askHint}${result}${why}${said}${onward}</div>`;
+      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${q.predict ? 'Predict' : escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${sure}${answer}${own}${askHint}${result}${why}${said}${onward}</div>`;
     }
 
     function askHint(i, k) {
@@ -1934,21 +1902,23 @@
     }
 
     const checking = new WeakSet();
+    const thinkingOpen = new WeakSet();
 
     async function answerQuiz(i, k, given) {
       const m = state.messages[i];
       const q = m && m.quizzes && m.quizzes[k];
       const text = String(given || '').trim();
       if (!q || typeof q.given === 'string' || state.busy || m.pending || !text || checking.has(q)) return;
+      const thinking = String(state.drafts[`think:${i}:${k}`] || '').trim().slice(0, MOST_THINKING);
       let correct = checkQuiz(q, text);
       if (correct === null && q.kind === 'fill_blank' && accepted(q).some((a) => plainAnswer(a) === plainAnswer(text))) correct = true;
-      if (correct === null) {
+      if (correct === null && !q.predict) {
         const chatId = state.id;
         checking.add(q);
         draw();
         let mark = null;
         try {
-          const response = await fetch('/api/quiz/mark', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: String(q.question || ''), answer: String(q.answer || ''), given: text, explain: String(q.explain || '') }) });
+          const response = await fetch('/api/quiz/mark', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: String(q.question || ''), answer: String(q.answer || ''), given: text, explain: String(q.explain || ''), confidence: SURE[q.sure] ? q.sure : '', thinking }) });
           if (response.ok) mark = await response.json();
         } catch (e) {}
         checking.delete(q);
@@ -1963,8 +1933,10 @@
       }
       q.given = text;
       q.correct = correct;
-      scoreSession(currentSession(), q.idea, correct, q.more);
+      if (thinking) q.thinking = thinking;
+      scoreSession(currentSession(), q.idea, correct, q.more || q.sure === 'guess');
       delete state.drafts[`${i}:${k}`];
+      delete state.drafts[`think:${i}:${k}`];
       if (correct === true) {
         state.streak += 1;
         mood(state.streak >= 3 ? 'cheer' : 'dance', state.streak >= 3 ? 2400 : 1800);
@@ -2281,13 +2253,13 @@
 
     function draw(stick = true, live = false) {
       const near = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
-      const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('quiz-input') && body.contains(document.activeElement)
-        ? { i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
+      const typing = document.activeElement && document.activeElement.classList && document.activeElement.matches('.quiz-input, .quiz-thinking') && body.contains(document.activeElement)
+        ? { box: document.activeElement.className.split(' ')[0], i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
         : null;
       const kept = body.scrollTop;
       const session = currentSession();
       const recap = session && session.state === 'finished' ? recapCard(session) : '';
-      const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}${lastSwitch()}` : welcome();
+      const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}` : welcome();
       const first = body.firstElementChild;
       const next = document.createElement('div');
       next.innerHTML = html;
@@ -2296,7 +2268,7 @@
       else body.innerHTML = html;
       drawProgress();
       if (typing) {
-        const again = body.querySelector(`.quiz-input[data-i="${typing.i}"][data-k="${typing.k}"]`);
+        const again = body.querySelector(`.${typing.box}[data-i="${typing.i}"][data-k="${typing.k}"]`);
         if (again && !again.disabled) {
           again.focus();
           again.setSelectionRange(typing.from, typing.to);
@@ -2336,7 +2308,6 @@
     async function send(text, extra = {}) {
       const question = text.trim();
       if (!question || state.busy || state.preparingSend) return;
-      const mode = state.mode;
       if (!extra.held) {
         const held = state.messages.flatMap((m) => (m.quizzes || []).filter((q) => q.held && !q.told));
         if (held.length) {
@@ -2381,8 +2352,7 @@
       going.forEach((f, i) => {
         if (f.status === 'ready') settle(i, f);
       });
-      asked.mode = state.mode;
-      const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
+      const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '' };
       working.set(answer, Date.now());
       if (card) answer.request = historyRequest(historyText(asked));
       if (card && extra.hint) card.hints = [...(Array.isArray(card.hints) ? card.hints : []), answer];
@@ -2394,7 +2364,7 @@
         fit();
       }
       const controller = new AbortController();
-      const thread = { id: state.id, mode: state.mode, refs: state.refs.slice(), messages: state.messages };
+      const thread = { id: state.id, refs: state.refs.slice(), messages: state.messages };
       const work = { abort: () => controller.abort(), thread, answer, waiting: [], answerId: null, permissionWanted: state.access, permissionPosted: access, permissionWorking: false };
       state.busy = work;
       awake();
@@ -2421,7 +2391,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
+          body: JSON.stringify({ messages: history, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && !card.predict && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('leo needs to sign in again. Quit leo and open it again.');
@@ -2468,8 +2438,8 @@
               for (const m of thread.messages) if (m !== answer) for (const q of m.quizzes || []) if (q.told) q.held = false;
               const idea = Number(e.quiz.idea) || 0;
               const s = currentSession();
-              if (s && s.state === 'active' && idea) s.asked += 1;
-              answer.quizzes = [...(answer.quizzes || []), { kind: String(e.quiz.kind || ''), question: e.quiz.question, options: Array.isArray(e.quiz.options) ? e.quiz.options.filter((o) => typeof o === 'string') : [], answer: String(e.quiz.answer || ''), explain: String(e.quiz.explain || ''), ...(idea ? { idea } : {}), ...(e.quiz.more ? { more: true } : {}) }];
+              if (s && s.state === 'active' && idea && !e.quiz.predict) s.asked += 1;
+              answer.quizzes = [...(answer.quizzes || []), { kind: String(e.quiz.kind || ''), question: e.quiz.question, options: Array.isArray(e.quiz.options) ? e.quiz.options.filter((o) => typeof o === 'string') : [], answer: String(e.quiz.answer || ''), explain: String(e.quiz.explain || ''), ...(idea ? { idea } : {}), ...(e.quiz.more ? { more: true } : {}), ...(e.quiz.predict ? { predict: true } : {}) }];
             }
             if (e.reset) {
               answer.text = '';
@@ -2518,7 +2488,7 @@
       if (card) {
         const extras = ['quizzes', 'asks', 'proposals'].filter((key) => (answer[key] || []).length);
         if (extras.length) {
-          const next = { role: 'assistant', text: '', sources: answer.sources, files: answer.files, mode: answer.mode, at: answer.at };
+          const next = { role: 'assistant', text: '', sources: answer.sources, files: answer.files, at: answer.at };
           for (const key of extras) {
             next[key] = answer[key];
             delete answer[key];
@@ -2533,7 +2503,7 @@
           answer.text = answer.text.slice(0, match.index) + replacement + answer.text.slice(end);
           answer.steps = (answer.steps || []).map(step => ({ ...step, at: step.at >= end ? step.at + delta : step.at }));
         }
-        if (card.correct === null || card.correct === undefined) {
+        if (!card.predict && (card.correct === null || card.correct === undefined)) {
           const verdict = answer.verdict || grade(answer.text).verdict;
           card.correct = verdict === 'correct' ? true : verdict === 'incorrect' ? false : null;
           scoreSession(currentSession(), card.idea, card.correct, card.more);
@@ -2594,7 +2564,6 @@
         syncSidebar(sidebarOpen());
         historyResize.fit();
         if (sidebarOpen()) loadChats();
-        drawModes();
         drawContext();
         if (state.filesFor !== state.id) loadFiles();
         drawRefs();
@@ -2618,7 +2587,6 @@
         $('#chat-access-menu').hidden = true;
         $('#chat-access').setAttribute('aria-expanded', 'false');
       }
-      if (!e.target.closest('[data-chat="modes"]')) closeMode();
       if (e.target.closest('.felix') && !e.target.closest('[data-chat]')) {
         tapped();
         return;
@@ -2656,10 +2624,6 @@
         const c = sessionSummary(s);
         s.dismissed = true;
         const ideas = [...c.review, ...c.skipped];
-        if (state.mode !== 'study') {
-          state.mode = 'study';
-          drawModes();
-        }
         send(`Let's do a study session on just these ideas: ${ideas.join('; ')}.`);
       }
       else if (what === 'unselect') {
@@ -2678,6 +2642,17 @@
         if (q) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), q.options[Number(el.dataset.o)]);
       } else if (what === 'quiz-next' || what === 'quiz-why') {
         continueQuiz(Number(el.dataset.i), Number(el.dataset.k), what === 'quiz-why');
+      } else if (what === 'quiz-sure') {
+        const q = state.messages[Number(el.dataset.i)]?.quizzes?.[Number(el.dataset.k)];
+        if (!q) return;
+        q.sure = q.sure === el.dataset.sure ? null : el.dataset.sure;
+        draw(false);
+      } else if (what === 'quiz-think') {
+        const q = state.messages[Number(el.dataset.i)]?.quizzes?.[Number(el.dataset.k)];
+        if (!q) return;
+        thinkingOpen.add(q);
+        draw(false);
+        body.querySelector(`.quiz-thinking[data-i="${el.dataset.i}"][data-k="${el.dataset.k}"]`)?.focus();
       } else if (what === 'quiz-hint') {
         askHint(Number(el.dataset.i), Number(el.dataset.k));
       } else if (what === 'quiz-check') {
@@ -2686,23 +2661,7 @@
       }
       else if (what === 'review') startReview();
       else if (what === 'forget') forget(el.dataset.id);
-      else if (what === 'modes') {
-        const menu = $('#chat-mode-menu');
-        menu.hidden = !menu.hidden;
-        el.setAttribute('aria-expanded', String(!menu.hidden));
-      } else if (what === 'mode') {
-        $('#chat-mode-btn').focus();
-        if (el.dataset.mode === state.mode) return;
-        state.asking = null;
-        closePick();
-        state.mode = el.dataset.mode;
-        if (state.messages.length) remember();
-        drawModes();
-        drawRefs();
-        draw();
-        persist();
-        loadReview();
-      } else if (what === 'starter') startWith(modeInfo().starters[Number(el.dataset.i)]);
+      else if (what === 'starter') startWith(STARTERS[Number(el.dataset.i)]);
       else if (what === 'ask-cancel') {
         state.asking = null;
         closePick();
@@ -2741,7 +2700,7 @@
         remember();
       }
       else if (what === 'drop') {
-        $('#chat-mode-btn').focus();
+        input.focus();
         state.dropped = state.context && state.context.id;
         drawContext();
         if (!state.messages.length) draw();
@@ -2762,6 +2721,7 @@
     });
     body.addEventListener('input', (e) => {
       if (e.target.classList.contains('quiz-input')) state.drafts[`${e.target.dataset.i}:${e.target.dataset.k}`] = e.target.value;
+      if (e.target.classList.contains('quiz-thinking')) state.drafts[`think:${e.target.dataset.i}:${e.target.dataset.k}`] = e.target.value;
     });
     body.addEventListener('keydown', (e) => {
       if (!e.target.classList.contains('quiz-input') || e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
@@ -2850,7 +2810,7 @@
       }
     });
     panel.addEventListener('keydown', (e) => {
-      const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access'], ['#chat-mode-menu', '#chat-mode-btn']]
+      const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access']]
         .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
         .find((x) => !x.menu.hidden);
       if (!open) return;
@@ -2948,10 +2908,6 @@
         const said = String(text || '').trim();
         if (!said || state.busy || state.preparingSend) return false;
         begin();
-        if (state.mode !== 'chat') {
-          state.mode = 'chat';
-          drawModes();
-        }
         toggle(true);
         send(said);
         return true;
@@ -2984,5 +2940,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -9,7 +9,6 @@ fn keeping_choices_are_saved_and_applied_right_away() {
         "chat-old-0001",
         chats::Saving {
             title: String::new(),
-            mode: String::new(),
             refs: vec![],
             messages: vec![serde_json::json!({"role": "user", "text": "hi"})],
         },

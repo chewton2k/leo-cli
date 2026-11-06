@@ -1275,7 +1275,6 @@ mod tests {
                 id,
                 chats::Saving {
                     title: id.into(),
-                    mode: "chat".into(),
                     refs: vec![],
                     messages: vec![serde_json::json!({"role": "user", "text": "hi"})],
                 },

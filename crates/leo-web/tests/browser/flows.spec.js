@@ -27,11 +27,6 @@ const test = base.test.extend({
 const fs = require('node:fs');
 const path = require('node:path');
 
-async function chooseMode(chat, mode) {
-  await chat.locator('#chat-mode-btn').click();
-  await chat.locator(`.chat-mode[data-mode="${mode}"]`).click();
-}
-
 test.beforeEach(async ({ page }) => {
   const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
   await page.goto(`/?token=${token}`);
@@ -136,7 +131,6 @@ test('retired practice state opens as Chat and old bookmarks return to the works
     await expect(page).toHaveURL(/\/(?:#\/)?$/);
   }
   await page.locator('#chat-toggle').click();
-  await expect(page.locator('#chat-mode-name')).toHaveText('Chat');
   await expect(page.locator('#chat')).toContainText('An old saved explanation.');
   await expect(page.locator('#chat')).toContainText('Interview practice is no longer part of leo.');
   await expect(page.locator('[data-action="interviews"]')).toHaveCount(0);
@@ -844,29 +838,73 @@ test.describe('note connections', () => {
 });
 
 test.describe('Felix', () => {
-  test('the head menu reaches every style and stops reading the note, all by keyboard', async ({ page }) => {
+  test('Felix stops reading the note from the head, by keyboard', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: 'Save the password.\n\nThen compare it.' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
     await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
     await expect(chat.locator('#chat-history')).toBeHidden();
-    const button = chat.locator('#chat-mode-btn');
-    await button.focus();
+    await expect(chat.locator('#chat-mode-btn')).toHaveCount(0);
+    const drop = chat.locator('[data-chat="drop"]');
+    await drop.focus();
     await page.keyboard.press('Enter');
-    await expect(button).toHaveAttribute('aria-expanded', 'true');
-    await page.keyboard.press('ArrowDown');
-    await expect(chat.locator('.chat-mode').first()).toBeFocused();
-    await page.keyboard.press('End');
-    await expect(chat.locator('[data-chat="drop"]')).toBeFocused();
-    await page.keyboard.press('Escape');
-    await expect(chat.locator('#chat-mode-menu')).toBeHidden();
-    await expect(button).toBeFocused();
-    await expect(chat).toBeVisible();
-    await button.click();
-    await chat.locator('[data-chat="drop"]').click();
     await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
-    await expect(button).toBeFocused();
+    await expect(drop).toBeHidden();
+    await expect(chat.locator('#chat-input')).toBeFocused();
+  });
+
+  test('a lesson card asks how sure you are and takes your thinking, and a prediction is not marked', async ({ page }) => {
+    const asked = [];
+    const marks = [];
+    const quiz = { kind: 'multiple_choice', question: 'Which end does a queue leave from?', options: ['the front', 'the back'], answer: 'the front', explain: 'Oldest first.' };
+    await page.route('**/api/quiz/mark', async (route) => {
+      marks.push(route.request().postDataJSON());
+      await route.fulfill({ json: { correct: true, feedback: 'Yes: the oldest item leaves first.' } });
+    });
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const lines = asked.length === 1
+        ? [{ quiz: { kind: 'free_response', predict: true, question: 'What must a queue remember?', answer: 'Its oldest item.' } }, { done: true }]
+        : asked.length === 2
+          ? [{ t: 'You said the order, and that is right: it tracks the oldest item.' }, { quiz: { kind: 'free_response', question: 'Why does order matter here?', answer: 'Fairness.' } }, { done: true }]
+          : [{ quiz }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('teach me queues');
+    await chat.locator('#chat-input').press('Enter');
+    const predict = chat.locator('.quiz-card').first();
+    await expect(predict.locator('.quiz-kind')).toHaveText('Predict');
+    await expect(predict.locator('[data-chat="quiz-sure"]')).toHaveCount(0);
+    await predict.locator('.quiz-input').fill('the order');
+    await predict.locator('[data-chat="quiz-check"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveCount(2);
+    expect(marks).toEqual([]);
+    expect(asked[1].mark).toBe(false);
+    await expect(predict).not.toHaveClass(/right|wrong/);
+
+    const check = chat.locator('.quiz-card').nth(1);
+    const sure = check.locator('[data-chat="quiz-sure"]', { hasText: 'Guessing' });
+    await sure.click();
+    await expect(sure).toHaveAttribute('aria-pressed', 'true');
+    await check.locator('[data-chat="quiz-think"]').click();
+    await expect(check.locator('.quiz-thinking')).toBeFocused();
+    await page.keyboard.type('fairness maybe');
+    await check.locator('.quiz-input').fill('so nobody waits forever');
+    await check.locator('[data-chat="quiz-check"]').click();
+    await expect(check.locator('.quiz-own')).toHaveText('Guessing · fairness maybe');
+    expect(marks[0]).toMatchObject({ confidence: 'guess', thinking: 'fairness maybe' });
+    await check.locator('[data-chat="quiz-next"]').click();
+    await expect.poll(() => asked.length).toBe(3);
+    expect(asked[2].messages.at(-1).text).toContain('(how sure I felt: guessing) My thinking: fairness maybe');
+
+    const choice = chat.locator('.quiz-card').last();
+    await choice.locator('[data-chat="quiz-sure"]', { hasText: 'Sure' }).click();
+    await choice.locator('.quiz-option', { hasText: 'the front' }).click();
+    await expect(choice.locator('.quiz-own')).toHaveText('Sure');
   });
 
   test('a growing reply keeps its finished words, and a citation lights its passage in the open note', async ({ page }) => {
@@ -926,11 +964,9 @@ test.describe('Felix', () => {
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
     await expect(chat.locator('.chat-context')).toContainText('Heaps');
-    await chooseMode(chat, 'study');
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
     await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
-    expect(asked[0].mode).toBe('study');
     expect(asked[0].note).toBe(note.id);
     await chat.locator('#chat-input').fill('At the root');
     await chat.locator('#chat-input').press('Enter');
@@ -942,16 +978,12 @@ test.describe('Felix', () => {
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
     await expect(chat).not.toHaveClass(/chat-leaving/);
     if (!(await chat.isVisible())) await page.locator('#chat-toggle').click();
-    await chooseMode(chat, 'chat');
-    await expect(chat.locator('.msg'), 'switching style keeps the conversation').toHaveCount(4);
-    await expect(chat.locator('.chat-switch')).toHaveText('Switched to Chat; the conversation carries on');
+    await expect(chat.locator('.msg')).toHaveCount(4);
     await chat.locator('#chat-input').fill('now explain why');
     await chat.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(3);
-    expect(asked[2].mode).toBe('chat');
     expect(asked[2].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
-    await expect(chat.locator('.chat-switch')).toHaveText('Now in Chat');
-    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.mode === 'chat' && c.count === 6)).toBe(true);
+    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.count === 6)).toBe(true);
   });
 
   test('notes are added with @ or the paperclip and go with every message', async ({ page }) => {
@@ -966,7 +998,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study']);
+    await expect(chat.locator('.chat-mode')).toHaveCount(0);
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');
@@ -1075,14 +1107,13 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chooseMode(chat, 'study');
-    await chat.locator('.starter', { hasText: 'Start a study session on this note' }).click();
-    await expect(chat.locator('.chat-ask')).toContainText('Which note should the session cover?');
+    await chat.locator('.starter', { hasText: 'Quiz me on this note' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should the quiz cover?');
     expect(asked.length).toBe(0);
     await chat.locator('#chat-pick-search').fill(`Sorting lecture ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Sorting lecture ${tag}` }).click();
     await expect(chat.locator('.msg.leo').last()).toContainText('Here we go.');
-    expect(asked[0].messages[0].text).toBe('Start a study session on this note');
+    expect(asked[0].messages[0].text).toBe('Quiz me on this note');
     expect(asked[0].refs).toEqual([note.id]);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
@@ -1095,9 +1126,8 @@ test.describe('Felix', () => {
     expect(asked[1].messages[0].text).toBe(`Make me a 3-day review plan for algos-${tag}`);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
-    await chooseMode(chat, 'chat');
-    await chat.locator('.starter', { hasText: 'Explain this simply' }).click();
-    await expect(chat.locator('.chat-ask')).toContainText('Which note should I explain?');
+    await chat.locator('.starter', { hasText: 'Teach me this note step by step' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should I teach you?');
     await chat.locator('[data-chat="ask-cancel"]').click();
     await expect(chat.locator('.chat-ask')).toHaveCount(0);
     expect(asked.length).toBe(2);
@@ -1238,7 +1268,6 @@ test.describe('Felix', () => {
     await card.locator('[data-chat="review"]').click();
     await expect(chat.locator('.msg.leo').last()).toContainText('First one: which structure?');
     const sent = asked[asked.length - 1];
-    expect(sent.mode).toBe('study');
     expect(sent.refs).toContain(note.id);
     expect(sent.messages[sent.messages.length - 1].text).toContain(`${question} (last time I said: a stack)`);
     await expect.poll(async () => (await (await page.request.get('/api/review')).json()).some((m) => m.question === question)).toBe(false);
@@ -3319,7 +3348,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
   });
 });
 
-test.describe('switching models and styles mid-chat', () => {
+test.describe('switching models mid-chat', () => {
   test('the next model is told what the last one looked up, and the switch is shown', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {
@@ -3340,7 +3369,7 @@ test.describe('switching models and styles mid-chat', () => {
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo').last()).toContainText('Building on that');
     const before = asked[1].messages[1].text;
-    expect(before).toContain('[Written by Codex · gpt-6.1-sol, in chat style]');
+    expect(before).toContain('[Written by Codex · gpt-6.1-sol]');
     expect(before).toContain('[What Felix did for this answer: Searched your notes for “queue” (found: Graph traversals)]');
     expect(before.endsWith('BFS uses a queue.')).toBe(true);
     expect(asked[1].recent).toEqual(['x1']);
@@ -3349,7 +3378,7 @@ test.describe('switching models and styles mid-chat', () => {
 });
 
 test.describe('past chats', () => {
-  test('chats are found by what was said in them, and switching style does not reorder them', async ({ page }) => {
+  test('chats are found by what was said in them, and opening one does not reorder them', async ({ page }) => {
     const tag = `${test.info().project.name}${Date.now().toString(36)}`;
     const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, mode: 'chat', messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
     await put(`chat-dij-${tag}`, `how does dijkstra${tag} relax edges`, `Shortest paths ${tag}`);
@@ -3369,7 +3398,6 @@ test.describe('past chats', () => {
     await search.fill('');
     await expect(chat.locator('.chat-history-title').first()).toHaveText(`Heaps ${tag}`);
     await chat.locator('.chat-history-item', { hasText: `Shortest paths ${tag}` }).click();
-    await chooseMode(chat, 'study');
     await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).filter((c) => c.id.endsWith(tag)).map((c) => c.id)).toEqual([`chat-heap-${tag}`, `chat-dij-${tag}`]);
   });
 });
@@ -4174,7 +4202,6 @@ test.describe('study sessions', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chooseMode(chat, 'study');
     await chat.locator('#chat-input').fill('quiz me on heaps');
     await chat.locator('#chat-input').press('Enter');
     const progress = chat.locator('#study-progress');

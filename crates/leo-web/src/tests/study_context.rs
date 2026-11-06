@@ -42,10 +42,9 @@ fn append(messages: &mut Vec<serde_json::Value>, question: &str) {
 }
 
 #[test]
-fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_refresh_changed_material(
-) {
+fn native_and_text_sessions_are_reused_without_repeating_documents_and_refresh_changed_material() {
     for native in [false, true] {
-        for mode in chat::MODES {
+        for practice in [false, true] {
             let (mut state, _dir, notes) = state_with(&[("Practice notes", "")]);
             state.room = Some(Arc::new(|| 360_000));
             let note = notes[0].clone();
@@ -105,11 +104,15 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
                 }
                 request(
                     &state,
-                    serde_json::json!({"chat":"study-cache-0001", "mode":mode, "access":"auto", "practice":mode=="study", "note":notes[0], "files":files, "messages":messages}),
+                    serde_json::json!({"chat":"study-cache-0001", "access":"auto", "practice":practice, "note":notes[0], "files":files, "messages":messages}),
                 );
             }
             let seen = heard.lock().unwrap();
-            assert_eq!(opened.load(Ordering::SeqCst), 1, "{mode}, native={native}");
+            assert_eq!(
+                opened.load(Ordering::SeqCst),
+                1,
+                "practice={practice}, native={native}"
+            );
             assert!(seen[0].contains("first.pdf") && seen[0].contains("FIRST_NOTE_MARKER"));
             assert!(!seen[1].contains("first.pdf") && !seen[1].contains("FIRST_NOTE_MARKER"));
             assert!(
@@ -118,7 +121,7 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
             assert!(
                 !seen[3].contains("SECOND_DOC_MARKER") && !seen[3].contains("UPDATED_NOTE_MARKER")
             );
-            if mode == "study" {
+            if practice {
                 assert!(seen[0].chars().count() < 90_000);
             } else {
                 assert!(seen[0].chars().count() > 200_000);
@@ -127,7 +130,7 @@ fn all_styles_reuse_native_and_text_sessions_without_repeating_documents_and_ref
             append(&mut messages, "Help with an ordinary message.");
             request(
                 &state,
-                serde_json::json!({"chat":"study-cache-0001", "mode":mode, "access":"read", "practice":false, "files":files, "messages":messages}),
+                serde_json::json!({"chat":"study-cache-0001", "access":"read", "practice":false, "files":files, "messages":messages}),
             );
             assert_eq!(opened.load(Ordering::SeqCst), 2);
         }

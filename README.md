@@ -92,7 +92,8 @@ keep tasks close by.
 
 ![Leo's note library with folder cards, note previews, and a tasks panel](public/notes-library.png)
 
-**Study with Felix.** Explore your notes with questions, explanations and feedback.
+**Study with Felix.** Ask anything, or say what you want to learn: Felix finds where
+your understanding stops, teaches one step at a time and quizzes you on your notes.
 
 
 **Dictate into other apps.** Hold or tap your global shortcut, speak, and Leo
