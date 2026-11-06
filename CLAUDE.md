@@ -113,7 +113,7 @@ settings and credentials are excluded from note exports.
 - `Store::unreadable`: files that failed to parse; `save` never deletes them.
 - Trash: `save` moves any note file that vanished (and was not just moved:
   its id is not live) to `<notes>/.trash/<same relative path>`, mtime = when
-  deleted. `tidy_trash` (load and save) drops live ids and ones past
+  deleted. `tidy_trash` (load, a save that writes a new id, and hourly on save) drops live ids and ones past
   the Keeping choice (`keep::DEFAULT_TRASH_DAYS`, 30). The Trash page restores and empties.
 - Updates: `leo_services::update::available()` reads the latest tag from the
   `releases/latest` redirect (not the API: rate limits), cached a day in

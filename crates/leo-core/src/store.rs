@@ -206,6 +206,26 @@ struct Seen {
     path: PathBuf,
     disk: u64,
     model: u64,
+    fields: u64,
+}
+
+const TIDY_TRASH_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+fn hash_note(note: &Note) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (
+        &note.id,
+        &note.title,
+        &note.body,
+        &note.tags,
+        note.created_at,
+        note.updated_at,
+        note.pinned,
+        &note.extra,
+    )
+        .hash(&mut hasher);
+    hasher.finish()
 }
 
 fn hash_str(text: &str) -> u64 {
@@ -292,7 +312,11 @@ fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
 
 fn save_directories(notes_dir: &Path, directories: &[String]) -> Result<()> {
     let path = crate::paths::contained_path(notes_dir, Path::new("directories.json"))?;
-    write_atomic(&path, &serde_json::to_string_pretty(directories)?)?;
+    let text = serde_json::to_string_pretty(directories)?;
+    if fs::read_to_string(&path).is_ok_and(|saved| saved == text) {
+        return Ok(());
+    }
+    write_atomic(&path, &text)?;
     Ok(())
 }
 
@@ -474,6 +498,7 @@ fn index_notes(
                 path: relative,
                 disk: hash_str(&content),
                 model,
+                fields: hash_note(&note),
             },
         );
         notes.push(note);
@@ -550,6 +575,7 @@ pub struct Store {
     undo: Vec<Undoable>,
     seen: std::cell::RefCell<HashMap<String, Seen>>,
     fingerprint: std::cell::Cell<u64>,
+    tidied: std::cell::Cell<std::time::Instant>,
 }
 
 impl Store {
@@ -584,6 +610,7 @@ impl Store {
         Ok(Store {
             seen: std::cell::RefCell::new(seen),
             fingerprint: std::cell::Cell::new(fingerprint_of(notes_dir)),
+            tidied: std::cell::Cell::new(std::time::Instant::now()),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -608,13 +635,22 @@ impl Store {
         let mut seen = self.seen.borrow_mut();
         let targets = self.assign_paths(&seen);
         let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
+        let mut appeared = false;
 
         for note in &self.notes {
             let target = targets[&note.id].clone();
             crate::paths::contained_path(&self.notes_dir, target.strip_prefix(&self.notes_dir)?)?;
+            let fields = hash_note(note);
+            let previous = seen.get(&note.id).cloned();
+            if let Some(previous) = &previous {
+                if previous.fields == fields
+                    && crate::paths::contained_path(&self.notes_dir, &previous.path)? == target
+                {
+                    continue;
+                }
+            }
             let content = note_to_markdown(note)?;
             let model = hash_str(&content);
-            let previous = seen.get(&note.id).cloned();
 
             if let Some(previous) = &previous {
                 let old_path = crate::paths::contained_path(&self.notes_dir, &previous.path)?;
@@ -626,11 +662,13 @@ impl Store {
                         self.conflict_copy(note)?;
                         if let Some(entry) = seen.get_mut(&note.id) {
                             entry.model = model;
+                            entry.fields = fields;
                         }
                     }
                     continue;
                 }
             }
+            appeared |= previous.is_none();
 
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
@@ -652,6 +690,7 @@ impl Store {
                     path: relative,
                     disk: model,
                     model,
+                    fields,
                 },
             );
         }
@@ -671,7 +710,10 @@ impl Store {
             }
         }
         drop(seen);
-        tidy_trash(&self.notes_dir, &live);
+        if appeared || self.tidied.get().elapsed() >= TIDY_TRASH_EVERY {
+            tidy_trash(&self.notes_dir, &live);
+            self.tidied.set(std::time::Instant::now());
+        }
 
         save_directories(&self.notes_dir, &self.directories)?;
         self.fingerprint.set(fingerprint_of(&self.notes_dir));
@@ -1620,6 +1662,33 @@ mod tests {
     }
 
     #[test]
+    fn saving_again_with_nothing_changed_rewrites_no_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        let mut store = Store::load_from(&notes_dir).unwrap();
+        store.create_note("Kept", "body", vec![], "").unwrap();
+        store.save().unwrap();
+        let stamp = |name: &str| {
+            std::fs::metadata(notes_dir.join(name))
+                .unwrap()
+                .modified()
+                .unwrap()
+        };
+        let (note, folders) = (stamp("Kept.md"), stamp("directories.json"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        store.save().unwrap();
+        assert_eq!(stamp("Kept.md"), note);
+        assert_eq!(stamp("directories.json"), folders);
+        store.notes[0].body = "changed".into();
+        store.save().unwrap();
+        assert_ne!(stamp("Kept.md"), note);
+        assert_eq!(stamp("directories.json"), folders);
+        assert!(std::fs::read_to_string(notes_dir.join("Kept.md"))
+            .unwrap()
+            .ends_with("changed"));
+    }
+
+    #[test]
     fn test_save_writes_md_files() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
@@ -1629,6 +1698,7 @@ mod tests {
             undo: Vec::new(),
             seen: Default::default(),
             fingerprint: Default::default(),
+            tidied: std::cell::Cell::new(std::time::Instant::now()),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
