@@ -172,6 +172,7 @@ pub struct Powers {
 #[derive(Clone)]
 struct AppState {
     visible: Arc<std::sync::atomic::AtomicBool>,
+    shown: Arc<tokio::sync::Notify>,
     refresh_requested: Arc<std::sync::atomic::AtomicBool>,
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
@@ -277,6 +278,7 @@ const PICTURES_PER_TICK: usize = 4;
 
 async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut read_at = None;
     let mut graphed_at = None;
     let mut stuck = None;
@@ -290,9 +292,11 @@ async fn keep_graph_current(state: AppState) {
                 .read_store(move |store| Ok(margin::sweep_store(&chats, store)))
                 .await;
         }
-        if !state.visible.load(std::sync::atomic::Ordering::Acquire)
-            || state.capture_activity.busy()
-        {
+        if !state.visible.load(std::sync::atomic::Ordering::Acquire) {
+            let _ = tokio::time::timeout(margin::SWEEP_EVERY, state.shown.notified()).await;
+            continue;
+        }
+        if state.capture_activity.busy() {
             continue;
         }
         let Ok(seen) = state.read_store(|store| Ok(store.fingerprint())).await else {
@@ -504,6 +508,7 @@ impl Running {
             self.state
                 .refresh_requested
                 .store(true, std::sync::atomic::Ordering::Release);
+            self.state.shown.notify_one();
         }
         changed
     }
@@ -595,6 +600,7 @@ pub(crate) async fn start_in(
         toolless_chat,
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        shown: Default::default(),
         refresh_requested: Default::default(),
         store: Arc::new(Mutex::new(Storage {
             changes: Some(store_refresh::Changes::new(&notes)),
@@ -968,6 +974,9 @@ async fn stop_idle_sessions(warm: Arc<warm::Slot>) {
     let mut every = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         every.tick().await;
+        if !warm.holding() {
+            continue;
+        }
         let warm = Arc::clone(&warm);
         let _ = tokio::task::spawn_blocking(move || warm.tidy()).await;
     }

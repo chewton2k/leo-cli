@@ -129,7 +129,6 @@ impl Slot {
         drop(removed);
     }
 
-    #[cfg(test)]
     pub fn holding(&self) -> bool {
         !self.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
