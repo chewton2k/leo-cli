@@ -1064,6 +1064,30 @@ fn the_study_rules_reach_felix_once_however_the_study_starts() {
 }
 
 #[test]
+fn a_lookup_uses_the_cheaper_writer_when_no_session_can_open() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    state.chat = Some(scripted(vec!["Chosen model."]).0);
+    state.light_chat = Some(scripted(vec!["Light model.", "Light model."]).0);
+    let shown = |lines: Vec<serde_json::Value>| {
+        lines
+            .iter()
+            .filter_map(|l| l["t"].as_str())
+            .collect::<String>()
+    };
+    assert_eq!(
+        shown(chat_lines(&state, "when is lab 3 due?")),
+        "Light model."
+    );
+    assert_eq!(shown(chat_lines(&state, "explain lab 3")), "Chosen model.");
+    state.light_chat = None;
+    state.chat = Some(scripted(vec!["Chosen model."]).0);
+    assert_eq!(
+        shown(chat_lines(&state, "when is lab 3 due?")),
+        "Chosen model."
+    );
+}
+
+#[test]
 fn a_lookup_starts_on_the_light_model_moves_up_when_needed_and_never_back_down() {
     struct Quick;
     impl chat::Conversation for Quick {

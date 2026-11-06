@@ -152,6 +152,7 @@ pub struct Powers {
     pub housekeeping: Option<Writer>,
     pub usage: Arc<usage::Usage>,
     pub chat: Option<Streamer>,
+    pub light_chat: Option<Streamer>,
     pub toolless_chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
@@ -189,6 +190,7 @@ struct AppState {
     warm: Arc<warm::Slot>,
     work: Arc<work::Work>,
     chat: Option<Streamer>,
+    light_chat: Option<Streamer>,
     toolless_chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     speech: Option<Arc<dyn speech::SpeechApi>>,
@@ -598,6 +600,7 @@ pub(crate) async fn start_in(
     let meaning = powers.meaning;
     let toolless = powers.toolless;
     let toolless_chat = powers.toolless_chat;
+    let light_chat = powers.light_chat;
     let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
     let (listener, port) = bind(options.port).await?;
     let gate = Arc::new(sessions::Gate::new(
@@ -607,6 +610,7 @@ pub(crate) async fn start_in(
     let state = AppState {
         toolless,
         toolless_chat,
+        light_chat,
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),

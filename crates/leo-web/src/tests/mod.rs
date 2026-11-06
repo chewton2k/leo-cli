@@ -62,6 +62,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
     let state = AppState {
         toolless: None,
         toolless_chat: None,
+        light_chat: None,
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),

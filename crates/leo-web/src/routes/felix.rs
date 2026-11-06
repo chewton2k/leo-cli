@@ -1185,6 +1185,10 @@ fn answer(
         session,
     } = ask;
     let light = remember.light;
+    let streamer = match &state.light_chat {
+        Some(cheaper) if light => cheaper,
+        _ => streamer,
+    };
     let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
         if value.get("restart").is_some() || value.get("reset").is_some() {
