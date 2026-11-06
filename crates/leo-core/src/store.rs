@@ -222,7 +222,7 @@ fn hash_note(note: &Note) -> u64 {
         note.created_at,
         note.updated_at,
         note.pinned,
-        &note.extra,
+        serde_yaml::to_string(&note.extra).unwrap_or_default(),
     )
         .hash(&mut hasher);
     hasher.finish()
@@ -575,7 +575,7 @@ pub struct Store {
     undo: Vec<Undoable>,
     seen: std::cell::RefCell<HashMap<String, Seen>>,
     fingerprint: std::cell::Cell<u64>,
-    tidied: std::cell::Cell<std::time::Instant>,
+    tidied: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 impl Store {
@@ -610,7 +610,7 @@ impl Store {
         Ok(Store {
             seen: std::cell::RefCell::new(seen),
             fingerprint: std::cell::Cell::new(fingerprint_of(notes_dir)),
-            tidied: std::cell::Cell::new(std::time::Instant::now()),
+            tidied: std::cell::Cell::new(Some(std::time::Instant::now())),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -635,7 +635,6 @@ impl Store {
         let mut seen = self.seen.borrow_mut();
         let targets = self.assign_paths(&seen);
         let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
-        let mut appeared = false;
 
         for note in &self.notes {
             let target = targets[&note.id].clone();
@@ -668,7 +667,9 @@ impl Store {
                     continue;
                 }
             }
-            appeared |= previous.is_none();
+            if previous.is_none() {
+                self.tidied.set(None);
+            }
 
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
@@ -710,9 +711,13 @@ impl Store {
             }
         }
         drop(seen);
-        if appeared || self.tidied.get().elapsed() >= TIDY_TRASH_EVERY {
+        if self
+            .tidied
+            .get()
+            .is_none_or(|at| at.elapsed() >= TIDY_TRASH_EVERY)
+        {
             tidy_trash(&self.notes_dir, &live);
-            self.tidied.set(std::time::Instant::now());
+            self.tidied.set(Some(std::time::Instant::now()));
         }
 
         save_directories(&self.notes_dir, &self.directories)?;
@@ -1662,6 +1667,86 @@ mod tests {
     }
 
     #[test]
+    fn a_change_to_any_field_of_a_saved_note_reaches_its_file() {
+        type Change = fn(&mut Note);
+        let changes: [Change; 7] = [
+            |n| n.title = "Renamed".into(),
+            |n| n.body = "new body".into(),
+            |n| n.tags = vec!["tagged".into()],
+            |n| n.created_at -= chrono::Duration::days(1),
+            |n| n.updated_at += chrono::Duration::days(1),
+            |n| n.pinned = true,
+            |n| {
+                n.extra
+                    .insert("rating".into(), serde_yaml::Value::from(1.5));
+            },
+        ];
+        for change in changes {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let notes_dir = tmp.path().join("notes");
+            let mut store = Store::load_from(&notes_dir).unwrap();
+            store.create_note("Kept", "body", vec![], "").unwrap();
+            store.notes[0]
+                .extra
+                .insert("rating".into(), serde_yaml::Value::from(4.5));
+            store.save().unwrap();
+            change(&mut store.notes[0]);
+            store.save().unwrap();
+            let saved = &Store::load_from(&notes_dir).unwrap().notes[0];
+            let wanted = &store.notes[0];
+            assert_eq!(
+                (
+                    &saved.title,
+                    &saved.body,
+                    &saved.tags,
+                    saved.created_at,
+                    saved.updated_at,
+                    saved.pinned,
+                    &saved.extra
+                ),
+                (
+                    &wanted.title,
+                    &wanted.body,
+                    &wanted.tags,
+                    wanted.created_at,
+                    wanted.updated_at,
+                    wanted.pinned,
+                    &wanted.extra
+                )
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_restored_note_leaves_the_trash_even_when_its_save_failed_midway() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut store, _tmp) = temp_store();
+        let b = store
+            .create_note("B", "b", vec![], "sub")
+            .unwrap()
+            .id
+            .clone();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let a = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.delete_note(&a);
+        store.save().unwrap();
+        assert_eq!(store.trashed().len(), 1);
+        store.undo().unwrap();
+        store.find_note_mut(&b).unwrap().body = "b2".into();
+        let sub = store.notes_dir.join("sub");
+        let open = std::fs::metadata(&sub).unwrap().permissions();
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = store.save();
+        std::fs::set_permissions(&sub, open).unwrap();
+        assert!(failed.is_err());
+        store.save().unwrap();
+        assert!(store.find_note(&a).is_some());
+        assert!(store.trashed().is_empty());
+    }
+
+    #[test]
     fn saving_again_with_nothing_changed_rewrites_no_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
@@ -1698,7 +1783,7 @@ mod tests {
             undo: Vec::new(),
             seen: Default::default(),
             fingerprint: Default::default(),
-            tidied: std::cell::Cell::new(std::time::Instant::now()),
+            tidied: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
