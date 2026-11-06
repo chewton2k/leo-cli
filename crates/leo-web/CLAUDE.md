@@ -406,6 +406,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   stays for old rows and is kept as it was on save (new rows say `chat`); request
   and saved `mode` fields are ignored. `.chat-switch` keeps only the who-answered
   line. Review shows on the empty chat only when questions are due.
+- `LEARNING` is not in the system prompt (2026-11-06, half of it, about 1,700 tokens off every cold prompt, measured on Codex): Felix calls `study_rules` before teaching, testing or marking. So nothing depends on him remembering, practice, marking and a running session send `<study_rules>` with the prompt, and a first `quiz` or `study_plan` carries it in the tool result; `Reads.study_rules` keeps a session from hearing it twice.
 - Lessons and practice borrow LearnHarness's method, in our own words only
   (AGPL-3.0 against leo's MIT; never paste its prompts or code). A lesson finds
   where understanding stops (ordinary quiz cards before any plan), plans the

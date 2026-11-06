@@ -965,6 +965,105 @@ fn a_session_hears_only_what_is_new_and_a_failed_native_start_falls_back() {
 }
 
 #[test]
+fn the_study_rules_reach_felix_once_however_the_study_starts() {
+    struct Session(Arc<Mutex<Vec<String>>>, Vec<&'static str>);
+    impl chat::Conversation for Session {
+        fn native(&self) -> bool {
+            false
+        }
+        fn say(&mut self, text: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            self.0.lock().unwrap().push(text.to_string());
+            let reply = if self.1.is_empty() {
+                "Done."
+            } else {
+                self.1.remove(0)
+            };
+            (exchange.piece)(reply);
+            Ok(chat::Reply::from(reply))
+        }
+    }
+    const QUIZ: &str = "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What does a heap keep at its root?\", \"answer\": \"The smallest item\"}</tool>";
+    const RULES: &str = "<tool>{\"name\": \"study_rules\"}</tool>";
+    const MARK: &str = "Find the edge first";
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let replies = Arc::new(Mutex::new(vec![RULES, QUIZ]));
+    let ears = Arc::clone(&heard);
+    let lines = Arc::clone(&replies);
+    state.converse = Some(Arc::new(
+        move |_: &chat::Instructions, _: &[chat::ToolSpec]| {
+            let script = std::mem::take(&mut *lines.lock().unwrap());
+            Some(Box::new(Session(Arc::clone(&ears), script)) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+
+    let lines_out = chat_lines(&state, "teach me heaps");
+    assert!(lines_out
+        .iter()
+        .any(|l| l["step"] == "Checked how to teach this"));
+    {
+        let mut said = heard.lock().unwrap();
+        assert!(!said[0].contains(MARK), "an answer starts without them");
+        assert!(said[1].contains(MARK), "asking for them returns them");
+        assert!(!said[2].contains(MARK), "a quiz after them repeats nothing");
+        said.clear();
+    }
+
+    *replies.lock().unwrap() = vec![QUIZ];
+    chat_lines(&state, "quiz me on heaps");
+    {
+        let mut said = heard.lock().unwrap();
+        assert!(!said[0].contains(MARK));
+        assert!(said[1].contains(MARK), "a first quiz brings them along");
+        said.clear();
+    }
+
+    let practice = |chat: Option<&str>, messages: Vec<chat::Turn>| {
+        let body = chat::ChatBody {
+            messages,
+            note: None,
+            refs: vec![],
+            chat: chat.map(str::to_string),
+            files: vec![],
+            access: None,
+            recent: vec![],
+            practice: true,
+            mark: false,
+            selection: None,
+            session: None,
+        };
+        run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+        });
+    };
+    let turn = |role: &str, text: &str| chat::Turn {
+        role: role.into(),
+        text: text.into(),
+    };
+    *replies.lock().unwrap() = vec![QUIZ];
+    practice(None, vec![turn("user", "go")]);
+    {
+        let mut said = heard.lock().unwrap();
+        assert!(said[0].contains(MARK), "practice starts with them");
+        assert!(!said[1].contains(MARK));
+        said.clear();
+    }
+
+    let mut talk = vec![turn("user", "go")];
+    practice(Some("study-rules-0001"), talk.clone());
+    talk.extend([turn("assistant", "Done."), turn("user", "next")]);
+    practice(Some("study-rules-0001"), talk);
+    let said = heard.lock().unwrap();
+    assert_eq!(said.len(), 2);
+    assert!(said[0].contains(MARK));
+    assert!(!said[1].contains(MARK), "a warm session has them already");
+}
+
+#[test]
 fn a_lookup_starts_on_the_light_model_moves_up_when_needed_and_never_back_down() {
     struct Quick;
     impl chat::Conversation for Quick {

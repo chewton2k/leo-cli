@@ -357,6 +357,7 @@ struct Remember {
 }
 
 struct Ask {
+    studying: bool,
     system: String,
     conversation: String,
     continued: Option<Continued>,
@@ -743,6 +744,14 @@ fn execute_tool(
     ) || tools::organizes(&call.name)
     {
         crate::routes::organize::run(state, desk, access, call)
+    } else if call.name == "study_rules" {
+        desk.reads.study_rules = true;
+        tools::Done {
+            step: "Checked how to teach this".into(),
+            result: chat::LEARNING.into(),
+            proposal: None,
+            found: Vec::new(),
+        }
     } else if call.name == "calculate" {
         let steps = call.text("steps");
         let lines = steps.lines().filter(|l| !l.trim().is_empty()).count();
@@ -789,6 +798,10 @@ fn execute_tool(
             done.result = reused;
             done.step = format!("{} again (unchanged)", done.step);
         }
+    }
+    if matches!(call.name.as_str(), "quiz" | "study_plan") && !desk.reads.study_rules {
+        desk.reads.study_rules = true;
+        done.result = format!("{}\n\n{}", done.result, chat::study_rules_block());
     }
     send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
     let added = desk.take_steering();
@@ -1158,6 +1171,7 @@ fn answer(
     tx: &crate::reply::Sender,
 ) -> Result<Option<chat::Spent>> {
     let Ask {
+        studying,
         system,
         conversation,
         continued,
@@ -1237,6 +1251,7 @@ fn answer(
         .as_ref()
         .map(|c| c.warm.reads.clone())
         .unwrap_or_default();
+    desk.reads.study_rules |= studying;
     let specs = tools::native_specs(access);
     let keep = |talk: Box<dyn chat::Conversation>,
                 sent: usize,
@@ -1318,6 +1333,7 @@ fn answer(
                 desk.asked = 0;
                 desk.verdict = None;
                 desk.reads.clear();
+                desk.reads.study_rules = studying;
                 desk.sources = sources.clone();
                 send(serde_json::json!({ "sources": sources }));
             }
@@ -1943,6 +1959,13 @@ pub(crate) async fn chat_reply(
             );
         }
     }
+    let studying = body.practice || body.mark || body.session.is_some();
+    if studying {
+        user = format!("{}{user}", chat::study_rules_block());
+        if let Some(c) = continued.as_mut().filter(|c| !c.warm.reads.study_rules) {
+            c.text = format!("{}{}", chat::study_rules_block(), c.text);
+        }
+    }
     let marking = body
         .mark
         .then(|| body.messages.last().map(|t| t.text.clone()))
@@ -1965,6 +1988,7 @@ pub(crate) async fn chat_reply(
     tokio::task::spawn_blocking(move || {
         let _foreground = foreground;
         let ask = Ask {
+            studying,
             system,
             conversation: user,
             continued,

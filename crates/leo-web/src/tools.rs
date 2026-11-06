@@ -149,7 +149,7 @@ pub const FRESH: Param = Param {
     about: "yes to repeat the full result if an earlier result is no longer available; otherwise unchanged reads return a short reference",
 };
 
-pub const SPECS: [Spec; 31] = [
+pub const SPECS: [Spec; 32] = [
     Spec {
         name: "search_notes",
         purpose: "Find notes by keywords, abbreviations or graph concepts.",
@@ -536,6 +536,13 @@ pub const SPECS: [Spec; 31] = [
         }],
         returns: "Matching chats with their title, date and the lines that match.",
         example: r#"<tool>{"name": "search_chats", "query": "midterm topics"}</tool>"#,
+    },
+    Spec {
+        name: "study_rules",
+        purpose: "Read how to teach a lesson, run practice, ask questions and mark answers. Call it once before any of those; never for an ordinary answer.",
+        params: &[],
+        returns: "The rules for lessons, practice, hints and marking.",
+        example: r#"<tool>{"name": "study_rules"}</tool>"#,
     },
     Spec {
         name: "study_plan",
@@ -2968,7 +2975,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "erase_everything", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, delete_task, move_note, make_folder, move_folder, delete_note, rename_note, rename_folder, pin_note, add_margin_note, list_trash, restore_note, restore_folder, delete_folder, search_chats, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note, list_boards, open_board, add_card"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, delete_task, move_note, make_folder, move_folder, delete_note, rename_note, rename_folder, pin_note, add_margin_note, list_trash, restore_note, restore_folder, delete_folder, search_chats, study_rules, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note, list_boards, open_board, add_card"
         ));
         assert_eq!(
             check(&Call {
