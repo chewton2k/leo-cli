@@ -2,11 +2,9 @@
 //! vocabulary every front end speaks. Nothing here draws to a terminal or
 //! makes a network request, which is what keeps it testable on its own.
 
-pub mod action;
 pub mod attachments;
 pub mod children;
 pub mod diag;
-pub mod editor;
 pub mod filename;
 pub mod keep;
 pub mod manual;

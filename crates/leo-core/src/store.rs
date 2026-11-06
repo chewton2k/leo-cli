@@ -280,11 +280,6 @@ fn notes_dir_path() -> Result<PathBuf> {
     crate::paths::contained_path(&crate::paths::data_dir()?, Path::new("notes"))
 }
 
-/// Legacy notes.json path — used only for migration detection.
-fn old_data_path() -> Result<PathBuf> {
-    Ok(crate::paths::data_dir()?.join("notes.json"))
-}
-
 fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
     let path = crate::paths::contained_path(notes_dir, Path::new("directories.json"))?;
     if path.exists() {
@@ -511,11 +506,6 @@ pub enum Undoable {
     },
     /// A checkbox that was toggled. Toggling is its own inverse.
     Toggled { id: String, n: usize, title: String },
-    /// Changes made by one command, taken back together.
-    Batch {
-        changes: Vec<Undoable>,
-        what: String,
-    },
 }
 
 impl Undoable {
@@ -531,7 +521,6 @@ impl Undoable {
                 };
                 format!("Moved \"{title}\" back to {place}")
             }
-            Undoable::Batch { what, .. } => what.clone(),
             Undoable::Toggled { title, n, .. } => {
                 format!("Un-toggled box {n} in \"{title}\"")
             }
@@ -577,21 +566,8 @@ impl Store {
     }
 
     /// Load notes from the platform data directory.
-    /// Automatically migrates from legacy notes.json on first run.
     pub fn load() -> Result<Self> {
         let notes_dir = notes_dir_path()?;
-        let old_path = old_data_path()?;
-        // Treat notes_dir as empty if it doesn't exist, or if it exists but
-        // contains no .md files (handles the case where sync init ran first
-        // and created notes_dir with .git/ before migration could fire).
-        let notes_dir_empty = !notes_dir.exists() || {
-            let mut md_paths = std::collections::HashSet::new();
-            collect_md_paths(&notes_dir, &mut md_paths).unwrap_or(());
-            md_paths.is_empty()
-        };
-        if old_path.exists() && notes_dir_empty {
-            migrate_from_json(&old_path, &notes_dir)?;
-        }
         Self::load_from(&notes_dir)
     }
 
@@ -909,30 +885,6 @@ impl Store {
         notes
     }
 
-    /// Find a note by numeric index, full ID, unique prefix, or title.
-    pub fn find_by_index_or_prefix(&self, input: &str) -> Option<&Note> {
-        if let Ok(n) = input.parse::<usize>() {
-            let list = self.list_notes(None, 20);
-            if n >= 1 && n <= list.len() {
-                return Some(list[n - 1]);
-            }
-        }
-        if let Some(note) = self.find_note(input) {
-            return Some(note);
-        }
-        let title_matches = self.find_by_title(input);
-        if title_matches.len() == 1 {
-            return Some(title_matches[0]);
-        }
-        None
-    }
-
-    /// Mutable version of find_by_index_or_prefix.
-    pub fn find_by_index_or_prefix_mut(&mut self, input: &str) -> Option<&mut Note> {
-        let id = self.find_by_index_or_prefix(input)?.id.clone();
-        self.notes.iter_mut().find(|note| note.id == id)
-    }
-
     /// Find notes whose title contains the query (case-insensitive), newest first.
     pub fn find_by_title(&self, query: &str) -> Vec<&Note> {
         let q = query.to_lowercase();
@@ -1128,11 +1080,6 @@ impl Store {
                 // A toggle is its own inverse, so this must not record itself.
                 if let Some(note) = self.find_note_mut(&id) {
                     note.toggle_checkbox(n);
-                }
-            }
-            Undoable::Batch { changes, .. } => {
-                for change in changes.into_iter().rev() {
-                    self.revert(change);
                 }
             }
         }
@@ -1364,31 +1311,6 @@ impl Store {
         counts
     }
 
-    /// Move several notes as one undoable change. Returns the titles moved.
-    pub fn move_notes(&mut self, ids: &[String], new_dir: &str) -> Vec<String> {
-        let mut changes = Vec::new();
-        let mut titles = Vec::new();
-        for id in ids {
-            if self.move_note(id, new_dir).is_some() {
-                changes.push(self.undo.pop().expect("move_note records its change"));
-                titles.push(
-                    self.find_note(id)
-                        .map(|n| n.title.clone())
-                        .unwrap_or_default(),
-                );
-            }
-        }
-        match changes.len() {
-            0 => {}
-            1 => self.remember(changes.pop().unwrap()),
-            n => self.remember(Undoable::Batch {
-                changes,
-                what: format!("Moved {n} notes back"),
-            }),
-        }
-        titles
-    }
-
     pub fn move_dir(&mut self, from: &str, into: &str) -> Option<String> {
         let from = from.trim_matches('/');
         let into = into.trim_matches('/');
@@ -1487,60 +1409,6 @@ impl Store {
         });
         Some(title)
     }
-}
-
-// ── Migration ───────────────────────────────────────────────────────────────
-
-fn migrate_from_json(old_path: &Path, notes_dir: &Path) -> Result<()> {
-    check_notes_root(notes_dir)?;
-    let raw = fs::read_to_string(old_path)
-        .with_context(|| format!("failed to read {}", old_path.display()))?;
-
-    #[derive(serde::Deserialize)]
-    struct LegacyStore {
-        notes: Vec<Note>,
-        #[serde(default)]
-        directories: Vec<String>,
-    }
-
-    let (notes, directories): (Vec<Note>, Vec<String>) = if raw.trim_start().starts_with('[') {
-        let notes: Vec<Note> = serde_json::from_str(&raw)?;
-        (notes, Vec::new())
-    } else {
-        let data: LegacyStore = serde_json::from_str(&raw)?;
-        (data.notes, data.directories)
-    };
-
-    let count = notes.len();
-    fs::create_dir_all(notes_dir)?;
-
-    for note in &notes {
-        crate::paths::validate_directory(&note.directory)?;
-        if note.id.is_empty() || note.id.contains(['/', '\\']) || note.id == "." || note.id == ".."
-        {
-            anyhow::bail!("legacy note has an unsafe id");
-        }
-        let file_path = if note.directory.is_empty() {
-            notes_dir.join(format!("{}.md", note.id))
-        } else {
-            let dir = crate::paths::contained_path(notes_dir, Path::new(&note.directory))?;
-            fs::create_dir_all(&dir)?;
-            dir.join(format!("{}.md", note.id))
-        };
-        crate::paths::contained_path(notes_dir, file_path.strip_prefix(notes_dir)?)?;
-        write_atomic(&file_path, &note_to_markdown(note)?)?;
-    }
-
-    let valid_dirs: Vec<String> = directories
-        .into_iter()
-        .filter(|dir| crate::paths::validate_directory(dir).is_ok())
-        .collect();
-    save_directories(notes_dir, &valid_dirs)?;
-
-    fs::rename(old_path, old_path.with_extension("json.bak"))?;
-
-    crate::diag::warn(format!("migrated {count} notes to {}", notes_dir.display()));
-    Ok(())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1800,7 +1668,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_notes_root_symlink_is_refused_on_read_save_and_migration() {
+    fn a_notes_root_symlink_is_refused_on_read_and_save() {
         let dir = tempfile::tempdir().unwrap();
         let outside = dir.path().join("outside");
         fs::create_dir(&outside).unwrap();
@@ -1810,42 +1678,7 @@ mod tests {
         let mut store = Store::load_from(&dir.path().join("real")).unwrap();
         store.notes_dir = linked.clone();
         assert!(store.save_files().is_err());
-        let legacy = dir.path().join("notes.json");
-        fs::write(&legacy, "[]").unwrap();
-        assert!(migrate_from_json(&legacy, &linked).is_err());
-        assert!(legacy.exists());
         assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn test_migrate_from_json() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let old_path = tmp.path().join("notes.json");
-        let json = serde_json::json!({
-            "notes": [{
-                "id": "550e8400-e29b-41d4-a716-446655440000",
-                "title": "Migrated Note",
-                "body": "content",
-                "tags": ["rust"],
-                "directory": "",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-02T00:00:00Z"
-            }],
-            "directories": []
-        });
-        std::fs::write(&old_path, serde_json::to_string(&json).unwrap()).unwrap();
-
-        let notes_dir = tmp.path().join("notes");
-        assert!(!notes_dir.exists());
-
-        migrate_from_json(&old_path, &notes_dir).unwrap();
-
-        assert!(notes_dir.exists());
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-        assert!(!old_path.exists(), "notes.json should be renamed");
-        assert!(tmp.path().join("notes.json.bak").exists());
     }
 
     #[test]
@@ -1988,20 +1821,6 @@ mod tests {
     fn deleting_nothing_records_nothing() {
         let (mut store, _d) = temp_store();
         assert_eq!(store.delete_notes(&["nope".to_string()]), 0);
-        assert!(!store.can_undo());
-    }
-
-    #[test]
-    fn moving_several_notes_is_one_undo() {
-        let (mut store, _d) = temp_store();
-        store.create_dir("cs130");
-        let a = store.create_note("A", "", vec![], "").unwrap().id.clone();
-        let b = store.create_note("B", "", vec![], "").unwrap().id.clone();
-        let moved = store.move_notes(&[a.clone(), b.clone()], "cs130");
-        assert_eq!(moved, vec!["A".to_string(), "B".to_string()]);
-        store.undo().unwrap();
-        assert_eq!(store.find_note(&a).unwrap().directory, "");
-        assert_eq!(store.find_note(&b).unwrap().directory, "");
         assert!(!store.can_undo());
     }
 

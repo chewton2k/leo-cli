@@ -784,10 +784,6 @@ impl Drop for ClaudeSession {
 }
 
 impl AgentCli {
-    pub fn is_claude(&self) -> bool {
-        self.agent == Agent::ClaudeCode
-    }
-
     pub fn provider_name(&self) -> &str {
         &self.name
     }
@@ -810,10 +806,6 @@ impl AgentCli {
 
     pub fn total_limit(&self) -> Duration {
         self.total_limit
-    }
-
-    pub fn session_arguments(&self, system_file: &Path) -> Vec<String> {
-        self.session_arguments_with(system_file, None)
     }
 
     fn session_arguments_with(

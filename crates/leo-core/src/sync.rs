@@ -138,9 +138,7 @@ pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
         init(notes_dir)?;
     }
     run_git(notes_dir, &["remote", "add", "origin", url])?;
-    if !crate::diag::is_quiet() {
-        println!("Connected to {url}");
-    }
+    println!("Connected to {url}");
     Ok(())
 }
 
@@ -353,8 +351,6 @@ pub fn now(notes_dir: &Path) -> Result<()> {
     push(notes_dir)
 }
 
-pub const GITHUB_REPO: &str = "leo-notes";
-
 const GH_MISSING: &str = "GitHub's command-line tool is not set up. Install it (brew install gh, \
 or see cli.github.com), sign in with `gh auth login`, then try again. Or make a \
 repository yourself and use `backup connect <url>`.";
@@ -472,7 +468,7 @@ pub fn status(notes_dir: &Path) -> Result<()> {
 
 fn print_output(output: String) {
     let text = output.trim_end();
-    if !text.is_empty() && !crate::diag::is_quiet() {
+    if !text.is_empty() {
         println!("{text}");
     }
 }

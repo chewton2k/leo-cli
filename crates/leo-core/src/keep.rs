@@ -56,13 +56,6 @@ pub fn save(notes_dir: &Path, keep: &Keep) -> Result<()> {
     Ok(())
 }
 
-pub fn kept_for(days: Option<u32>) -> String {
-    match days {
-        None => "until you empty it".to_string(),
-        Some(_) => format!("for {}", describe(days)),
-    }
-}
-
 pub fn describe(days: Option<u32>) -> String {
     match days {
         None => "forever".to_string(),
@@ -128,7 +121,5 @@ mod tests {
         assert_eq!(describe(None), "forever");
         assert_eq!(describe(Some(365)), "a year");
         assert_eq!(describe(Some(30)), "30 days");
-        assert_eq!(kept_for(Some(30)), "for 30 days");
-        assert_eq!(kept_for(None), "until you empty it");
     }
 }
