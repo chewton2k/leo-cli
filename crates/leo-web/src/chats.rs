@@ -447,50 +447,6 @@ pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
         .unwrap_or(false)
 }
 
-pub fn remembered(dir: &Path) -> Vec<(String, String, usize, u64)> {
-    db_of(dir)
-        .with(|c| {
-            let mut found = c.prepare(
-                "SELECT id, title, memory FROM chats WHERE memory IS NOT NULL ORDER BY updated_at DESC, id",
-            )?;
-            let rows = found.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-            })?;
-            let rows: Vec<(String, String, String)> = rows.collect::<rusqlite::Result<_>>()?;
-            Ok(rows
-                .into_iter()
-                .filter_map(|(id, title, memory)| {
-                    let memory: Memory = serde_json::from_str(&memory).ok()?;
-                    Some((id, title, memory.upto, serde_json::to_vec(&memory).ok()?.len() as u64))
-                })
-                .collect())
-        })
-        .unwrap_or_default()
-}
-
-pub fn forget_memory(dir: &Path, id: &str) -> bool {
-    db_of(dir)
-        .with(|c| {
-            c.execute(
-                "UPDATE chats SET memory = NULL WHERE id = ?1 AND memory IS NOT NULL",
-                [id],
-            )
-        })
-        .is_ok_and(|n| n > 0)
-}
-
-pub fn bytes_of(dir: &Path, id: &str) -> u64 {
-    db_of(dir)
-        .with(|c| {
-            c.query_row(
-                "SELECT length(CAST(messages AS BLOB)) + length(CAST(refs AS BLOB)) + length(CAST(title AS BLOB)) + coalesce(length(CAST(memory AS BLOB)), 0) FROM chats WHERE id = ?1",
-                [id],
-                |r| r.get::<_, i64>(0),
-            )
-        })
-        .map_or(0, |n| n.max(0) as u64)
-}
-
 pub fn tidy(dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
     let Some(days) = days else {
         return 0;

@@ -856,46 +856,6 @@ impl Graphs {
         &self.path
     }
 
-    pub fn stored_in(&self) -> &Path {
-        self.db.path()
-    }
-
-    pub fn bytes(&self) -> u64 {
-        self.db
-            .with(|c| {
-                c.query_row(
-                    "SELECT (SELECT coalesce(SUM(length(id) + length(data)), 0) FROM graph_notes)
-                          + (SELECT coalesce(SUM(length(data)), 0) FROM graph_links)
-                          + (SELECT coalesce(SUM(length(data)), 0) FROM graph_meta)",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map_or(0, |n| n.max(0) as u64)
-    }
-
-    pub fn clear(&self) -> Result<bool> {
-        let mut job = self.job.lock().unwrap_or_else(|e| e.into_inner());
-        if job.state == "building" {
-            return Ok(false);
-        }
-        self.bring_in_file();
-        self.db.with(|c| {
-            let tx = c.transaction()?;
-            tx.execute("DELETE FROM graph_notes", [])?;
-            tx.execute("DELETE FROM graph_links", [])?;
-            tx.execute("DELETE FROM graph_meta", [])?;
-            tx.commit()
-        })?;
-        *job = Job {
-            state: "idle",
-            done: 0,
-            total: 0,
-            message: None,
-        };
-        Ok(true)
-    }
-
     fn bring_in_file(&self) {
         let Some(old) = std::fs::read_to_string(&self.path)
             .ok()

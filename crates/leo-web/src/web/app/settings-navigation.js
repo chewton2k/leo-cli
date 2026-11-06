@@ -12,7 +12,7 @@ const SETTINGS_SECTIONS = [
     ['backup', 'Backup', 'backup', 'Keep a private copy of your notes on GitHub.'],
   ] },
   { group: 'Data', items: [
-    ['storage', 'Storage', 'storage', 'What Leo keeps on this computer, and how long.'],
+    ['keeping', 'Keeping', 'storage', 'How long leo keeps each kind of data on this computer.'],
     ['trash', 'Trash', 'trash', 'Deleted notes wait here, so a mistake can be undone.'],
   ] },
   { group: 'This app', items: [
@@ -54,10 +54,12 @@ const SETTINGS_INDEX = [
   { section: 'calendar', id: 'calendar-next', label: 'Next up', keywords: 'upcoming event check now refresh' },
   { section: 'backup', id: 'backup-github', label: 'GitHub backup', keywords: 'repository repo copy private notes sync gh' },
   { section: 'backup', id: 'backup-push', label: 'Push changes', keywords: 'automatic idle quit off when upload backup' },
-  { section: 'storage', id: 'storage-keep', label: 'How long Leo keeps things', keywords: 'trash chats days delete retention' },
-  { section: 'storage', id: 'storage-areas', label: 'Storage used', keywords: 'disk space size clear cache folders models' },
-  { section: 'storage', id: 'storage-export', label: 'Export everything', keywords: 'zip download backup notes uploads chats' },
-  { section: 'storage', id: 'storage-restore', label: 'Restore tasks', keywords: 'import tasks json' },
+  { section: 'keeping', id: 'keeping-trash', label: 'Keep the trash', keywords: 'deleted notes days retention delete' },
+  { section: 'keeping', id: 'keeping-chat', label: 'Keep chats with Felix', keywords: 'conversations days retention delete' },
+  { section: 'keeping', id: 'keeping-upload', label: 'Keep uploaded files', keywords: 'originals documents pdf days retention delete' },
+  { section: 'keeping', id: 'keeping-transcript', label: 'Keep recording transcripts', keywords: 'recordings sources what was said days retention delete' },
+  { section: 'keeping', id: 'keeping-audio', label: 'Keep unfinished recording audio', keywords: 'interrupted recordings recover days retention delete' },
+  { section: 'keeping', id: 'keeping-export', label: 'Export notes', keywords: 'zip download backup uploads chats trash' },
   { section: 'trash', id: 'trash-notes', label: 'Trash', keywords: 'deleted notes restore empty bin recover' },
   { section: 'health', id: 'health-checks', label: 'Health checks', keywords: 'doctor microphone permissions accessibility ready problems fix' },
   { section: 'updates', id: 'updates-check', label: 'Check for updates', keywords: 'new version download install restart' },
@@ -79,6 +81,7 @@ function settingsIcon(name) {
   return SETTINGS_ICON_PATHS[name] ? svg(SETTINGS_ICON_PATHS[name]) : ICON[name] || '';
 }
 function settingsSection(section) {
+  if (section === 'storage') section = 'keeping';
   if (!section) { try { section = localStorage.getItem('leo-settings-section') || 'general'; } catch (e) { section = 'general'; } }
   return settingsItems().some(([id]) => id === section) ? section : 'general';
 }

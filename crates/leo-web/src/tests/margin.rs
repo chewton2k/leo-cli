@@ -1092,7 +1092,7 @@ fn a_thread_on_a_trashed_note_exports_only_with_the_trash() {
 }
 
 #[test]
-fn exports_and_storage_cover_margin_threads() {
+fn exports_cover_margin_threads() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
     let chats = crate::chats::dir_for(&store.notes_dir);
@@ -1124,22 +1124,4 @@ fn exports_and_storage_cover_margin_threads() {
     zip.set_position(0);
     let mut archive = zip::ZipArchive::new(zip).unwrap();
     assert!(archive.by_name("leo/margin.json").is_ok());
-
-    let captions = crate::captions::Captions::for_notes(&store.notes_dir);
-    let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
-    let kept = crate::storage::Kept {
-        captions: &captions,
-        vectors: &vectors,
-    };
-    let areas = crate::storage::more_areas(&store, &chats, &kept);
-    assert!(areas.iter().any(|a| a.id == "margin"));
-    let request = crate::storage::Request {
-        area: "margin".into(),
-        action: "delete-all".into(),
-        items: Vec::new(),
-    };
-    crate::storage::act_on_more(&store, &chats, &kept, &request)
-        .unwrap()
-        .unwrap();
-    assert!(margin::every(&chats).is_empty());
 }

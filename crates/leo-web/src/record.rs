@@ -44,6 +44,17 @@ pub struct Pending {
     pub directory: String,
     pub source: Source,
     pub profile: leo_core::recording::Profile,
+    #[serde(default)]
+    pub started: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub trait Housekeeper: Send + Sync {
+    fn pending_recordings(&self) -> anyhow::Result<Vec<Pending>> {
+        Ok(Vec::new())
+    }
+    fn discard_recording(&self, _id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 pub struct Listening {
@@ -921,7 +932,7 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
         Ok(Ok(())) => Json(serde_json::json!({ "deleted": true })).into_response(),
         _ => error(
             StatusCode::CONFLICT,
-            "The recording could not be deleted. Try again, or remove its audio in Storage.",
+            "The recording could not be deleted. Try again.",
         ),
     }
 }

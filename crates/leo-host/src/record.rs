@@ -393,6 +393,7 @@ pub fn pending() -> Result<Vec<leo_web::record::Pending>> {
                 title: session.manifest.title,
                 directory: session.manifest.dir,
                 profile: session.manifest.profile,
+                started: Some(session.manifest.started),
                 source: if call {
                     leo_web::record::Source::Nativecall
                 } else if session.manifest.screen {
@@ -416,7 +417,7 @@ fn recover(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorde
         .collect();
     anyhow::ensure!(
         !selected.is_empty() && selected.len() <= 2,
-        "This recording cannot be recovered. Check Recording audio in Storage."
+        "This recording cannot be recovered."
     );
     let mut dirs = Vec::new();
     let warnings = Vec::new();
@@ -466,9 +467,12 @@ fn resume_retained(
         _ => {}
     });
     if let Some(problem) = failed.into_inner() {
-        anyhow::bail!("This recording could not be recovered: {problem}. Its available audio is kept in Recording audio in Storage.");
+        anyhow::bail!("This recording could not be recovered: {problem}. Its available audio is kept until Settings → Keeping says it can go.");
     }
-    anyhow::ensure!(finished.get(), "This recording is still incomplete. Check Recording audio in Storage and try recovering it again.");
+    anyhow::ensure!(
+        finished.get(),
+        "This recording is still incomplete. Try recovering it again."
+    );
     Ok(())
 }
 

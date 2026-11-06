@@ -98,7 +98,7 @@ pub fn powers() -> leo_web::Powers {
         listener: Some(crate::record::listener()),
         regenerator: Some(crate::record::regenerator()),
         calendar_access: Some(std::sync::Arc::new(crate::settings::WebSettings)),
-        housekeeper: Some(std::sync::Arc::new(crate::storage::Housekeeping)),
+        housekeeper: Some(std::sync::Arc::new(crate::housekeeping::Housekeeping)),
         room: Some(std::sync::Arc::new(leo_services::ai::felix_room)),
         context: Some(std::sync::Arc::new(leo_services::ai::felix_context)),
         reader: Some(std::sync::Arc::new(

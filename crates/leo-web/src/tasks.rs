@@ -482,6 +482,7 @@ pub fn db_of(chats: &Path) -> std::sync::Arc<crate::db::Db> {
     crate::chats::db_of(chats)
 }
 
+#[cfg(test)]
 pub fn tasks_dir(chats: &Path) -> std::path::PathBuf {
     chats
         .parent()
@@ -578,24 +579,6 @@ fn read_all(chats: &Path) -> Vec<Task> {
     out
 }
 
-pub fn storage_entries(chats: &Path) -> Vec<Task> {
-    read_all(chats)
-}
-
-pub fn erase_deleted(chats: &Path) -> anyhow::Result<usize> {
-    let mut gone = 0;
-    for task in read_all(chats).into_iter().filter(|t| t.deleted) {
-        let Ok(path) = task_path(chats, &format!("{}.json", task.id)) else {
-            continue;
-        };
-        if read_file(chats, &path).is_some_and(|t| t.deleted && t.updated_at == task.updated_at) {
-            std::fs::remove_file(path).map_err(|_| anyhow::anyhow!("A deleted task file could not be erased. Check that Leo can write to its notes folder, then try again."))?;
-            gone += 1;
-        }
-    }
-    Ok(gone)
-}
-
 pub fn load_all(chats: &Path) -> Vec<Task> {
     read_all(chats)
         .into_iter()
@@ -627,15 +610,6 @@ pub fn remove(chats: &Path, id: &str) -> bool {
     task.deleted = true;
     task.updated_at = Utc::now();
     write_file(chats, &task).is_ok()
-}
-
-pub fn remove_done(chats: &Path) -> usize {
-    let done: Vec<String> = load_all(chats)
-        .into_iter()
-        .filter(|t| t.done)
-        .map(|t| t.id)
-        .collect();
-    done.iter().filter(|id| remove(chats, id)).count()
 }
 
 pub fn metas(chats: &Path) -> Vec<Meta> {

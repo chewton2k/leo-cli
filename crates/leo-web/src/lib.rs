@@ -17,6 +17,7 @@ pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
+mod keeping;
 pub mod margin;
 mod originals;
 mod progress;
@@ -30,8 +31,6 @@ pub mod sessions;
 mod shutdown;
 pub mod speech;
 pub mod steer;
-pub mod storage;
-mod storage_saved;
 mod tasks;
 #[cfg(test)]
 mod tests;
@@ -66,7 +65,7 @@ use crate::routes::felix::{
     get_review, list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
     steer_answer,
 };
-use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
+use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
     move_note, rename_dir, search_notes, toggle_checkbox, update_note,
@@ -168,7 +167,7 @@ pub struct Powers {
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
     pub calendar_access: Option<Arc<dyn CalendarAccess>>,
-    pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    pub housekeeper: Option<Arc<dyn record::Housekeeper>>,
     pub reader: Option<Reader>,
     pub room: Option<Room>,
     pub context: Option<Room>,
@@ -215,7 +214,7 @@ struct AppState {
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
     chats: std::path::PathBuf,
-    housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    housekeeper: Option<Arc<dyn record::Housekeeper>>,
     reader: Option<Reader>,
     room: Option<Room>,
     context: Option<Room>,
@@ -662,6 +661,11 @@ pub(crate) async fn start_in(
         vectors,
     };
 
+    tokio::spawn({
+        let state = state.clone();
+        async move { keeping::expire_now(&state).await }
+    });
+
     let background = Background {
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
@@ -890,7 +894,6 @@ fn router(state: AppState) -> Router {
             "/api/chats/{id}/files/{doc}",
             axum::routing::delete(remove_chat_file),
         )
-        .route("/api/storage", get(get_storage).post(change_storage))
         .route("/api/keep", get(get_keep).post(set_keep))
         .route("/api/export", get(export_zip))
         .route(
@@ -955,10 +958,6 @@ fn router(state: AppState) -> Router {
         .route("/api/record/{id}/stop", post(record::stop))
         .route("/api/record/{id}/finish", post(record::finish_available))
         .route("/api/record/{id}/recover", post(record::recover))
-        .route(
-            "/browser-storage.js",
-            get(routes::assets::browser_storage_js),
-        )
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
         .route(

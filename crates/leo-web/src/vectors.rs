@@ -180,32 +180,6 @@ impl Vectors {
         }
     }
 
-    pub fn path(&self) -> &Path {
-        self.db.path()
-    }
-
-    pub fn bytes(&self) -> u64 {
-        self.db
-            .with(|c| {
-                c.query_row(
-                    "SELECT coalesce(SUM(length(v) + length(note) + length(hash)), 0) FROM vectors",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map_or(0, |n| n.max(0) as u64)
-    }
-
-    pub fn clear(&self) -> bool {
-        if let Ok(mut known) = self.known.lock() {
-            known.clear();
-        }
-        self.changed();
-        self.db
-            .with(|c| c.execute("DELETE FROM vectors", []))
-            .is_ok_and(|n| n > 0)
-    }
-
     pub fn version(&self) -> u64 {
         self.version.load(std::sync::atomic::Ordering::Relaxed)
     }

@@ -1,7 +1,7 @@
 # leo-web: leo's engine and the page
 
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
-settings, import, storage housekeeping) arrives as a `Powers` field built by
+settings, import, recording housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
 reader, seer, meaning, room, speech, toolless, toolless_chat).
 
@@ -58,7 +58,7 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
 
 - Hash router (`#/f/dir`, `#/n/id`, `#/new/dir`, `#/search/q`, `#/trash`,
   `#/calendar`, `#/boards[/id]`, `#/record[/dir]`,
-  `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
+  `#/settings[/keeping]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
 
 - Native quit confirmation keeps the current page and uses its existing toast
@@ -99,8 +99,8 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   or focusing anywhere else turns it back (`spare`, in place, so the press
   still reaches what was clicked).
 
-- Back from Settings, Storage or Trash returns to the page before them
-  (`places.before`, kept on `hashchange`; Storage opened from Settings goes
+- Back from Settings, Keeping or Trash returns to the page before them
+  (`places.before`, kept on `hashchange`; Keeping opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.
   When the page Back goes to is the previous history entry (each entry keeps
   its position in `history.state.leoAt`; in-place URL rewrites keep it), it
@@ -208,7 +208,7 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   the copied transcripts (POST `uncombine`).
 
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
-  Settings pinned below (Trash and Storage live inside Settings since
+  Settings pinned below (Trash and Keeping live inside Settings since
   2026-11-02, the user's call; the rail shows Settings for them). The rail has no
   Notes button (2026-11-03, the user's call: notes open from the explorer; the
   library is reached from the breadcrumbs' first crumb or the leo name). Buttons retain accessible names,
@@ -459,7 +459,7 @@ target. Check the page sequence after loading preferences.
   for what vanished another way: it waits `SWEEP_AFTER_DAYS` (7) after first seeing a
   note missing, in case it was a partial sync or a rename, and never runs while no
   notes loaded or a file is unreadable. Export adds `leo/margin.json` with Chats,
-  without trashed notes' threads unless Trash is chosen; Storage has one delete-all.
+  without trashed notes' threads unless Trash is chosen.
 - Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
   without one, the global default applies only to notes leo made (a v4 id, so never a
   headerless file) after it was set (`Prefs.since`), so turning it on never starts
@@ -681,8 +681,8 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
   API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
 
-- Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
-  `/api/tasks/import` (ids dedupe; a newer local copy is kept).
+- Export adds `tasks.json`; the Restore tasks control left with the Storage page
+  (2026-11-05); POST `/api/tasks/import` (ids dedupe; a newer local copy is kept).
 
 ## Boards (`boards.rs`, `routes/boards.rs`, `app/boards.js`, 2026-11-02)
 
@@ -743,7 +743,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   (fixture: real CSS and boards.js over an in-memory API; desktop and webkit) and
   flows.spec.js (real server: drag, reload, API contract).
 
-## Settings, Storage, export
+## Settings, Keeping, export
 
 - Settings (`SettingsApi`, `leo_host::WebSettings`): one model picker
   per AI with prices and effort chips.
@@ -764,10 +764,25 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   the media query directly. Print overrides with `:root:root` so a PDF is
   always light.
 
-- Storage (`storage.rs`, `storage_saved.rs` + the `Housekeeper`): every area leo keeps, with size,
-  items and confirmed actions; signed-in browsers; how long trash and chats
-  are kept (`/api/keep`); Export (zip of notes, optional uploads, chats,
-  trash; never config or keys); Restore tasks.
+- Keeping (`keeping.rs`, `app/keeping.js`; 2026-11-05, the user's call, replacing
+  the Storage page, its `/api/storage` routes, areas and `Housekeeper` actions;
+  files and tables only Storage managed stay on disk untouched): Settings →
+  Data → Keeping sets how long leo keeps each kind of data (`/api/keep`, one list
+  of 7/30/90 days, 1 year or Forever for every row): Trash, Chats with Felix,
+  Uploaded files, Recording transcripts, Unfinished recording audio; then Export
+  notes (zip of notes, optional uploads, chats, trash; never config or keys).
+  Shortening a period asks first (`keep-now`/`keep-cancel`, Cancel puts the
+  select back); `#/settings/storage` is an alias of `#/settings/keeping`.
+  Forever deletes nothing. Expiry runs once when the engine starts (`start_in`)
+  and right after POST `/api/keep` (`keeping::expire_now`): uploads (files under
+  `<data>/attachments/<note-id>/` older than N days by modification time, empty
+  folders removed; the note is never touched), transcripts (folders in
+  `recording-sources/` by folder time) and unfinished audio
+  (`record::Housekeeper::pending_recordings`, each with `Pending.started`, then
+  `discard_recording`; the recording job in use and locked sessions are skipped).
+  Every pass is bounded, never follows symlinks, stays in its folder and
+  skips an item it cannot delete. Trash and chats expire as before.
+  `Housekeeper` now lives in `record.rs` (pending and discard only).
 
 ## Testing
 
@@ -798,14 +813,13 @@ Database handles are cached up to 32 paths; filesystem
 checks/open/close occur outside the database cache mutex. Point and screenshot
 workers retain their save guard through I/O and in-memory acknowledgement even if the HTTP client
 leaves. Recording warnings retain at most 40 entries of 2,000 Unicode characters.
-Storage validates complete recording selections before deletion and rejects linked
-recording, originals and picture roots. Legacy writing CLI profiles appear only
+Keeping's expiry refuses linked recording and originals roots. Legacy writing CLI profiles appear only
 when saved data exists; metadata-only controls offer explicit confirmed cleanup
 without deleting credentials during provider migration.
 
 Writing Settings offers Ollama, Codex and Claude Code. Removed AGY/Copilot
-choices and sign-in commands are unavailable; legacy saved profiles remain in
-Storage until explicitly cleared. Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
+choices and sign-in commands are unavailable; legacy saved profiles stay on disk
+untouched (the Storage page that listed them was removed). Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
 
 Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
@@ -947,7 +961,7 @@ stacks segmented rows (container query), and switch rows stay inline on phones.
 `.set-card` is a tinted group (`--tint`, no border, no shadow, no rule between
 rows: space separates them; inputs, selects and plain buttons inside it fill
 with `--raised`). Inputs keep their border; nothing else in Settings' own layout
-has a 1px rule (the Trash list, Storage items, Calendar form and menus included).
+has a 1px rule (the Trash list, Calendar form and menus included).
 Selection is ink (segment and nav pills are `--raised`, switches `--text`);
 indigo stays for focus, links and the search pulse. Writing AI uses a pen icon,
 never a sparkle.
@@ -988,7 +1002,7 @@ inside that section's own element, so the placeholder-then-content double draw
 cannot lose it; then it waits for the arrival animation, scrolls the target to
 the centre, focuses it (`tabindex=-1`) and pulses it once: a 650 ms opacity pulse
 on `::after` in `--accent`; Reduced Motion skips the pulse and shows an outline
-until blur. Routes stay `#/settings/<section>`; Storage
+until blur. Routes stay `#/settings/<section>`; Keeping
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
@@ -1017,8 +1031,8 @@ flags remain compatible, and late responses cannot dismiss another sheet or page
 Speech models show In use, every Downloaded file and filtered All models cards.
 Rows show escaped catalog descriptions, languages, size, streaming support and
 measured accuracy/speed with themed meters; unknown scores stay unmeasured.
-A remembered Storage section at the Settings root keeps Settings selected and
-Back returns to the previous note; only the explicit Storage route selects Storage.
+A remembered Keeping section at the Settings root keeps Settings selected and
+Back returns to the previous note; only the explicit Keeping route selects Keeping.
 
 `Powers.app_settings` supplies session-gated bounded JSON `/api/app` and
 `/api/health`; blocking native work runs off async tasks and outside the store
@@ -1056,9 +1070,7 @@ selection drags while keeping file drops and pointer-driven board/resize actions
 
 Page toolbars share the same 760 px maximum width across notes, library, recording
 and Settings. Every Settings section uses the same Settings / section breadcrumb;
-Storage and Trash keep their routes and controllers inside that frame. Storage
-category cards remove outer Settings padding so only their compact summary sets
-the closed height.
+Keeping and Trash keep their routes and controllers inside that frame.
 Usage opens from the rail above Settings and shows remaining subscription windows,
 with unknown and expired readings explicit. The combined Quick Leo uses only
 Cmd/Ctrl+F and retains task/search/question/navigation ranking. Explicit named
@@ -1103,4 +1115,4 @@ remain in leo.db, unused and never purged or migrated away. Old interview-style
 chats open as Chat; their saved cards show a short retirement message. Old routes,
 remembered places and style fall back to the note workspace or Chat. Stale
 leo-interview-* localStorage keys stay untouched. Downloaded runtimes remain in
-Storage's Other downloaded model files with the existing symlink/path protections.
+disk, untouched, now that the Storage page is gone.

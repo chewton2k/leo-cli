@@ -22,13 +22,13 @@ fn keeping_choices_are_saved_and_applied_right_away() {
         page["chat_days"].is_null(),
         "chats are kept forever unless asked"
     );
-    assert_eq!(page["chat_choices"].as_array().unwrap().len(), 4);
+    assert_eq!(page["choices"].as_array().unwrap().len(), 5);
 
     let bad = run(set_keep(
         State(state.clone()),
         Json(leo_core::keep::Keep {
             trash_days: Some(3),
-            chat_days: None,
+            ..Default::default()
         }),
     ));
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
@@ -39,6 +39,7 @@ fn keeping_choices_are_saved_and_applied_right_away() {
         Json(leo_core::keep::Keep {
             trash_days: None,
             chat_days: Some(30),
+            ..Default::default()
         }),
     ));
     assert_eq!(json_of(set)["chat_days"], 30);
@@ -48,4 +49,35 @@ fn keeping_choices_are_saved_and_applied_right_away() {
     );
     let notes_dir = state.fresh().notes_dir.clone();
     assert_eq!(leo_core::keep::load(&notes_dir).trash_days, None);
+}
+
+#[test]
+fn a_shorter_upload_period_deletes_old_uploads_at_once_and_forever_deletes_nothing() {
+    let (state, _d, _ids) = state_with(&[]);
+    let notes_dir = state.fresh().notes_dir.clone();
+    let folder = crate::keeping::data_dir(&notes_dir)
+        .join("attachments")
+        .join("note-one");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("old.pdf");
+    std::fs::write(&file, "x").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+    std::fs::File::open(&file)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+
+    let forever = run(set_keep(State(state.clone()), Json(Default::default())));
+    assert_eq!(forever.status(), StatusCode::OK);
+    assert!(file.exists());
+
+    let shorter = run(set_keep(
+        State(state.clone()),
+        Json(leo_core::keep::Keep {
+            upload_days: Some(30),
+            ..Default::default()
+        }),
+    ));
+    assert_eq!(json_of(shorter)["upload_days"], 30);
+    assert!(!file.exists());
 }

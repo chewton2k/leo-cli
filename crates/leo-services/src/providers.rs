@@ -76,10 +76,6 @@ pub enum ModelState {
     Damaged,
 }
 
-pub fn speech_model_dir() -> std::path::PathBuf {
-    crate::config::choice::models_dir().join("speech")
-}
-
 pub fn model_state(path: &std::path::Path, sha256: &str) -> ModelState {
     if !path.is_file() {
         return ModelState::Missing;

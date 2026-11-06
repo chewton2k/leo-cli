@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub const TRASH_CHOICES: [Option<u32>; 5] = [Some(7), Some(30), Some(90), Some(365), None];
-pub const CHAT_CHOICES: [Option<u32>; 4] = [Some(30), Some(90), Some(365), None];
+pub const CHOICES: [Option<u32>; 5] = [Some(7), Some(30), Some(90), Some(365), None];
 pub const DEFAULT_TRASH_DAYS: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,6 +12,12 @@ pub struct Keep {
     pub trash_days: Option<u32>,
     #[serde(default)]
     pub chat_days: Option<u32>,
+    #[serde(default)]
+    pub upload_days: Option<u32>,
+    #[serde(default)]
+    pub transcript_days: Option<u32>,
+    #[serde(default)]
+    pub audio_days: Option<u32>,
 }
 
 fn default_trash_days() -> Option<u32> {
@@ -24,6 +29,9 @@ impl Default for Keep {
         Keep {
             trash_days: default_trash_days(),
             chat_days: None,
+            upload_days: None,
+            transcript_days: None,
+            audio_days: None,
         }
     }
 }
@@ -41,7 +49,14 @@ pub fn load(notes_dir: &Path) -> Keep {
 
 pub fn save(notes_dir: &Path, keep: &Keep) -> Result<()> {
     use std::io::Write;
-    if !TRASH_CHOICES.contains(&keep.trash_days) || !CHAT_CHOICES.contains(&keep.chat_days) {
+    let days = [
+        keep.trash_days,
+        keep.chat_days,
+        keep.upload_days,
+        keep.transcript_days,
+        keep.audio_days,
+    ];
+    if !days.iter().all(|d| CHOICES.contains(d)) {
         anyhow::bail!("that is not one of the choices");
     }
     let path = path_for(notes_dir);
@@ -93,27 +108,55 @@ mod tests {
         let keep = Keep {
             trash_days: None,
             chat_days: Some(90),
+            ..Keep::default()
         };
         save(&notes, &keep).unwrap();
         assert_eq!(load(&notes), keep);
         assert_eq!(path_for(&notes), tmp.path().join("keep.json"));
-        assert!(save(
-            &notes,
-            &Keep {
-                trash_days: Some(3),
-                chat_days: None
-            }
-        )
-        .is_err());
-        assert!(save(
-            &notes,
-            &Keep {
-                trash_days: Some(30),
-                chat_days: Some(7)
-            }
-        )
-        .is_err());
+        let odd = Some(3);
+        for bad in [
+            Keep {
+                trash_days: odd,
+                ..Keep::default()
+            },
+            Keep {
+                chat_days: odd,
+                ..Keep::default()
+            },
+            Keep {
+                upload_days: odd,
+                ..Keep::default()
+            },
+            Keep {
+                transcript_days: odd,
+                ..Keep::default()
+            },
+            Keep {
+                audio_days: odd,
+                ..Keep::default()
+            },
+        ] {
+            assert!(save(&notes, &bad).is_err());
+        }
         assert_eq!(load(&notes), keep);
+    }
+
+    #[test]
+    fn a_file_with_only_the_older_keys_loads_and_the_new_ones_keep_forever() {
+        let tmp = tempfile::tempdir().unwrap();
+        let notes = tmp.path().join("notes");
+        std::fs::write(path_for(&notes), r#"{"trash_days": 90, "chat_days": 7}"#).unwrap();
+        assert_eq!(
+            load(&notes),
+            Keep {
+                trash_days: Some(90),
+                chat_days: Some(7),
+                ..Keep::default()
+            }
+        );
+        assert_eq!(load(&notes).upload_days, None);
+        assert_eq!(load(&notes).transcript_days, None);
+        assert_eq!(load(&notes).audio_days, None);
     }
 
     #[test]

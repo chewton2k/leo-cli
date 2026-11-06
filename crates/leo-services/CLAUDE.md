@@ -290,7 +290,7 @@ two calls and the answer in one turn, about 5 s.
 model in its `choice::WRITING` list and its lowest effort, for Study grading and
 other shared quick reviews. `Powers.quick` remains independent of the retired
 interview runtimes. Runtime downloads and pinning were removed on 2026-11-05;
-existing downloaded caches remain removable through Storage's safe generic cleanup.
+existing downloaded caches stay on disk; the Storage page that listed them was removed on 2026-11-05.
 
 ### What the agent CLIs may use
 
@@ -441,8 +441,8 @@ Recording capture uses bounded queues; shutdown signals cancellation without
 waiting indefinitely for an active transcription call. Session lock heartbeats
 stop/join on drop, and temporary write-up WAVs are guarded. Verified downloads use
 owned temporary paths, connection/total deadlines and checksum checks; extraction
-has a process deadline. Downloaded models/toolchains remain disk caches until the
-user clears them in Storage; there is no automatic LRU quota.
+has a process deadline. Downloaded models/toolchains remain disk caches that leo never
+expires; there is no automatic LRU quota.
 
 Synthetic capture regressions exercise twelve segment rolls and check every
 segment's sample count/overlap using short segment intervals. They avoid processing

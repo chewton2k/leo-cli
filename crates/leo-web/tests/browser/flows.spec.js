@@ -43,8 +43,8 @@ async function goPlace(page, action) {
     await page.locator('#menu').click();
     return page.locator(`.sheet [data-action="${action}"]`).click();
   }
-  // Trash and Storage live inside Settings on a wide screen.
-  if (action === 'trash' || action === 'storage') {
+  // Trash and Keeping live inside Settings on a wide screen.
+  if (action === 'trash' || action === 'keeping') {
     await page.locator('#side [data-action="settings"]').click();
     return page.locator(`.settings-nav a[href="#/settings/${action}"]`).click();
   }
@@ -328,9 +328,9 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
     await expect(page).toHaveURL(url);
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
   }
-  // Trash and Storage moved into Settings' own sidebar; the rail keeps Settings selected there.
-  await expect(side.locator('[data-action="trash"], [data-action="storage"]')).toHaveCount(0);
-  for (const section of ['trash', 'storage']) {
+  // Trash and Keeping moved into Settings' own sidebar; the rail keeps Settings selected there.
+  await expect(side.locator('[data-action="trash"], [data-action="keeping"]')).toHaveCount(0);
+  for (const section of ['trash', 'keeping']) {
     await page.locator(`.settings-nav a[href="#/settings/${section}"]`).click();
     await expect(page).toHaveURL(new RegExp(`#/settings/${section}$`));
     await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href', `#/settings/${section}`);
@@ -1896,29 +1896,6 @@ test.describe('pictures', () => {
   });
 });
 
-test('hovering the storage bar names the part and its size, and highlights it', async ({ page }) => {
-  test.skip(test.info().project.name === 'phone', 'hovering needs a mouse');
-  await page.request.post('/api/notes', { data: { title: 'Storage hover', body: 'x' } });
-  await page.goto('/#/settings/storage');
-  const seg = page.locator('.store-bar i').first();
-  await expect(seg).toBeVisible();
-  const name = await seg.getAttribute('data-name');
-  const size = await seg.getAttribute('data-size');
-  await seg.hover();
-  const tip = page.locator('#store-tip');
-  await expect(tip).toBeVisible();
-  await expect(tip).toContainText(name);
-  await expect(tip).toContainText(size);
-  await expect(seg).toHaveClass(/on/);
-  await expect(page.locator('.store-bar')).toHaveClass(/hovering/);
-  await expect(page.locator(`.store-key.on`)).toContainText(name);
-  await page.mouse.move(5, 5);
-  await expect(tip).toBeHidden();
-  await expect(page.locator('.store-bar')).not.toHaveClass(/hovering/);
-  await seg.click();
-  await expect(page.locator(`.store-area[data-area="${await seg.getAttribute('data-area')}"]`)).toHaveAttribute('open', '');
-});
-
 test.describe('large libraries', () => {
   test('a big folder loads in pages as you scroll, and Select all takes every note', async ({ page }) => {
     test.setTimeout(90000);
@@ -2017,9 +1994,8 @@ test.describe('readability', () => {
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.keyboard.press('Escape');
-      await page.goto('/#/settings/storage');
-      await page.locator('#tasks-restore').setInputFiles({ name: 'tasks.json', mimeType: 'application/json', buffer: Buffer.from('{"wrong":[]}') });
-      await expect(page.locator('.toast.bad')).toContainText('Choose tasks.json');
+      await page.goto('/#/settings/keeping');
+      await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
@@ -2049,7 +2025,7 @@ test.describe('readability', () => {
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['calendar', '#/calendar']]) {
+      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['keeping', '#/settings/keeping'], ['record', '#/record'], ['calendar', '#/calendar']]) {
         await page.goto(`/${hash}`);
         await look(name);
       }
@@ -2153,88 +2129,9 @@ test.describe('trash', () => {
   });
 });
 
-test.describe('storage', () => {
-  test('shows what leo keeps and deletes only what was chosen, after asking', async ({ page }) => {
-    const tag = test.info().project.name;
-    for (const n of [1, 2]) {
-      const put = await page.request.put(`/api/chats/storage-${tag}-${n}`, { data: { mode: 'chat', refs: [], messages: [{ role: 'user', text: `storage chat ${tag} ${n}` }] } });
-      expect(put.ok()).toBe(true);
-    }
-    const note = await (await page.request.post('/api/notes', { data: { title: `Throwaway ${tag}`, body: 'x' } })).json();
-    expect((await page.request.delete(`/api/notes/${note.id}`)).ok()).toBe(true);
-
-    await page.goto('/');
-    await goPlace(page, 'storage');
-    await expect(page).toHaveURL(/#\/settings\/storage$/);
-    await expect(page.locator('.store-big')).toContainText(/KB|MB|bytes/);
-    const chats = page.locator('details.store-area[data-area="chats"]');
-    await chats.locator('summary').click();
-    const first = chats.locator('.store-item', { hasText: `storage chat ${tag} 1` });
-    await expect(first).toBeVisible();
-    const deleteSelected = chats.locator('[data-act="delete"]');
-    await expect(deleteSelected).toBeDisabled();
-    await first.locator('input').check();
-    await expect(deleteSelected).toContainText('(1)');
-    await deleteSelected.click();
-    await expect(page.locator('.sheet')).toContainText('deleted for good');
-    await page.locator('[data-action="storage-go"]').click();
-    await expect(page.locator('.toast')).toContainText('Deleted 1 chat.');
-    await expect(chats).toHaveAttribute('open', '');
-    await expect(chats.locator('.store-item', { hasText: `storage chat ${tag} 1` })).toHaveCount(0);
-    await expect(chats.locator('.store-item', { hasText: `storage chat ${tag} 2` })).toBeVisible();
-
-    const trash = page.locator('details.store-area[data-area="trash"]');
-    await trash.locator('summary').click();
-    await expect(trash).toContainText(`Throwaway ${tag}`);
-    await trash.locator('[data-act="empty"]').click();
-    await page.locator('[data-action="close"]').click();
-    await expect(trash).toContainText(`Throwaway ${tag}`);
-    await trash.locator('[data-act="empty"]').click();
-    await page.locator('[data-action="storage-go"]').click();
-    await expect(page.locator('.toast')).toContainText('Emptied the trash');
-    expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
-    await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
-    // A wide screen opens Storage from Settings' sidebar; a phone opens it from the menu at the top level.
-    const openedFrom = (await page.locator('#side').isVisible()) ? /#\/settings$/ : /#\/$/;
-    await page.locator('#back').click();
-    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(openedFrom);
-  });
-});
-
-test.describe('storage of pictures', () => {
-  test('pictures are listed with the notes that use them, and unused ones can be deleted', async ({ page }) => {
-    const tag = test.info().project.name;
-    const data = await page.evaluate(() => {
-      const c = document.createElement('canvas');
-      c.width = 64;
-      c.height = 48;
-      c.getContext('2d').fillRect(0, 0, 30, 20);
-      return c.toDataURL('image/png').split(',')[1];
-    });
-    const used = (await (await page.request.post('/api/images', { data: { name: `used-${tag}.png`, data } })).json()).path;
-    const spare = (await (await page.request.post('/api/images', { data: { name: `spare-${tag}.png`, data } })).json()).path;
-    await page.request.post('/api/notes', { data: { title: `Pictured ${tag} for storage`, body: `![board](${used})` } });
-    await page.goto('/#/settings/storage');
-    const pictures = page.locator('details.store-area[data-area="pictures"]');
-    await expect(pictures).toContainText('Pictures in notes');
-    await pictures.locator('summary').click();
-    const name = (p) => p.split('/').pop();
-    await expect(pictures.locator('.store-item', { hasText: name(used) })).toContainText(`In “Pictured ${tag} for storage”`);
-    await expect(pictures.locator('.store-item', { hasText: name(spare) })).toContainText('Not in any note');
-    await pictures.locator('[data-act="unused"]').click();
-    await expect(page.locator('.sheet')).toContainText('no note shows');
-    await page.locator('[data-action="storage-go"]').click();
-    await expect(page.locator('.toast')).toContainText(/Deleted \d+ pictures?\./);
-    await expect(pictures.locator('.store-item', { hasText: name(spare) })).toHaveCount(0);
-    await expect(pictures.locator('.store-item', { hasText: name(used) })).toBeVisible();
-    expect((await page.request.get(`/api/image?path=${encodeURIComponent(used)}`)).ok()).toBe(true);
-    expect((await page.request.get(`/api/image?path=${encodeURIComponent(spare)}`)).status()).toBe(404);
-  });
-});
-
 test.describe('export and this browser', () => {
   test('exports a zip with the parts chosen', async ({ page }) => {
-    await page.goto('/#/settings/storage');
+    await page.goto('/#/settings/keeping');
     const link = page.locator('#export-link');
     await expect(link).toHaveAttribute('href', '/api/export?uploads=true&chats=true&trash=false');
     await page.locator('[data-export="chats"]').uncheck();
@@ -2247,8 +2144,6 @@ test.describe('export and this browser', () => {
     expect(bytes.subarray(0, 2).toString()).toBe('PK');
     expect(bytes.includes(Buffer.from('leo/README.txt'))).toBe(true);
     expect(bytes.includes(Buffer.from('serve-token'))).toBe(false);
-
-    await expect(page.locator('.store-browser')).toHaveCount(0);
   });
 
   test('Felix is the tab icon, even before signing in', async ({ page, playwright }) => {
@@ -2264,10 +2159,14 @@ test.describe('export and this browser', () => {
 });
 
 test.describe('advanced settings', () => {
-  test('chooses how long the trash and chats are kept, asking before deleting sooner', async ({ page }) => {
+  test('chooses how long each kind of data is kept, asking before deleting sooner', async ({ page }) => {
     await page.goto('/#/settings/storage');
+    await expect(page).toHaveURL(/#\/settings\/storage$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Keeping' })).toBeVisible();
+    await expect(page.locator('select[data-keep]')).toHaveCount(5);
     const trash = page.locator('select[data-keep="trash_days"]');
     const chats = page.locator('select[data-keep="chat_days"]');
+    const uploads = page.locator('select[data-keep="upload_days"]');
     await expect(trash).toHaveValue('30');
     await expect(chats).toHaveValue('forever');
     const kept = async () => {
@@ -2285,6 +2184,11 @@ test.describe('advanced settings', () => {
     await page.locator('[data-action="keep-now"]').click();
     await expect.poll(kept).toEqual([null, 90]);
     await expect(chats).toHaveValue('90');
+    await uploads.selectOption('forever');
+    await uploads.selectOption('7');
+    await expect(page.locator('.sheet h3')).toHaveText('Keep uploaded files for 7 days?');
+    await page.locator('[data-action="keep-cancel"]').click();
+    await expect(uploads).toHaveValue('forever');
     await page.goto('/#/trash');
     await page.request.post('/api/keep', { data: { trash_days: 7, chat_days: null } });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Keep check', body: 'x' } })).json();
@@ -2877,7 +2781,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     const slow = [
       ['#/settings', '**/api/settings'],
       ['#/trash', '**/api/trash'],
-      ['#/settings/storage', '**/api/storage'],
+      ['#/settings/keeping', '**/api/keep'],
       ['#/search/slow', '**/api/search?*'],
       [`#/f/slow-${kind()}`, '**/api/dirs?*'],
       [`#/n/${note.id}`, `**/api/notes/${note.id}`],
@@ -3051,7 +2955,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     await call('POST', '/api/dirs/move', { from: `contract-moved-${tag}`, into: `contract-${tag}` });
     await call('POST', `/api/notes/${made.id}/suggestion`, { find: 'new', replace: 'newer' });
     await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', mode: 'chat', messages: [{ role: 'user', text: 'hi' }] });
-    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/speech', '/api/record']) {
+    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/keep', '/api/speech', '/api/record']) {
       await call('GET', url);
     }
     const trashed = json(await call('POST', '/api/trash/move', { notes: [made.id], dirs: [] }));
@@ -3901,7 +3805,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.goto('/#/settings/backup');
   await expect(page.locator('select[data-set="auto_push"]')).toBeVisible();
   await inspect();
-  await page.goto('/#/settings/storage');
+  await page.goto('/#/settings/keeping');
   await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
   await inspect();
   await page.goto('/#/');
@@ -5236,7 +5140,7 @@ test('a late missing note response keeps a new draft open', async ({ page }) => 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
-test('Back from Settings, Storage or Trash returns to the note you were reading', async ({ page }) => {
+test('Back from Settings, Keeping or Trash returns to the note you were reading', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Back here ${Date.now().toString(36)}`, body: 'Keep my place.' } })).json();
   const visit = (hash) => page.evaluate((h) => { location.hash = h; }, hash);
   const back = async () => { await page.locator('#back').click(); };
@@ -5260,7 +5164,7 @@ test('Back from Settings, Storage or Trash returns to the note you were reading'
   await back();
   await expect.poll(at).toBe(`#/n/${note.id}`);
   expect(await page.evaluate(() => history.length)).toBe(depth);
-  await visit('#/settings/storage');
+  await visit('#/settings/keeping');
   await expect(page.locator('#back')).toBeVisible();
   await back();
   await expect.poll(at).toBe(`#/n/${note.id}`);
@@ -5463,13 +5367,13 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
 });
 
 for (const width of [1280, 390]) {
-  test(`Record and Settings keep consistent headers and compact storage at ${width}px`, async ({ page }, testInfo) => {
+  test(`Record and Settings keep consistent headers at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     let reference;
     for (const [route, crumb] of [
       ['record', 'Record'],
       ['settings/general', 'Settings / General'],
-      ['settings/storage', 'Settings / Storage'],
+      ['settings/keeping', 'Settings / Keeping'],
       ['settings/trash', 'Settings / Trash'],
     ]) {
       await page.goto('/#/' + route);
@@ -5494,19 +5398,6 @@ for (const width of [1280, 390]) {
       }
       reference = header;
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      if (route === 'settings/storage') {
-        const areas = page.locator('.store-area');
-        await expect(areas.first()).toBeVisible();
-        for (const area of await areas.all()) {
-          const heading = area.locator(':scope > summary');
-          const summary = await heading.boundingBox();
-          const content = await heading.evaluate(el => Math.max(...Array.from(el.children, child => child.getBoundingClientRect().height)));
-          const card = await area.boundingBox();
-          expect(card.height - summary.height).toBeLessThanOrEqual(3);
-          expect(summary.height).toBeLessThanOrEqual(Math.max(52, content + 16) + 1);
-        }
-        await page.screenshot({ path: testInfo.outputPath('storage.png') });
-      }
     }
   });
 }

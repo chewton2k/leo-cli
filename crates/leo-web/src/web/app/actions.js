@@ -134,7 +134,6 @@ const actions = {
   'quick-run': (el) => quickGo(Number(el.dataset.at)),
   'quick-done': (el) => quickDone(el),
   'library-show-all': () => changeLibrary('show', 'all'),
-  'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {
     closeSheet();
     go(el.dataset.dir ? `#/new/${enc(el.dataset.dir)}` : '#/new');
@@ -151,11 +150,7 @@ const actions = {
     closeSheet();
     go('#/settings');
   },
-  storage: () => go('#/settings/storage'),
-  'storage-act': storageAsk,
-  'storage-more': storageMore,
-  'storage-open-chat': storageOpenChat,
-  'storage-go': () => storageGo().catch(fail),
+  keeping: () => go('#/settings/keeping'),
   'keep-now': () => {
     const next = state.keepPending;
     state.keepPending = null;

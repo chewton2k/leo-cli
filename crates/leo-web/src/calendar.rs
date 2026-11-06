@@ -92,21 +92,21 @@ fn body_of(notes: &Path, id: &str) -> Option<(DateTime<Utc>, Vec<u8>)> {
 }
 
 impl Calendar {
-    pub(crate) fn clear_cached(
-        &self,
-        path: &Path,
-        request: &crate::storage::Request,
-    ) -> Result<String> {
+    #[allow(dead_code)]
+    pub(crate) fn clear_cached(&self, path: &Path) -> Result<String> {
         let _busy = Busy::take(&self.busy).ok_or_else(|| anyhow::anyhow!("Leo is refreshing your calendars. Wait for that to finish, then clear the cached events."))?;
-        let result = crate::storage_saved::act_on(path, request)
-            .ok_or_else(|| anyhow::anyhow!("Choose an action offered in Storage."))??;
+        let gone =
+            crate::db::for_chats(path).with(|c| c.execute("DELETE FROM calendar_feeds", []))?;
         self.expanded
             .lock()
             .map_err(|_| {
                 anyhow::anyhow!("Calendar cache could not be cleared. Restart Leo and try again.")
             })?
             .clear();
-        Ok(result)
+        Ok(format!(
+            "Removed {gone} saved record{}. Other information stays.",
+            if gone == 1 { "" } else { "s" }
+        ))
     }
 
     pub(crate) fn events(
@@ -657,13 +657,8 @@ pub(crate) mod tests {
         std::fs::write(&settings, "saved calendar connection").unwrap();
         crate::db::for_chats(&path).with(|c| c.execute("INSERT INTO calendar_feeds (feed, tried_at, body) VALUES ('calendar-one', 'now', X'0102')", [])).unwrap();
         let calendar = Calendar::default();
-        let request = crate::storage::Request {
-            area: "calendar-cache".into(),
-            action: "all".into(),
-            items: vec![],
-        };
         let refresh = Busy::take(&calendar.busy).unwrap();
-        assert!(calendar.clear_cached(&path, &request).is_err());
+        assert!(calendar.clear_cached(&path).is_err());
         assert_eq!(
             crate::db::for_chats(&path)
                 .with(
@@ -674,7 +669,7 @@ pub(crate) mod tests {
             1
         );
         drop(refresh);
-        calendar.clear_cached(&path, &request).unwrap();
+        calendar.clear_cached(&path).unwrap();
         assert_eq!(
             crate::db::for_chats(&path)
                 .with(

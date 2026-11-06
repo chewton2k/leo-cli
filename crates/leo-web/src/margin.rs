@@ -305,24 +305,6 @@ pub fn remove(chats: &Path, id: &str) -> bool {
         .is_ok_and(|gone| gone > 0)
 }
 
-pub fn clear(chats: &Path) -> usize {
-    db_of(chats)
-        .with(|c| c.execute("DELETE FROM margin_threads", []))
-        .unwrap_or(0)
-}
-
-pub fn bytes(chats: &Path) -> (u64, u64) {
-    db_of(chats)
-        .with(|c| {
-            c.query_row(
-                "SELECT count(*), coalesce(sum(length(CAST(quote AS BLOB)) + length(CAST(prefix AS BLOB)) + length(CAST(suffix AS BLOB)) + length(CAST(messages AS BLOB))), 0) FROM margin_threads",
-                [],
-                |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
-            )
-        })
-        .unwrap_or((0, 0))
-}
-
 pub fn last_read_note(chats: &Path, note: &str) -> Option<DateTime<Utc>> {
     let text: Option<String> = db_of(chats)
         .with(|c| {

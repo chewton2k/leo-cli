@@ -319,7 +319,7 @@ fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
 #[test]
 fn native_recordings_can_be_recovered_without_reopening_capture() {
     struct Kept;
-    impl crate::storage::Housekeeper for Kept {
+    impl crate::record::Housekeeper for Kept {
         fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
             Ok(vec![record::Pending {
                 id: "native-saved".into(),
@@ -327,13 +327,8 @@ fn native_recordings_can_be_recovered_without_reopening_capture() {
                 directory: "cs130".into(),
                 source: record::Source::Microphone,
                 profile: Default::default(),
+                started: None,
             }])
-        }
-        fn areas(&self) -> Vec<crate::storage::Area> {
-            vec![]
-        }
-        fn act(&self, _: &str, _: &str, _: &[String]) -> Option<anyhow::Result<String>> {
-            None
         }
     }
     let (mut state, _dir, _) = state_with(&[]);
@@ -361,7 +356,7 @@ fn native_recordings_can_be_recovered_without_reopening_capture() {
 #[test]
 fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_model() {
     struct Kept;
-    impl crate::storage::Housekeeper for Kept {
+    impl crate::record::Housekeeper for Kept {
         fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
             Ok(vec![record::Pending {
                 id: "waiting-native".into(),
@@ -369,13 +364,8 @@ fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_mo
                 directory: "cs130".into(),
                 source: record::Source::Microphone,
                 profile: Default::default(),
+                started: None,
             }])
-        }
-        fn areas(&self) -> Vec<crate::storage::Area> {
-            vec![]
-        }
-        fn act(&self, _: &str, _: &str, _: &[String]) -> Option<anyhow::Result<String>> {
-            None
         }
     }
     let (mut state, _dir, _) = state_with(&[]);

@@ -15,7 +15,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/dictation.js"),
     include_str!("../web/app/app-settings.js"),
     include_str!("../web/app/onboarding.js"),
-    include_str!("../web/app/storage.js"),
+    include_str!("../web/app/keeping.js"),
     include_str!("../web/app/uploads.js"),
     include_str!("../web/app/sheets.js"),
     include_str!("../web/app/side.js"),
@@ -43,10 +43,6 @@ const CHAT_JS: &str = include_str!("../web/chat.js");
 pub(crate) async fn pane_resize_js() -> Response {
     javascript(include_str!("../web/pane-resize.js"))
 }
-pub(crate) async fn browser_storage_js() -> Response {
-    javascript(include_str!("../web/browser-storage.js"))
-}
-
 const RECORDING_JS: &str = include_str!("../web/recording.js");
 
 pub(crate) async fn index() -> Html<&'static str> {

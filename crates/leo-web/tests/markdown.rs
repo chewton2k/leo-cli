@@ -34,7 +34,6 @@ fn saving_and_draft_recovery_pass_their_tests() {
     run_node_tests("browser-server.test.js");
     run_node_tests("saving.test.js");
     run_node_tests("website-leave.test.js");
-    run_node_tests("browser-storage.test.js");
 }
 
 #[test]

@@ -100,8 +100,8 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       expect(search.y-add.y-add.height).toBeGreaterThanOrEqual(6);
       await expect(rail.getByRole('button',{name:'Quick Leo',exact:true}),'search and Quick Leo are one button').toHaveCount(0);
       await expect(rail.locator('kbd')).toHaveCount(0);
-      // Trash and Storage live inside Settings now, so the rail only offers Settings for them.
-      await expect(rail.getByRole('button',{name:/^(Trash|Storage)$/})).toHaveCount(0);
+      // Trash and Keeping live inside Settings now, so the rail only offers Settings for them.
+      await expect(rail.getByRole('button',{name:/^(Trash|Keeping)$/})).toHaveCount(0);
       for(const label of ['New note','Ask Felix','Search','Record','Note from a file','Calendar','Boards','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();

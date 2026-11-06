@@ -105,7 +105,7 @@ pub(crate) async fn create_task(
     if tasks::count(&chats) >= tasks::MOST_TASKS {
         return error(
             StatusCode::CONFLICT,
-            "leo keeps up to 10,000 tasks. Delete finished ones in Storage first.",
+            "leo keeps up to 10,000 tasks. Delete finished ones first.",
         );
     }
     let now = Utc::now();
