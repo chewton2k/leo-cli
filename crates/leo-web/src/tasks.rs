@@ -818,7 +818,10 @@ mod tests {
         std::fs::write(&copy, old.replace("task-0001", "task-0002")).unwrap();
         assert_eq!(forget_deleted(&chats, Some(30), later), 1);
         assert!(!file.exists());
-        assert!(copy.exists(), "only a tombstone under its own name is removed");
+        assert!(
+            copy.exists(),
+            "only a tombstone under its own name is removed"
+        );
         assert_eq!(load_all(&chats).len(), 1);
         assert!(load(&chats, "task-0002").is_some());
     }
