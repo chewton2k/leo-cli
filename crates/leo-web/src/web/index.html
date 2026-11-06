@@ -434,6 +434,12 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .note-img { display: block; max-width: 100%; height: auto; margin: 10px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--card, transparent); }
 .msg .note-img { margin: 6px 0; }
 .msg-steps { display: grid; gap: 2px; margin-bottom: 8px; padding: 6px 8px; border-radius: 10px; background: var(--surface-2); }
+.msg-trace { margin-bottom: 8px; font-size: 12.5px; color: var(--muted); }
+.msg-trace > summary { display: flex; align-items: center; gap: 6px; min-height: 22px; cursor: pointer; list-style: none; }
+.msg-trace > summary::-webkit-details-marker { display: none; }
+.msg-trace > .msg-steps { margin: 4px 0 0; }
+.msg-trace[open] > summary > .msg-step-chevron { transform: rotate(90deg); }
+.msg-outside { font-weight: 500; }
 .msg-step { font-size: 12.5px; color: var(--muted); }
 .msg-step > summary, div.msg-step { display: flex; align-items: center; gap: 6px; min-height: 22px; }
 .msg-step > summary { cursor: pointer; list-style: none; }

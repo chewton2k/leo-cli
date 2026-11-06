@@ -1294,6 +1294,8 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').fill('is my BFS note right?');
     await chat.locator('#chat-input').press('Enter');
     const answer = chat.locator('.msg.leo').last();
+    await expect(answer.locator('.msg-trace > summary')).toHaveText('Searched your notes');
+    await answer.locator('.msg-trace > summary').click();
     const steps = answer.locator('.msg-step');
     await expect(steps).toHaveCount(2);
     await expect(steps.first()).toContainText('Searched your notes for “BFS”');
@@ -3618,6 +3620,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.route('**/api/chat', route => route.fulfill({ contentType: 'application/x-ndjson', body: [{ step: 'Found relevant notes', tool: 'search_notes', found: ['Queues', 'Heaps'] }, { t: 'Here are the notes.' }, { done: true }].map(line => JSON.stringify(line)).join('\n') + '\n' }));
   await page.locator('#chat-input').fill('Find my algorithm notes');
   await page.locator('#chat-input').press('Enter');
+  await page.locator('.msg-trace').last().locator('> summary').click();
   const step = page.locator('details.msg-step').last();
   await expect(step.locator('summary > .msg-step-chevron')).toHaveCount(1);
   await step.locator('summary').click();
@@ -4538,6 +4541,45 @@ test('Felix tool activity stays between the response passages it belongs to afte
 
 
 
+test('Felix shows one live step, then one line, and marks an answer from outside the notes', async ({ page }) => {
+  const lines = [
+    { step: 'Searched your notes for “lab safety”', tool: 'search_notes', found: [] },
+    { wait: 700 },
+    { step: 'Worked out the numbers', tool: 'calculate', found: [] },
+    { wait: 700 },
+    { t: 'Wear goggles.' },
+    { done: true },
+  ];
+  await page.addInitScript((script) => {
+    const real = window.fetch.bind(window);
+    window.fetch = (url, options) => {
+      if (String(url) !== '/api/chat') return real(url, options);
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        async start(stream) {
+          for (const line of script) {
+            if (line.wait) await new Promise((done) => setTimeout(done, line.wait));
+            else stream.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+          }
+          stream.close();
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'application/x-ndjson' } }));
+    };
+  }, lines);
+  await page.goto('/');
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('what are the lab safety rules?');
+  await page.locator('#chat-input').press('Enter');
+  const answer = page.locator('.msg.leo').last();
+  await expect(answer.locator('.msg-step')).toHaveText(['Searched your notes for “lab safety”']);
+  await expect(answer.locator('.msg-step')).toHaveText(['Worked out the numbers']);
+  await expect(answer.locator('.msg-trace')).toHaveCount(0);
+  await expect(answer.locator('.msg-trace > summary')).toHaveText('Searched your notes');
+  await expect(answer.locator('.msg-steps .msg-step').first()).toBeHidden();
+  await expect(answer.locator('.msg-outside')).toHaveText('Not from your notes');
+});
+
 test('the same step repeated in a row shows once with how many times', async ({ page }) => {
   const step = (text, tool = 'open_note') => JSON.stringify({ step: text, tool, found: [] });
   await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: [step('Read “Pipelining”'), step('Read “Pipelining” again (unchanged)'), step('Read “Pipelining” again (unchanged)'), step('Read “Pipelining” again (unchanged)'), step('Retried open note: "note" is missing.', 'open_note'), JSON.stringify({ t: 'It overlaps instructions.' }), JSON.stringify({ done: true })].join('\n') + '\n' }));
@@ -4546,6 +4588,7 @@ test('the same step repeated in a row shows once with how many times', async ({ 
   await page.locator('#chat-input').fill('what does my pipelining note say?');
   await page.locator('#chat-input').press('Enter');
   await expect(page.locator('.msg.leo').last()).toContainText('It overlaps instructions.');
+  await page.locator('.msg.leo').last().locator('.msg-trace > summary').click();
   const steps = page.locator('.msg.leo').last().locator('.msg-step');
   await expect(steps).toHaveCount(3);
   await expect(steps.nth(1)).toContainText('Read “Pipelining” again (unchanged)');

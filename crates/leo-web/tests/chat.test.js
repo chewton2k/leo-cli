@@ -673,6 +673,30 @@ test('actual quiz sends keep the prior model history stable through hints, marki
   assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
 });
 
+test('a finished trace says what was opened, used and changed in one line', () => {
+  const step = (tool, text, found = []) => ({ tool, text, found });
+  const opened = [step('open_note', 'Opened “A”'), step('open_note', 'Read part 2 of 3 of “B” (lines 40–80)'), step('open_note', 'Read part 3 of 3 of “B” (lines 80–120)'), step('open_note', 'Opened “C”'), step('open_note', 'Opened “D”')];
+  assert.equal(C.traceSummary(opened, 3, 0), 'Opened 4 notes, used 3');
+  assert.equal(C.traceSummary(opened, 4, 0), 'Opened 4 notes');
+  assert.equal(C.traceSummary(opened, 0, 0), 'Opened 4 notes');
+  assert.equal(C.traceSummary(opened.slice(0, 1), 1, 1), 'Opened 1 note · made 1 change');
+  assert.equal(C.traceSummary([step('read_document', 'Read “a.pdf”')], 0, 0), 'Opened 1 source');
+  assert.equal(C.traceSummary([step('search_notes', 'Searched')], 0, 2), 'Searched your notes · made 2 changes');
+  assert.equal(C.traceSummary([step('calculate', 'Worked it out')], 0, 0), '1 step');
+});
+
+test('only an empty search with nothing cited is marked as not from the notes', () => {
+  const empty = [{ tool: 'search_notes', text: 'Searched', found: [] }];
+  assert.equal(C.notFromNotes(empty, 'Wear goggles.', 0), true);
+  assert.equal(C.notFromNotes(empty, 'Wear goggles.', 1), false);
+  assert.equal(C.notFromNotes(empty, 'Beyond your notes: wear goggles.', 0), false);
+  assert.equal(C.notFromNotes(empty, '  ', 0), false);
+  assert.equal(C.notFromNotes([], 'Hello.', 0), false);
+  assert.equal(C.notFromNotes([{ tool: 'search_notes', text: 'Searched', found: ['A'] }], 'Wear goggles.', 0), false);
+  assert.equal(C.notFromNotes([...empty, { tool: 'open_note', text: 'Opened “A”', found: [] }], 'Wear goggles.', 0), false);
+  assert.equal(C.notFromNotes([{ tool: 'calculate', text: 'Worked', found: [] }], '4', 0), false);
+});
+
 test('the saved week adds up by model and states the cached share', () => {
   const [week, big, unknown, bad] = C.usageWeek([
     { model: 'big', calls: 2, input: 1000, cached: 750, output: 40 },

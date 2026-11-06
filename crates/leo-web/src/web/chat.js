@@ -131,6 +131,30 @@
     return parts;
   }
 
+  const OPENING_TOOLS = new Set(['open_note', 'read_document', 'read_transcript', 'read_original']);
+  const SEARCHING_TOOLS = new Set(['search_notes', 'search_chats']);
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+  function traceSummary(steps, used, changes) {
+    const opened = new Set();
+    for (const step of steps) {
+      if (!OPENING_TOOLS.has(step.tool)) continue;
+      opened.add(/“(.+?)”/.exec(step.text)?.[1] || step.text);
+    }
+    const noun = steps.some((step) => step.tool === 'read_document') ? 'source' : 'note';
+    let line;
+    if (opened.size) line = `Opened ${plural(opened.size, noun)}${used > 0 && used < opened.size ? `, used ${used}` : ''}`;
+    else if (steps.some((step) => SEARCHING_TOOLS.has(step.tool))) line = 'Searched your notes';
+    else line = plural(steps.length, 'step');
+    return changes > 0 ? `${line} · made ${plural(changes, 'change')}` : line;
+  }
+
+  function notFromNotes(steps, shown, used) {
+    if (!String(shown).trim() || used > 0 || /beyond your notes/i.test(shown)) return false;
+    if (steps.some((step) => OPENING_TOOLS.has(step.tool) || step.found.length)) return false;
+    return steps.some((step) => step.tool === 'search_notes');
+  }
+
   const QUIZ_KINDS = { multiple_choice: 'Multiple choice', fill_blank: 'Fill in the blank', free_response: 'Free response' };
 
   function plainAnswer(text) {
@@ -1729,9 +1753,20 @@
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
       const removed = verdict ? m.text.length - shown.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
-      const body = parts.length ? parts.map((part, k) => part.steps
-        ? `<div class="msg-steps">${stepRuns(part.steps).map((run, j, all) => stepLine(run.step, m.pending && k === parts.length - 1 && j === all.length - 1, run.times)).join('')}</div>`
-        : `<div class="prose">${cite(render(part.text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`).join('') : html ? `<div class="prose">${html}</div>` : '';
+      const taken = parts.flatMap((part) => part.steps || []);
+      const newest = parts.findLastIndex((part) => part.steps);
+      const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
+      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`;
+      const live = (part, k) => {
+        const run = stepRuns(part.steps).at(-1);
+        return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
+      };
+      const trace = !m.pending && taken.length
+        ? `<details class="msg-trace"><summary>${escape(traceSummary(taken, used.length, made))}${stepChevron}</summary><div class="msg-steps">${stepRuns(taken).map((run) => stepLine(run.step, false, run.times)).join('')}</div></details>`
+        : '';
+      const words = parts.length ? parts.map((part, k) => part.steps ? (m.pending ? live(part, k) : '') : prose(part.text)).join('') : html ? `<div class="prose">${html}</div>` : '';
+      const outside = !m.pending && notFromNotes(taken, shown, used.length) ? '<div class="msg-note msg-outside">Not from your notes</div>' : '';
+      const body = `${trace}${words}${outside}`;
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
@@ -2992,5 +3027,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

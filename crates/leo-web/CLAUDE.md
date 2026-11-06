@@ -474,7 +474,13 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   unclear). Text written
   before a tool call is kept (a paragraph break, not a restart). A broken
   agent session sends `{"reset"}` and is redone through the text protocol
-  (`FALLBACK_TRIES`). Felix has no web tools of his own; an AI's own web search
+  (`FALLBACK_TRIES`). While Felix works the reply shows only his newest step; a
+  finished reply folds every step into one `.msg-trace` line (`traceSummary`,
+  2026-11-06, the user's call from a six-persona simulation: citations and change
+  cards are what catch mistakes, and the count must agree with the sources). An
+  empty note search with nothing cited adds `Not from your notes`
+  (`notFromNotes`), since that was the one thing only the step lines said. Steps
+  stay in the saved chat and in what Felix is told he did. Felix has no web tools of his own; an AI's own web search
   is left to it.
 
 - Read tools: search_notes, open_note, connected_notes, read_document,
