@@ -332,7 +332,7 @@ fn error(code: StatusCode, message: impl ToString) -> Response {
 }
 
 async fn notes_of(state: &AppState) -> Result<PathBuf, StatusCode> {
-    state.with_store(|s| Ok(s.notes_dir.clone())).await
+    state.read_store(|s| Ok(s.notes_dir.clone())).await
 }
 
 struct Busy(Arc<AtomicBool>);

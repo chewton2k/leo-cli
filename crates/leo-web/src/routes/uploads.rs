@@ -774,7 +774,7 @@ pub(crate) async fn list_originals(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
@@ -840,7 +840,7 @@ pub(crate) async fn get_original(
     Path((id, name)): Path<(String, String)>,
     Query(how): Query<OriginalView>,
 ) -> Response {
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };

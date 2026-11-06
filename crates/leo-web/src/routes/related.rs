@@ -71,7 +71,7 @@ pub(crate) async fn related_notes(
     let limit = query.limit.unwrap_or(4).clamp(1, MOST_RELATED);
     let graphs = Arc::clone(&state.graphs);
     let found = state
-        .with_store(move |store| {
+        .read_store(move |store| {
             if !store.notes.iter().any(|n| n.id == id) {
                 return Err(StatusCode::NOT_FOUND);
             }

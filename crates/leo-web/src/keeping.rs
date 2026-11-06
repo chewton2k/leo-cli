@@ -120,7 +120,7 @@ pub(crate) async fn would_delete(state: &AppState, field: &str, days: Option<u32
         .lock()
         .ok()
         .and_then(|held| held.as_ref().map(|job| job.session_id()));
-    let Ok(notes_dir) = state.with_store(|store| Ok(store.notes_dir.clone())).await else {
+    let Ok(notes_dir) = state.read_store(|store| Ok(store.notes_dir.clone())).await else {
         return 0;
     };
     if field == "trash_days" {
@@ -183,7 +183,7 @@ pub fn expire_audio(
 
 pub(crate) async fn expire_now(state: &AppState) {
     let Ok((notes_dir, keep)) = state
-        .with_store(|store| {
+        .read_store(|store| {
             Ok((
                 store.notes_dir.clone(),
                 leo_core::keep::load(&store.notes_dir),

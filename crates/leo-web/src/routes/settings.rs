@@ -17,7 +17,7 @@ pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
@@ -60,7 +60,7 @@ pub(crate) async fn change_setting(
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };

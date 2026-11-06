@@ -24,7 +24,7 @@ pub(crate) async fn get_keep(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     state
-        .with_store(|store| Ok(Json(keep_page(leo_core::keep::load(&store.notes_dir)))))
+        .read_store(|store| Ok(Json(keep_page(leo_core::keep::load(&store.notes_dir)))))
         .await
 }
 

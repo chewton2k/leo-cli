@@ -139,7 +139,7 @@ pub(crate) async fn list_chats(
         };
     }
     let days = state
-        .with_store(|store| Ok(leo_core::keep::load(&store.notes_dir).chat_days))
+        .read_store(|store| Ok(leo_core::keep::load(&store.notes_dir).chat_days))
         .await
         .unwrap_or(None);
     match tokio::task::spawn_blocking(move || {
@@ -1030,7 +1030,7 @@ pub(crate) async fn original_passage(
     let Some(reader) = state.reader.clone() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes_dir = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
@@ -1796,7 +1796,7 @@ pub(crate) async fn chat_reply(
     .unwrap_or_default();
     let margin_block = margin_context.clone();
     let gathered = state
-        .with_store(move |store| {
+        .read_store(move |store| {
             let cache = graphs.load();
             Ok(chat::gather_seeing(
                 store,

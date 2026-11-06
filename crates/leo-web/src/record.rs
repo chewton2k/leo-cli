@@ -806,7 +806,7 @@ pub(crate) async fn snapshot(
 ) -> Response {
     use base64::Engine;
     writes_done(&state, &id).await;
-    let notes = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let notes = match state.read_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(notes) => notes,
         Err(code) => {
             return error(
