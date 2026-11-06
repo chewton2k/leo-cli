@@ -56,21 +56,10 @@ test('context targets capture ids and folders without changing the current note'
   assert.deepEqual(plain(target(el({ region: '' }))), { kind: 'root', dir: '' });
 });
 
-test('note titles are data: slashes are allowed, an empty name is not', () => {
-  const vm = require('node:vm');
-  const side = read('web/app/side.js');
-  const source = side.slice(side.indexOf('function validNoteName('), side.indexOf('\nasync function afterExplorerNote('));
-  const toasts = [];
-  const valid = vm.runInNewContext(`${source} validNoteName;`, { toast: (text) => toasts.push(text) });
-  for (const title of ['Q3/Q4 plan', 'a\\b', '../Notes', 'plain']) assert.equal(valid(title), true, title);
-  assert.equal(valid(''), false);
-  assert.deepEqual(toasts, ['Enter a note name.']);
-});
-
 test('move choices leave out where the note or folder already is', () => {
   const vm = require('node:vm');
   const side = read('web/app/side.js');
-  const source = side.slice(side.indexOf('async function explorerMoveSheet('), side.indexOf('\nfunction validNoteName('));
+  const source = side.slice(side.indexOf('async function explorerMoveMenu('), side.indexOf('\nasync function afterExplorerNote('));
   const shown = [];
   const context = {
     seq: 1,
@@ -79,15 +68,14 @@ test('move choices leave out where the note or folder already is', () => {
     esc: (text) => text,
     folderLabel: (dir) => dir.split('/').pop() || 'Top level',
     ICON: { folder: '' },
-    focusOnClose() {},
-    sheet: (html) => { shown.push([...html.matchAll(/data-explorer-move="([^"]*)"/g)].map((m) => m[1])); return { addEventListener() {} }; },
+    popupMenu: (owner, { rows }) => { shown.push(rows.map((row) => (row.text === 'Top level' ? '' : row.text))); },
   };
-  const move = vm.runInNewContext(`${source} explorerMoveSheet;`, context);
+  const move = vm.runInNewContext(`${source} explorerMoveMenu;`, context);
   return (async () => {
     await move({ kind: 'note' }, { title: 'N', directory: 'A/B' });
     await move({ kind: 'note' }, { title: 'N', directory: '' });
     await move({ kind: 'folder', dir: 'A/B' }, null);
     await move({ kind: 'folder', dir: 'D' }, null);
-    assert.deepEqual(shown, [['', 'A', 'A/B/C', 'D'], ['A', 'A/B', 'A/B/C', 'D'], ['', 'D'], ['A', 'A/B', 'A/B/C']]);
+    assert.deepEqual(JSON.parse(JSON.stringify(shown)), [['', 'A', 'A/B/C', 'D'], ['A', 'A/B', 'A/B/C', 'D'], ['', 'D'], ['A', 'A/B', 'A/B/C']]);
   })();
 });

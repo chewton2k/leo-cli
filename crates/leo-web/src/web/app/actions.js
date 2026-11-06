@@ -14,7 +14,6 @@ const actions = {
   'dictation-copy': (el) => dictationChange({action:'copy',id:Number(el.dataset.id)}).then(() => pulse(el)),
   'speech-filter': filterSpeech,
   'speech-model': changeSpeechModel,
-  'speech-delete': (el) => { closeSheet(); return speechChange({ action: el.dataset.verb || 'delete', id: el.dataset.model }); },
   back,
   home: () => go('#/'),
   'side-fold': foldSide,
@@ -31,8 +30,8 @@ const actions = {
     go('#/boards');
   },
   'kanban-new-board': () => kanbanNewBoard(),
-  'kanban-board-menu': () => kanbanBoardMenu(),
-  'kanban-column-menu': (el) => kanbanColumnMenu(el.dataset.col),
+  'kanban-board-menu': kanbanBoardMenu,
+  'kanban-column-menu': kanbanColumnMenu,
   'kanban-add-card': (el) => kanbanComposer(el.dataset.col),
   'kanban-add-column': () => kanbanAddColumn(),
   'kanban-open-card': (el) => kanbanCardPanel(el.dataset.card),
@@ -138,8 +137,6 @@ const actions = {
     go(dir ? `#/new/${enc(dir)}` : '#/new');
   },
   'new-folder': newFolder,
-  'folder-rename-save': renameFolder,
-  'folder-delete-now': deleteFolderNow,
   'create-folder': createFolder,
   settings: () => {
     closeSheet();
@@ -160,10 +157,6 @@ const actions = {
   'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,
-  'remove-key-now': (el) => {
-    closeSheet();
-    return changeSetting({ set: 'key', account: el.dataset.account, value: null });
-  },
   'test-ai': testAi,
   'use-plan': (el) => changeSetting({ set: 'provider', task: 'writing', value: el.dataset.provider }),
   'note-picture': () => choosePictures(),
@@ -208,10 +201,9 @@ const actions = {
     saving.retry();
     route();
   },
-  move: () => moveSheet(),
+  move: (el) => moveSheet(el),
   share,
-  delete: () => confirmDelete(),
-  'delete-now': deleteNow,
+  delete: () => trashNote(),
   restore: (el) => restore(el.dataset.id, false),
   'trash-select': () => {
     state.selecting = !state.selecting;

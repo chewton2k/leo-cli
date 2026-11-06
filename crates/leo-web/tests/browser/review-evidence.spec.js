@@ -734,7 +734,7 @@ test('R3/R12 Usage keeps its layout and returns to the pre-redesign provider col
     await page.goto('/#/');
     await expect(page.locator('#app')).not.toBeEmpty();
     if (width >= 1000) await page.locator('#side [data-action="usage"]').click();
-    else { await page.locator('#menu').click(); await page.locator('.sheet [data-action="usage"]').click(); }
+    else { await page.locator('#menu').click(); await page.locator(':is(.sheet, .popup-menu) [data-action="usage"]').click(); }
     await expect(page.locator('.usage-sheet .coding-plan')).toHaveCount(2);
     await settle(page);
     const colors = await page.evaluate(() => {
@@ -789,7 +789,7 @@ test('R11/R13 the explorer has no Collapse all and the rail has no Felix, while 
       expect(await page.locator('#side .side-rail [data-action="chat"]').count()).toBe(0);
     } else {
       await page.locator('#menu').click();
-      await page.locator('.sheet [data-action="folders"]').click();
+      await page.locator(':is(.sheet, .popup-menu) [data-action="folders"]').click();
       await expect(page.locator('#folders-sheet')).toBeVisible();
       expect(await page.locator('#folders-sheet').evaluate(named), 'no Collapse all in the compact Folders sheet').toBe(false);
     }

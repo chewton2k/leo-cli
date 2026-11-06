@@ -1229,7 +1229,8 @@ test('heading peaks are taller and preview motion opens and closes on a retained
     expect(between).toBeGreaterThan(0);
     expect(between).toBeLessThan(1);
     await preview.evaluate(el => { for (const run of el.getAnimations()) run.finish(); });
-    await expect.poll(() => tick.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m22)).toBeCloseTo(3, 1);
+    await expect.poll(() => tick.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m11)).toBeCloseTo(1.8, 1);
+    expect(await tick.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m22)).toBe(1);
     expect(await tick.evaluate(el => parseFloat(getComputedStyle(el).transitionDuration))).toBeGreaterThanOrEqual(0.24);
     await page.mouse.move(600, 500);
     expect(await preview.evaluate(el => el.getAnimations().map(run => run.effect.getTiming().duration))).toEqual([192]);

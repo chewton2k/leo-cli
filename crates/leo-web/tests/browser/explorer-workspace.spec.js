@@ -26,7 +26,7 @@ async function options(page, row, label) {
 }
 async function folders(page) {
   await page.locator('#menu').click();
-  await page.locator('.sheet [data-action="folders"]').click();
+  await page.locator(':is(.sheet, .popup-menu) [data-action="folders"]').click();
   await expect(page.locator('#folders-sheet')).toBeVisible();
 }
 
@@ -76,17 +76,16 @@ test('context note rename, move and trash keep an unrelated open note and suppor
   await options(page, row, 'Rename');
   const renamed = name();
   await page.getByRole('textbox', { name: 'Note name' }).fill(renamed);
-  await page.locator('#explorer-rename-save').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Enter');
   await expect(row).toHaveText(renamed);
   await expect(page.locator('#title')).toHaveText(current.title);
   await options(page, row, 'Move');
-  await page.locator(`[data-explorer-move="${destination}"]`).click();
+  await page.getByRole('menuitem', { name: destination, exact: true }).click();
   await expect(page.locator('.toast')).toContainText('Moved');
   await expect(page.locator('#title')).toHaveText(current.title);
   await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
   await expect(row).toHaveText(renamed);
   await options(page, row, 'Move to trash');
-  await page.locator('.sheet').getByRole('button', { name: 'Move to trash', exact: true }).click();
   await expect(row).toHaveCount(0);
   await expect(page.locator('#title')).toHaveText(current.title);
   await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
@@ -102,12 +101,10 @@ test('folder context actions use the captured folder, preserve the editor and re
   await options(page, folderRow(page, dir), 'Rename');
   const renamed = name();
   await page.getByRole('textbox', { name: 'Folder name' }).fill(renamed);
-  await page.locator('[data-action="folder-rename-save"]').click();
+  await page.getByRole('textbox', { name: 'Folder name' }).press('Enter');
   await expect(folderRow(page, renamed)).toBeVisible();
   await expect(page.locator('#title')).toHaveText(current.title);
   await options(page, folderRow(page, renamed), 'Move to trash');
-  await expect(page.locator('.sheet')).toContainText('subfolders and all their notes');
-  await page.locator('[data-action="folder-delete-now"]').click();
   await expect(folderRow(page, renamed)).toHaveCount(0);
   await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
   await expect(folderRow(page, renamed)).toBeVisible();
@@ -135,7 +132,7 @@ test('explorer keyboard menu clamps to the viewport and blank space cannot delet
   expect(menu.y + menu.height).toBeLessThanOrEqual(viewport.height);
   await page.keyboard.press('Escape');
   await page.locator('#title').click({ button: 'right' });
-  await expect(page.locator('.explorer-menu')).toHaveCount(0);
+  await expect(page.locator('.popup-menu')).toHaveCount(0);
 });
 
 for (const width of [390, 900]) test(`compact Folders at ${width} shares rows, traps focus and returns to More`, async ({ page }, testInfo) => {
@@ -185,10 +182,10 @@ for (const width of [390, 900]) test(`compact Folders at ${width} shares rows, t
   await folders(page);
   await page.locator(`${host} [data-action="new-folder"]`).click();
   await page.locator('#folder-name').fill('Unsafe/Name');
-  await page.locator('[data-action="create-folder"]').click();
+  await page.locator('#folder-name').press('Enter');
   await expect(page.locator('.toast')).toContainText('cannot contain /');
   await expect(page.locator('#folder-name')).toHaveValue('Unsafe/Name');
-  await page.locator('.sheet [data-action="close"]').click();
+  await page.locator('#folder-name').press('Escape');
   await expect(page.locator(host)).toBeVisible();
   await page.setViewportSize({ width: 1100, height: 844 });
   await expect(page.locator(host)).toHaveCount(0);
@@ -264,14 +261,13 @@ test('folder move and Undo retain the current note, and trashing its ancestor sa
   const note = await createNote(page, dir);
   await openNote(page, note);
   await options(page, folderRow(page, dir), 'Move');
-  await page.locator(`[data-explorer-move="${destination}"]`).click();
+  await page.getByRole('menuitem', { name: destination, exact: true }).click();
   await expect(page.locator('#title')).toHaveText(note.title);
   await expect(page.locator('.toast')).toContainText('Moved');
   await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
   await expect(folderRow(page, dir)).toBeVisible();
   await page.locator('#title').fill('The latest unsaved title');
   await options(page, folderRow(page, dir), 'Move to trash');
-  await page.locator('[data-action="folder-delete-now"]').click();
   await expect(page.getByText('Choose a note or create one')).toBeVisible();
   await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
   await expect(folderRow(page, dir)).toBeVisible();
@@ -287,27 +283,23 @@ test('captured folder creation overrides another selection and note rename retai
   await folderRow(page, selected).click();
   await options(page, folderRow(page, target), 'New folder here');
   await page.locator('#folder-name').fill('Child');
-  await page.locator('[data-action="create-folder"]').click();
+  await page.locator('#folder-name').press('Enter');
   await expect(folderRow(page, `${target}/Child`)).toBeVisible();
   await expect(page.locator('#title')).toHaveText(current.title);
   await options(page, folderRow(page, target), 'New folder here');
   await page.locator('#folder-name').fill('Child');
-  await page.locator('[data-action="create-folder"]').click();
+  await page.locator('#folder-name').press('Enter');
   await expect(page.locator('.toast')).toContainText('already exists');
   await expect(page.locator('#folder-name')).toHaveValue('Child');
-  await page.locator('.sheet [data-action="close"]').click();
+  await page.locator('#folder-name').press('Escape');
   await options(page, noteRow(page, note.id), 'Rename');
   const input = page.getByRole('textbox', { name: 'Note name' });
-  await input.fill('   ');
-  await page.locator('#explorer-rename-save').click();
-  await expect(page.locator('.toast')).toContainText('Enter a note name');
-  await expect(input).toHaveValue('   ');
   await input.fill(name());
   await page.route(`**/api/notes/${note.id}`, route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'That note changed elsewhere. Open it again before renaming.' }) }));
-  await page.locator('#explorer-rename-save').click();
+  await page.getByRole('textbox', { name: 'Note name' }).press('Enter');
   await expect(page.locator('.toast')).toContainText('changed elsewhere');
   await expect(input).toBeVisible();
-  await page.locator('.sheet [data-action="close"]').click();
+  await input.press('Escape');
   await page.unroute(`**/api/notes/${note.id}`);
   await page.request.delete(`/api/notes/${note.id}`);
   await options(page, noteRow(page, note.id), 'Rename');

@@ -10,20 +10,17 @@ test('note deletion preserves failures and never redirects another open note', a
   for (const mode of ['success', 'error', 'navigate']) {
     let destroyed = 0, went = 0, failed = 0;
     const session = { note: { id: 'note' }, doc: { destroy() { destroyed++; } } };
-    const box = { isConnected: true };
-    const button = { dataset: { id: 'note' }, isConnected: true, disabled: false, closest: () => box };
     const context = { state: { session }, closeSheet() {}, enc: encodeURIComponent, loadSideFolders() {}, toast() {}, restore() {}, fail: () => failed++, go: () => went++ };
     context.api = async () => {
       if (mode === 'error') throw Error('offline');
       if (mode === 'navigate') context.state.session = { note: { id: 'other' } };
     };
     vm.createContext(context);
-    vm.runInContext(sheets.slice(sheets.indexOf('async function deleteNow('), sheets.indexOf('async function restore(')), context);
-    await context.deleteNow(button);
+    vm.runInContext(sheets.slice(sheets.indexOf('let trashing = null;'), sheets.indexOf('async function restore(')), context);
+    await context.trashNote({ id: 'note' }).catch(context.fail);
     assert.equal(went, mode === 'success' ? 1 : 0);
     assert.equal(destroyed, mode === 'success' ? 1 : 0);
     assert.equal(failed, mode === 'error' ? 1 : 0);
-    assert.equal(button.disabled, false);
     if (mode === 'error') assert.equal(context.state.session, session);
     if (mode === 'navigate') assert.equal(context.state.session.note.id, 'other');
   }

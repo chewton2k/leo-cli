@@ -2,7 +2,7 @@ const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
 const sideActive = () => sideWide() && !side.mini || Boolean(document.querySelector('#folders-sheet'));
 const creationDir = (explicit) => explicit ?? side.target ?? (state.view === 'note' ? state.dir || '' : '');
-const side = { folders: [], loaded: false, mini: false, open: new Set(), revealed: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0, sig: [], lastSig: '', pill: '' };
+const side = { folders: [], loaded: false, mini: false, open: new Set(), revealed: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0, sig: [], lastSig: '', pill: '', closing: new Set(), growing: null };
 // Folders the user opened with their own hands, kept across restarts. Folders
 // unfolded only to show the open note or folder (`side.revealed`) are not
 // kept, so the explorer reopens exactly as the user left it, closed by default.
@@ -105,6 +105,7 @@ function drawSide() {
   }
   const scrolled = box.querySelector('.side-tree');
   const kept = scrolled ? scrolled.scrollTop : 0;
+  const high = side.growing ? sideKids(side.growing.path)?.getBoundingClientRect().height || 0 : 0;
   const railScroll = box.querySelector('.side-rail-main')?.scrollTop || 0;
   const active = box.contains(document.activeElement) ? document.activeElement.closest('button[data-action]') : null;
   const focused = active ? Object.fromEntries(['action', 'dir', 'parent', 'id', 'offset'].filter((key) => key in active.dataset).map((key) => [key, active.dataset[key]])) : null;
@@ -137,7 +138,7 @@ function drawSide() {
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
     </div>`);
-  if (listChanged && !side.twisted && sideWide()) flipList(box, '.side-tree .side-folder[data-refresh-key], .side-tree .side-note[data-id]', (el) => (el.dataset.id ? `n:${el.dataset.id}` : `d:${el.dataset.refreshKey}`), paint);
+  if (listChanged && !side.twisted && !side.growing && !side.closing.size && sideWide()) flipList(box, '.side-tree .side-folder[data-refresh-key], .side-tree .side-note[data-id]', (el) => (el.dataset.id ? `n:${el.dataset.id}` : `d:${el.dataset.refreshKey}`), paint);
   else paint();
   const pill = box.querySelector('.side-tree .side-pill');
   const owner = pillKey(pill);
@@ -148,6 +149,7 @@ function drawSide() {
   revealNoteRow(tree);
   box.querySelector('.side-rail-main').scrollTop = railScroll;
   drawFoldersSheet();
+  if (side.growing) growFolder(high);
   if (focused) {
     const buttons = [...box.querySelectorAll('button[data-action]')];
     const button = buttons.find((button) => Object.entries(focused).every(([key, value]) => button.dataset[key] === value)) || (focused.action === 'side-notes' && buttons.find((button) => ['side-notes', 'open-folder'].includes(button.dataset.action) && button.dataset.dir === focused.dir));
@@ -204,8 +206,8 @@ function folderTree(here) {
       const toggle = `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`;
       side.sig.push(`d:${d.name}`);
       rows.push(`<div data-refresh-key="${esc(d.name)}" class="side-folder${on ? ' on' : ''}" data-drop-dir="${esc(d.name)}" style="--depth:${depth}">${on ? '<span class="side-pill" aria-hidden="true"></span>' : ''}${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}" aria-expanded="${open}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${esc(String(d.notes))}</span>` : ''}</button><button class="side-add side-sub" data-action="explorer-menu" data-kind="folder" data-dir="${esc(d.name)}" aria-label="Options for ${esc(name)}" title="Folder options" aria-haspopup="menu">${ICON.more}</button></div>`);
-      if (open) {
-        side.visible.push(d.name);
+      if (open || side.closing.has(d.name)) {
+        if (open) side.visible.push(d.name);
         rows.push(`<div class="side-kids" data-kids="${esc(d.name)}" data-drop-dir="${esc(d.name)}" style="--depth:${depth}">`);
         walk(d.name, depth + 1);
         rows.push('</div>');
@@ -225,6 +227,22 @@ function sideArrow(path) {
   return [...(document.querySelector('#folders-sheet .side-tree') || document.querySelector('#side .side-tree')).querySelectorAll('.side-twist')].find((b) => b.dataset.dir === path) || null;
 }
 
+function drawTwisted(path, was) {
+  side.twisted = { path, was };
+  drawSide();
+  side.twisted = null;
+}
+
+function growFolder(high) {
+  const { path, to } = side.growing;
+  const kids = sideKids(path);
+  if (kids && kids.scrollHeight !== to) {
+    side.growing.to = kids.scrollHeight;
+    slideHeight(kids, high, kids.scrollHeight);
+  }
+  if (!kids || !side.notes.get(path)?.loading) side.growing = null;
+}
+
 function twistFolder(path, control = null, keep = true) {
   if (control) control.focus({ preventScroll: true });
   const was = folderShown(path);
@@ -237,17 +255,25 @@ function twistFolder(path, control = null, keep = true) {
   }
   if (keep) keepOpenFolders();
   const kids = sideKids(path);
+  const from = kids ? kids.getBoundingClientRect().height : 0;
+  side.growing = null;
   if (was && kids) {
     const arrow = sideArrow(path);
     if (arrow) arrow.classList.remove('open');
-    slideHeight(kids, kids.getBoundingClientRect().height, 0, drawSide);
+    side.closing.add(path);
+    slideHeight(kids, from, 0, () => {
+      side.closing.delete(path);
+      drawTwisted(path, false);
+    });
     return;
   }
-  side.twisted = { path, was };
-  drawSide();
-  side.twisted = null;
+  side.closing.delete(path);
+  drawTwisted(path, was);
   const grown = sideKids(path);
-  if (grown) slideHeight(grown, 0, grown.getBoundingClientRect().height);
+  if (grown) {
+    slideHeight(grown, from, grown.scrollHeight);
+    if (side.notes.get(path)?.loading) side.growing = { path, to: grown.scrollHeight };
+  }
   requestAnimationFrame(() => {
     const arrow = sideArrow(path);
     if (arrow) arrow.classList.toggle('open', !was);
@@ -342,6 +368,11 @@ function sideNoteRows(path, depth) {
   return rows + (status || pages ? `<div class="side-note-status" data-drop-dir="${esc(path)}" style="--depth:${depth}">${status}${pages}</div>` : '');
 }
 
+async function refreshSideTree() {
+  await loadSideFolders();
+  for (const [path, entry] of [...side.notes]) loadSideNotes(path, entry.offset || 0, true);
+}
+
 function loadSideNotes(path, offset = 0, force = false) {
   if (path !== '' && !side.folders.some((folder) => folder.name === path)) return;
   if (!Number.isSafeInteger(offset) || offset < 0) return;
@@ -411,7 +442,6 @@ function showFolders() {
   const box = $('#folders-sheet');
   box.querySelector('.side-tree').scrollTop = side.sheetScroll || 0;
   (box.querySelector('.side-note.on') || box.querySelector('[data-action="new"]')).focus({ preventScroll: true });
-  trapSheetFocus(scrim);
 }
 
 addEventListener('resize', () => {
@@ -435,19 +465,6 @@ async function openExplorerNote(el) {
   } catch (error) { if (current()) fail(error); }
 }
 
-let explorerPopup = null;
-function closeExplorerMenu(focus = true) {
-  if (!explorerPopup) return;
-  const { box, owner } = explorerPopup;
-  explorerPopup = null;
-  box.inert = true;
-  box.setAttribute('aria-hidden', 'true');
-  box.className = 'explorer-menu-gone';
-  fold(box, () => box.remove());
-  if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'false');
-  if (focus && owner.isConnected) owner.focus({ preventScroll: true });
-}
-
 function explorerTarget(el) {
   const note = el.closest('.side-note-wrap')?.querySelector('.side-note');
   if (note) return { kind: 'note', id: note.dataset.id, dir: note.dataset.from || '' };
@@ -458,42 +475,17 @@ function explorerTarget(el) {
 }
 
 function explorerMenu(el, event = null) {
-  closeExplorerMenu(false);
+  closePopup(false);
   const target = Object.freeze(explorerTarget(el));
   const owner = el.closest('button') || el.closest('.side-tree, .side-group');
   if (!owner) return;
-  const box = document.createElement('div');
-  box.className = 'explorer-menu';
-  box.setAttribute('role', 'menu');
-  box.setAttribute('aria-label', target.kind === 'note' ? 'Note options' : 'Folder options');
   const rows = target.kind === 'note'
     ? [['open', 'Open'], ['rename', 'Rename'], ['move', 'Move'], ['trash', 'Move to trash']]
     : [['new', target.dir ? 'New note here' : 'New note'], ['folder', target.dir ? 'New folder here' : 'New folder'], ...(target.kind === 'folder' && target.dir ? [['rename', 'Rename'], ['move', 'Move'], ['trash', 'Move to trash']] : [])];
-  box.innerHTML = rows.map(([action, label]) => `<button type="button" role="menuitem" data-explorer-action="${action}">${label}</button>`).join('');
-  document.body.appendChild(box);
-  if (owner.hasAttribute('aria-haspopup')) owner.setAttribute('aria-expanded', 'true');
-  const bounds = owner.getBoundingClientRect();
-  box.style.left = `${Math.max(8, Math.min(event?.clientX ?? bounds.right, innerWidth - box.offsetWidth - 8))}px`;
-  box.style.top = `${Math.max(8, Math.min(event?.clientY ?? bounds.bottom, innerHeight - box.offsetHeight - 8))}px`;
-  explorerPopup = { box, owner, target };
-  unfold(box, event ? { x: event.clientX, y: event.clientY } : owner);
-  const buttons = [...box.querySelectorAll('button')];
-  buttons[0].focus();
-  box.addEventListener('click', (e) => {
-    const action = e.target.closest('[data-explorer-action]')?.dataset.explorerAction;
-    if (!action) return;
-    closeExplorerMenu();
-    explorerAction(action, target).catch(fail);
-  });
-  box.addEventListener('keydown', (e) => {
-    const at = buttons.indexOf(document.activeElement);
-    let next;
-    if (e.key === 'ArrowDown') next = (at + 1) % buttons.length;
-    else if (e.key === 'ArrowUp') next = (at + buttons.length - 1) % buttons.length;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = buttons.length - 1;
-    else if (e.key === 'Escape' || e.key === 'Tab') { closeExplorerMenu(); e.preventDefault(); e.stopPropagation(); return; }
-    if (next !== undefined) { e.preventDefault(); buttons[next].focus(); }
+  popupMenu(owner, {
+    label: target.kind === 'note' ? 'Note options' : 'Folder options',
+    point: event && { x: event.clientX, y: event.clientY },
+    rows: rows.map(([action, text]) => ({ text, run: () => explorerAction(action, target) })),
   });
 }
 
@@ -508,11 +500,6 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
   explorerMenu(event.target);
 });
-document.addEventListener('pointerdown', (event) => {
-  if (explorerPopup && !explorerPopup.box.contains(event.target)) closeExplorerMenu(false);
-});
-addEventListener('hashchange', () => closeExplorerMenu(false));
-
 function explorerFocus(at) {
   const host = $('#folders-sheet') || $('#side');
   if (!host || !at) return null;
@@ -533,11 +520,6 @@ function refocusExplorer(at) {
   explorerFocus(at)?.focus({ preventScroll: true });
 }
 
-function focusOnClose(box, at) {
-  box.focusAt = at;
-  box.returnFocus = () => explorerFocus(box.focusAt);
-}
-
 async function explorerAction(action, target) {
   const el = { dataset: { dir: target.dir, parent: target.dir } };
   if (action === 'new') return actions.new(el);
@@ -548,68 +530,98 @@ async function explorerAction(action, target) {
   }
   if (target.kind === 'folder') {
     if (!target.dir) return;
-    if (action === 'rename') return renameFolderSheet(target.dir);
-    if (action === 'trash') return deleteFolderAsk(target.dir);
+    if (action === 'rename') return renameFolder(target.dir);
+    if (action === 'trash') return trashFolder(target.dir);
   }
   const mine = seq;
   if (target.kind === 'note' && state.session?.note.id === target.id) await ready();
   const note = target.kind === 'note' ? await api(`/api/notes/${enc(target.id)}`) : null;
   if (mine !== seq) return;
   if (action === 'rename') return renameExplorerNote(note);
-  if (action === 'trash') return confirmDelete(note, target);
-  if (action === 'move') return explorerMoveSheet(target, note);
+  if (action === 'trash') return trashNote(note, target);
+  if (action === 'move') return explorerMoveMenu(target, note, explorerFocus(target) || document.activeElement);
+}
+
+function inlineEdit(where, { id, value, label, hint = '', at, save }) {
+  const input = document.createElement('input');
+  input.className = 'inline-edit';
+  input.id = id;
+  input.value = value;
+  input.maxLength = 120;
+  input.placeholder = hint;
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', label);
+  for (const edge of ['left', 'top', 'width', 'height']) input.style[edge] = `${where[edge]}px`;
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  let busy = false;
+  const finish = (back = at) => {
+    busy = true;
+    input.remove();
+    explorerFocus(back)?.focus({ preventScroll: true });
+  };
+  const commit = async () => {
+    const text = input.value.trim();
+    if (busy || !input.isConnected) return;
+    if (!text || text === value) return finish();
+    busy = true;
+    input.readOnly = true;
+    const done = await save(text);
+    busy = false;
+    input.readOnly = false;
+    if (done) finish(done === true ? at : done);
+    else input.focus();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'Enter') { e.preventDefault(); commit().catch(fail); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); }
+  });
+  input.addEventListener('blur', () => { commit().catch(fail); });
 }
 
 function renameExplorerNote(note) {
-  const box = sheet(`<h3>Rename note</h3><label class="field">${ICON.note}<input id="explorer-note-name" value="${esc(note.title)}" maxlength="120" aria-label="Note name"></label><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="explorer-rename-save">Rename</button></div>`);
-  const input = box.querySelector('input'), save = box.querySelector('#explorer-rename-save');
-  focusOnClose(box, { kind: 'note', id: note.id, dir: note.directory });
-  input.focus(); input.select();
-  const run = async () => {
-    const title = input.value.trim();
-    if (save.disabled || !validNoteName(title)) return;
-    save.disabled = true;
-    try {
-      const renamed = await api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { title, base: note.version } });
-      if (box.isConnected) closeSheet();
+  const at = { kind: 'note', id: note.id, dir: note.directory };
+  const row = explorerFocus(at);
+  if (!row) return;
+  inlineEdit(row.querySelector('.side-label').getBoundingClientRect(), {
+    id: 'explorer-note-name',
+    value: note.title,
+    label: 'Note name',
+    at,
+    save: async (title) => {
+      const renamed = await api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { title, base: note.version } }).catch((error) => { fail(error); });
+      if (!renamed) return false;
       await afterExplorerNote(note.id);
       toast(`Renamed note to “${title}”`, {
         action: 'Undo',
         run: () => api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { title: note.title, base: renamed.version } }).then(() => afterExplorerNote(note.id)).catch(fail),
       });
-    } catch (error) { fail(error); }
-    finally { if (save.isConnected) save.disabled = false; }
-  };
-  save.addEventListener('click', run);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); run(); } });
+      return true;
+    },
+  });
 }
 
-async function explorerMoveSheet(target, note) {
+async function explorerMoveMenu(target, note, owner) {
   const mine = seq;
   const folders = await api('/api/folders');
   if (mine !== seq) return;
   const from = target.kind === 'note' ? note.directory : parentOf(target.dir);
   const choices = ['', ...folders.map((f) => f.name)].filter((dir) => dir !== from && (target.kind === 'note' || dir !== target.dir && !dir.startsWith(`${target.dir}/`)));
-  const box = sheet(`<h3>Move “${esc(note?.title || folderLabel(target.dir))}”</h3>${choices.map((dir) => `<button class="list-row" data-explorer-move="${esc(dir)}">${ICON.folder}<span>${esc(dir || 'Top level')}</span></button>`).join('') || '<p class="hint">There is no other folder to move it to. Make a folder first.</p>'}`);
-  focusOnClose(box, { ...target });
-  box.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-explorer-move]');
-    if (!button || button.disabled) return;
-    button.disabled = true;
-    try {
-      const dir = button.dataset.explorerMove;
-      if (target.kind === 'folder') await dropFolder(target.dir, dir);
-      else await dropNote({ id: note.id, title: note.title, dir: note.directory }, dir);
-      box.focusAt = target.kind === 'folder' ? { kind: 'folder', dir: dir ? `${dir}/${folderLabel(target.dir)}` : folderLabel(target.dir) } : { kind: 'folder', dir };
-      if (box.isConnected) closeSheet();
-    } catch (error) { fail(error); }
-    finally { if (button.isConnected) button.disabled = false; }
+  popupMenu(owner, {
+    label: `Move “${note?.title || folderLabel(target.dir)}”`,
+    find: 'Find a folder',
+    rows: choices.map((dir) => ({
+      text: dir || 'Top level',
+      icon: ICON.folder,
+      run: async () => {
+        if (target.kind === 'folder') await dropFolder(target.dir, dir);
+        else await dropNote({ id: note.id, title: note.title, dir: note.directory }, dir);
+        refocusExplorer(target.kind === 'folder' ? { kind: 'folder', dir: dir ? `${dir}/${folderLabel(target.dir)}` : folderLabel(target.dir) } : { kind: 'folder', dir });
+      },
+    })),
   });
-}
-
-function validNoteName(name) {
-  if (!name) { toast('Enter a note name.', { bad: true }); return false; }
-  return true;
 }
 
 async function afterExplorerNote(id) {
