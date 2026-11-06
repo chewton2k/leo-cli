@@ -148,10 +148,15 @@ mod tests {
 
     fn age(path: &Path, days: u64, extra_secs: u64) {
         let when = SystemTime::now() - std::time::Duration::from_secs(days * 86_400 + extra_secs);
-        std::fs::File::open(path)
-            .unwrap()
-            .set_modified(when)
-            .unwrap();
+        let mut open = std::fs::File::options();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            open.write(true).custom_flags(0x0200_0000);
+        }
+        #[cfg(not(windows))]
+        open.read(true);
+        open.open(path).unwrap().set_modified(when).unwrap();
     }
 
     fn data() -> (tempfile::TempDir, PathBuf) {
