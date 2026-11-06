@@ -51,9 +51,7 @@ function trashAsk(ids, all) {
   const names = all ? items : items.filter((t) => ids.includes(t.id));
   const what = all ? `all ${plural(items.length, 'note')} in the trash` : names.length === 1 ? `“${names[0].title}”` : plural(names.length, 'note');
   state.trashPending = { ids, all };
-  sheet(`<h3>Delete ${esc(what)} for good?</h3>
-    <p>${all || names.length > 1 ? 'They' : 'It'} cannot be restored afterwards.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="trash-delete-now">Delete for good</button></div>`);
+  confirmSheet({ title: `Delete ${esc(what)} for good?`, text: `${all || names.length > 1 ? 'They' : 'It'} cannot be restored afterwards.`, yes: 'Delete for good', action: 'trash-delete-now' });
 }
 
 async function trashDeleteNow() {

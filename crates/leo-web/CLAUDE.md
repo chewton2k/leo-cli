@@ -111,10 +111,14 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
 - `api()` treats an empty body as `null`; every success is JSON or a bodiless
   204 (a browser test sweeps the API).
 
-- In the macOS app (`html[data-app="mac"]`) the window buttons cover the top
-  44 px of the first 86 px: the sidebar toggle sits below them, level with the
-  explorer header, the rail starts under it, and a folded sidebar pads the toolbar
-  to 86 px (2026-11-06; `sidebar.spec.js` measures it).
+- Sidebar header (2026-11-06, the owner, after T3 Code): one row at the top of the
+  sidebar holds the toggle and the "leo" brand, everywhere. In the macOS app
+  (`html[data-app="mac"]`) the window buttons cover the top 44 px of the first
+  86 px, so a windowed Mac starts the row at 84 px; full screen (the desktop sets
+  `html[data-fullscreen]` from `is_fullscreen()` on load and on every resize),
+  Windows and the browser start it flush left. Folded beside the window buttons,
+  the toggle drops below them into the rail and the toolbar is padded to 86 px.
+  `sidebar.spec.js` measures all three states.
 
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`
   (Felix and/or the original pane), `--mid`. Fixed things (toolbar, select
@@ -124,6 +128,33 @@ reader, seer, meaning, room, speech, toolless, toolless_chat).
   (core.js) draws one at the left edge of Felix (and the original pane), so
   the notes' scrollbar sits beside the notes; the page still scrolls the
   window, so reading positions and paging are unchanged.
+
+## Shared components (new UI must use these; 2026-11-06, the owner: "make sure throughout the app we are reusing ui components")
+
+- Choice of a few options: `segmented()` (settings-navigation.js; `field` mode fires
+  `change` on a hidden input, `action` mode makes `data-action` buttons with
+  `aria-pressed`; a 4th choice item is the tooltip). Calendar views, Which days change,
+  onboarding Recommended/All, Add to note's where, the card panel's priority.
+- Picture choices: `choiceCards()` (the same two modes; `columns` keeps rows aligned).
+- On/off: `settingsSwitch()`; checkboxes stay only for task completion and picking
+  several items (Trash).
+- Dropdowns: a `<select>` inside `.select-control` with the chevron; select-menu.js
+  turns every one into the app's own menu (document-wide, sheets included; not under
+  forced colours, where the native select stays), keeping the select's id, value and
+  `change` events. Do not hand-build list menus.
+- Text fields: `.field` (icon-led box, sheets and the note field group) or `.set-input`
+  (Settings rows and label-above forms).
+- Folder, Title and What do you want: `noteFields()` (uploads.js), used by the upload
+  sheet and the Record page.
+- Confirmations: `confirmSheet({ title, text, yes, action, data, danger, cancel })`
+  (sheets.js) for every "are you sure" sheet.
+- Empty pages: `empty(icon, title, text)`. Counts: `.badge`. Small uppercase section
+  labels share one rule (`.side-group`, `.source-label`, `.quick-due-head`,
+  `.chat-history-group`, `.pick-head`).
+- Kept on purpose: the speech-model filters (five wrapping filters, `library-views`),
+  the model picker (a menu of models with effort chips), the margin-mode menu (its own
+  interrupted-motion and keyboard tests) and chat.js's attach and access menus (chat.js
+  is a separate script without the app's helpers).
 
 ## Notes, editing and browsing
 
@@ -591,6 +622,8 @@ target. Check the page sequence after loading preferences.
   switch, the folder, and Title and What do you want under one "Optional" caption.
   The only other line, that photos and scans need a writing AI that can see images,
   appears only while a picture is picked (the page cannot tell which AI sees).
+  Folder, Title and What do you want come from `noteFields` (uploads.js), the same
+  helper the Record page uses (passed to the recorder as a dependency).
 
 - Uploads: POST `/api/import` runs the `Importer` on a thread; "What do you
   want from it?" goes in `<what_the_user_wants>`. Several files make a note
@@ -639,9 +672,12 @@ target. Check the page sequence after loading preferences.
   Housekeeper does not list is not found.
   The idle page (2026-11-06) shows Microphone, Screen and Call as one row of
   `.choice-pick` cards with a track diagram each (one waveform, or two for Call)
-  over the same `rec-kind` radios, Folder, Title and What you want as one aligned
-  form with short placeholders, the calendar hint as one linked line, and the
-  "keeps recording if you close the window" tip under Start.
+  over the same `rec-kind` radios; then `noteFields({ id: 'rec' })`, the upload
+  sheet's group of icon-led `.field`s (Folder as the shared select menu, the calendar
+  event picker beside it when a calendar is connected, then Title and What do you
+  want under one "Optional" caption; ids `#rec-dir`, `#rec-title`, `#rec-wants`), the
+  calendar hint as one linked line, and the "keeps recording if you close the window"
+  tip under Start.
 
 - Screenshots (the user's call): paste a PNG/JPEG/GIF/WebP into Your notes while
   recording instead of a browser screen picker. The existing snapshot endpoint
@@ -765,28 +801,29 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   null = top, an id = just after it; another board keeps a same-named column, else
   the first). Export adds `leo/boards.json`.
 
-- New board uses the existing sheet and controls, with a labelled full-width name
-  field and a small preview of the three starting columns; Enter and Create board
+- New board uses the existing sheet and controls like New folder (a heading, one
+  full-width `.field` named Board name) and a small preview of the three starting columns; Enter and Create board
   submit the same request, and Cancel leaves the boards untouched.
 
-- Page: board tabs with counts (a card dropped on a tab moves to that board, with
-  Undo), the name and column names edit in place (Enter saves, Escape reverts),
-  columns are grey lanes of white cards (title, muted subheading, priority arrows,
-  a lines icon when there is a description), + Add card opens a composer that stays
-  open for the next card (adds are queued so fast typing loses nothing), + Add
-  column, ⋯ sheets for a column (rename, move left/right, delete moving its cards)
-  and the board (rename, add column, delete with a second press, Undo). A card opens
-  in a side panel beside the board like a note (2026-11-02, the user's call: no modal;
-  `#kanban-panel`, kept across board redraws, a full-screen layer under 760 px): title,
-  subheading, status, priority (`library-views`), board, a borderless description
+- Page (redesigned 2026-11-06, the owner: "redesign the kanban boards"): one header
+  row holds the board name (edits in place, sized to its text), its ⋯ menu and, at the
+  right, the board tabs with count badges (a card dropped on a tab moves to that board,
+  with Undo; the tabs wrap under the name on a phone). Columns are quiet `--tint` lanes
+  only as tall as their cards, up to the window, then the card list scrolls inside
+  (dragging near its edge scrolls it). A compact head has the colour dot (`kanbanTone`:
+  to do blue, in progress amber, done green, blocked red, others by place), the name
+  (edits in place), the count, a + (`kanban-compose`) and ⋯. Cards show the title (three
+  lines at most), the muted subheading, two lines of the description when there is one
+  (`.kanban-has-text`) and the priority arrow; hover and focus rings. Add card is a quiet
+  row at the foot; an empty column shows a short dashed "Drag a card here" target; Add
+  column is a slim tile as tall as the tallest lane. + Add card's composer stays open for
+  the next card (adds are queued so fast typing loses nothing); ⋯ sheets for a column
+  (rename, move left/right, delete moving its cards) and the board (rename, add column,
+  delete with a second press, Undo). A card opens in a side panel beside the board like
+  a note (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board
+  redraws, a full-screen layer under 760 px): title, subheading, status and board (the
+  shared select menu), priority (`segmented`, `data-priority`), a borderless description
   (autosave after 600 ms, on blur, and before Escape or × closes it), Delete with Undo.
-  Columns share one height and fill the width (flex 1, at least 260 px; Add column is a
-  small + tile), cards are roomier, and each column takes a quiet colour from its name
-  (`kanbanTone`: to do blue, in progress amber, done green, blocked red, others by
-  place) shown as a dot and a 3% tint; the column count is a plain muted number.
-  No help line under the board. Cards hug their content (no minimum height), the
-  selected tab has the segment pill's small shadow, New board is a ghost tab and
-  Add column a solid tile, so nothing on the page has a dashed border.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed

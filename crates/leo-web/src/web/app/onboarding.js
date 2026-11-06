@@ -135,7 +135,7 @@ function drawOnboardingModels() {
   const recommended = models.filter((model) => model.recommended);
   const all = onboardingAll || !recommended.length;
   const shown = all ? models : recommended;
-  const toggle = recommended.length && recommended.length < models.length ? `<div class="library-views model-filters" role="group" aria-label="Which models to show"><button class="btn plain sm${all ? '' : ' on'}" data-action="onboarding-models" data-all="false" aria-pressed="${!all}">Recommended</button><button class="btn plain sm${all ? ' on' : ''}" data-action="onboarding-models" data-all="true" aria-pressed="${all}">All ${models.length}</button></div>` : '';
+  const toggle = recommended.length && recommended.length < models.length ? `<div class="model-filters">${segmented({ label: 'Which models to show', action: 'onboarding-models', key: 'all', current: String(all), choices: [['false', 'Recommended'], ['true', `All ${models.length}`]] })}</div>` : '';
   const key = (all ? 'all:' : 'recommended:') + shown.map((model) => model.id).join(',');
   // Polling during a download only touches the state chips and the progress
   // bar, so a click is never lost to a button being replaced under the pointer.

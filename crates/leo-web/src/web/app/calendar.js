@@ -258,7 +258,7 @@ function calHead(days) {
       <button type="button" class="icon-btn cal-arrow next" data-action="cal-next" aria-label="Next ${unit}" title="Next ${unit} (J)">${ICON.back}</button>
     </div>
     <div class="cal-status" role="status">${calStatus()}</div>
-    <div class="library-views cal-views" role="group" aria-label="View">${CAL_VIEWS.map(([v, label]) => `<button type="button" class="btn sm plain${cal.view === v ? ' on' : ''}" data-action="cal-view" data-view="${v}" aria-pressed="${cal.view === v}" title="${label} (${label[0]})">${label}</button>`).join('')}</div>
+    <div class="cal-views">${segmented({ label: 'View', action: 'cal-view', key: 'view', current: cal.view, choices: CAL_VIEWS.map(([v, label]) => [v, label, '', `${label} (${label[0]})`]) })}</div>
     <button type="button" class="btn primary sm" data-action="task-new" data-day="${esc(cal.selected)}">${ICON.plus}<span>New</span></button>
   </header>`;
 }
@@ -940,7 +940,7 @@ function calPeekTask(side, id, on) {
     <textarea class="kanban-sheet-title cal-peek-title" id="cal-peek-title" rows="1" maxlength="300" aria-label="Title"${leo ? '' : ' readonly'}>${esc(task.title)}</textarea>
     ${task.found === false ? '<p class="set-note warn">leo could not find this checkbox in the note any more. Open the note to check it.</p>' : ''}
     <label class="set-row cal-peek-done"><span class="set-label">${day ? `Done on ${esc(dayName)}` : 'Done'}</span><input type="checkbox" class="cal-check" data-action="task-done" data-id="${esc(task.id)}"${day ? ` data-on="${esc(day)}"` : ''}${doneNow ? ' checked' : ''}></label>
-    ${repeating ? `<div class="set-row"><span class="set-label">Change</span><div class="library-views" role="group" aria-label="Which days change">${[['one', 'This one'], ['all', 'Every time']].map(([v, label]) => `<button type="button" class="btn sm plain${scope === v ? ' on' : ''}" data-cal-scope="${v}" aria-pressed="${scope === v}">${label}</button>`).join('')}</div></div>` : ''}
+    ${repeating ? `<div class="set-row"><span class="set-label">Change</span>${segmented({ label: 'Which days change', action: 'cal-scope', key: 'cal-scope', current: scope, choices: [['one', 'This one'], ['all', 'Every time']] })}</div>` : ''}
     <div class="set-row column cal-peek-when"><span class="set-label">When</span><span class="cal-peek-times">
       <input class="set-input" type="date" id="cal-peek-date" aria-label="Date" value="${esc(slot.date || '')}">
       <input class="set-input" type="time" id="cal-peek-start" aria-label="Starts" value="${esc(calHM(slot.time) || '')}"${slot.date ? '' : ' disabled'}>
@@ -1004,6 +1004,7 @@ function calPeekTask(side, id, on) {
         o.classList.toggle('on', o === b);
         o.setAttribute('aria-pressed', String(o === b));
       }
+      syncSegmented(b.closest('.segmented'));
     });
   }
   const when = () => {

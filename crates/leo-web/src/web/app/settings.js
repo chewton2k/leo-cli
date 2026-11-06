@@ -389,9 +389,7 @@ async function saveKey(account) {
 }
 
 function confirmRemoveKey(el) {
-  sheet(`<h3>Remove the ${esc(el.dataset.name)} key?</h3>
-    <p>leo stops using ${esc(el.dataset.name)} until you add a key again.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="remove-key-now" data-account="${esc(el.dataset.account)}">Remove</button></div>`);
+  confirmSheet({ title: `Remove the ${esc(el.dataset.name)} key?`, text: `leo stops using ${esc(el.dataset.name)} until you add a key again.`, yes: 'Remove', action: 'remove-key-now', data: ` data-account="${esc(el.dataset.account)}"` });
 }
 
 async function testAi(el) {
@@ -506,14 +504,14 @@ function changeSpeechModel(el) {
   if (el.dataset.verb === 'delete_file') {
     const file = (state.speech.extra_files || []).find((file) => file.name === el.dataset.model);
     if (!file) return;
-    sheet(`<h3>Delete ${esc(file.name)}?</h3><p>This removes the model file from this computer.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="speech-delete" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`);
+    confirmSheet({ title: `Delete ${esc(file.name)}?`, text: 'This removes the model file from this computer.', yes: 'Delete', action: 'speech-delete', data: ` data-model="${esc(file.name)}" data-verb="delete_file"` });
     return;
   }
   const model = state.speech.models.find((m) => m.id === el.dataset.model);
   if (!model) return;
   const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' };
   if (change.action === 'delete') {
-    sheet(`<h3>Delete ${esc(model.name)}?</h3><p>The download is removed from this computer. Your notes stay.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="speech-delete" data-model="${esc(model.id)}">Delete</button></div>`);
+    confirmSheet({ title: `Delete ${esc(model.name)}?`, text: 'The download is removed from this computer. Your notes stay.', yes: 'Delete', action: 'speech-delete', data: ` data-model="${esc(model.id)}"` });
     return;
   }
   return speechChange(change);

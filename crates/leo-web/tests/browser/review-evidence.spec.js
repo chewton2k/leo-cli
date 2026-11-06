@@ -675,15 +675,16 @@ test('Settings chooses how often Felix reads and says so in one sentence', async
 test('R16 the When you ask copy in Settings describes the real activation', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/#/settings/felix');
-  await expect(page.locator('.settings-section')).toContainText('When you ask');
-  const text = await page.locator('.settings-section').innerText();
-  const copy = await page.locator('.settings-section .set-card', { hasText: 'When you ask' }).first().innerText();
+  const card = page.locator('[data-find="felix-new-notes"]');
+  await expect(card).toContainText('When you ask');
+  const copy = await card.innerText();
+  await expect(card.locator('.choice-pick'), 'two choices').toHaveCount(2);
+  await expect(card.locator('.choice-about'), 'each with one line').toHaveCount(2);
   expect(copy, 'names the passage selection').toMatch(/select(ing)? (a |the )?(passage|words|text)/i);
   expect(copy, 'names Ask Felix').toMatch(/Ask Felix/);
   expect(copy, 'names the shortcut').toMatch(/(⌘|Cmd|Ctrl)\s*\+?\s*(⇧|Shift)\s*\+?\s*E/i);
-  expect(copy, 'names the question and send steps').toMatch(/question/i);
-  expect(copy).toMatch(/send/i);
-  expect(copy, 'states that nothing is asked automatically').toMatch(/automatic|on its own|only when you|does not activate/i);
+  await expect(card.locator('p.hint'), 'one privacy sentence').toHaveCount(1);
+  expect(copy, 'says what Reads along sends and to which AI').toMatch(/Reads along sends the note’s title and the text you change to \S/);
   record('R16', { ...env(page), copy });
 });
 

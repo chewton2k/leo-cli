@@ -62,8 +62,9 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     }
     const EASE_OUT='ease-out';
     ${read('app/motion.js')}
+    ${read('app/settings-navigation.js')}
     ${read('app/boards.js')}
-    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
+    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-compose':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     async function route(){closeSheet(true);const m=location.hash.match(/^#\\/boards\\/?(.*)$/);if(!m){leaveBoards();state={view:'other'};app.innerHTML='<p id="elsewhere">Elsewhere</p>';return;}await showBoards(decodeURIComponent(m[1]));}
@@ -129,6 +130,10 @@ test('a board shows columns of cards, and cards drag between columns and onto an
     await expect(page.locator('[data-card="cemail0001"] .kanban-card-title')).toHaveText('Email tutor <b>now</b>');
     await expect(page.locator('[data-card="cessay0001"] .kanban-priority.high')).toBeVisible();
     await expect(page.locator('[data-count-col="ktodo00001"]')).toHaveText('2');
+    const lanes = await page.locator('.kanban-col').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+    expect(Math.max(...lanes), 'lanes are only as tall as their cards').toBeLessThan(400);
+    await expect(page.locator('.kanban-head > .kanban-title-row + .kanban-tabs'), 'title, menu and tabs share one header row').toHaveCount(1);
+    await expect(page.locator('.kanban-cards[data-col="kdone00001"]:empty'), 'an empty column shows its drop target').toBeVisible();
     const tall = async (id) => (await page.locator(`[data-card="${id}"]`).boundingBox()).height;
     expect(await tall('cread00001'), 'a title-only card hugs its title').toBeLessThan(await tall('cessay0001') - 30);
 
@@ -337,7 +342,7 @@ test('new board setup has a full-width named field and a readable column preview
       await page.locator('[data-action="kanban-new-board"]').click();
       const sheet=page.locator('.sheet'), field=page.locator('.sheet').getByRole('textbox',{name:'Board name',exact:true});
       await expect(field).toBeFocused();
-      const panel=await sheet.boundingBox(), input=await field.boundingBox();
+      const panel=await sheet.boundingBox(), input=await field.locator('xpath=ancestor::label[1]').boundingBox();
       expect(input.width).toBeGreaterThan(panel.width-64);
       await expect(sheet.locator('.kanban-start-column')).toHaveCount(3);
       for(const name of ['To do','In progress','Done'])await expect(sheet.getByText(name,{exact:true})).toBeVisible();

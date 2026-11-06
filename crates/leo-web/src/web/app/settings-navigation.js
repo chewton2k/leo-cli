@@ -258,10 +258,10 @@ function settingsSwitch(attrs, on, label = '') {
 //   updates it and fires `change` on it, like the <select> it replaces.
 // - `action`: each option is a data-action button (the caller's handler stores the choice).
 function segmented({ label, choices, current, field = '', action = '', key = '' }) {
-  const options = choices.map(([value, text, icon = '']) => {
+  const options = choices.map(([value, text, icon = '', hint = '']) => {
     const on = String(value) === String(current);
     const what = action ? ` data-action="${action}" data-${key}="${esc(value)}" aria-pressed="${on}"` : ` data-action="segment-pick" data-value="${esc(value)}" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
-    return `<button type="button" class="segment${on ? ' on' : ''}"${what} title="${esc(text)}">${icon}<span>${esc(text)}</span></button>`;
+    return `<button type="button" class="segment${on ? ' on' : ''}"${what} title="${esc(hint || text)}">${icon}<span>${esc(text)}</span></button>`;
   }).join('');
   const index = Math.max(0, choices.findIndex(([value]) => String(value) === String(current)));
   const hidden = field ? `<input type="hidden" ${field} value="${esc(current ?? '')}">` : '';

@@ -24,8 +24,10 @@ a test, or leave it unset to see the user's own data.
    `html[data-app="mac"]`, which hides the sidebar wordmark and makes room for
    the buttons (2026-10-31, the user found the grey title strip ugly). `#bar`
    and `.side-head` are `data-tauri-drag-region="deep"`. The icon rail stays
-   visible when the explorer is hidden; the sidebar toggle stays over the rail below the window controls, whether the
-   explorer is shown or hidden.
+   visible when the explorer is hidden. The sidebar toggle and the brand share one
+   header row: to the right of the window controls when windowed, flush left in
+   full screen (`lib.rs` tells the page on load and on every resize). Folded on
+   a windowed Mac, the toggle drops into the rail below the window controls.
 
 ## Behaviour
 

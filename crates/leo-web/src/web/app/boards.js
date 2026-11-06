@@ -11,7 +11,6 @@ const KANBAN_SAVE_MS = 600;
 const KANBAN_PRIORITIES = [['', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
 const KANBAN_ICON = {
   pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>'),
-  lines: svg('<path d="M5 7h14M5 12h14M5 17h9"/>'),
   high: svg('<path d="M6 13l6-6 6 6M6 19l6-6 6 6"/>'),
   medium: svg('<path d="M6 9.5h12M6 14.5h12"/>'),
   low: svg('<path d="M6 9l6 6 6-6"/>'),
@@ -100,11 +99,10 @@ function kanbanPriority(priority) {
 }
 
 function kanbanCardHtml(card) {
-  const foot = card.priority || card.description
-    ? `<div class="kanban-card-foot">${kanbanPriority(card.priority)}${card.description ? `<span class="kanban-has-text" title="Has a description" aria-label="Has a description">${KANBAN_ICON.lines}</span>` : ''}</div>`
-    : '';
+  const preview = card.description ? `<div class="kanban-has-text">${esc(card.description.slice(0, 240))}</div>` : '';
+  const foot = card.priority ? `<div class="kanban-card-foot">${kanbanPriority(card.priority)}</div>` : '';
   const open = kanban.panel?.id === card.id;
-  return `<article class="kanban-card${open ? ' open' : ''}" tabindex="0" data-card="${esc(card.id)}" data-action="kanban-open-card" aria-roledescription="card" aria-label="${esc(card.title)}"${open ? ' aria-current="true"' : ''}><div class="kanban-card-title">${esc(card.title)}</div>${card.subheading ? `<div class="kanban-card-sub">${esc(card.subheading)}</div>` : ''}${foot}</article>`;
+  return `<article class="kanban-card${open ? ' open' : ''}" tabindex="0" data-card="${esc(card.id)}" data-action="kanban-open-card" aria-roledescription="card" aria-label="${esc(card.title)}"${open ? ' aria-current="true"' : ''}><div class="kanban-card-title">${esc(card.title)}</div>${card.subheading ? `<div class="kanban-card-sub">${esc(card.subheading)}</div>` : ''}${preview}${foot}</article>`;
 }
 
 function kanbanColumnHtml(column) {
@@ -113,7 +111,8 @@ function kanbanColumnHtml(column) {
     <header class="kanban-col-head" title="Drag to move this column">
       <span class="kanban-dot" aria-hidden="true"></span>
       <input class="kanban-col-name" data-kanban-name="${esc(column.id)}" value="${esc(column.name)}" maxlength="80" aria-label="Column name" spellcheck="false" autocomplete="off">
-      <span class="kanban-count" data-count-col="${esc(column.id)}">${cards.length}</span>
+      <span class="badge kanban-count" data-count-col="${esc(column.id)}">${cards.length}</span>
+      <button class="icon-btn kanban-col-more" data-action="kanban-compose" data-col="${esc(column.id)}" aria-label="Add a card to ${esc(column.name)}" title="Add card">${ICON.plus}</button>
       <button class="icon-btn kanban-col-more" data-action="kanban-column-menu" data-col="${esc(column.id)}" aria-label="Options for ${esc(column.name)}" title="Column options">${ICON.more}</button>
     </header>
     <div class="kanban-cards" data-col="${esc(column.id)}">${cards.map(kanbanCardHtml).join('')}</div>
@@ -125,7 +124,7 @@ function kanbanTabsHtml() {
   const here = kanban.board?.id;
   return kanban.boards.map((b) => {
     const count = b.id === here ? kanban.cards.length : b.cards || 0;
-    return `<a class="kanban-tab${b.id === here ? ' on' : ''}" href="#/boards/${enc(b.id)}" data-kanban-drop="${esc(b.id)}"${b.id === here ? ' aria-current="page"' : ''}><span class="kanban-tab-name">${esc(b.name)}</span><span class="kanban-count" data-count-board="${esc(b.id)}">${count}</span></a>`;
+    return `<a class="kanban-tab${b.id === here ? ' on' : ''}" href="#/boards/${enc(b.id)}" data-kanban-drop="${esc(b.id)}"${b.id === here ? ' aria-current="page"' : ''}><span class="kanban-tab-name">${esc(b.name)}</span><span class="badge kanban-count" data-count-board="${esc(b.id)}">${count}</span></a>`;
   }).join('') + `<button class="kanban-tab kanban-tab-new" data-action="kanban-new-board">${ICON.plus}<span>New board</span></button>`;
 }
 
@@ -159,11 +158,11 @@ function drawKanban() {
   try {
     host.innerHTML = `<div class="kanban-page">
       <header class="kanban-head">
-        <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
         <div class="kanban-title-row">
-          <input class="kanban-title" data-kanban-name="board" value="${esc(board.name)}" maxlength="80" aria-label="Board name" spellcheck="false" autocomplete="off">
+          <input class="kanban-title" data-kanban-name="board" value="${esc(board.name)}" size="${Math.max(4, board.name.length + 1)}" maxlength="80" aria-label="Board name" spellcheck="false" autocomplete="off">
           <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
         </div>
+        <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
       </header>
       <div class="kanban-cols">${board.columns.map(kanbanColumnHtml).join('')}${board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="kanban-add-col" data-action="kanban-add-column" title="Add column">${ICON.plus}<span>Add column</span></button>` : ''}</div>
     </div>`;
@@ -212,8 +211,8 @@ function kanbanSyncTab() {
 
 async function kanbanNewBoard() {
   const box = sheet(`<div class="kanban-start">
-    <header class="kanban-start-head"><span class="kanban-start-icon">${ICON.board}</span><div><h3>New board</h3><p>A place for your next project.</p></div></header>
-    <label class="kanban-start-field"><span>Board name</span><input class="set-input" id="kanban-board-name" maxlength="80" placeholder="Coursework or Job search" autocomplete="off" aria-describedby="kanban-start-help"></label>
+    <h3>New board</h3>
+    <label class="field">${ICON.board}<input id="kanban-board-name" maxlength="80" placeholder="Name, e.g. Coursework" aria-label="Board name" autocomplete="off" aria-describedby="kanban-start-help"></label>
     <div class="kanban-start-preview" aria-label="Starting columns">
       ${[['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']].map(([tone, name]) => `<div class="kanban-start-column" data-tone="${tone}"><span><i class="kanban-dot"></i>${name}</span><div class="kanban-start-card" aria-hidden="true"><i></i><i></i></div></div>`).join('')}
     </div>
@@ -279,6 +278,10 @@ async function kanbanRename(input) {
     toast(e.message, { bad: true });
   }
 }
+
+document.addEventListener('input', (e) => {
+  if (e.target.matches?.('.kanban-title')) e.target.size = Math.max(4, e.target.value.length + 1);
+});
 
 document.addEventListener('change', (e) => {
   const input = e.target.closest?.('[data-kanban-name]');
@@ -483,7 +486,10 @@ function kanbanPanelStatus() {
   const box = $('#kanban-panel');
   const status = box && $('#kanban-card-column', box);
   if (!card || !status) return;
-  if (document.activeElement !== status) status.innerHTML = kanbanStatusOptions(card);
+  if (document.activeElement !== status) {
+    status.innerHTML = kanbanStatusOptions(card);
+    status.value = card.column;
+  }
   const column = kanbanColumn(card.column);
   box.dataset.tone = column ? kanbanTone(column) : '';
 }
@@ -522,7 +528,7 @@ function kanbanCardPanel(id) {
     <input class="kanban-sheet-sub" id="kanban-card-sub" maxlength="200" placeholder="Add a subheading" aria-label="Subheading" autocomplete="off" value="${esc(card.subheading || '')}">
     <div class="kanban-props">
       <div class="set-row"><span class="set-label">Status</span><label class="select-control kanban-status"><span class="kanban-dot" aria-hidden="true"></span><select id="kanban-card-column" aria-label="Status">${kanbanStatusOptions(card)}</select>${ICON.chevron}</label></div>
-      <div class="set-row"><span class="set-label">Priority</span><div class="library-views kanban-priorities" role="group" aria-label="Priority">${KANBAN_PRIORITIES.map(([value, label]) => `<button type="button" class="btn sm plain${(card.priority || '') === value ? ' on' : ''}" data-priority="${value}" aria-pressed="${(card.priority || '') === value}">${value ? KANBAN_ICON[value] : ''}<span>${esc(label)}</span></button>`).join('')}</div></div>
+      <div class="set-row kanban-priorities"><span class="set-label">Priority</span>${segmented({ label: 'Priority', action: 'kanban-priority', key: 'priority', current: card.priority || '', choices: KANBAN_PRIORITIES })}</div>
       ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
     </div>
     <textarea class="kanban-description" id="kanban-card-description" maxlength="8000" aria-label="Description" placeholder="Add details, steps or links…">${esc(card.description || '')}</textarea>
@@ -596,6 +602,7 @@ function kanbanCardPanel(id) {
         c.classList.toggle('on', c === chip);
         c.setAttribute('aria-pressed', String(c === chip));
       }
+      syncSegmented(chip.closest('.segmented'));
     } catch (err) {
       if (err instanceof Locked) throw err;
       toast(err.message, { bad: true });
@@ -744,6 +751,14 @@ function kanbanEdges() {
     const before = row.scrollLeft;
     if (step) row.scrollLeft += step;
     moved = row.scrollLeft !== before;
+  }
+  const list = document.elementFromPoint(d.x, d.y)?.closest('.kanban-col')?.querySelector('.kanban-cards');
+  if (list && d.kind === 'card') {
+    const r = list.getBoundingClientRect();
+    const step = d.y < r.top + 32 ? -10 : d.y > r.bottom - 32 ? 10 : 0;
+    const before = list.scrollTop;
+    if (step) list.scrollTop += step;
+    moved = moved || list.scrollTop !== before;
   }
   const top = ($('#bar')?.getBoundingClientRect().bottom || 0) + KANBAN_EDGE;
   const v = d.y < top ? -14 : d.y > innerHeight - KANBAN_EDGE ? 14 : 0;

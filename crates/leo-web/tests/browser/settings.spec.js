@@ -413,6 +413,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
     }
     ${sheets}
     ${read('app/refresh.js')}
+    ${read('app/settings-navigation.js')}
     ${read('app/app-settings.js')}
     ${read('app/onboarding.js')}
     document.addEventListener('click',event=>{

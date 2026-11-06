@@ -118,7 +118,7 @@
   }
 
   function create(deps) {
-    const { api, esc, toast, go, noteHash, felix, icons, noteReady, encodePicture } = deps;
+    const { api, esc, toast, go, noteHash, felix, icons, noteReady, encodePicture, noteFields } = deps;
     const s = {
       view: null,
       dismissed: (() => { try { return root.sessionStorage.getItem('leo-record-dismissed'); } catch (e) { return null; } })(),
@@ -331,13 +331,12 @@
 
     function drawIdle(folders, here) {
       const ov = s.overview || {};
-      const options = ['', ...folders].map((f) => `<option value="${esc(f)}"${f === here ? ' selected' : ''}>${esc(f || 'All notes (top level)')}</option>`).join('');
       const upcoming = (s.calendar && s.calendar.events) || [];
       const picked = s.event !== null ? upcoming[s.event] : null;
       const pending = ov.pending || [];
       const event = upcoming.length
-        ? `<label class="set-row"><span class="set-label">Calendar event</span><span class="select-control"><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></label>
-          ${picked ? '<p class="set-note rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
+        ? `<div class="field">${icons.calendar}<span class="select-control"><select id="rec-event" aria-label="Calendar event"><option value="">No calendar event</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></div>
+          ${picked ? '<p class="hint rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
         : '';
       const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes.</p>' : '';
       const recover = pending.length
@@ -349,12 +348,7 @@
         <section class="set-card rec-card">
           <header><h3>New recording</h3></header>
           ${kindChoices()}
-          <div class="rec-form">
-          <label class="set-row"><span class="set-label">Folder</span><span class="select-control"><select id="rec-dir">${options}</select>${icons.chevron}</span></label>
-          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="set-input rec-title-input" placeholder="Optional" autocomplete="off"></label>
-          ${event}
-          <label class="set-row rec-wants-row"><span class="set-label">What you want</span><textarea id="rec-wants" class="set-input" rows="2" maxlength="4000" aria-label="What you want from the notes" placeholder="Optional, e.g. what will be on the exam"></textarea></label>
-          </div>
+          ${noteFields({ id: 'rec', folders, here, most: 4000, before: event })}
           ${connect}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>

@@ -1212,7 +1212,7 @@ test('soft Enter and composing input keep their native line-break behavior', asy
 test('heading peaks are taller and preview motion opens and closes on a retained tooltip', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.setViewportSize({ width: 2000, height: 900 });
     await page.goto(url);
     const preview = page.locator('.outline-preview');
     await preview.evaluate(el => {

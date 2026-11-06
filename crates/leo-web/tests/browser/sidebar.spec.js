@@ -158,28 +158,40 @@ test('sidebar and page header rows align across desktop layouts', async ({ brows
     await page.goto(url);
     await expect(page.locator('.side-head')).toBeVisible();
     await page.locator('main').evaluate(el=>el.insertAdjacentHTML('beforeend','<div class="settings-layout"><nav class="settings-nav">Settings</nav></div>'));
-    for(const width of [1000,1280]) for(const theme of ['light','dark']) for(const mac of [false,true]) for(const top of [0,20]) for(const mini of [false,true]) {
+    for(const width of [1000,1280]) for(const theme of ['light','dark']) for(const mode of ['web','mac','mac-full']) for(const top of [0,20]) for(const mini of [false,true]) {
+      const mac=mode!=='web', windowed=mode==='mac';
       await page.setViewportSize({width,height:800});
-      await page.evaluate(({theme,mac,top,mini})=>{
+      await page.evaluate(({theme,mac,full,top,mini})=>{
         document.documentElement.dataset.theme=theme;
         document.documentElement.style.setProperty('--top',top+'px');
         audit.mac(mac);
+        document.documentElement.toggleAttribute('data-fullscreen',full);
         document.body.classList.toggle('side-mini',mini);
         document.body.classList.add('on-note');
         document.querySelector('.bar').classList.add('scrolled');
-      },{theme,mac,top,mini});
+      },{theme,mac,full:mode==='mac-full',top,mini});
+      const at=JSON.stringify({width,theme,mode,top,mini});
       const head=await page.locator('.side-head').boundingBox(), bar=await page.locator('.bar').boundingBox();
-      expect(Math.abs(head.y+head.height-bar.y-bar.height),JSON.stringify({width,theme,mac,top,mini})).toBeLessThanOrEqual(1);
+      expect(Math.abs(head.y+head.height-bar.y-bar.height),at).toBeLessThanOrEqual(1);
       const toggle=await page.locator('.side-fold').boundingBox();
       expect(toggle.y).toBeGreaterThanOrEqual(top);
-      if(mac) {
-        expect(toggle.y,'the toggle sits below the macOS window buttons').toBeGreaterThanOrEqual(top+44);
+      if(windowed&&mini) {
+        expect(toggle.y,'folded, the toggle sits below the macOS window buttons').toBeGreaterThanOrEqual(top+44);
+        expect(toggle.x).toBeLessThan(52);
         const first=await page.locator('.side-rail .side-row').first().boundingBox();
         expect(first.y,'the rail starts below the toggle').toBeGreaterThanOrEqual(toggle.y+toggle.height);
-      } else expect(toggle.y+toggle.height).toBeLessThanOrEqual(head.y+head.height);
+      } else {
+        expect(toggle.y+toggle.height,at).toBeLessThanOrEqual(head.y+head.height);
+        if(windowed) expect(toggle.x,'the header row starts right of the window buttons').toBeGreaterThanOrEqual(84);
+        else expect(toggle.x,'without window buttons the header row is flush left').toBeLessThanOrEqual(8);
+        if(!mini) {
+          const brand=await page.locator('.side-head .brand').boundingBox();
+          expect(brand,`${at} shows the brand`).not.toBeNull();
+          expect(brand.x).toBeGreaterThanOrEqual(toggle.x+toggle.width);
+        }
+      }
       const row=await page.locator('.bar-row').boundingBox();
       expect(row.height).toBeGreaterThanOrEqual(40);
-      if(mac)expect(toggle.x).toBeLessThan(52);
       const settings=await page.locator('.settings-nav').evaluate(el=>({top:parseFloat(getComputedStyle(el).top),gap:parseFloat(getComputedStyle(el.parentElement).columnGap)}));
       expect(settings.top).toBe(bar.height+settings.gap);
     }
@@ -568,8 +580,9 @@ test('the sidebar toggle keeps its place while the explorer folds, and the fold 
     for(const [width,full] of [[1280,284],[1100,240]]) {
       await page.setViewportSize({width,height:800});
       await page.goto(url);
-      for(const mac of [false,true]) {
-        await page.evaluate(on=>audit.mac(on),mac);
+      for(const mode of ['web','mac-full','mac']) {
+        const moves=mode==='mac';
+        await page.evaluate(mode=>{audit.mac(mode!=='web');document.documentElement.toggleAttribute('data-fullscreen',mode==='mac-full');},mode);
         const toggle=page.locator('.side-fold'), side=page.locator('#side');
         const open=await toggle.boundingBox();
         expect((await side.boundingBox()).width).toBe(full);
@@ -580,10 +593,12 @@ test('the sidebar toggle keeps its place while the explorer folds, and the fold 
         await expect(page.locator('body')).not.toHaveClass(/side-folding/);
         await expect(page.locator('.side-explorer')).toBeHidden();
         expect((await side.boundingBox()).width).toBe(52);
-        expect(await toggle.boundingBox()).toEqual(open);
+        if(moves) expect((await toggle.boundingBox()).y,'folded beside the window buttons, the toggle drops below them').toBeGreaterThanOrEqual(44);
+        else expect(await toggle.boundingBox()).toEqual(open);
         await expect(page.locator('.side-rail')).toBeVisible();
         const clear=await page.locator('.bar').evaluate(el=>el.getBoundingClientRect().left+parseFloat(getComputedStyle(el).paddingLeft));
-        expect(clear, 'the toolbar starts after the toggle').toBeGreaterThanOrEqual(open.x+open.width);
+        const folded=await toggle.boundingBox();
+        expect(clear, 'the toolbar starts after the toggle').toBeGreaterThanOrEqual(folded.x+folded.width);
         await slid();
         await toggle.click();
         expect(await page.evaluate(()=>window.slid)).toBe(true);
@@ -592,6 +607,7 @@ test('the sidebar toggle keeps its place while the explorer folds, and the fold 
         expect((await side.boundingBox()).width).toBe(full);
         expect(await toggle.boundingBox()).toEqual(open);
       }
+      await page.evaluate(()=>{audit.mac(false);document.documentElement.removeAttribute('data-fullscreen');});
     }
     await page.emulateMedia({reducedMotion:'reduce'});
     await page.locator('.side-fold').click();
