@@ -301,12 +301,19 @@ pub fn finish(
     let _ = session.save();
     transcriber.recording_ended();
     let segment_samples = session.manifest.segment_secs * wav::RATE as u64;
+    let mut no_model = false;
+    let mut take = |update: Update, state: &mut Live| {
+        if let Update::Failed { error, .. } = &update {
+            no_model |= session::transcriber::waiting_for_model(error);
+        }
+        state.apply(update, emit, segment_samples);
+    };
     while !transcriber.is_finished() {
         if finish_now.load(Ordering::Relaxed) {
             transcriber.cancel();
         }
         for update in updates.try_iter() {
-            state.apply(update, emit, segment_samples);
+            take(update, state);
         }
         let segments = session.segments();
         let total = segments.len();
@@ -341,11 +348,15 @@ pub fn finish(
         );
     }
     for update in updates.try_iter() {
-        state.apply(update, emit, segment_samples);
+        take(update, state);
     }
     let assembled = session.assemble();
     if assembled.pending > 0 {
-        emit(Event::Failed("Some transcript files could not be saved. Audio is kept; free disk space and recover the session.".into()));
+        emit(Event::Failed(if no_model {
+            "No speech model was ready, so this recording is not transcribed yet. Its audio is kept: download a model in Settings → Speech models, then recover the recording.".into()
+        } else {
+            "Some transcript files could not be saved. Audio is kept; free disk space and recover the session.".into()
+        }));
         return;
     }
     if assembled.is_silent() && session.manifest.points.is_empty() {
@@ -750,6 +761,45 @@ mod tests {
             assert!(!controls.pause.load(Ordering::Acquire));
             assert!(!controls.finish_now.load(Ordering::Acquire));
         }
+    }
+
+    #[test]
+    fn a_recording_stopped_without_a_model_ends_unsaved_and_stays_recoverable() {
+        let root = tempfile::tempdir().unwrap();
+        let session = Session::create(root.path(), Manifest::new(None, None, "", false)).unwrap();
+        let dir = session.dir.clone();
+        wav::write(&dir.join(wav::done_name(0)), &vec![3000i16; 1600]).unwrap();
+        let (tx, updates) = mpsc::channel();
+        let transcriber = Transcriber::start(
+            &dir,
+            std::sync::Arc::new(|_| Err("Download a model in Settings → Speech models.".into())),
+            Policy {
+                first_wait: Duration::from_millis(5),
+                idle: Duration::from_millis(5),
+                finish_limit: Duration::from_millis(40),
+                ..Policy::default()
+            },
+            false,
+            tx,
+        );
+        let events = std::sync::Mutex::new(Vec::new());
+        finish(
+            session,
+            transcriber,
+            &updates,
+            &mut Live::new(live::ROLL_INTERVAL),
+            &|event| events.lock().unwrap().push(event),
+            SILENT_RECORDING,
+            &AtomicBool::new(false),
+        );
+        let events = events.into_inner().unwrap();
+        assert!(
+            matches!(events.last(), Some(Event::Failed(why)) if why.contains("speech model")),
+            "{:?}",
+            events.last()
+        );
+        assert!(dir.join(wav::done_name(0)).exists());
+        assert_eq!(Session::unfinished(root.path()), [dir]);
     }
 
     #[test]

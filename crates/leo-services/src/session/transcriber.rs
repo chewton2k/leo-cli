@@ -371,7 +371,9 @@ fn settle(
                         && !rate_limited(&error)
                         && !waiting_for_model(&error)))
             {
-                if write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err() {
+                if waiting_for_model(&error)
+                    || write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err()
+                {
                     if let Ok(mut terminal) = work.terminal.lock() {
                         terminal.insert(index);
                     }
@@ -477,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_model_ends_after_the_finish_window_and_keeps_audio() {
+    fn a_missing_model_ends_after_the_finish_window_and_leaves_the_segment_waiting() {
         let dir = tempfile::tempdir().unwrap();
         loud(dir.path(), 0);
         let (tx, rx) = mpsc::channel();
@@ -491,12 +493,19 @@ mod tests {
             false,
             tx,
         );
-        let start = Instant::now();
-        worker.wait();
-        assert!(start.elapsed() < Duration::from_secs(2));
+        let (ended, end) = mpsc::channel();
+        std::thread::spawn(move || {
+            worker.wait();
+            let _ = ended.send(());
+        });
+        assert!(
+            end.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "the wait for a model never ended"
+        );
         assert!(rx.try_iter().any(|e| matches!(e, Update::Failed { .. })));
         assert!(dir.path().join(wav::done_name(0)).exists());
-        assert!(dir.path().join("seg-00000.err").exists());
+        assert!(!dir.path().join("seg-00000.err").exists());
+        assert_eq!(waiting(dir.path()), [0]);
     }
 
     fn quick() -> Policy {

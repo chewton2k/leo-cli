@@ -469,7 +469,9 @@ both tracks in Rust. `session::awake::Awake` holds an App Nap/process activity
 exception through recording. Capture opens only when requested, never because
 the page is visible. A missing/damaged model leaves stopped segments pending
 without `.err` files; a model becoming ready retries them, and Finish available
-still cancels waiting work. Transcription attempts and filesystem traversal are
+still cancels waiting work. The recorder waits for a model only for the finish
+window (120 s): then it ends unsaved with the audio kept, releasing its sleep
+guard, model pin and activity lease, and the recording stays under recovery. Transcription attempts and filesystem traversal are
 snapshotted outside their mutexes before disk I/O.
 
 `recorder::resume_with_controls` exposes the same finish control during native
