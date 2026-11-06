@@ -485,7 +485,7 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
   const form = document.createElement('div');
   form.className = 'kanban-composer';
   form.dataset.composer = columnId;
-  form.innerHTML = `<textarea class="set-input" rows="2" maxlength="300" placeholder="What needs doing?" aria-label="New card title"></textarea>${segmented({ label: 'Priority', action: 'kanban-priority', key: 'priority', current: chosen, choices: KANBAN_PRIORITIES })}<div class="kanban-composer-row"><button type="button" class="btn sm primary" data-kanban="add">Add card</button><button type="button" class="btn sm plain" data-kanban="cancel">Cancel</button></div>`;
+  form.innerHTML = `<div class="kanban-composer-box"><textarea class="set-input" rows="2" maxlength="300" placeholder="What needs doing?" aria-label="New card title"></textarea>${segmented({ label: 'Priority', action: 'kanban-priority', key: 'priority', current: chosen, choices: KANBAN_PRIORITIES })}</div><div class="kanban-composer-row"><button type="button" class="btn sm primary" data-kanban="add">Add card</button><button type="button" class="btn sm plain" data-kanban="cancel">Cancel</button></div>`;
   button.replaceWith(form);
   const text = form.querySelector('textarea');
   // Cards save one after another, so typing the next one while the last saves loses nothing.

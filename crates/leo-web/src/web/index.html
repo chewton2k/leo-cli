@@ -1423,8 +1423,12 @@ body.kanban-dragging, body.kanban-dragging * { cursor: grabbing !important; user
   .kanban-col:hover :is(.kanban-add-card, .kanban-col-more), .kanban-col:focus-within :is(.kanban-add-card, .kanban-col-more), .kanban-cards:empty + .kanban-add-card, .kanban-col.kanban-full .kanban-add-card, .kanban-col-more[aria-expanded="true"] { opacity: 1; }
 }
 .kanban-composer { flex: none; margin: 6px 8px 8px; }
-.kanban-composer textarea.set-input { width: 100%; resize: none; font-size: 14px; background: var(--raised); }
-.kanban-composer .segmented { margin-top: 6px; }
+.kanban-composer-box { border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.kanban-composer-box:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kanban-composer textarea.set-input { display: block; width: 100%; padding: 10px 12px 4px; border: 0; background: none; resize: none; font-size: 14px; }
+.kanban-composer textarea.set-input:focus { outline: none; }
+.kanban-composer .segmented { margin: 0 3px 3px; border: 0; background: none; }
+.kanban-composer .segment-pill { background: var(--surface-2); box-shadow: none; }
 .kanban-composer .segment { min-height: 26px; padding: 0 2px; font-size: 12px; }
 .kanban-composer-row { display: flex; gap: 6px; margin-top: 6px; }
 body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(440px, 42vw); }
