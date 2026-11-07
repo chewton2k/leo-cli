@@ -951,7 +951,16 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   every row lines up. No footnote. Each has a row reset (`settingReset`,
   a small icon button that shows only while the value differs from
   `APPEARANCE_DEFAULTS`: Match device, Cute, Wide; `data-action="setting-reset"`,
-  named "Reset <setting> to default"). Add one only where the default is real. `/theme.js`
+  named "Reset <setting> to default"). Text size and Felix's lettering
+  (2026-11-06, the user's request) are two more rows in `theme.js` (`READING`,
+  stored like Note width in `leo-text-size` / `leo-felix-letters`, set as
+  `html[data-text-size]` / `[data-felix-letters]` before paint, default key
+  removed). Small .9, Medium 1, Large 1.12 set `--read`; only reading text
+  multiplies it (`.prose`, headings, code, tables, line editor, `.margin-felix`,
+  `.margin-you`, Felix's chat answers), so chrome keeps its size and line
+  heights stay unitless. Lettering moves `--felix-letters` (`--voice` or
+  `--note-font`) for answers and margin notes only; the hello text keeps
+  `--voice`. Cards are `.read-sample` HTML, really at size. Add one only where the default is real. `/theme.js`
   loads in `<head>` (before any paint, no inline script under the CSP) and
   sets `html[data-theme]`; the dark colours apply under
   `prefers-color-scheme: dark` unless `data-theme="light"`, and always with

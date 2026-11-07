@@ -4771,6 +4771,51 @@ test('notes read wide by default, and Settings can make them comfortable or full
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test("Text size and Felix's lettering change reading text at once, survive a reload, and leave Medium as it was", async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'one browser is enough for computed styles');
+  const note = await (await page.request.post('/api/notes', { data: { title: `Read ${Date.now().toString(36)}`, body: '## Part\n\nA line of the note.' } })).json();
+  const px = () => page.locator('#doc .blk p').first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  const chrome = () => page.locator('.note-head h1').evaluate((el) => getComputedStyle(el).fontSize);
+  const read = async () => { await page.goto(`/#/n/${note.id}`); await expect(page.locator('#doc')).toContainText('A line of the note'); };
+  const letters = () => page.evaluate(() => {
+    const family = (html, pick) => { const box = document.createElement('div'); box.innerHTML = html; document.body.append(box); const found = getComputedStyle(box.querySelector(pick)).fontFamily; box.remove(); return found; };
+    return { chat: family('<div class="msg leo"><div class="prose">x</div></div>', '.prose'), margin: family('<div class="margin-felix">x</div>', '.margin-felix'), notes: getComputedStyle(document.body).fontFamily, hello: family('<div class="chat-hello-lead"><b>x</b></div>', 'b') };
+  });
+  await read();
+  expect(await px()).toBe(16.5);
+  const chromeSize = await chrome();
+  for (const [choice, size] of [['large', 16.5 * 1.12], ['small', 16.5 * 0.9]]) {
+    await page.goto('/#/settings');
+    await page.locator(`[data-action="text-size-pick"][data-size="${choice}"]`).click();
+    await expect(page.locator(`[data-action="text-size-pick"][data-size="${choice}"]`)).toHaveAttribute('aria-pressed', 'true');
+    expect(await page.locator(`.read-sample[data-text-size="${choice}"]`).evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeCloseTo(size, 1);
+    await read();
+    expect(await px()).toBeCloseTo(size, 1);
+    expect(await chrome(), 'the title is chrome-sized and keeps its size').toBe(chromeSize);
+    await page.reload();
+    await expect(page.locator('#doc')).toContainText('A line of the note');
+    expect(await px(), 'kept after a reload').toBeCloseTo(size, 1);
+  }
+  await page.goto('/#/settings');
+  await page.getByRole('button', { name: 'Reset Text size to default' }).click();
+  await read();
+  expect(await px()).toBe(16.5);
+  expect(await page.evaluate(() => localStorage.getItem('leo-text-size'))).toBeNull();
+  const own = await letters();
+  expect(own.chat).toBe(own.margin);
+  expect(own.chat).not.toBe(own.notes);
+  await page.goto('/#/settings');
+  await page.locator('[data-action="letters-pick"][data-letters="notes"]').click();
+  await page.reload();
+  const like = await letters();
+  expect(like.chat).toBe(like.notes);
+  expect(like.margin).toBe(like.notes);
+  expect(like.hello, 'only answers and margin notes change lettering').toBe(own.hello);
+  await page.getByRole('button', { name: "Reset Felix's lettering to default" }).click();
+  expect((await letters()).chat).toBe(own.chat);
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
 test('Quick Leo is one Spotlight-style line that works out what you want: a reminder, a question, a note to open or a new one', async ({ page }) => {
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
   const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
