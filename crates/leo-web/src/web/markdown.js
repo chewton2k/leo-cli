@@ -175,7 +175,7 @@
       const lettered = ordered && /[a-z]/i.test(kind);
       const paren = kind.endsWith(')') ? '-paren' : '';
       const first = lettered || !ordered ? 1 : parseInt(items[from].marker, 10);
-      const style = lettered ? `list-${kind[0] === 'a' ? 'lower' : 'upper'}${paren}` : depth > 1 ? `list-${(depth - 1) % 3 + 1}` : paren && 'list-paren';
+      const style = lettered ? `list-${kind[0] === 'a' ? 'lower' : 'upper'}${paren}` : depth > 1 && ordered && (depth === state.depth && state.first !== undefined ? state.first : first) > 1 ? paren && 'list-paren' || 'list-1' : depth > 1 ? `list-${(depth - 1) % 3 + 1}` : paren && 'list-paren';
       const look = style ? ` class="${style}"` : '';
       let html = ordered ? (first > 1 ? `<ol${look} start="${first}">` : `<ol${look}>`) : `<ul${look}>`;
       let i = from;
@@ -371,6 +371,7 @@
         interactive: options.interactive !== false,
         depth: options.depth || 1,
         after: options.after,
+        first: options.first,
       });
     } finally {
       pictureDir = '';
