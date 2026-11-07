@@ -816,4 +816,13 @@ test('a streamed list marker waits until it has text', () => {
   assert.equal(C.held('Intro\n- first'), 'Intro\n- first');
   assert.equal(C.held('Pay 5 -'), 'Pay 5 -');
   assert.equal(C.held('Intro\n- first\n-'), 'Intro\n- first');
+  assert.equal(C.held('Apple\nPear\n\n3'), 'Apple\nPear\n');
+  assert.equal(C.held('Apple\nPear\n\n12'), 'Apple\nPear\n');
+  assert.equal(C.held('Steps\nc'), 'Steps');
+  assert.equal(C.held('Steps\nbb'), 'Steps');
+  assert.equal(C.held('Steps\nA)'), 'Steps');
+  assert.equal(C.held('Steps\nok'), 'Steps\nok');
+  assert.equal(C.held('Steps\nApple'), 'Steps\nApple');
+  assert.equal(C.held('Steps\n3 apples'), 'Steps\n3 apples');
+  assert.equal(C.held('Pay 5'), 'Pay 5');
 });

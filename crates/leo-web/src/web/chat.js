@@ -111,7 +111,7 @@
   }
 
   function held(text) {
-    return String(text).replace(/(?:^|\n)[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/, '');
+    return String(text).replace(/(?:^|\n)[ \t]*(?:[-*+]|\d{1,9}[.)]?|([a-zA-Z])\1?[.)]?)[ \t]*$/, '');
   }
 
   const MOST_REPLY_STEPS = 64;
@@ -1302,7 +1302,7 @@
       }
       const first = state.messages.find((m) => m.role === 'user' && m.text);
       const ghost = state.fresh && !state.chats.some((c) => c.id === state.id)
-        ? [{ id: state.id, title: first ? draftTitle(first.text) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
+        ? [{ id: state.id, title: first ? draftTitle(first) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
         : [];
       const list = [...ghost, ...state.chats];
       if (!list.length) {
@@ -1723,18 +1723,24 @@
       chip.lastElementChild.textContent = state.context ? state.context.title || 'Untitled' : '';
     }
 
-    function draftTitle(text) {
-      const asked = clipped(text.replace(/\s+/g, ' '), 80);
-      const note = state.context && state.dropped !== state.context.id ? state.context.title : '';
-      if (!note || asked.split(' ').length > 6 || asked.toLowerCase().includes(note.toLowerCase())) return asked;
-      return clipped(`${asked.replace(/[?.! ]+$/, '')}: ${note}`, 80);
+    const clippedTitle = (text) => {
+      const chars = Array.from(String(text).replace(/\s+/g, ' ').trim());
+      return chars.length > 80 ? `${chars.slice(0, 80).join('')}…` : chars.join('');
+    };
+
+    function draftTitle(first) {
+      const asked = clippedTitle(first.text);
+      const open = state.context && state.dropped !== state.context.id ? state.context.title : undefined;
+      const note = [first.refs?.[0]?.title, first.docs?.[0], state.refs[0]?.title, open].find((t) => typeof t === 'string');
+      if (!note || !note.trim() || asked.split(' ').length > 6 || asked.toLowerCase().includes(note.toLowerCase())) return asked;
+      return clippedTitle(`${asked.replace(/[?.! ]+$/, '')}: ${note}`);
     }
 
     function drawTitle() {
       const first = state.messages.find((m) => m.role === 'user' && m.text);
       const saved = (state.chats || []).find((c) => c.id === state.id);
       const title = $('#chat-title');
-      title.textContent = saved ? saved.title : first ? draftTitle(first.text) : 'New chat';
+      title.textContent = saved ? saved.title : first ? draftTitle(first) : 'New chat';
       title.classList.toggle('quiet', !saved && !first);
     }
 
@@ -2959,17 +2965,10 @@
       const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access']]
         .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
         .find((x) => !x.menu.hidden && !x.menu.dataset.folding);
-      if (e.key === 'Escape' && !open && !state.doomed && !state.busy && panel.classList.contains('with-history') && (e.target === document.body || history.contains(e.target) || !wide() || sourceNarrow()) && !e.target.closest('input, textarea')) {
+      if (e.key === 'Escape' && !open && !state.doomed && !state.busy && panel.classList.contains('with-history') && (history.contains(e.target) || !wide() || sourceNarrow()) && !e.target.closest('input, textarea') && !document.querySelector('.scrim')) {
         e.preventDefault();
         e.stopImmediatePropagation();
         showSidebar(false);
-        return;
-      }
-      if (e.key === 'Escape' && !open && e.target === document.body && !document.querySelector('.scrim')) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (state.busy) state.busy.abort();
-        else toggle(false);
         return;
       }
       if (!open) return;
@@ -3021,6 +3020,7 @@
       if (e.key === 'Escape') {
         e.stopPropagation();
         if (state.busy) state.busy.abort();
+        else if (panel.classList.contains('with-history')) showSidebar(false);
         else toggle(false);
       }
     });
@@ -3037,6 +3037,14 @@
     panel.addEventListener('pointerout', (e) => light(e.relatedTarget));
     panel.addEventListener('focusin', (e) => light(e.target));
     panel.addEventListener('focusout', (e) => light(e.relatedTarget));
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.isComposing || !state.open || e.target !== document.body || document.querySelector('.scrim, .scrim-gone')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!state.doomed && !state.busy && panel.classList.contains('with-history')) showSidebar(false);
+      else if (state.busy) state.busy.abort();
+      else toggle(false);
+    });
     panel.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || e.target.closest('input, textarea, select, [contenteditable]')) return;
       e.stopPropagation();

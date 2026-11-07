@@ -27,6 +27,7 @@ document.addEventListener('keydown', (e) => {
     if ($('.scrim')) return closeSheet();
     if (source.note && sourcePane.contains(e.target)) return closeSource();
     if (typing) return e.target.blur();
+    if (e.target === document.body && chat.isOpen()) return;
     if (state.view === 'trash' && state.selecting) {
       state.selecting = false;
       state.picked = new Set();
