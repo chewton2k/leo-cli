@@ -213,3 +213,20 @@ test('the Usage sheet icon buttons name themselves on hover', async ({ page }) =
   await expect(tools).toHaveCount(2);
   for (const button of await tools.all()) expect(await button.getAttribute('title')).toBe(await button.getAttribute('aria-label'));
 });
+
+test('Felix only bobs while his panel is open', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Bob', body: 'Hello.' } })).json();
+  const bobbing = () => page.evaluate(() => document.getAnimations().filter(a => a.animationName === 'felix-bob' && a.playState === 'running').length);
+  await page.goto(`/#/n/${note.id}`);
+  await page.waitForTimeout(800);
+  expect(await bobbing()).toBe(0);
+  await page.goto('/#/settings');
+  await page.waitForTimeout(500);
+  expect(await bobbing()).toBe(0);
+  await page.goto(`/#/n/${note.id}`);
+  await page.locator('#chat-toggle').click();
+  await expect.poll(bobbing).toBeGreaterThan(0);
+  await page.locator('#chat .chat-head [data-chat="close"], #chat [data-chat="close"]').first().click();
+  await expect(page.locator('#chat')).toBeHidden();
+  expect(await bobbing()).toBe(0);
+});
