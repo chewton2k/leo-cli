@@ -223,7 +223,7 @@ function drawKanban() {
     host = app.querySelector('.kanban-board');
     kanbanSized?.disconnect();
     kanbanSized?.observe(host);
-    kanban.panel?.flush();
+    kanban.panel?.end();
     kanban.panel = null;
     document.body.classList.remove('kanban-panel-on');
   }
@@ -572,7 +572,7 @@ function kanbanPanelStatus() {
 function kanbanClosePanel(refocus = true) {
   const open = kanban.panel;
   if (!open) return;
-  open.flush();
+  open.end();
   kanban.panel = null;
   const box = $('#kanban-panel');
   if (box) { box.hidden = true; box.innerHTML = ''; }
@@ -606,7 +606,7 @@ function kanbanCardPanel(id) {
       <div class="set-row kanban-priorities"><span class="set-label">Priority</span>${segmented({ label: 'Priority', action: 'kanban-priority', key: 'priority', current: card.priority || '', choices: KANBAN_PRIORITIES })}</div>
       ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
     </div>
-    <textarea class="kanban-description" id="kanban-card-description" maxlength="8000" aria-label="Description" placeholder="Add details, steps or links…">${esc(card.description || '')}</textarea>
+    <div class="prose doc kanban-description" id="kanban-card-description" role="group" aria-label="Description"></div>
   </div>`;
   box.hidden = false;
   document.body.classList.add('kanban-panel-on');
@@ -620,16 +620,20 @@ function kanbanCardPanel(id) {
   const saved = $('#kanban-card-saved', box);
   const fit = (area) => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; };
   fit(title);
-  fit(description);
-  const fields = { title, subheading: sub, description };
+  const fields = { title, subheading: sub };
   const timers = {};
+  const queue = (name) => {
+    if (saved.isConnected) saved.textContent = '';
+    clearTimeout(timers[name]);
+    timers[name] = setTimeout(() => save(name).catch(fail), KANBAN_SAVE_MS);
+  };
+  const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => queue('description') });
   const save = async (name) => {
     clearTimeout(timers[name]);
     timers[name] = 0;
-    const field = fields[name];
-    const value = name === 'description' ? field.value.trim() : field.value.replace(/\s+/g, ' ').trim();
+    const value = name === 'description' ? doc.source().trim() : fields[name].value.replace(/\s+/g, ' ').trim();
     if (value === (card[name] || '')) return;
-    if (name === 'title' && !value) { field.value = card.title; fit(title); return; }
+    if (name === 'title' && !value) { title.value = card.title; fit(title); return; }
     try {
       const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
       kanbanUpdate(card, done);
@@ -639,25 +643,28 @@ function kanbanCardPanel(id) {
       toast(e.message, { bad: true });
     }
   };
-  const flush = () => { for (const name of Object.keys(fields)) if (timers[name]) save(name).catch(fail); };
-  kanban.panel = { id, flush };
+  const end = () => {
+    doc.stop();
+    for (const name of [...Object.keys(fields), 'description']) if (timers[name]) save(name).catch(fail);
+    doc.destroy();
+  };
+  kanban.panel = { id, end };
   for (const [name, field] of Object.entries(fields)) {
     field.addEventListener('input', () => {
-      if (field.tagName === 'TEXTAREA') fit(field);
-      if (saved.isConnected) saved.textContent = '';
-      clearTimeout(timers[name]);
-      timers[name] = setTimeout(() => save(name).catch(fail), KANBAN_SAVE_MS);
+      if (field === title) fit(field);
+      queue(name);
     });
     field.addEventListener('blur', () => { if (timers[name]) save(name).catch(fail); });
   }
+  description.addEventListener('focusout', () => { if (timers.description) save('description').catch(fail); });
   title.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sub.focus(); }
   });
   sub.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); description.focus(); }
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); doc.editStart(); }
   });
   box.onkeydown = (e) => {
-    if (e.key !== 'Escape' || e.isComposing) return;
+    if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
     e.preventDefault();
     e.stopPropagation();
     kanbanClosePanel();

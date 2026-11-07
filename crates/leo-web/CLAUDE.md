@@ -919,7 +919,14 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board redraws, a
   full-screen layer under 760 px): title, subheading, status and board (the shared select
   menu), priority (`segmented`, `data-priority`), a borderless description (autosave after
-  600 ms, on blur, and before Escape or × closes it), Delete with Undo.
+  600 ms, on blur, and before Escape or × closes it), Delete with Undo. The description is
+  the note editor itself (2026-11-06, the user's call: "render markdown the same as our
+  notes"): `leoDoc.mount` on `#kanban-card-description` (rendered blocks, click a line to
+  edit, checkboxes toggle), no outline, pictures, margin or note id. `description` stays plain
+  Markdown in the card JSON; `onChange` feeds the same debounced PATCH, and the panel's `end()`
+  stops the editor, saves and `destroy()`s it. Escape leaves a line first (the doc cancels it),
+  the panel closes on the next one; an edited line never hangs its `##` into the panel's edge.
+  The card on the board still previews the raw text.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the placeholder
