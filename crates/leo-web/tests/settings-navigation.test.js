@@ -15,7 +15,7 @@ test('all grouped Settings routes resolve, with Keeping and Trash under Data', (
   assert.equal(h.settingsSection(''), 'dictation');
   assert.equal(h.settingsSection('../bad'), 'general');
   const html = h.settingsFrame('keeping', '<section>Keeping content</section>');
-  for (const label of ['Leo', 'Your notes', 'Data', 'Trash', 'This app', 'Speech models', 'Updates &amp; about']) assert.ok(html.includes(label), label);
+  for (const label of ['leo', 'Your notes', 'Data', 'Trash', 'This app', 'Speech models', 'Updates &amp; about']) assert.ok(html.includes(label), label);
   assert.ok(html.includes('href="#/settings/keeping" aria-current="page"'));
   assert.ok(!html.includes('Phone'));
   assert.ok(html.includes('Keeping content'));

@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 function helpers() {
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8');
-  const context = { state: { speechFilter: 'recommended' }, esc: require('../src/web/markdown.js').escape, ICON: { chevron: '' }, settingsOption: () => '', app: { addEventListener() {} } };
+  const context = { state: { speechFilter: 'recommended' }, esc: require('../src/web/markdown.js').escape, ICON: { chevron: '' }, settingsOption: () => '', plural: (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`, app: { addEventListener() {} } };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function speechCards(')), context);
   return context;
@@ -21,7 +21,8 @@ test('Downloaded lists every disk model even when filtered or damaged', () => {
   assert.ok(html.includes('Many languages'));
   assert.ok(html.includes('Accuracy'));
   assert.ok(html.includes('Speed'));
-  assert.equal(h.speechFiltered(models, 'downloaded').length, 2);
+  assert.equal((html.match(/data-model-row="one"/g) || []).length, 1);
+  assert.ok(!html.includes('data-filter="downloaded"'));
   assert.equal(h.speechFiltered(models, 'english').length, 1);
   assert.equal(h.speechFiltered(models, 'many').length, 0);
 });
@@ -33,4 +34,9 @@ test('model rows show the catalog description capabilities size accuracy and spe
   assert.ok(!html.includes('<live>'));
   const unknown = h.speechModelRow({id:'unknown',name:'Unknown',languages:['ja'],size:1,speed:0,accuracy:0,accuracy_measured:false});
   assert.equal((unknown.match(/Not measured/g)||[]).length,2);
+});
+test('the downloaded heading counts models in the singular', () => {
+  const h = helpers();
+  const models = [{ id: 'one', name: 'English', languages: ['en'], size: 100, bytes: 100, downloaded: true, verified: true, recommended: true, speed: 8, accuracy: 96 }];
+  assert.ok(h.speechCards({ selected: { id: 'one', language: 'en' }, ready: true, disk_bytes: 100, models, extra_files: [] }).includes('1 model ·'));
 });

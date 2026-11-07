@@ -16,7 +16,7 @@ async function showKeeping() {
   let keep;
   try { keep = await api('/api/keep'); }
   catch (error) {
-    if (mine === seq) refreshPanel(app, settingsFrame('keeping', empty(ICON.storage, 'Keeping could not be opened', 'Leo did not answer. Open this page again in a moment.')));
+    if (mine === seq) refreshPanel(app, settingsFrame('keeping', empty(ICON.storage, 'Keeping could not be opened', 'leo did not answer. Open this page again in a moment.')));
     throw error;
   }
   if (mine !== seq) return;
@@ -35,7 +35,7 @@ function keepCard() {
     `<span class="select-control"><select data-keep="${field}" aria-label="Keep ${esc(label.toLowerCase())} for"${busy}>${keep.choices.map((c) => `<option value="${keepValue(c.days)}"${keepValue(c.days) === keepValue(keep[field]) ? ' selected' : ''}>${esc(c.label === 'forever' ? 'Forever' : c.label === 'a year' ? '1 year' : c.label)}</option>`).join('')}</select>${ICON.chevron}</span>`;
   return `<section class="set-card">
       ${KEEPING_ROWS.map(([field, label, , find, about]) => `<div class="set-row" data-find="${find}"><span class="keep-text">${label}<span class="hint keep-about">${about}</span></span>${select(field, label)}</div>`).join('')}
-      <p class="hint keep-note">Leo never deletes a note on its own. Things past their time go when you change a choice here, when Leo starts, and once a day.</p>
+      <p class="hint keep-note">leo never deletes a note on its own. Things past their time go when you change a choice here, when leo starts, and once a day.</p>
     </section>`;
 }
 
@@ -87,7 +87,7 @@ function keepDrafts() {
   if (!drafts.length) return '';
   const titles = drafts.slice(0, 3).map((d) => `“${d.edit.title || 'Untitled'}”`).join(', ') + (drafts.length > 3 ? ` and ${drafts.length - 3} more` : '');
   return `<section class="set-card" data-find="keeping-drafts">
-      <div class="set-row"><span class="keep-text">Edits not saved yet<span class="hint keep-about">${esc(`Leo could not save your latest edits to ${titles}. They are kept in this window until they save or you discard them.`)}</span></span><button type="button" class="btn plain sm" data-action="drafts-retry">Try again</button><button type="button" class="btn plain sm" data-action="drafts-discard-ask">Discard</button></div>
+      <div class="set-row"><span class="keep-text">Edits not saved yet<span class="hint keep-about">${esc(`leo could not save your latest edits to ${titles}. They are kept in this window until they save or you discard them.`)}</span></span><button type="button" class="btn plain sm" data-action="drafts-retry">Try again</button><button type="button" class="btn plain sm" data-action="drafts-discard-ask">Discard</button></div>
     </section>`;
 }
 
@@ -101,7 +101,7 @@ async function draftsRetry() {
 function draftsDiscardAsk(el) {
   const count = saving.drafts().length;
   if (!count) return drawKeeping();
-  const box = confirmSheet({ title: `Discard ${esc(plural(count, 'unsaved edit'))}?`, text: 'Each note keeps what Leo last saved. The edits kept in this window are gone for good.', yes: 'Discard', action: 'drafts-discard' });
+  const box = confirmSheet({ title: `Discard ${esc(plural(count, 'unsaved edit'))}?`, text: 'Each note keeps what leo last saved. The edits kept in this window are gone for good.', yes: 'Discard', action: 'drafts-discard' });
   box.returnFocus = el;
   box.querySelector('[data-action="close"]').focus();
 }

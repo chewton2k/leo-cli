@@ -65,7 +65,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
       const anchored = () => page.locator('.model-filters').evaluate(box => Math.round(box.getBoundingClientRect().top));
       const where = await anchored();
       expect(await page.evaluate(() => scrollY)).toBeGreaterThan(0);
-      await page.locator('.model-filters [data-filter="downloaded"]').click();
+      await page.locator('.model-filters [data-filter="english"]').click();
       expect(Math.abs(await anchored() - where)).toBeLessThan(2);
       await page.locator('.model-filters [data-filter="recommended"]').click();
       expect(Math.abs(await anchored() - where)).toBeLessThan(2);
