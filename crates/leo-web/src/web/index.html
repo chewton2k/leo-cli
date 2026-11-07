@@ -1213,7 +1213,7 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 @keyframes chat-in { from { transform: translateX(100%); } }
 @media (min-width: 600px) { .chat { width: clamp(380px, 62vw, 520px); } }
 .chat { flex-direction: row; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--page); border-radius: 16px 0 0 16px; }
+.chat-main { container: chatmain / inline-size; flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--page); border-radius: 16px 0 0 16px; }
 .chat-history { display: flex; flex-direction: column; background: var(--ground); visibility: hidden; opacity: 0; pointer-events: none; clip-path: inset(0 0 0 100%); transition: margin-left var(--t-open-out) var(--ease-exit), clip-path var(--t-open-out) var(--ease-exit), opacity var(--t-follow-out) var(--ease-exit), visibility 0s var(--t-open-out); }
 .chat.with-history .chat-history { visibility: visible; opacity: 1; pointer-events: auto; clip-path: inset(0 -6px 0 0); transition-duration: var(--t-open), var(--t-open), var(--t-follow), 0s; transition-timing-function: var(--ease-arrive); transition-delay: 0s; }
 @media (min-width: 900px) {
@@ -1855,7 +1855,7 @@ body.source-resizing iframe { pointer-events: none; }
 .chat-compose:focus-within { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
 @media (forced-colors: active) { .chat-compose:focus-within { outline: 2px solid Highlight; } }
 .chat-tools { display: flex; align-items: center; gap: 4px; }
-.chat-chip { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 9px; border: 0; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 600; }
+.chat-chip { flex: 0 1 auto; min-width: min(76px, 100%); display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 9px; border: 0; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 600; }
 .chat-chip[hidden] { display: none; }
 .chat-chip.off { background: none; color: var(--muted); }
 .chat-chip svg { width: 15px; height: 15px; flex: none; }
@@ -1863,6 +1863,7 @@ body.source-resizing iframe { pointer-events: none; }
 .chat-access { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-left: auto; padding: 0 9px; border: 0; border-radius: 9px; background: none; color: var(--muted); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .chat-access svg { width: 15px; height: 15px; flex: none; }
 .chat-access .chev { width: 13px; height: 13px; opacity: .7; }
+@container chatmain (max-width: 380px) { .chat-access .chev { display: none; } .chat-access { padding: 0 4px; } .chat-tools { gap: 2px; } }
 .chat-access:hover { color: var(--text); background: var(--tint); }
 .chat-access-menu { position: absolute; z-index: 6; right: 0; bottom: calc(100% + 6px); width: min(330px, 100%); padding: 4px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow); }
 .chat-access-menu button { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); text-align: left; }
@@ -1871,7 +1872,8 @@ body.source-resizing iframe { pointer-events: none; }
 .chat-access-menu svg { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--muted); }
 .chat-access-menu b { display: block; font-size: 13.5px; font-weight: 650; }
 .chat-access-menu small { display: block; margin-top: 1px; font-size: 12px; line-height: 1.4; color: var(--muted); }
-.chat-compose textarea { min-width: 0; border: 0; outline: 0; resize: none; background: none; font-size: 15px; line-height: 1.45; padding: 6px 6px 12px; max-height: 160px; }
+.chat-compose textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-compose textarea { text-overflow: ellipsis; min-width: 0; border: 0; outline: 0; resize: none; background: none; font-size: 15px; line-height: 1.45; padding: 6px 6px 12px; max-height: 160px; }
 .chat-send { flex: none; width: 32px; height: 32px; border-radius: 9px; border: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); }
 .chat-send svg { width: 18px; height: 18px; }
 .chat-send.stop { background: var(--text); color: var(--bg); }

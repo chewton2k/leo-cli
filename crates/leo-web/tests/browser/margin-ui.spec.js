@@ -172,3 +172,23 @@ test('the New task title placeholder fits its field', async ({ page }) => {
   });
   expect(fit.text).toBeLessThanOrEqual(fit.room);
 });
+
+test('a narrow Felix panel keeps the placeholder on one line, the note chip readable and the send button inside', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Word study notes', body: 'Hello.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await page.locator('#chat-toggle').click();
+  await expect(page.locator('.chat-chip:not([hidden])')).toBeVisible();
+  await page.evaluate(() => document.documentElement.style.setProperty('--chat-w', '330px'));
+  await expect.poll(() => page.locator('#chat').evaluate(el => el.getBoundingClientRect().width)).toBeLessThan(400);
+  const fit = await page.evaluate(() => {
+    const input = document.querySelector('#chat-input');
+    const form = document.querySelector('#chat-form').getBoundingClientRect();
+    const chip = document.querySelector('.chat-chip:not([hidden])').getBoundingClientRect();
+    const send = document.querySelector('#chat-send').getBoundingClientRect();
+    return { lines: input.scrollHeight <= input.clientHeight, chip: chip.width, inside: send.right <= form.right };
+  });
+  expect(fit.lines).toBe(true);
+  expect(fit.chip).toBeGreaterThanOrEqual(76);
+  expect(fit.inside).toBe(true);
+});
