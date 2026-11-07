@@ -379,6 +379,23 @@ test('explorer refresh keeps file rows and a click in progress intact', async ({
   });
 });
 
+test('the explorer filter keeps its text, focus and matches through a redraw', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.goto(url);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    await expect(page.locator('.side-note[data-id="course-note"]')).toBeVisible();
+    await page.locator('#side-filter').fill('OVERVIEW');
+    await expect(page.locator('.side-note-wrap:has(.side-note[data-id="escaped-note"])')).toBeHidden();
+    await expect(page.locator('.side-note-wrap:has(.side-note[data-id="course-note"])')).toBeVisible();
+    await page.evaluate(()=>{seq++;drawSide();});
+    await expect(page.locator('#side-filter')).toBeFocused();
+    await expect(page.locator('#side-filter')).toHaveValue('OVERVIEW');
+    await expect(page.locator('.side-note-wrap:has(.side-note[data-id="escaped-note"])')).toBeHidden();
+    expect(await page.evaluate(()=>window.errors)).toEqual([]);
+  });
+});
+
 test('loaded folders never flash Opening notes while pages change or folders are clicked', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{
     const page=await context.newPage({viewport:{width:1280,height:800}});

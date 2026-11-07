@@ -802,7 +802,7 @@ test('nothing found offers Felix and a new note', async ({ page }) => {
   const fresh = `zzqq-new-${tag}`;
   await page.goto(`/#/search/${ask}`);
   await expect(page.getByRole('heading', { name: `No notes match “${ask}”` })).toBeVisible();
-  await page.getByRole('button', { name: 'Ask Felix' }).click();
+  await page.locator('#app').getByRole('button', { name: 'Ask Felix' }).click();
   await expect(page.locator('#chat')).toBeVisible();
   await expect(page.locator('#chat-body')).toContainText(ask);
   await page.locator('#chat [data-chat="close"]').click();
@@ -4305,7 +4305,14 @@ test.describe('calendar', () => {
     const made = await (await page.request.post('/api/tasks', { data: { title, description: '', date: null, time: null, kind: 'other', repeat: [] } })).json();
     const saved = async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === made.id);
     await page.goto('/#/calendar');
-    await page.evaluate((id) => taskSheet(id), made.id);
+    await page.evaluate((id) => {
+      const open = document.createElement('button');
+      open.dataset.action = 'task-open';
+      open.dataset.id = id;
+      document.body.append(open);
+      open.click();
+      open.remove();
+    }, made.id);
     const description = page.locator('#task-description');
     await description.fill('First draft');
     await expect.poll(async () => (await saved()).description).toBe('First draft');

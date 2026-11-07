@@ -16,6 +16,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
   let held = null;
   let oldView = null;
   const fixture = `const app = document.querySelector('#app'), $ = selector => document.querySelector(selector);
+const plural = (n, word, many = word + 's') => n + ' ' + (n === 1 ? word : many);
     let seq = 1, state = {view:'settings',speech:${JSON.stringify(view)}};
     const ICON={chevron:''}, fail=error => {window.errors.push(error.message)}, toast=()=>{}, sheet=()=>{};
     const esc = text => String(text).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));

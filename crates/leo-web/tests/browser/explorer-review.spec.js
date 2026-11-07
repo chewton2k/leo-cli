@@ -385,8 +385,4 @@ test('explorer keys move, open and filter', async ({ page }) => {
   await page.locator('#side-filter').fill('GRA');
   await expect(page.locator('#side .side-note-wrap:has(.side-note[data-title="Heap"])')).toBeHidden();
   await expect(page.locator('#side .side-note-wrap:has(.side-note[data-title="Graph"])')).toBeVisible();
-  await page.evaluate(() => drawSide());
-  await expect(page.locator('#side-filter')).toBeFocused();
-  await expect(page.locator('#side-filter')).toHaveValue('GRA');
-  await expect(page.locator('#side .side-note-wrap:has(.side-note[data-title="Heap"])')).toBeHidden();
 });

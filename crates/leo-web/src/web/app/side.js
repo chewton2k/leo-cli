@@ -694,10 +694,21 @@ document.addEventListener('keydown', (event) => {
     const open = row.getAttribute('aria-expanded') === 'true';
     const twist = row.closest('.side-folder').querySelector('.side-twist');
     event.preventDefault();
+    const toggle = () => {
+      const dir = row.dataset.dir;
+      const refocus = () => {
+        if (document.activeElement?.matches?.('.side-tree .side-row') && document.activeElement !== row) return;
+        const again = [...document.querySelectorAll('.side-tree .side-row[data-action="open-folder"]')].find((el) => el.dataset.dir === dir && el.offsetParent !== null);
+        if (again && document.activeElement !== again) again.focus();
+      };
+      twist.click();
+      refocus();
+      requestAnimationFrame(refocus);
+    };
     if (event.key === 'ArrowRight') {
-      if (!open) twist.click();
+      if (!open) toggle();
       else row.closest('.side-folder').nextElementSibling?.querySelector('.side-row')?.focus();
-    } else if (open) twist.click();
+    } else if (open) toggle();
     else {
       const kids = row.closest('.side-kids');
       rows.find((el) => el.dataset.action === 'open-folder' && el.dataset.dir === kids?.dataset.kids)?.focus();
