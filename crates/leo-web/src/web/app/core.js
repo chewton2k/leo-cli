@@ -135,6 +135,7 @@ $('#search-icon').innerHTML = ICON.search;
 const pageBar = document.createElement('div');
 pageBar.className = 'page-bar';
 pageBar.hidden = true;
+pageBar.dataset.keepSelection = '';
 pageBar.setAttribute('aria-hidden', 'true');
 pageBar.innerHTML = '<div class="page-bar-thumb"></div>';
 document.body.appendChild(pageBar);

@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
-async function editorFixture(browser, run, { remember = false, body = null, touch = false } = {}) {
+async function editorFixture(browser, run, { remember = false, body = null, touch = false, related = false } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -17,6 +17,8 @@ async function editorFixture(browser, run, { remember = false, body = null, touc
   const syncSegmented = () => {}, syncAppearanceResets = () => {};
   ${pickWidth}
   window.audit = { pick: width => pickWidth({dataset:{width}}), anchor: () => JSON.parse(localStorage.getItem('fixture-reading') || 'null') };
+  ${related ? `const hideAskFloat = () => {};
+  ${passages.slice(passages.indexOf('const KEEP_SELECTION'), passages.indexOf("document.addEventListener('keydown'"))}` : ''}
   ${remember ? `const $ = selector => document.querySelector(selector), enc = encodeURIComponent;
     const seq = 1, citedLines = null, state = {view:'note',session:{doc:window.doc}};
     async function api(url, options = {}) {
@@ -34,7 +36,7 @@ async function editorFixture(browser, run, { remember = false, body = null, touc
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     const sidebar = remember ? '<aside class="side"><div class="side-head">Folders</div><div class="side-explorer"><nav class="side-tree">' + Array.from({length:100},(_,i)=>'<button class="side-row">Folder '+i+'</button>').join('') + '</nav></div></aside>' : '';
-    res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"></head><body class="on-note">'+sidebar+'<header id="bar" class="bar"><div class="bar-row">Leo</div></header><main><div class="note-layout"><div class="note-columns"><aside class="note-outline" hidden><details class="source-more"><summary aria-label="Headings in this note"></summary><nav aria-label="Headings"></nav></details></aside><article class="note"><h1>My note</h1><div id="doc" class="doc prose"></div></article></div></div></main><script src="/markdown.js"></script><script src="/editing.js"></script><script src="/doc.js"></script><script src="/fixture.js"></script></body></html>');
+    res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"></head><body class="on-note">'+sidebar+'<header id="bar" class="bar"><div class="bar-row">Leo</div></header><main><div class="note-layout"><div class="note-columns"><aside class="note-outline" hidden><details class="source-more"><summary aria-label="Headings in this note"></summary><nav aria-label="Headings"></nav></details></aside><article class="note"><h1>My note</h1><div id="doc" class="doc prose"></div>'+(related?'<section class="related" id="related"><h2 class="related-head">Related notes</h2><div class="related-list"><a class="list-row related-row" href="/away"><span class="related-title">Another note</span><span class="sub">Shares a topic</span></a></div></section>':'')+'</article></div></div></main><script src="/markdown.js"></script><script src="/editing.js"></script><script src="/doc.js"></script><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const context = await browser.newContext({ hasTouch: touch });
@@ -892,7 +894,7 @@ test('heading rail previews magnify nearby bars without opening the whole outlin
   }, { body });
 });
 
-test('the heading rail and its preview never cover the note text, whatever the width', async ({ browser }) => {
+test('the heading rail keeps clear of the note text and its preview shows at every width', async ({ browser }) => {
   const body = ['# One', 'Text '.repeat(80), '## Two', 'More '.repeat(80), '# Three', 'End'].join('\n');
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
@@ -913,14 +915,47 @@ test('the heading rail and its preview never cover the note text, whatever the w
           return { left: text.left, right: text.right, bar: Math.max(...bars), tip: box && [box.left, box.right] };
         });
         expect(seen.bar, `ticks clear the text at ${width}px`).toBeLessThanOrEqual(seen.left - 6);
-        if (width === 2000) expect(seen.tip, 'a wide window still previews the heading').not.toBeNull();
-        if (!seen.tip) continue;
-        expect(seen.tip[1] <= seen.left || seen.tip[0] >= seen.right, `the preview opens beside the text at ${width}px`).toBe(true);
+        expect(seen.tip, `the preview shows at ${width}px, over the text if it must`).not.toBeNull();
         expect(seen.tip[0]).toBeGreaterThanOrEqual(0);
         expect(seen.tip[1]).toBeLessThanOrEqual(width);
       }
     }
   }, { body });
+});
+
+test('dragging down through the note never highlights the empty space or the page chrome under it', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await page.goto(url);
+    const first = await page.locator('#doc .blk').first().boundingBox();
+    const row = await page.locator('.related-row').boundingBox();
+    const head = await page.locator('.related-head').boundingBox();
+    await page.mouse.move(first.x + 4, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2, { steps: 12 });
+    await page.mouse.up();
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('First paragraph');
+    expect(picked).not.toMatch(/Related notes|Another note|Shares a topic/);
+    const chrome = await page.evaluate(() => ['.related', '.doc-tail', '.blk:has(.blank)', '.related-head', '#bar'].map((selector) => {
+      for (let el = document.querySelector(selector); el; el = el.parentElement) {
+        const pick = getComputedStyle(el).webkitUserSelect;
+        if (pick && pick !== 'auto') return pick;
+      }
+      return 'auto';
+    }));
+    expect(chrome.slice(0, 4)).toEqual(['none', 'none', 'none', 'none']);
+    await page.mouse.click(head.x + 8, head.y + head.height / 2);
+    expect(await page.evaluate(() => getSelection().toString())).toBe('');
+    await page.mouse.move(first.x + 4, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(first.x + 200, first.y + first.height / 2, { steps: 4 });
+    await page.mouse.up();
+    expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+    await page.mouse.click(head.x + 8, head.y + head.height / 2);
+    expect(await page.evaluate(() => getSelection().toString())).toBe('');
+  }, { body: 'First paragraph of the note.\n\nSecond paragraph of the note.\n\n\n', related: true });
 });
 
 test('heading previews preserve edits, refresh body text, and release their elements on destroy', async ({ browser }) => {

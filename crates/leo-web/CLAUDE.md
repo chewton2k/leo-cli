@@ -1066,11 +1066,18 @@ gutters and the left one holds a tick per heading (`.outline-ticks`, longer for
 higher levels, the current one in the accent). Hovering or focusing the rail
 magnifies nearby bars (they stay inside the 48 px gutter, at least 6 px from the
 text) and previews the heading and a bounded plain-text excerpt (up to 24 lines /
-800 UTF-16 units, escaped); clicking or Enter/Space jumps there. The preview opens
-only into free space, between the rail and the text or right of the text (over the
-margin), when 220 px fit (`outlineRoom`); with no room it stays hidden and the
-disclosure below the rail lists the headings (2026-11-06, the owner's screenshot of
-a narrow window).
+800 UTF-16 units, escaped); clicking or Enter/Space jumps there. The preview always
+shows (`outlineRoom`): between the rail and the text, else right of the text, else over
+the text (2026-11-06, the owner: "these preview boxes should show even if they cover
+the text"; this reverses the earlier same-day "free space only" rule). It sits above the
+margin layer (z 12) and ignores the pointer.
+Page chrome is not selectable (2026-11-06, the owner): `body` is `user-select: none` and
+the allow list in `index.html` (inputs, `.doc`, `.prose`, chat and margin text, errors,
+transcripts, descriptions, code) turns it back on; new text that people would copy needs a
+class on that list. `.related`, `.doc-tail` and blank blocks stay off it, so a drag down
+the note stops at its end instead of painting empty space. A press on non-selectable,
+non-control chrome clears the selection and Ask Felix (`passages.js`), except in
+`[data-keep-selection]` (Ask Felix, `.page-bar`) and the resize grips.
 Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Motion
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
