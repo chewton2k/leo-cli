@@ -130,14 +130,51 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+const FLIP_GAP: Duration = Duration::from_secs(1);
+
+#[cfg(target_os = "macos")]
+fn needs_flip(active: bool, window_here: bool, since_last_flip: Option<Duration>) -> bool {
+    !active && !window_here && since_last_flip.is_none_or(|gap| gap > FLIP_GAP)
+}
+
+#[cfg(target_os = "macos")]
+fn window_on_active_space(app: &AppHandle) -> bool {
+    app.get_webview_window(crate::MAIN)
+        .and_then(|window| window.ns_window().ok())
+        .is_some_and(|raw| unsafe { &*raw.cast::<objc2_app_kit::NSWindow>() }.isOnActiveSpace())
+}
+
+#[cfg(target_os = "macos")]
 fn popup<M: tauri::menu::ContextMenu + 'static>(tray: &tauri::tray::TrayIcon, menu: M) {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy as Policy};
+    static LAST_FLIP: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let app = tray.app_handle().clone();
     let _ = tray.with_inner_tray_icon(move |tray| {
         if let Some(status) = tray.ns_status_item() {
             let raw = menu.inner_context().ns_menu();
             if let Some(menu) = unsafe { raw.cast::<objc2_app_kit::NSMenu>().as_ref() } {
+                let main = objc2::MainThreadMarker::new();
+                let flip = main.filter(|main| {
+                    let mut last = LAST_FLIP.lock().unwrap_or_else(|e| e.into_inner());
+                    let flip = needs_flip(
+                        NSApplication::sharedApplication(*main).isActive(),
+                        window_on_active_space(&app),
+                        last.map(|at| at.elapsed()),
+                    );
+                    if flip {
+                        *last = Some(std::time::Instant::now());
+                    }
+                    flip
+                });
+                if let Some(main) = flip {
+                    NSApplication::sharedApplication(main).setActivationPolicy(Policy::Accessory);
+                }
                 #[allow(deprecated)]
                 status.popUpStatusItemMenu(menu);
-                if let Some(main) = objc2::MainThreadMarker::new() {
+                if let Some(main) = flip {
+                    NSApplication::sharedApplication(main).setActivationPolicy(Policy::Regular);
+                }
+                if let Some(main) = main {
                     if let Some(button) = status.button(main) {
                         button.highlight(false);
                     }
@@ -244,6 +281,23 @@ fn plan_use(writing: &str, limits: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_menu_flips_the_app_only_when_it_is_away_from_this_desktop() {
+        use super::{needs_flip as flip, FLIP_GAP};
+        use std::time::Duration;
+        let long = Some(FLIP_GAP + Duration::from_millis(1));
+        assert!(flip(false, false, None));
+        assert!(flip(false, false, long));
+        assert!(!flip(true, false, None), "Leo in front never flips");
+        assert!(!flip(false, true, None), "Leo beside you here never flips");
+        assert!(
+            !flip(false, false, Some(FLIP_GAP)),
+            "no flip twice within a second"
+        );
+        assert!(!flip(false, false, Some(Duration::ZERO)));
+    }
+
     #[test]
     fn limits_explain_the_selected_provider_and_preserve_reported_use() {
         for (provider, expected) in [

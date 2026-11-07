@@ -10,8 +10,9 @@ impl SettingsApi for Settings {
     fn describe(&self, _: &std::path::Path) -> serde_json::Value {
         serde_json::json!({"refresh_count": self.0.load(Ordering::SeqCst)})
     }
-    fn refresh_usage(&self) {
+    fn refresh_usage(&self, claude: bool) -> Option<String> {
         self.0.fetch_add(1, Ordering::SeqCst);
+        claude.then(|| "Claude Code reported no limits.".to_string())
     }
     fn apply(&self, _: &serde_json::Value) -> anyhow::Result<String> {
         anyhow::bail!("Not used")
@@ -22,9 +23,13 @@ impl SettingsApi for Settings {
 }
 
 async fn request(port: u16, method: &str, path: &str, cookie: &str) -> String {
+    request_with(port, method, path, cookie, "").await
+}
+
+async fn request_with(port: u16, method: &str, path: &str, cookie: &str, body: &str) -> String {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        stream.write_all(format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        stream.write_all(format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).await.unwrap();
         response
@@ -100,6 +105,15 @@ async fn only_explicit_authenticated_usage_refresh_polls_and_concurrent_refresh_
                 .await
                 .contains("\"refresh_count\":1"));
             assert_eq!(fake.0.load(Ordering::SeqCst), 1);
+            for (body, note) in [
+                ("{}", false),
+                ("{\"claude\":false}", false),
+                ("{\"claude\":true}", true),
+            ] {
+                let answer = request_with(port, "POST", "/api/settings/usage", cookie, body).await;
+                assert!(answer.starts_with("HTTP/1.1 200"), "{body}");
+                assert_eq!(answer.contains("reported no limits"), note, "{body}");
+            }
         } else {
             let missing = request(port, "POST", "/api/settings/usage", cookie).await;
             assert!(missing.starts_with("HTTP/1.1 503"));
