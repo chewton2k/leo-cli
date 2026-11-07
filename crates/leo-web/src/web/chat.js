@@ -246,7 +246,22 @@
     return `${slide ? 'slide' : 'p.'} ${c.from}`.replace('p. ', 'p.');
   }
 
-  function cite(html, sources, escape, files) {
+  function numbered(text, sources) {
+    const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
+    const out = [];
+    for (const m of String(text).matchAll(CITED)) {
+      for (const c of citations(m[1])) {
+        const s = !c.file && byN.get(c.id);
+        if (!s) continue;
+        const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
+        const key = `${s.id}|${lines}`;
+        if (!out.some((x) => x.key === key)) out.push({ key, n: out.length + 1, s, lines, where: lines ? placeWord(c) : '' });
+      }
+    }
+    return out;
+  }
+
+  function cite(html, sources, escape, files, marks) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
     const byF = new Map((files || []).map((f) => [`f${f.n}`, f]));
     const short = (t) => (t.length > 28 ? t.slice(0, 27) + '…' : t);
@@ -264,10 +279,12 @@
           if (!s) return '';
           const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
           const where = lines ? placeWord(c) : '';
+          const mark = marks && marks.find((x) => x.key === `${s.id}|${lines}`);
+          if (mark) return `<button class="cite cite-n" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}" aria-label="${escape(`Source ${mark.n}: ${s.title}${where ? `, ${where}` : ''}`)}">${mark.n}</button>`;
           return `<button class="cite" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}">${escape(short(s.title))}${where ? `<span class="cite-at">${escape(where)}</span>` : ''}</button>`;
         })
         .filter(Boolean);
-      return chips.length ? `${whole.startsWith(' ') ? ' ' : ''}${chips.join('')}` : '';
+      return chips.length ? `${whole.startsWith(' ') && !chips.every((c) => c.startsWith('<button class="cite cite-n"')) ? ' ' : ''}${chips.join('')}` : '';
     });
   }
 
@@ -679,31 +696,8 @@
   const NOTE_DRAG = 'application/x-leo-note';
 
   const WORDS = /\s*\S+|\s+/g;
-  const NO_ARRIVAL = 'pre, code, button, svg, textarea, input, .katex, .cite';
 
   const greeting = (text, escape) => (text.match(WORDS) || []).map((part, i) => `<span class="word" style="animation-delay:${160 + Math.min(i, 14) * 30}ms">${escape(part)}</span>`).join('');
-
-  function arriving(text) {
-    const out = document.createDocumentFragment();
-    (text.match(WORDS) || []).forEach((part, i) => {
-      const word = document.createElement('span');
-      word.className = 'word';
-      word.style.animationDelay = `${Math.min(i, 8) * 30}ms`;
-      word.textContent = part;
-      out.append(word);
-    });
-    return out;
-  }
-
-  function arrive(node) {
-    if (node.nodeType === 3) return node.data.trim() ? arriving(node.data) : node;
-    if (node.nodeType !== 1) return node;
-    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-    const found = [];
-    for (let t = walker.nextNode(); t; t = walker.nextNode()) if (t.data.trim() && !t.parentElement.closest(NO_ARRIVAL)) found.push(t);
-    for (const t of found) t.replaceWith(arriving(t.data));
-    return node;
-  }
 
   const isWord = (n) => n.nodeType === 1 && n.classList.contains('word');
 
@@ -725,13 +719,13 @@
     for (const { name, value } of to.attributes) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
   }
 
-  function settle(from, to, arrives) {
+  function settle(from, to) {
     const was = runs(from);
     const now = runs(to);
     now.forEach((b, i) => {
       const a = was[i];
       if (!a) {
-        for (const n of b.nodes) from.append(arrives ? arrive(n) : n);
+        for (const n of b.nodes) from.append(n);
         return;
       }
       if (a.run && b.run) {
@@ -739,7 +733,7 @@
         const after = said(b);
         if (before === after) return;
         const end = a.nodes[a.nodes.length - 1];
-        if (arrives && before && after.startsWith(before)) end.after(arriving(after.slice(before.length)));
+        if (before && after.startsWith(before) && end.nodeType === 3) end.appendData(after.slice(before.length));
         else {
           end.after(...b.nodes);
           a.nodes.forEach((n) => n.remove());
@@ -751,10 +745,10 @@
       if (!a.run && !b.run && x.nodeType === 1 && y.nodeType === 1 && x.tagName === y.tagName) {
         if (x.outerHTML === y.outerHTML) return;
         match(x, y);
-        settle(x, y, arrives || (x.classList.contains('prose') && Boolean(x.closest('.msg.pending'))));
+        settle(x, y);
         return;
       }
-      x.before(...b.nodes.map((n) => (arrives ? arrive(n) : n)));
+      x.before(...b.nodes);
       a.nodes.forEach((n) => n.remove());
     });
     for (const a of was.slice(now.length)) a.nodes.forEach((n) => n.remove());
@@ -769,7 +763,7 @@
   function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
-    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
+    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, fresh: false, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -786,7 +780,7 @@
         <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
         <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
-        <button type="button" class="icon-btn" data-chat="drop" aria-label="Stop reading this note" title="Stop reading this note" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button>
+        <button type="button" class="icon-btn" data-chat="drop" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg></button>
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
@@ -1300,11 +1294,16 @@
           : '<div class="chat-history-none">No chat mentions that.</div>';
         return;
       }
-      if (!state.chats.length) {
+      const first = state.messages.find((m) => m.role === 'user' && m.text);
+      const ghost = state.fresh && !state.chats.some((c) => c.id === state.id)
+        ? [{ id: state.id, title: first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
+        : [];
+      const list = [...ghost, ...state.chats];
+      if (!list.length) {
         box.innerHTML = '<div class="chat-history-none">Your conversations with Felix are kept here, on this computer.</div>';
         return;
       }
-      box.innerHTML = groups(state.chats)
+      box.innerHTML = groups(list)
         .map((g) => `<div class="chat-history-group">${escape(g.name)}</div>${g.chats
           .map((c) => chatRow(c))
           .join('')}`)
@@ -1312,7 +1311,7 @@
     }
 
     function chatRow(c) {
-      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button></div>`;
+      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button>${c.ghost ? '' : `<button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button>`}</div>`;
     }
 
     let resumeSeq = 0;
@@ -1321,6 +1320,7 @@
       resumeSeq++;
       if (state.busy) state.busy.abort();
       state.id = id;
+      state.fresh = true;
       stopCompacting();
       state.messages = [];
       state.refs = [];
@@ -1362,6 +1362,7 @@
         return null;
       }
       state.id = chat.id;
+      state.fresh = false;
       compactLater();
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
@@ -1700,12 +1701,21 @@
       return `<div class="session-recap" role="status"><h4>Study session done</h4><p>${parts.join(' · ')}</p>${lines.join('')}<div class="session-acts">${again ? '<button type="button" class="btn primary sm" data-chat="session-again">Study those again</button>' : ''}<button type="button" class="btn plain sm" data-chat="session-done">Done</button></div></div>`;
     }
 
+    const EYE = '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>';
+    const EYE_OFF = '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
+
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
       box.textContent = ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
       box.title = ctx ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
-      $('[data-chat="drop"]').hidden = !ctx;
+      const eye = $('[data-chat="drop"]');
+      const off = Boolean(state.context) && !ctx;
+      const label = off ? 'Read this note again' : 'Stop reading this note';
+      eye.hidden = !state.context;
+      eye.title = label;
+      eye.setAttribute('aria-label', label);
+      eye.firstElementChild.innerHTML = off ? EYE_OFF : EYE;
     }
 
     const writer = (m) => (m && m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '');
@@ -1742,8 +1752,9 @@
       const shown = grade(m.text).text;
       const html = !shown && m.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : '';
       const used = cited(m.text, m.sources);
-      const from = !m.pending && used.length > 1
-        ? `<div class="msg-from">${used.map((s) => `<button class="cite" data-chat="open" data-id="${escape(s.id)}">${escape(s.title)}</button>`).join('')}</div>`
+      const marks = numbered(shown, m.sources);
+      const from = !m.pending && marks.length
+        ? `<div class="msg-from">${marks.map((x) => `<button class="cite cite-src" data-chat="open" data-id="${escape(x.s.id)}"${x.lines ? ` data-line="${x.lines}"` : ''}><b>${x.n}</b>${escape(x.s.title)}${x.where ? ` · ${escape(x.where)}` : ''}</button>`).join('')}</div>`
         : '';
       const error = m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
       const verdict = grade(m.text).verdict;
@@ -1761,7 +1772,7 @@
       const taken = parts.flatMap((part) => part.steps || []);
       const newest = parts.findLastIndex((part) => part.steps);
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
-      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`;
+      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
       const live = (part, k) => {
         const run = stepRuns(part.steps).at(-1);
         return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
@@ -2359,7 +2370,7 @@
       const next = document.createElement('div');
       next.innerHTML = html;
       const hello = Boolean(first) && first.classList.contains('chat-hello') && Boolean(next.firstElementChild) && next.firstElementChild.dataset.hello === first.dataset.hello;
-      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next, false);
+      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next);
       else body.innerHTML = html;
       drawProgress();
       if (typing) {
@@ -2463,6 +2474,7 @@
         state.messages.push(answer);
         if (input.value.trim() === question) input.value = '';
         fit();
+        drawChats();
       }
       const controller = new AbortController();
       const thread = { id: state.id, refs: state.refs.slice(), messages: state.messages };
@@ -2799,8 +2811,7 @@
         remember();
       }
       else if (what === 'drop') {
-        input.focus();
-        state.dropped = state.context && state.context.id;
+        state.dropped = state.dropped === state.context.id ? null : state.context.id;
         drawContext();
         if (!state.messages.length) draw();
       } else if (what === 'open') {
@@ -3039,5 +3050,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

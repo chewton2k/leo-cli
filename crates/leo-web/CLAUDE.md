@@ -531,9 +531,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
   “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
-  attribute says the connected notes are read too), while a note is attached a
-  `Stop reading this note` icon button (`data-chat="drop"`, focus moves to the
-  input) and New/Close. Felix's words (greeting, answers) use
+  attribute says the connected notes are read too), while a note is attached an
+  eye toggle (`data-chat="drop"`) and New/Close. Felix's words (greeting, answers) use
   `--voice`; the user's messages stay sans in a `--field` bubble. The greeting
   and starters arrive once per chat (`data-hello` key): words fade
   in (`.word`, `word-in` .5 s opacity and colour, no blur, nothing moves),
@@ -553,6 +552,18 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   cancels on Escape or leaving the control, and keeps the chat on a failed request;
   Reduced Motion snaps the width and label.
 
+- Chat panel (2026-11-06, the owner; simulation in `docs/superpowers/user-simulation-report.md`): the eye
+  (`data-chat="drop"`) is a toggle that shows while a note is open, eye or eye-off, "Stop reading this
+  note" or "Read this note again", and keeps focus. New chat adds a placeholder row to the Chats list
+  (`state.fresh`, set by `begin()`, cleared by `resume()`; `drawChats` derives it, no ×, titled by the first
+  message) that goes away when the chat is left empty. Answers no longer split into word spans (the greeting
+  still does): streamed text only grows its last text node, and `.msg.pending > .prose` with no later `.prose` gets a
+  28 px CSS soft bottom edge (none under Reduced Motion), so nothing is state on a message. In answers each
+  `[n1 L4-6]` is a small muted superscript button (`numbered()`, one number per note and line in order of
+  appearance, `.cite-n`, title "Note, lines 4–6") and `.msg-from` is a "Sources" line of `.cite-src`
+  buttons with number, note and line; copy, Save and Add to note still drop every `.cite`. `cite()` numbers
+  only when given `marks`: quiz cards and file chips keep their look. The prompt (`BASE`, `REPLY_STYLE`):
+  one cite per bullet, short plain sentences, no bold except a closing "Next:" line.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),

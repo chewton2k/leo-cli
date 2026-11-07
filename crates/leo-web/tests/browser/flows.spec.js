@@ -841,7 +841,7 @@ test.describe('note connections', () => {
 });
 
 test.describe('Felix', () => {
-  test('Felix stops reading the note from the head, by keyboard', async ({ page }) => {
+  test('Felix stops and resumes reading the note from the head, by keyboard', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: 'Save the password.\n\nThen compare it.' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
@@ -853,8 +853,12 @@ test.describe('Felix', () => {
     await drop.focus();
     await page.keyboard.press('Enter');
     await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
-    await expect(drop).toBeHidden();
-    await expect(chat.locator('#chat-input')).toBeFocused();
+    await expect(drop).toBeVisible();
+    await expect(drop).toHaveAttribute('aria-label', 'Read this note again');
+    await expect(drop).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
+    await expect(drop).toHaveAttribute('aria-label', 'Stop reading this note');
   });
 
   test('a lesson card asks how sure you are and takes your thinking, and a prediction is not marked', async ({ page }) => {
@@ -925,14 +929,14 @@ test.describe('Felix', () => {
       const next = (html) => { const t = document.createElement('div'); t.innerHTML = html; return t; };
       const box = document.querySelector('#settle');
       window.__first = box.querySelector('p').firstChild;
-      leoChat.settle(box, next('<div class="msg leo pending"><div class="prose"><p>Hello there my friend</p></div></div>'), false);
+      leoChat.settle(box, next('<div class="msg leo pending"><div class="prose"><p>Hello there my friend</p></div></div>'));
       window.__again = box.querySelector('p').textContent;
     });
-    expect(await page.evaluate(() => ({ kept: document.querySelector('#settle p').firstChild === window.__first, text: window.__again, words: document.querySelectorAll('#settle .word').length }))).toEqual({ kept: true, text: 'Hello there my friend', words: 2 });
+    expect(await page.evaluate(() => ({ kept: document.querySelector('#settle p').firstChild === window.__first, text: window.__again, words: document.querySelectorAll('#settle .word').length }))).toEqual({ kept: true, text: 'Hello there my friend', words: 0 });
     await page.evaluate(() => {
       const t = document.createElement('div');
       t.innerHTML = '<div class="msg leo"><div class="prose"><p>Hello there my friend</p></div></div>';
-      leoChat.settle(document.querySelector('#settle'), t, false);
+      leoChat.settle(document.querySelector('#settle'), t);
     });
     expect(await page.evaluate(() => document.querySelector('#settle p').textContent)).toBe('Hello there my friend');
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [{ n: 1, id: note.id, title: 'Lit', folder: '', why: 'open' }] }, { t: 'It says so [n1 L3-3].' }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' }));
@@ -969,7 +973,8 @@ test.describe('Felix', () => {
     await expect(chat.locator('.chat-context')).toContainText('Heaps');
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
-    await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
+    await expect(chat.locator('.msg.leo .cite-n').first()).toHaveText('1');
+    await expect(chat.locator('.msg.leo .msg-from')).toContainText('Heaps');
     expect(asked[0].note).toBe(note.id);
     await chat.locator('#chat-input').fill('At the root');
     await chat.locator('#chat-input').press('Enter');
@@ -1073,7 +1078,19 @@ test.describe('Felix', () => {
       await openSidebar();
     }
     await expect(sidebar.locator('.chat-history-item', { hasText: `second question ${tag}` })).toBeVisible();
+    if (tag === 'desktop') {
+      await chat.locator('.chat-head [data-chat="new"]').click();
+      const placeholder = sidebar.locator('.chat-history-row.on');
+      await expect(placeholder.locator('.chat-history-title')).toHaveText('New chat');
+      await expect(placeholder.locator('.chat-history-x')).toHaveCount(0);
+      await chat.locator('#chat-input').fill(`third question ${tag}`);
+      await chat.locator('#chat-input').press('Enter');
+      await expect(placeholder.locator('.chat-history-title')).toHaveText(`third question ${tag}`);
+      await chat.locator('.chat-head [data-chat="new"]').click();
+      await expect(sidebar.locator('.chat-history-row', { hasText: 'New chat' })).toHaveCount(1);
+    }
     await sidebar.locator('.chat-history-item', { hasText: `first question ${tag}` }).click();
+    await expect(sidebar.locator('.chat-history-row', { hasText: 'New chat' })).toHaveCount(0);
     await expect(chat.locator('.msg.leo').last()).toContainText(`About first question ${tag}`);
     await expect(chat.locator('.msg.user')).toHaveCount(1);
 
@@ -3002,8 +3019,10 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     const chat = await openFelix(page);
     await chat.locator('#chat-input').fill('where does it talk about DFS?');
     await chat.locator('#chat-input').press('Enter');
-    const lineChip = chat.locator('.cite[data-line="7-8"]');
-    await expect(lineChip).toContainText('lines 7–8');
+    const lineChip = chat.locator('.prose .cite[data-line="7-8"]');
+    await expect(lineChip).toHaveText('1');
+    await expect(lineChip).toHaveAttribute('title', `Cited ${tag}, lines 7–8`);
+    await expect(chat.locator('.msg-from .cite[data-line="7-8"]')).toHaveText(`1Cited ${tag} · lines 7–8`);
     const fileChip = chat.locator('.cite-file');
     await expect(fileChip).toContainText('lecture.txt');
     await expect(fileChip).toContainText('line 3');
