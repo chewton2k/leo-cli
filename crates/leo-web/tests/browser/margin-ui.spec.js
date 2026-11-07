@@ -205,3 +205,11 @@ test('the note toolbar moves clear of an overlaying Felix panel instead of hidin
   expect(gap.pill.left).toBeGreaterThanOrEqual(0);
   expect(gap.pill.right).toBeLessThanOrEqual(gap.chat.left + 1);
 });
+
+test('the Usage sheet icon buttons name themselves on hover', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#side [data-action="usage"]').click();
+  const tools = page.locator('.usage-tools .icon-btn');
+  await expect(tools).toHaveCount(2);
+  for (const button of await tools.all()) expect(await button.getAttribute('title')).toBe(await button.getAttribute('aria-label'));
+});
