@@ -68,3 +68,19 @@ test('compact margin anchors stay outside the passage and open real persisted re
   const animations = await stroke.evaluateAll(lines => lines.map(el => getComputedStyle(el).animationName));
   for (const animation of animations) expect(animation).toBe('none');
 });
+
+test('a reading mode picked on a new note is saved with the note', async ({ page }) => {
+  await page.goto('/#/new');
+  const button = page.locator('#margin-mode');
+  await expect(button).toBeEnabled();
+  await button.click();
+  await page.waitForTimeout(300);
+  await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
+  await expect(button).toHaveText('Reads along');
+  await page.locator('#title').click();
+  await page.keyboard.type('Picked early');
+  await expect(page).toHaveURL(/#\/n\//);
+  const id = page.url().match(/#\/n\/([^/?]+)/)[1];
+  await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).mode).toBe('along');
+  await expect(button).toHaveText('Reads along');
+});

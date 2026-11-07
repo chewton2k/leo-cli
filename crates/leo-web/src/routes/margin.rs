@@ -223,6 +223,37 @@ pub(crate) async fn change_settings(
     State(state): State<AppState>,
     Json(body): Json<PrefsBody>,
 ) -> Response {
+    let held = state.chats.clone();
+    let before = match blocking(move || margin::prefs(&held)).await {
+        Ok(before) => before,
+        Err(refused) => return *refused,
+    };
+    let flips = body
+        .default_mode
+        .as_deref()
+        .is_some_and(|mode| margin::valid_mode(mode) && mode != before.default_mode);
+    if let (true, "along", Some(since)) = (flips, before.default_mode.as_str(), before.since) {
+        let notes = state
+            .read_store(move |store| {
+                Ok(store
+                    .notes
+                    .iter()
+                    .filter(|n| n.created_at >= since && margin::made_by_leo(&n.id))
+                    .map(|n| n.id.clone())
+                    .collect::<Vec<_>>())
+            })
+            .await;
+        let held = state.chats.clone();
+        let pinned = match notes {
+            Ok(notes) => blocking(move || margin::pin_modes(&held, &notes, "along")).await,
+            Err(code) => return code.into_response(),
+        };
+        match pinned {
+            Ok(true) => {}
+            Ok(false) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(refused) => return *refused,
+        }
+    }
     let view = state.clone();
     let done = blocking(move || {
         let next = changed(margin::prefs(&view.chats), body)?;
@@ -488,9 +519,6 @@ pub(crate) async fn ask(
     {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
-    if question.is_empty() {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
     if body.quote.trim().chars().count() < margin::LEAST_QUOTE {
         return said(
             StatusCode::BAD_REQUEST,
@@ -527,11 +555,19 @@ pub(crate) async fn ask(
         );
     }
     let mut thread = margin::new_thread(&id, "ask", place, &body.quote, Vec::new());
-    let text = match answered(&state, &note, &thread, &question).await {
+    let asked = if question.is_empty() {
+        margin::UNSPOKEN
+    } else {
+        &question
+    };
+    let text = match answered(&state, &note, &thread, asked).await {
         Ok(text) => text,
         Err(refused) => return *refused,
     };
-    thread.messages = vec![margin::you_say(&question), margin::felix_says(&text)];
+    thread.messages = vec![margin::felix_says(&text)];
+    if !question.is_empty() {
+        thread.messages.insert(0, margin::you_say(&question));
+    }
     let chats = state.chats.clone();
     let saved = thread.clone();
     match blocking(move || margin::put(&chats, &saved)).await {

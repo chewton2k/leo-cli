@@ -42,9 +42,10 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     window.leoTheme={noteWidth:()=>'wide'};
     window.fake={mode:${JSON.stringify(mode)},layout:${JSON.stringify(layout)},threads:${JSON.stringify(threads)},failMode:false,posts:[]};
     async function api(url,{method='GET',body}={}){
-      await new Promise(r=>setTimeout(r,2));
+      await new Promise(r=>setTimeout(r,fake.delay||2));
       if(url==='/api/margin')return {layout:fake.layout,pace:'regular',default_mode:'ask'};
       if(url.endsWith('/margin')&&method==='GET')return {mode:fake.mode,threads:structuredClone(fake.threads)};
+      if(url.endsWith('/margin/threads')&&method==='POST'){fake.posts.push(body);return {id:'t9',quote:body.quote,prefix:body.prefix,suffix:body.suffix,status:'open',source:'ask',messages:[{from:'felix',text:'A fake answer.'}]};}
       if(url.endsWith('/margin')&&method==='POST'){fake.posts.push(body);if(fake.failMode){const e=new Error('Try again.');e.status=503;throw e;}fake.mode=body.mode;return {mode:body.mode};}
       throw new Error('No fake for '+method+' '+url);
     }
@@ -649,19 +650,38 @@ test('a fresh margin reply with a sketch draws it instead of showing its source'
   });
 });
 
-test('only drafts offer the chat fallback and replies keep Add to note', async ({ browser }) => {
+test('every open thread offers the chat fallback, Add to note comes last, and an ask answers in place', async ({ browser }) => {
   await fixture(browser, async page => {
     await page.evaluate(() => marginOpen('t1', true));
     const note = page.locator('.margin-note[data-id="t1"]');
-    await expect(note.getByRole('button', { name: 'Add to note' })).toBeVisible();
-    await expect(note.getByRole('button', { name: 'Ask in chat' })).toBeHidden();
-    await expect(note.getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
+    await expect(note.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
+    await expect(note.locator('.margin-acts button:visible')).toHaveText(['Resolve', 'Dismiss', 'Add to note']);
     await page.evaluate(() => {
+      fake.delay = 300;
       const text = session.doc.source().slice(0, 12);
       marginAsk(session, { text, from: 0, to: 12 });
+      window.draftEl = document.querySelector('.margin-note[data-id="draft"]');
     });
     const draft = page.locator('.margin-note[data-id="draft"]');
     await expect(draft.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
-    await expect(draft.getByRole('button', { name: 'Add to note' })).toBeHidden();
+    await expect(draft.locator('.margin-pending .margin-dots')).toBeVisible();
+    await expect(draft.getByRole('button', { name: 'Cancel' })).toBeHidden();
+    const answered = page.locator('.margin-note[data-id="t9"]');
+    await expect(answered.locator('.margin-felix')).toHaveText('A fake answer.');
+    await expect(answered.locator('.margin-pending')).toBeHidden();
+    expect(await page.evaluate(() => window.draftEl === document.querySelector('.margin-note[data-id="t9"]'))).toBe(true);
+    expect(await page.evaluate(() => fake.posts.at(-1).question)).toBe('');
+    await expect(answered.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
   }, { threads: [THREADS.short] });
+});
+
+test('a closed thread with replies says how many more and marks-only shows a ring', async ({ browser }) => {
+  const two = { ...THREADS.short, messages: [{ from: 'felix', text: 'Hash it.' }, { from: 'you', text: 'Why?' }, { from: 'felix', text: 'Salt it too.' }] };
+  await fixture(browser, async page => {
+    await expect(page.locator('.margin-note[data-id="t1"] .margin-foot')).toHaveText('2 more');
+    await expect(page.locator('.margin-note[data-id="t1"] .margin-felix')).toHaveText('Salt it too.');
+  }, { threads: [two] });
+  await fixture(browser, async page => {
+    await expect(page.locator('.margin-mark[data-id="t1"]')).toHaveAttribute('data-more', '');
+  }, { threads: [two], layout: 'marks' });
 });

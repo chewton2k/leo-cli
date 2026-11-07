@@ -579,7 +579,11 @@ target. Check the page sequence after loading preferences.
 - Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
   without one, the global default applies only to notes leo made (a v4 id, so never a
   headerless file) after it was set (`Prefs.since`), so turning it on never starts
-  reading old notes.
+  reading old notes. Turning the default off pins the notes made while it was on
+  (`margin::pin_modes`, insert-ignore in one transaction, before the prefs are written),
+  so they keep reading along. An unsaved note shows the default and keeps a picked mode
+  in `marginPage.wanted`; the created hook (`marginCreated`) loads the note's margin and
+  POSTs it (2026-11-06, the user's call).
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
   sends changed blocks after a pause (4 s, slow 8 s). Silence is the normal answer:
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
@@ -615,8 +619,17 @@ target. Check the page sequence after loading preferences.
   bounded when parsed.
 - A failed or missing AI shows a fixed, actionable status above the note and leaves `margin::PROBLEM`
   (fixed text, no provider detail) in Settings → Felix and Health until a read works.
-- Selection: Ask Felix (⌘⇧E) opens a draft in the margin, POST
-  `.../margin/threads` (no read-along needed), or Ask in chat. With Felix open, under
+- Selection: Ask Felix (⌘⇧E) opens a draft in the margin and asks at once, POST
+  `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
+  only Felix's message is stored). The draft shows dots (`.margin-pending`, filled from
+  `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
+  (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
+  leaves the thread closed when it lands, and a closed failure toasts. An open failure
+  shows the problem and lets the user type a question (2026-11-06, the user's call).
+  Replies show the sent text and dots the same way; a failed one restores the text.
+  Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
+  Add to note. A closed thread with more messages says "N more" (marks get a ring).
+  Word arrival animates colour only, never opacity (blur on WebKit); positions are rounded. With Felix open, under
   3 or over 600 characters, it goes to the chat as before. The server anchors on
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
   POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
@@ -625,7 +638,7 @@ target. Check the page sequence after loading preferences.
 - Add to note uses `/insert` with one request id per thread (`/insert` dedupes on note
   and request, whatever the base), runs once at a time and shows Undo before it closes
   the thread. After a 409 it re-finds the passage, or says it went to the end and
-  skips the glow. Only drafts offer Ask in chat, which attaches the quote. `add_margin_note`'s Undo is refused
+  skips the glow. Ask in chat attaches the quote. `add_margin_note`'s Undo is refused
   once the user has replied. `chat::gather_seeing` adds open threads of the open note
   after the notes (`margin::context`, at most 3,000 characters and an eighth of the
   note room); the block's fence is keyed per process and stable while its content is,

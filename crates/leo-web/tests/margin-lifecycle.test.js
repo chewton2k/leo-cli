@@ -242,3 +242,24 @@ test('switching to When you ask during the save sends nothing, and a late answer
   await pending;
   assert.equal(late.state.status, '');
 });
+
+test('a mode picked before the first save is kept, then sent once the note exists', async () => {
+  const h = harness();
+  const calls = [];
+  h.context.api = async (url, options = {}) => {
+    calls.push([options.method || 'GET', url, options.body]);
+    if (url === '/api/margin') return { layout: 'both', pace: 'regular', default_mode: 'ask' };
+    return options.method === 'POST' ? { mode: options.body.mode } : { mode: 'ask', threads: [] };
+  };
+  h.context.marginControl = () => {};
+  h.context.marginModeMenu = () => {};
+  h.state.s.note = {};
+  h.state.mode = 'ask';
+  await h.context.marginChangeMode('along');
+  assert.equal(h.state.mode, 'along');
+  assert.deepEqual(calls, []);
+  await h.context.marginCreated(h.state.s, { id: 'n1' });
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['POST', '/api/notes/n1/margin', { mode: 'along' }]));
+  assert.equal(h.state.mode, 'along');
+  assert.equal(h.state.loaded, true);
+});
