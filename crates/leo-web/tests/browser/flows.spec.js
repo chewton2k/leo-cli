@@ -4930,6 +4930,15 @@ test("Text size and Felix's lettering change reading text at once, survive a rel
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('On a Mac only Command opens Quick Leo, so Control+K stays a text-editing key', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
+  await page.goto('/');
+  await page.keyboard.press('Control+k');
+  await expect(page.locator('.quick-leo')).toHaveCount(0);
+  await page.keyboard.press('Meta+k');
+  await expect(page.locator('.scrim:not(.scrim-gone) .quick-leo')).toBeVisible();
+});
+
 test('Quick Leo is one Spotlight-style line that works out what you want: a reminder, a question, a note to open or a new one', async ({ page }) => {
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
   const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });

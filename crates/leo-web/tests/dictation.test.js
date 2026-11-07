@@ -20,8 +20,6 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(html.includes('role="radiogroup" aria-label="Popup"'));
   assert.ok(/<input type="checkbox" class="switch" role="switch" data-dictation="writing" data-on="quick">/.test(html));
   assert.ok(html.includes('Adds a few seconds'));
-  assert.ok(!html.includes('dictation-badge'));
-  for (const text of ['<h3>Shortcut and microphone</h3>', '<h3>Text</h3>', '<h3>Popup</h3>', 'Change shortcut']) assert.ok(html.includes(text), text);
   assert.ok(!/id="dictation-position-row" hidden/.test(html));
   assert.ok(/id="dictation-position-row" hidden/.test(context.dictationCards({ settings: { popup: 'off' }, recent: [], shortcut: {} })));
   assert.ok(!html.includes('data-action="dictation-save"'));

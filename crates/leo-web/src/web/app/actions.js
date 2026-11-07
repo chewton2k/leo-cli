@@ -142,9 +142,15 @@ const actions = {
     if (!chat.askNew(el.dataset.query)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });
   },
   'search-new': async (el) => {
-    const note = await api('/api/notes', { method: 'POST', body: { title: el.dataset.query.slice(0, 120), body: '', directory: creationDir() } });
-    go(noteHash(note.id));
+    el.disabled = true;
+    try {
+      const note = await api('/api/notes', { method: 'POST', body: { title: Array.from(el.dataset.query).slice(0, 120).join(''), body: '', directory: creationDir() } });
+      go(noteHash(note.id));
+    } finally {
+      el.disabled = false;
+    }
   },
+  'search-retry': (el) => showSearch(el.dataset.query),
   'new-folder': newFolder,
   'create-folder': createFolder,
   settings: () => {

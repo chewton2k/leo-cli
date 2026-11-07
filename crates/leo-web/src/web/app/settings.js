@@ -173,7 +173,10 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.view === 'settings' && app.querySelector('.picker-menu:not([hidden])')) {
     e.stopPropagation();
+    const open = app.querySelector('.picker-menu:not([hidden])');
+    const owner = open.parentElement.querySelector('.picker-button');
     closePickers();
+    owner?.focus();
     return;
   }
   if (state.view !== 'settings') return;
@@ -864,7 +867,8 @@ function speechCards(view) {
   const downloaded = view.models.filter((model) => model.downloaded);
   const extras = view.extra_files || [];
   const available = view.models.filter((model) => !model.downloaded);
-  const filter = !state.speechFilter || state.speechFilter === 'downloaded' ? 'recommended' : state.speechFilter;
+  if (!state.speechFilter || state.speechFilter === 'downloaded') state.speechFilter = 'recommended';
+  const filter = state.speechFilter;
   const filters = [['recommended', 'Recommended'], ['english', 'English'], ['many', 'Many languages'], ['all', `All ${available.length}`]];
   const rows = speechFiltered(available, filter).map(speechModelRow).join('');
   return `<section class="set-card" data-find="speech-in-use"><header><h3>In use</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header><div class="set-row"><span class="grow set-value-text">${view.ready && current ? esc(current.name) : 'Download a model below, then choose Use.'}</span></div><p class="set-note">Dictation and recording share this model. Audio stays on this computer.</p>${language}</section>

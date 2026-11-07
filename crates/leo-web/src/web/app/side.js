@@ -136,7 +136,7 @@ function drawSide() {
     <div class="side-explorer" id="side-explorer">
       <button class="side-row side-new" data-action="new" data-dir="${esc(actionDir)}" aria-label="New note" aria-keyshortcuts="${ON_MAC ? 'Meta+N' : 'Control+N'}" title="New note${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.filePlus}<span class="side-label">New note</span><kbd aria-hidden="true">${newNoteLabel}</kbd></button>
       <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><span class="side-group-tools"><button class="side-add" data-action="new-folder" data-parent="${esc(actionDir)}" aria-label="New folder" title="New folder${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.folderPlus}</button></span></div>
-      <label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label>
+      <label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="" tabindex="0">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
@@ -650,7 +650,6 @@ function applySideFilter(tree) {
   for (const wrap of tree.querySelectorAll('.side-note-wrap')) {
     if (!(wrap.querySelector('.side-note')?.dataset.title || '').toLowerCase().includes(text)) hide(wrap);
   }
-  for (const status of tree.querySelectorAll('.side-note-status')) hide(status);
   const folders = [...tree.querySelectorAll('.side-folder')].reverse();
   for (const folder of folders) {
     const kids = folder.nextElementSibling?.matches('.side-kids') ? folder.nextElementSibling : null;
@@ -663,13 +662,14 @@ function applySideFilter(tree) {
   }
 }
 
+const rowKey = (el) => el.dataset.id || el.dataset.dir || '';
+
 function sideRoving(tree) {
   if (!tree) return;
   const rows = [...tree.querySelectorAll('.side-row')];
   for (const row of rows) row.tabIndex = -1;
-  const key = (el) => el.dataset.id || el.dataset.dir || '';
   const visible = rows.filter((row) => !row.closest('[hidden]'));
-  const stop = visible.find((row) => row.getAttribute('aria-current') === 'page') || visible.find((row) => side.focusKey && key(row) === side.focusKey) || visible[0];
+  const stop = visible.find((row) => row.getAttribute('aria-current') === 'page') || visible.find((row) => side.focusKey && rowKey(row) === side.focusKey) || visible[0];
   if (stop) stop.tabIndex = 0;
 }
 
@@ -681,7 +681,7 @@ document.addEventListener('input', (event) => {
 });
 
 document.addEventListener('focusin', (event) => {
-  if (event.target.matches?.('.side-tree .side-row')) side.focusKey = event.target.dataset.id || event.target.dataset.dir || '';
+  if (event.target.matches?.('.side-tree .side-row')) side.focusKey = rowKey(event.target);
 });
 
 document.addEventListener('keydown', (event) => {

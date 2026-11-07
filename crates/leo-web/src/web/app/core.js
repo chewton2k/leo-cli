@@ -889,7 +889,13 @@ async function showSearch(query) {
     return;
   }
   app.innerHTML = `<div class="section-title">Searching…</div><div class="cards">${skeleton(3)}</div>`;
-  const results = await api(`/api/search?q=${enc(query)}&brief=true`);
+  let results;
+  try {
+    results = await api(`/api/search?q=${enc(query)}&brief=true`);
+  } catch (e) {
+    if (mine === seq) app.innerHTML = empty(ICON.search, 'Search did not finish', e.message || 'Something went wrong.', `<button class="btn primary" data-action="search-retry" data-query="${esc(query)}">Try again</button>`);
+    return;
+  }
   if (mine !== seq) return;
   const words = query.split(/\s+/).map((w) => w.replace(/^#/, '')).filter(Boolean);
   const draw = (list) => list.map((n) => card(n, { words, showFolder: true, why: n.why })).join('');

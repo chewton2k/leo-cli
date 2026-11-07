@@ -1039,16 +1039,13 @@ function calPeekTask(side, id, on) {
     patch({ title: text }).catch(fail);
   });
   const about = $('#cal-peek-about', side);
-  let timer = 0;
-  const flushAbout = () => {
-    clearTimeout(timer);
-    const text = about.value.trim();
-    if (text === (task.description || '')) return;
-    patch({ description: text }).catch(fail);
-  };
-  about.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flushAbout, 600); });
-  about.addEventListener('blur', flushAbout);
-  if (cal.peek) cal.peek.flush = flushAbout;
+  const aboutField = autosaveField({
+    input: about,
+    status: said,
+    value: () => task.description || '',
+    save: (text) => patch({ description: text }),
+  });
+  if (cal.peek) cal.peek.flush = aboutField.flush;
   for (const b of side.querySelectorAll('[data-cal-scope]')) {
     b.addEventListener('click', () => {
       if (cal.peek) cal.peek.scope = b.dataset.calScope;
@@ -1250,6 +1247,57 @@ function newTaskSheet(day = null) {
   title.focus();
 }
 
+let taskField = null;
+const autosaves = new Set();
+
+function autosaveField({ input, status, value, save, delay = 600 }) {
+  let timer = 0;
+  let busy = null;
+  const field = {
+    text: () => input.value.trim(),
+    pending: () => Boolean(timer || busy) || input.value.trim() !== value(),
+    async flush() {
+      clearTimeout(timer);
+      timer = 0;
+      if (busy) {
+        await busy;
+        return field.flush();
+      }
+      const text = input.value.trim();
+      if (text === value()) return true;
+      status('Saving…');
+      busy = save(text);
+      let ok = false;
+      try {
+        ok = (await busy) !== false;
+      } finally {
+        busy = null;
+      }
+      if (ok) {
+        status('Saved');
+        if (input.value.trim() !== value()) timer = setTimeout(field.flush, delay);
+      } else {
+        status('Not saved, will retry');
+        timer = setTimeout(field.flush, 3000);
+      }
+      return ok;
+    },
+  };
+  input.addEventListener('input', () => {
+    status('');
+    clearTimeout(timer);
+    timer = setTimeout(field.flush, delay);
+  });
+  input.addEventListener('blur', () => field.flush().catch(fail));
+  autosaves.add(field);
+  return field;
+}
+
+function pendingAutosaves() {
+  for (const f of autosaves) if (!f.pending()) autosaves.delete(f);
+  return [...autosaves];
+}
+
 function taskSheet(id, on = null) {
   const task = calFind(id);
   if (!task) return;
@@ -1282,50 +1330,40 @@ function taskSheet(id, on = null) {
   const description = $('#task-description', box);
   const descState = $('#task-description-state', box);
   const opened = task.description || '';
-  let descTimer = 0;
-  let descSaving = false;
   let descSaved = false;
-  const flushDescription = async () => {
-    clearTimeout(descTimer);
-    if (descSaving) {
-      descTimer = setTimeout(flushDescription, 200);
-      return;
-    }
-    const text = description.value.trim();
-    if (text === (task.description || '')) return;
-    descSaving = true;
-    descState.textContent = 'Saving…';
-    try {
-      const saved = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: text } });
-      task.description = saved.description;
-      descState.textContent = 'Saved';
-      if (!descSaved) {
-        descSaved = true;
-        toast('Description saved', { action: 'Undo', run: async () => {
-          const undone = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: opened } });
-          task.description = undone.description;
-          if (box.isConnected) {
-            description.value = opened;
-            descState.textContent = '';
-          }
-          loadTasksWindow().catch(() => {});
-        } });
+  const earlier = taskField && taskField.id === id && taskField.field.pending() ? taskField : null;
+  if (earlier) description.value = earlier.field.text();
+  const field = autosaveField({
+    input: description,
+    status: (text) => { if (descState.isConnected) descState.textContent = text; },
+    value: () => task.description || '',
+    save: async (text) => {
+      try {
+        const saved = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: text } });
+        task.description = saved.description;
+        if (!descSaved) {
+          descSaved = true;
+          toast('Description saved', { action: 'Undo', run: async () => {
+            const undone = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: opened } });
+            task.description = undone.description;
+            if (box.isConnected) {
+              description.value = opened;
+              descState.textContent = '';
+            }
+            loadTasksWindow().catch(() => {});
+          } });
+        }
+        loadTasksWindow().catch(() => {});
+        return true;
+      } catch (err) {
+        if (err instanceof Locked) throw err;
+        toast(err.message, { bad: true });
+        return false;
       }
-      loadTasksWindow().catch(() => {});
-    } catch (err) {
-      descState.textContent = '';
-      if (err instanceof Locked) throw err;
-      toast(err.message, { bad: true });
-    } finally {
-      descSaving = false;
-    }
-  };
-  description.addEventListener('input', () => {
-    descState.textContent = '';
-    clearTimeout(descTimer);
-    descTimer = setTimeout(flushDescription, 600);
+    },
   });
-  description.addEventListener('blur', flushDescription);
+  taskField = { id, field };
+  if (earlier) earlier.field.flush().then(field.flush).catch(fail);
   const repeatBox = $('#task-repeat', box);
   if (repeatBox) {
     repeatPicker(repeatBox, task.repeat || [], async (days) => {

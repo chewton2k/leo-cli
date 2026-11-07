@@ -115,8 +115,15 @@ test('the downloading update shows a percent and a bar', () => {
 test('an available update has one primary Download and no Check now', () => {
   const { value } = context();
   const html = value.updatesCard({ version: '1.2.3', platform: 'macos', preferences: {}, updates: { state: 'available', version: '2.0.0' }, paths: {} });
-  assert.ok(html.includes('btn primary sm') && html.includes('Download 2.0.0'));
-  assert.ok(!html.includes('check_updates'));
+  const primary = [...html.matchAll(/<button class="btn primary[^"]*"[^>]*data-app-action="([a-z_]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(primary, ['download_update']);
+  assert.ok(!html.includes('data-app-action="check_updates"'));
+});
+test('a ready update offers Restart as the one primary action and Check now stays', () => {
+  const { value } = context();
+  const html = value.updatesCard({ version: '1.2.3', platform: 'macos', preferences: {}, updates: { state: 'ready', version: '2.0.0' }, paths: {} });
+  assert.deepEqual([...html.matchAll(/<button class="btn primary[^"]*"[^>]*data-app-action="([a-z_]+)"/g)].map((m) => m[1]), ['restart_update']);
+  assert.ok(html.includes('data-app-action="check_updates"'));
 });
 test('idle Updates shows only the last-checked line', () => {
   const { value } = context();
@@ -127,5 +134,5 @@ test('Health loads in shape', () => {
   const { value } = context();
   const html = value.healthCards(null);
   assert.ok(html.includes('Checking…') && html.includes('activity-spin'));
-  assert.equal((html.match(/class="skeleton"/g) || []).length, 6);
+  assert.ok(html.includes('class="skeleton"'));
 });

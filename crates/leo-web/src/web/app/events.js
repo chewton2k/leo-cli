@@ -13,7 +13,7 @@ window.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
-  const chord = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+  const chord = (ON_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey;
   const letter = e.key.toLowerCase();
   if (chord && (letter === 'k' || letter === 'f' && state.view !== 'note')) {
     e.preventDefault();
@@ -22,6 +22,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (chord && letter === 'n') {
     if (e.isComposing || $('.scrim') || $('.inline-edit') || state.view === 'locked') return;
+    if (typing && !typing.matches('.line-edit') || $('#rec-point-text')?.value.trim()) return;
     e.preventDefault();
     const dir = creationDir();
     go(dir ? `#/new/${enc(dir)}` : '#/new');
@@ -56,10 +57,11 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved() || Boolean(kanban.panel?.dirty());
+const unsaved = () => saving.unsaved() || Boolean(kanban.panel?.dirty()) || pendingAutosaves().length > 0;
 
 function saveWebsiteWork() {
   kanban.panel?.flush().catch(() => {});
+  for (const f of pendingAutosaves()) f.flush().catch(() => {});
   saving.retry().catch(() => {});
 }
 

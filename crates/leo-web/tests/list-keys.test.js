@@ -5,8 +5,15 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/web/app/select-menu.js'), 'utf8');
-const from = source.indexOf('let listTyped');
-const end = source.indexOf('\nfunction ', source.indexOf('function listKeyTarget') + 1);
+const fn = source.indexOf('function listKeyTarget');
+const from = Math.min(source.indexOf('let listTyped'), fn);
+let depth = 0;
+let end = source.indexOf('{', fn);
+do {
+  if (source[end] === '{') depth++;
+  if (source[end] === '}') depth--;
+  end++;
+} while (depth > 0);
 
 function load() {
   const context = { Date: { now: () => context.now }, now: 1000 };
