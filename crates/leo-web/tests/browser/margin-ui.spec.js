@@ -84,3 +84,36 @@ test('a reading mode picked on a new note is saved with the note', async ({ page
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).mode).toBe('along');
   await expect(button).toHaveText('Reads along');
 });
+
+test('a drag across page chrome paints nothing, fields stay selectable once focused, and the mode menu clears a selection', async ({ page }) => {
+  await page.goto('/#/record');
+  await expect(page.locator('#rec-title')).toBeVisible();
+  await page.mouse.move(60, 20);
+  await page.mouse.down();
+  await page.mouse.move(640, 400, { steps: 6 });
+  await page.mouse.move(1270, 700, { steps: 6 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => getSelection().toString())).toBe('');
+  const field = page.locator('#rec-title');
+  await field.click();
+  await page.keyboard.type('hello world');
+  await page.mouse.click(5, 5);
+  const box = await field.boundingBox();
+  await page.mouse.move(box.x + 10, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 200, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.up();
+  expect(await field.evaluate(i => i.value.slice(i.selectionStart, i.selectionEnd))).toContain('world');
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Selection chrome', body: 'Alpha beta gamma.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  const word = page.locator('#doc .blk').first();
+  const at = await word.boundingBox();
+  await page.mouse.move(at.x + 1, at.y + at.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(at.x + 40, at.y + at.height / 2, { steps: 4 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+  await expect(page.locator('#margin-mode')).toBeEnabled();
+  await page.locator('#margin-mode').click();
+  expect(await page.evaluate(() => getSelection().toString())).toBe('');
+});

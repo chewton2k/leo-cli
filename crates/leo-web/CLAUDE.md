@@ -1151,7 +1151,9 @@ margin layer (z 12) and ignores the pointer.
 Page chrome is not selectable (2026-11-06, the owner): `body` is `user-select: none` and
 the allow list in `index.html` (inputs, `.doc`, `.prose`, chat and margin text, errors,
 transcripts, descriptions, code) turns it back on; new text that people would copy needs a
-class on that list. `.related`, `.doc-tail` and blank blocks stay off it, so a drag down
+class on that list. Hints, card descriptions and notes (`.hint`, `.choice-about`, `.set-note`, but not `.set-note.warn`) are chrome and
+not on it, and an unfocused input or textarea is `user-select: none` so a drag across a form paints no
+placeholder; focusing it makes it selectable (2026-11-06). The note's mode button and menu clear a selection like other chrome. `.related`, `.doc-tail` and blank blocks stay off it, so a drag down
 the note stops at its end instead of painting empty space. A press on non-selectable,
 non-control chrome clears the selection and Ask Felix (`passages.js`), except in
 `[data-keep-selection]` (Ask Felix, `.page-bar`) and the resize grips.
