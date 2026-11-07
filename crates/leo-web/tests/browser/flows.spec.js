@@ -3695,7 +3695,7 @@ test.describe('passages', () => {
     const ask = page.locator('.ask-float');
     await expect(ask).toBeVisible();
     await ask.click();
-    await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Ask in chat' }).click();
+    await page.locator('.margin-note[data-open]').getByRole('button', { name: 'Ask in chat' }).click();
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
     await expect(chat.locator('.chat-passage')).toContainText('keeps the minimum');
