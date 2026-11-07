@@ -292,6 +292,7 @@ test('Tab indents a list item and Shift-Tab brings it back', () => {
   assert.equal(ed.outdent(' - item'), '- item');
   assert.equal(ed.outdent('\t- item'), '- item');
   assert.equal(ed.outdent('   - item'), ' - item');
+  for (const line of ['1. a', '2005. second', 'a) b']) assert.equal(ed.outdent(ed.indent(line)), line, 'a lone item comes back to its own bytes');
 });
 
 test('Tab nests under the marker above and Shift-Tab returns to the parent', () => {

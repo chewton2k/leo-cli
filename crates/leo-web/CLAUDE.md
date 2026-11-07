@@ -696,7 +696,7 @@ target. Check the page sequence after loading preferences.
   (`ai::reads_stay_here`).
 - Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (30 s, 90 s, 3 min, 5 min; default 90 s, `Prefs.gap`) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
-  most 8,000 characters in and 220 tokens out. At the defaults, 40 reads
+  most 8,000 characters in and 220 tokens out. At the defaults, 40 reads An over-limit card offers Discard these changes, the one way out that drops text (2026-11-06).
   take an hour of writing at least, and a day's worst case is about 90k input
   tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
   bounded when parsed.

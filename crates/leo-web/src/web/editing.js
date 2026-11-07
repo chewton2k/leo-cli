@@ -249,6 +249,9 @@
         if (!earlier) break;
         if (leadWidth(earlier.lead) < leadWidth(found.lead)) return earlier.lead + line.slice(found.lead.length);
       }
+      const own = found.marker.length + found.gap.length;
+      const lead = leadWidth(found.lead);
+      if (lead && !found.lead.includes('\t') && lead % own === 0) return ' '.repeat(lead - own) + line.slice(found.lead.length);
     }
     return line.replace(/^(?: {1,2}|\t)/, '');
   }

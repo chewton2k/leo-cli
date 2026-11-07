@@ -635,7 +635,7 @@ async function kanbanCardPanel(id) {
       ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
     </div>
     <div class="prose doc kanban-description" id="kanban-card-description" role="group" aria-label="Description"></div>
-    <p class="kanban-limit" id="kanban-card-problem" role="alert" hidden></p>
+    <p class="kanban-limit" id="kanban-card-problem" role="alert" hidden></p><button type="button" class="btn plain sm" id="kanban-card-discard" hidden>Discard these changes</button>
   </div>`;
   box.hidden = false;
   document.body.classList.add('kanban-panel-on');
@@ -649,6 +649,7 @@ async function kanbanCardPanel(id) {
   const saved = $('#kanban-card-saved', box);
   const problem = $('#kanban-card-problem', box);
   const tell = (text) => { problem.textContent = text; problem.hidden = !text; };
+  const discard = $('#kanban-card-discard', box);
   const fit = (area) => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; };
   fit(title);
   const fields = { title, subheading: sub };
@@ -662,6 +663,7 @@ async function kanbanCardPanel(id) {
   const tellOver = () => {
     const extra = over();
     tell(extra > 0 ? `Keep the description within ${KANBAN_MOST_DESCRIPTION.toLocaleString('en')} characters. It is ${extra.toLocaleString('en')} over, so this text is not saved yet.` : '');
+    discard.hidden = extra <= 0;
     return extra > 0;
   };
   const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => { tellOver(); queue('description'); } });
@@ -700,6 +702,12 @@ async function kanbanCardPanel(id) {
     doc.destroy();
   };
   kanban.panel = { id, end, settle, flush, dirty };
+  discard.addEventListener('click', () => {
+    doc.stop();
+    clearTimeout(timers.description);
+    timers.description = 0;
+    kanbanClosePanel();
+  });
   for (const [name, field] of Object.entries(fields)) {
     field.addEventListener('input', () => {
       if (field === title) fit(field);
