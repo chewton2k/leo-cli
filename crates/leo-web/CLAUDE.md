@@ -1415,7 +1415,7 @@ response shows as a quiet line. Usage and New task share the `sheetroom` contain
 A week column shows only as many side-by-side tiles as it is wide enough for (`CAL_TILE_PX`, 64, after
 a 30 px strip kept for the count); the rest become a `+N` in that strip beside the tiles that opens the day
 (2026-11-06). `calFit` re-measures after every draw and on resize (`ResizeObserver` on `#cal-main`), so the
-count is right at any width; columns under 140 px hide the task checkbox so a title keeps whole words. The Tasks window stops short of the outline rail's
+count is right at any width; columns under 140 px put the title under the task checkbox so it keeps whole words. The Tasks window stops short of the outline rail's
 foot (`fitTasksWindow` scrolls it inside or folds it) and the outline sits above the dock.
 Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
 minimum timed block. Overlap layout includes that visual minimum; saved task
