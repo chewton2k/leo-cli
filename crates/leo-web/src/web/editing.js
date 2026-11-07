@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
 
-  const { MARKER } = root.leoMarkdown || require('./markdown.js');
+  const { MARKER, listKind, listable } = root.leoMarkdown || require('./markdown.js');
   const FENCE = /^\s*(```|~~~)/;
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
   const QUOTE = /^\s*>/;
@@ -114,23 +114,35 @@
     return m && { lead: m.groups.lead, marker: m.groups.marker, gap: m.groups.gap, box: m.groups.box || '', head: m[0], text: line.slice(m[0].length) };
   }
 
-  const itemHead = (line) => item(line)?.head || line.match(HEAD)?.[0] || '';
-  const leadWidth = (lead) => lead.replace(/\t/g, '    ').length;
-
-  function listLevel(lines, at) {
-    if (!item(lines[at] ?? '')) return 0;
+  function listed(lines, at) {
     let from = at;
     while (from > 0 && item(lines[from - 1])) from--;
-    const open = [];
-    for (let i = from; i <= at; i++) {
-      const depth = leadWidth(item(lines[i]).lead);
-      while (open.length && open[open.length - 1] >= depth) open.pop();
-      open.push(depth);
-    }
-    return open.length - 1 + Math.floor(open[0] / 2);
+    let after = false;
+    for (let i = from; i <= at; i++) after = Boolean(listable(lines[i], after));
+    return after;
   }
 
-  const listPrefix = (line) => item(line)?.head || '';
+  const itemIn = (line, above) => (!above || listable(line, above.length > 0 && listed(above, above.length - 1)) ? item(line) : null);
+  const itemHead = (line, above) => itemIn(line, above)?.head || line.match(HEAD)?.[0] || '';
+  const leadWidth = (lead) => lead.replace(/\t/g, '    ').length;
+
+  function listLevels(lines) {
+    const open = [];
+    let after = false;
+    return lines.map((line) => {
+      after = Boolean(listable(line, after));
+      if (!after) {
+        open.length = 0;
+        return -1;
+      }
+      const depth = leadWidth(item(line).lead);
+      while (open.length && open[open.length - 1] >= depth) open.pop();
+      open.push(depth);
+      return open.length - 1 + Math.floor(open[0] / 2);
+    });
+  }
+
+  const listPrefix = (line, above) => itemIn(line, above)?.head || '';
 
   function nextMarker(marker) {
     const number = marker.match(/^(\d+)(.)$/);
@@ -142,9 +154,14 @@
     return String.fromCharCode(run.charCodeAt(0) + 1).repeat(run.length) + end;
   }
 
-  const firstMarker = (marker) => marker.replace(/\d+/, '1').replace(/[a-z]+/, 'a').replace(/[A-Z]+/, 'A');
+  function place(marker) {
+    const run = marker.slice(0, -1);
+    return /\d/.test(run) ? Number(run) : run.toLowerCase().charCodeAt(0) - 96 + (run.length - 1) * 26;
+  }
 
-  function renumber(lines, at) {
+  const closeAfter = (marker, previous) => Math.abs(place(marker) - place(previous) - 1) <= 1;
+
+  function renumber(lines, at, fresh = -1) {
     if (!item(lines[at] ?? '')) return;
     let from = at;
     while (from > 0 && item(lines[from - 1])) from--;
@@ -155,9 +172,13 @@
       const depth = leadWidth(found.lead);
       while (open.length && open[open.length - 1].depth > depth) open.pop();
       const level = open[open.length - 1]?.depth === depth ? open.pop() : null;
-      const kind = firstMarker(found.marker);
-      const marker = level ? (firstMarker(level.marker) === kind ? nextMarker(level.marker) : found.marker) : open.length ? kind : found.marker;
-      open.push({ depth, marker });
+      const kind = listKind(found.marker);
+      const same = level && kind !== 'ul' && listKind(level.marker) === kind;
+      const follows = same && (i === fresh || (!level.stopped && (closeAfter(found.marker, level.marker) || closeAfter(found.marker, level.typed))));
+      const starts = !same && i === fresh && open.length > 0 && kind !== 'ul';
+      const marker = follows ? nextMarker(level.marker) : starts ? kind : found.marker;
+      const stopped = same ? !follows : /[a-z]/i.test(kind) && !/^[aA][.)]/.test(marker);
+      open.push({ depth, marker, typed: found.marker, stopped });
       if (marker !== found.marker) lines[i] = found.lead + marker + lines[i].slice(found.lead.length + found.marker.length);
     }
   }
@@ -172,13 +193,13 @@
   }
 
   function stepBack(line, above) {
-    const found = item(line);
-    if (!found) return line.slice(itemHead(line).length);
+    const found = itemIn(line, above);
+    if (!found) return line.slice(itemHead(line, above).length);
     return found.lead ? outdent(line, above) : found.text;
   }
 
   function continueLine(line, above) {
-    const found = item(line);
+    const found = itemIn(line, above);
     if (found) {
       const prefix = `${found.lead}${nextMarker(found.marker)}${found.gap}${found.box ? '[ ] ' : ''}`;
       return found.text.trim() ? { prefix, exit: false } : { prefix, exit: true, back: stepBack(line, above) };
@@ -226,9 +247,14 @@
   const PREFIX = new RegExp(String.raw`^(\s*)(#{1,6}\s+|>\s?|(?:${MARKER})\s+(?:\[[ xX]\]\s+)?)?`);
   const TAG = /^<\/?u>/;
 
-  function visibleIndices(raw) {
+  function hiddenHead(raw, isItem) {
+    const found = raw.match(PREFIX);
+    return isItem || !/^[a-z]/i.test(found[2] || '') ? found[0].length : found[1].length;
+  }
+
+  function visibleIndices(raw, isItem) {
     const out = [];
-    const prefix = raw.match(PREFIX)[0].length;
+    const prefix = hiddenHead(raw, isItem);
     let i = prefix;
     while (i < raw.length) {
       const c = raw[i];
@@ -258,8 +284,8 @@
     return { prefix, out };
   }
 
-  function rawOffset(raw, visiblePrefix) {
-    const { prefix, out } = visibleIndices(raw);
+  function rawOffset(raw, visiblePrefix, isItem = true) {
+    const { prefix, out } = visibleIndices(raw, isItem);
     const k = visiblePrefix.length;
     if (k === 0) return out.length ? out[0] : prefix;
     if (k >= out.length) return raw.length;
@@ -267,6 +293,8 @@
   }
 
   const STYLES = { bold: 2, italic: 1 };
+  const CALLOUT = /^\s*>\s*\[![A-Za-z-]+\][+-]?/;
+  const wordy = (c) => /[\p{L}\p{N}]/u.test(c || '');
 
   function narrowed(line, lo, hi, edges, inside) {
     const inner = line.slice(lo, hi);
@@ -286,8 +314,11 @@
     [lo, hi] = narrowed(line, lo, hi, /^[*_]+|[*_]+$/g, /[*_]/);
     const left = line.slice(0, lo).match(/(\*{1,3}|_{1,3})$/)?.[0] || '';
     const right = line.slice(hi).match(/^(\*{1,3}|_{1,3})/)?.[0] || '';
-    const run = left[0] === right[0] ? Math.min(left.length, right.length) : 0;
-    return { lo, hi, before: STYLES[style], after: STYLES[style], on: style === 'bold' ? run >= 2 : run % 2 === 1 };
+    const opens = left[0] === '_' ? !wordy(line[lo - left.length - 1]) : left.length > 1 || !wordy(line[lo - left.length - 1]);
+    const shuts = right[0] !== '_' || !wordy(line[hi + right.length]);
+    const paired = left && left[0] === right[0];
+    const run = paired && opens && shuts ? Math.min(left.length, right.length) : 0;
+    return { lo, hi, before: STYLES[style], after: STYLES[style], on: style === 'bold' ? run >= 2 : run % 2 === 1, stuck: paired && !run && left[0] === '*' };
   }
 
   function restyle(text, from, to, style) {
@@ -297,13 +328,17 @@
     if (text.slice(from, to).includes('\n')) {
       for (const block of splitBlocks(rows)) if (!['line', 'quote'].includes(block.kind)) for (let row = block.start; row < block.end; row++) skipped.add(row);
     }
+    const levels = listLevels(rows);
     let base = 0;
     rows.forEach((line, row) => {
-      let lo = Math.max(from - base, line.match(PREFIX)[0].length);
+      let lo = Math.max(from - base, hiddenHead(line, levels[row] >= 0));
       let hi = Math.min(to - base, line.length);
       while (lo < hi && /\s/.test(line[lo])) lo++;
       while (lo < hi && /\s/.test(line[hi - 1])) hi--;
-      if (!skipped.has(row) && /[\p{L}\p{N}]/u.test(line.slice(lo, hi))) regions.push({ row, ...styleRegion(line, lo, hi, style) });
+      if (lo < hi && !skipped.has(row) && !(line.match(CALLOUT)?.[0].length > lo) && /[\p{L}\p{N}]/u.test(line.slice(lo, hi))) {
+        const region = styleRegion(line, lo, hi, style);
+        if (!region.stuck) regions.push({ row, ...region });
+      }
       base += line.length + 1;
     });
     if (!regions.length) return { text, from, to };
@@ -413,7 +448,7 @@
     });
   }
 
-  const api = { restyle, cellEnd, nextCell, addRow, listPrefix, itemHead, listLevel, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { restyle, cellEnd, nextCell, addRow, listPrefix, itemHead, listed, listLevels, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);
