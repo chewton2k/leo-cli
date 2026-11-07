@@ -1842,7 +1842,8 @@
     function drawBelow() {
       const next = document.createElement('div');
       if (!state.messages.length) {
-        next.innerHTML = `<div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>${asking()}`;
+        const unread = Boolean(state.context) && state.dropped === state.context.id;
+        next.innerHTML = `<div class="chat-starters">${STARTERS.map((s, i) => unread && s.needs === 'note' ? '' : `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>${asking()}`;
       }
       settle($('#chat-below'), next);
     }
