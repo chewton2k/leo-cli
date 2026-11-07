@@ -79,6 +79,7 @@ async function marginMount(s, mine) {
   layer.innerHTML = '<svg class="margin-ink" aria-hidden="true"></svg><div class="margin-said-aloud" aria-live="polite"></div>';
   columns.appendChild(layer);
   columns.dataset.margin = marginLayout(columns);
+  marginGutter(columns, ['right', 'both'].includes(columns.dataset.margin) ? 0 : 1);
   Object.assign(marginPage, { s, layer, svg: layer.firstChild, baseline: marginKit.blocksOf(s.doc.source()), nextRead: 0 });
   layer.addEventListener('click', marginClick);
   layer.addEventListener('keydown', marginKey);
