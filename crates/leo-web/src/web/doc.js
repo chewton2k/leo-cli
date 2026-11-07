@@ -98,7 +98,7 @@
       return md.render(text.replace(/^\s+/, ''), {
         boxOffset: ed.boxesBefore(lines, block.start),
         dir,
-        depth: block.kind === 'line' ? ed.listLevel(text) + 1 : 1,
+        depth: block.kind === 'line' ? ed.listLevel(lines, block.start) + 1 : 1,
       });
     }
 
@@ -106,7 +106,8 @@
       blocks = ed.splitBlocks(lines);
       rendered = blocks.map((block, i) => {
         const text = lines.slice(block.start, block.end).join('\n');
-        const key = JSON.stringify([block.kind, text, ed.boxesBefore(lines, block.start)]);
+        const level = block.kind === 'line' ? ed.listLevel(lines, block.start) : 0;
+        const key = JSON.stringify([block.kind, text, ed.boxesBefore(lines, block.start), level]);
         const old = rendered[i];
         if (old && old.key === key && old.el.isConnected && !old.el.classList.contains('editing')) {
           old.el.dataset.start = String(block.start);
@@ -116,7 +117,6 @@
         el.className = `blk blk-${block.kind}`;
         el.dataset.start = String(block.start);
         el.dataset.i = String(i);
-        const level = block.kind === 'line' ? ed.listLevel(text) : 0;
         if (level) el.style.marginLeft = `${level * 1.5}em`;
         el.innerHTML = renderBlock(block);
         if (old && old.el.parentNode === container) old.el.replaceWith(el);
@@ -611,7 +611,6 @@
       if (margin !== null) area.style.margin = margin;
       area.value = raw.slice(prefix.length);
       area.rows = 1;
-      area.spellcheck = true;
       area.setAttribute('autocapitalize', 'sentences');
       if (prefix && el.querySelector('li')) {
         const text = el.querySelector('.task > span') || el.querySelector('li');
@@ -656,6 +655,7 @@
     }
 
     function look(area) {
+      area.spellcheck = !(editing && ['table', 'code', 'math'].includes(editing.kind)) && !/^\s*[-|:]/.test(area.value);
       const head = editing && editing.kind === 'line' && !editing.prefix && area.value.match(/^\s{0,3}(#{1,6})\s/);
       if (head) area.dataset.head = String(Math.min(head[1].length + 1, 6));
       else delete area.dataset.head;
@@ -794,7 +794,7 @@
       if (!container.isConnected || e.isComposing || e.defaultPrevented) return;
       if (editing && document.activeElement === editing.area) return;
       const focus = document.activeElement;
-      if ((!focus || focus === document.body || container.contains(focus)) && historyKey(e)) return;
+      if ((!focus || focus === document.body || container.contains(focus)) && (historyKey(e) || styleKey(e))) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && (!focus || focus === document.body || container.contains(focus))) {
         e.preventDefault();
         stop();
@@ -806,6 +806,31 @@
       if (e.key !== 'Backspace' && e.key !== 'Delete' && !typing && !enter) return;
       if (!replaceSelection(typing ? e.key : enter ? '\n' : '')) return;
       e.preventDefault();
+    }
+
+    function styleKey(e) {
+      const style = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && { b: 'bold', i: 'italic', u: 'underline' }[e.key.toLowerCase()];
+      if (!style) return false;
+      if (editing && document.activeElement === editing.area) {
+        e.preventDefault();
+        const { area } = editing;
+        if (area.selectionStart === area.selectionEnd) return true;
+        const next = ed.restyle(area.value, area.selectionStart, area.selectionEnd, style);
+        area.value = next.text;
+        area.setSelectionRange(next.from, next.to);
+        onInput();
+        return true;
+      }
+      const span = selectedSpan();
+      if (!span) return false;
+      e.preventDefault();
+      stop();
+      const next = ed.restyle(lines.join('\n'), span[0], span[1], style);
+      lines = next.text.split('\n');
+      changed();
+      draw();
+      selectSpan(next.from, next.to);
+      return true;
     }
 
     function replaceSelection(text) {
@@ -887,7 +912,8 @@
       const value = prefix + area.value;
       const before = value.slice(0, prefix.length + area.selectionStart).split('\n');
       const after = value.slice(prefix.length + area.selectionEnd);
-      const next = ed.continueLine(before[before.length - 1]);
+      const above = lines.slice(0, start).concat(before.slice(0, -1));
+      const next = ed.continueLine(before[before.length - 1], above);
       const span = editing.end - start;
       if (next.exit && !after.trim()) {
         before[before.length - 1] = next.back;
@@ -917,7 +943,7 @@
     function onKey(e) {
       if (e.isComposing || e.keyCode === 229) return;
       editing.softBreak = e.key === 'Enter' && e.shiftKey;
-      if (historyKey(e)) return;
+      if (historyKey(e) || styleKey(e)) return;
       const { area, start, kind } = editing;
       const prefix = editing.prefix;
       const pos = prefix.length + area.selectionStart;
@@ -938,7 +964,7 @@
 
       if (kind === 'line' && e.key === 'Backspace' && collapsed && pos && pos === ed.itemHead(value).length) {
         e.preventDefault();
-        lines.splice(start, editing.end - start, ...ed.stepBack(value).split('\n'));
+        lines.splice(start, editing.end - start, ...ed.stepBack(value, lines.slice(0, start)).split('\n'));
         ed.closeList(lines, start);
         changed();
         stop();
@@ -960,9 +986,24 @@
         return;
       }
 
+      if (kind === 'table' && e.key === 'Tab') {
+        e.preventDefault();
+        const cell = ed.nextCell(area.value, area.selectionEnd, e.shiftKey);
+        if (cell) {
+          area.setSelectionRange(cell.from, cell.to);
+          return;
+        }
+        const row = ed.addRow(area.value);
+        area.value = row.text;
+        area.setSelectionRange(row.at, row.at);
+        onInput();
+        return;
+      }
+
       if (kind === 'line' && e.key === 'Tab') {
         e.preventDefault();
-        const next = e.shiftKey ? ed.outdent(value) : ed.indent(value);
+        const above = lines.slice(0, start);
+        const next = e.shiftKey ? ed.outdent(value, above) : ed.indent(value, above);
         lines.splice(start, editing.end - start, ...next.split('\n'));
         ed.renumber(lines, start);
         const shift = lines[start].length - value.split('\n')[0].length;
@@ -976,6 +1017,13 @@
         e.preventDefault();
         stop();
         selectSpan(0, docLength());
+        return;
+      }
+
+      if (MAC && kind === 'line' && (e.key === 'End' || e.key === 'Home') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        const to = e.key === 'End' ? area.value.length : 0;
+        area.setSelectionRange(e.shiftKey ? Math.min(to, area.selectionStart) : to, e.shiftKey ? Math.max(to, area.selectionEnd) : to);
         return;
       }
 
@@ -1340,7 +1388,7 @@
           changed();
           const input = wasEditing ? container.querySelector(`.blk[data-start="${line}"] input[data-box]`) : box;
           if (input) {
-            const checked = /^\s*(?:[-*+]|\d+[.)]) +\[x\]/.test(lines[line]);
+            const checked = ed.itemHead(lines[line]).includes('[x]');
             input.checked = checked;
             input.defaultChecked = checked;
             input.closest('label.task').classList.toggle('done', checked);
@@ -1371,9 +1419,10 @@
       const block = blocks[Number(blk.dataset.i)];
       const prefix = block && block.kind === 'line' ? caretIn(blk, e.clientX, e.clientY) : null;
       const line = shifted(Number(blk.dataset.start));
+      const cell = block && block.kind === 'table' ? e.target.closest('td, th') : null;
       stop();
       const raw = lines[line] || '';
-      const caret = prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix) : 'end';
+      const caret = cell ? ed.cellEnd(lines.slice(line, line + block.end - block.start).join('\n'), cell.parentNode.rowIndex, cell.cellIndex) : prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix) : 'end';
       editLine(line, caret, false);
     });
 
@@ -1530,6 +1579,7 @@
   }
 
   const CITED_FOR = 4000;
+  const MAC = /Mac/.test(root.navigator?.platform || '');
 
   root.leoDoc = { mount };
 })(window);

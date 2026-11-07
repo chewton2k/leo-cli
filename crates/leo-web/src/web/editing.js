@@ -1,10 +1,11 @@
 (function (root) {
   'use strict';
 
+  const { MARKER } = root.leoMarkdown || require('./markdown.js');
   const FENCE = /^\s*(```|~~~)/;
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
   const QUOTE = /^\s*>/;
-  const BOX = /^(?:[-*+]|\d+[.)]) {1,4}\[( |x|X)\](?: |$)/;
+  const BOX = new RegExp(String.raw`^(?:${MARKER}) {1,4}\[( |x|X)\](?: |$)`);
 
   const isBox = (line) => BOX.test(line.trimStart());
 
@@ -105,25 +106,31 @@
     return -1;
   }
 
-  const ITEM = /^([^\S\n]*)([-*+]|\d+[.)]|([a-zA-Z])\3*[.)])([^\S\n]+)(\[[ xX]\](?:[^\S\n]+|$))?/;
+  const ITEM = new RegExp(String.raw`^(?<lead>[^\S\n]*)(?<marker>${MARKER})(?<gap>[^\S\n]+)(?<box>\[[ xX]\](?:[^\S\n]+|$))?`);
+  const HEAD = /^\s{0,3}#{1,6}[^\S\n]+/;
 
   function item(line) {
     const m = line.match(ITEM);
-    return m && { lead: m[1], marker: m[2], box: m[5] || '', head: m[0], text: line.slice(m[0].length) };
+    return m && { lead: m.groups.lead, marker: m.groups.marker, gap: m.groups.gap, box: m.groups.box || '', head: m[0], text: line.slice(m[0].length) };
   }
 
-  const itemHead = (line) => item(line)?.head || '';
+  const itemHead = (line) => item(line)?.head || line.match(HEAD)?.[0] || '';
   const leadWidth = (lead) => lead.replace(/\t/g, '    ').length;
 
-  function listLevel(line) {
-    const found = item(line);
-    return found ? Math.floor(leadWidth(found.lead) / 2) : 0;
+  function listLevel(lines, at) {
+    if (!item(lines[at] ?? '')) return 0;
+    let from = at;
+    while (from > 0 && item(lines[from - 1])) from--;
+    const open = [];
+    for (let i = from; i <= at; i++) {
+      const depth = leadWidth(item(lines[i]).lead);
+      while (open.length && open[open.length - 1] >= depth) open.pop();
+      open.push(depth);
+    }
+    return open.length - 1 + Math.floor(open[0] / 2);
   }
 
-  function listPrefix(line) {
-    const found = item(line);
-    return found && !/[a-zA-Z]/.test(found.marker) ? found.head : '';
-  }
+  const listPrefix = (line) => item(line)?.head || '';
 
   function nextMarker(marker) {
     const number = marker.match(/^(\d+)(.)$/);
@@ -164,38 +171,60 @@
     lines.splice(0, lines.length, ...rest);
   }
 
-  function stepBack(line) {
+  function stepBack(line, above) {
     const found = item(line);
-    return found.lead ? outdent(line) : found.text;
+    if (!found) return line.slice(itemHead(line).length);
+    return found.lead ? outdent(line, above) : found.text;
   }
 
-  function continueLine(line) {
+  function continueLine(line, above) {
     const found = item(line);
     if (found) {
-      const prefix = `${found.lead}${nextMarker(found.marker)} ${found.box ? '[ ] ' : ''}`;
-      return found.text.trim() ? { prefix, exit: false } : { prefix, exit: true, back: stepBack(line) };
+      const prefix = `${found.lead}${nextMarker(found.marker)}${found.gap}${found.box ? '[ ] ' : ''}`;
+      return found.text.trim() ? { prefix, exit: false } : { prefix, exit: true, back: stepBack(line, above) };
     }
+    if (HEAD.test(line) && line === itemHead(line)) return { prefix: '', exit: true, back: '' };
     const m = line.match(/^(\s*)>\s?(.*)$/);
     if (m) return m[2].trim() ? { prefix: `${m[1]}> `, exit: false } : { prefix: '', exit: true, back: '' };
     return { prefix: '', exit: false };
   }
 
   function toggleBox(line) {
-    const m = line.match(/^(\s*(?:[-*+]|\d+[.)]) {1,4}\[)( |x|X)(\](?: .*)?)$/s);
-    if (!m) return line;
-    return m[1] + (m[2] === ' ' ? 'x' : ' ') + m[3];
+    if (!isBox(line)) return line;
+    const at = line.indexOf('[') + 1;
+    return line.slice(0, at) + (line[at] === ' ' ? 'x' : ' ') + line.slice(at + 1);
   }
 
-  function indent(line) {
-    // shortcut: two spaces under `1.` nest in leo but read flat in strict CommonMark, widen to the parent's text column if notes must nest elsewhere.
-    return '  ' + line;
+  function indent(line, above = []) {
+    const found = item(line);
+    if (!found) return '  ' + line;
+    const depth = leadWidth(found.lead);
+    let sibling = found;
+    for (let k = above.length - 1; k >= 0; k--) {
+      const earlier = item(above[k]);
+      if (!earlier) break;
+      const width = leadWidth(earlier.lead);
+      if (width > depth) continue;
+      if (width === depth) sibling = earlier;
+      break;
+    }
+    return ' '.repeat(depth + sibling.marker.length + sibling.gap.length) + line.slice(found.lead.length);
   }
 
-  function outdent(line) {
+  function outdent(line, above = []) {
+    const found = item(line);
+    if (found) {
+      for (let k = above.length - 1; k >= 0; k--) {
+        const earlier = item(above[k]);
+        if (!earlier) break;
+        if (leadWidth(earlier.lead) < leadWidth(found.lead)) return earlier.lead + line.slice(found.lead.length);
+      }
+    }
     return line.replace(/^(?: {1,2}|\t)/, '');
   }
 
-  const PREFIX = /^(\s*)(#{1,6}\s+|>\s?|(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)?/;
+  const PREFIX = new RegExp(String.raw`^(\s*)(#{1,6}\s+|>\s?|(?:${MARKER})\s+(?:\[[ xX]\]\s+)?)?`);
+  const TAG = /^<\/?u>/;
 
   function visibleIndices(raw) {
     const out = [];
@@ -213,7 +242,13 @@
           continue;
         }
       }
-      if (c === '*' || c === '~' || c === '`') {
+      const tag = c === '<' && raw.slice(i).match(TAG);
+      if (tag) {
+        i += tag[0].length;
+        continue;
+      }
+      // shortcut: every `*` and word-edge `_` counts as a mark, so a caret lands one character off past an unpaired one; read the renderer's pairs if that shows.
+      if (c === '*' || c === '~' || c === '`' || (c === '_' && !(/\w/.test(raw[i - 1] || '') && /\w/.test(raw[i + 1] || '')))) {
         i++;
         continue;
       }
@@ -227,8 +262,107 @@
     const { prefix, out } = visibleIndices(raw);
     const k = visiblePrefix.length;
     if (k === 0) return out.length ? out[0] : prefix;
-    if (k > out.length) return raw.length;
+    if (k >= out.length) return raw.length;
     return out[k - 1] + 1;
+  }
+
+  const STYLES = { bold: 2, italic: 1 };
+
+  function narrowed(line, lo, hi, edges, inside) {
+    const inner = line.slice(lo, hi);
+    const bare = inner.replace(edges, '');
+    if (!bare || inside.test(bare)) return [lo, hi];
+    const from = lo + inner.indexOf(bare);
+    return [from, from + bare.length];
+  }
+
+  function styleRegion(line, lo, hi, style) {
+    if (style === 'underline') {
+      [lo, hi] = narrowed(line, lo, hi, /^[*_~]*(?:<u>)?[*_~]*|[*_~]*(?:<\/u>)?[*_~]*$/g, /<\/?u>/);
+      const before = line.slice(0, lo).match(/<u>([*_~]*)$/);
+      const after = line.slice(hi).match(/^([*_~]*)<\/u>/);
+      return before && after ? { lo, hi, before: 3 + before[1].length, after: 4 + after[1].length, keep: [before[1], after[1]], on: true } : { lo, hi, on: false };
+    }
+    [lo, hi] = narrowed(line, lo, hi, /^[*_]+|[*_]+$/g, /[*_]/);
+    const left = line.slice(0, lo).match(/(\*{1,3}|_{1,3})$/)?.[0] || '';
+    const right = line.slice(hi).match(/^(\*{1,3}|_{1,3})/)?.[0] || '';
+    const run = left[0] === right[0] ? Math.min(left.length, right.length) : 0;
+    return { lo, hi, before: STYLES[style], after: STYLES[style], on: style === 'bold' ? run >= 2 : run % 2 === 1 };
+  }
+
+  function restyle(text, from, to, style) {
+    const rows = text.split('\n');
+    const regions = [];
+    const skipped = new Set();
+    if (text.slice(from, to).includes('\n')) {
+      for (const block of splitBlocks(rows)) if (!['line', 'quote'].includes(block.kind)) for (let row = block.start; row < block.end; row++) skipped.add(row);
+    }
+    let base = 0;
+    rows.forEach((line, row) => {
+      let lo = Math.max(from - base, line.match(PREFIX)[0].length);
+      let hi = Math.min(to - base, line.length);
+      while (lo < hi && /\s/.test(line[lo])) lo++;
+      while (lo < hi && /\s/.test(line[hi - 1])) hi--;
+      if (!skipped.has(row) && /[\p{L}\p{N}]/u.test(line.slice(lo, hi))) regions.push({ row, ...styleRegion(line, lo, hi, style) });
+      base += line.length + 1;
+    });
+    if (!regions.length) return { text, from, to };
+    const off = regions.every((region) => region.on);
+    const open = style === 'underline' ? '<u>' : '*'.repeat(STYLES[style]);
+    const close = style === 'underline' ? '</u>' : open;
+    const spots = regions.map(({ row, lo, hi, before, after, keep = ['', ''], on }) => {
+      const line = rows[row];
+      if (on !== off) return { row, lo, hi };
+      if (off) {
+        rows[row] = line.slice(0, lo - before) + keep[0] + line.slice(lo, hi) + keep[1] + line.slice(hi + after);
+        return { row, lo: lo - before + keep[0].length, hi: hi - before + keep[0].length };
+      }
+      rows[row] = line.slice(0, lo) + open + line.slice(lo, hi) + close + line.slice(hi);
+      return { row, lo: lo + open.length, hi: hi + open.length };
+    });
+    const offset = (row, column) => rows.slice(0, row).reduce((sum, line) => sum + line.length + 1, column);
+    const [first, last] = [spots[0], spots[spots.length - 1]];
+    const marked = !off && first.row !== last.row;
+    return { text: rows.join('\n'), from: offset(first.row, first.lo) - (marked ? open.length : 0), to: offset(last.row, last.hi) + (marked ? close.length : 0) };
+  }
+
+  function tableCells(text) {
+    const found = [];
+    let base = 0;
+    text.split('\n').forEach((row, line) => {
+      if (line !== 1 && row.trim()) {
+        const bars = [...row.matchAll(/(?<!\\)\|/g)].map((m) => m.index);
+        if (!/^\s*\|/.test(row)) bars.unshift(-1);
+        if (!/(?<!\\)\|\s*$/.test(row)) bars.push(row.length);
+        for (let col = 0; col + 1 < bars.length; col++) {
+          const lo = bars[col] + 1;
+          const hi = bars[col + 1];
+          const inner = row.slice(lo, hi);
+          const from = lo + (inner.trim() ? inner.length - inner.trimStart().length : Math.min(1, inner.length));
+          const to = from + inner.trim().length;
+          found.push({ line, col, lo: base + lo, hi: base + hi, from: base + from, to: base + to });
+        }
+      }
+      base += row.length + 1;
+    });
+    return found;
+  }
+
+  function cellEnd(text, row, col) {
+    return tableCells(text).find((cell) => cell.line === (row ? row + 1 : 0) && cell.col === col)?.to ?? 'end';
+  }
+
+  function nextCell(text, at, back) {
+    const all = tableCells(text);
+    const here = all.findIndex((cell) => at <= cell.hi);
+    if (back) return all[Math.max(0, here - 1)] || null;
+    return here >= 0 ? all[here + 1] || null : null;
+  }
+
+  function addRow(text) {
+    const columns = tableCells(text).filter((cell) => cell.line === 0).length;
+    const body = text.replace(/\s+$/, '');
+    return { text: `${body}\n|${'  |'.repeat(columns)}`, at: body.length + 3 };
   }
 
   const MOST_PASSAGE = 8000;
@@ -279,7 +413,7 @@
     });
   }
 
-  const api = { listPrefix, itemHead, listLevel, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { restyle, cellEnd, nextCell, addRow, listPrefix, itemHead, listLevel, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);
