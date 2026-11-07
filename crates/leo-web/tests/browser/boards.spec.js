@@ -65,6 +65,10 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     ${read('app/motion.js')}
     ${read('app/popup-menu.js')}
     ${read('app/settings-navigation.js')}
+    ${read('markdown.js')}
+    ${read('editing.js')}
+    ${read('doc.js')}
+    const leoDoc=window.leoDoc;
     ${read('app/boards.js')}
     const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':kanbanBoardMenu,'kanban-column-menu':kanbanColumnMenu,'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
@@ -196,9 +200,12 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await expect(page.locator('.scrim')).toHaveCount(0);
     await expect(page.locator('[data-card="cessay0001"]')).toHaveClass(/\bopen\b/);
     await expect(sheet.locator('#kanban-card-title')).toHaveValue('Write essay');
-    await expect(sheet.locator('#kanban-card-description')).toHaveValue('Outline first');
+    await expect(sheet.locator('#kanban-card-description')).toHaveText('Outline first');
     await sheet.locator('#kanban-card-sub').fill('History · draft 2');
-    await sheet.locator('#kanban-card-description').fill('Outline first\nThen write');
+    await sheet.locator('#kanban-card-description .blk').click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Then write');
     await sheet.locator('[data-priority="medium"]').click();
     await expect(sheet.locator('[data-priority="medium"]')).toHaveAttribute('aria-pressed', 'true');
     await sheet.locator('#kanban-card-column').selectOption({ label: 'In progress' });
@@ -228,6 +235,47 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await page.locator('.toast button').click();
     await expect(page.locator('[data-card="cessay0001"]')).toHaveCount(1);
     expect(await page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001').description)).toBe('Outline first\nThen write');
+  });
+});
+
+test('a card\'s details render as Markdown like a note, toggle checkboxes, edit by line and stay plain Markdown', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const markdown = '## Plan\n\nSome **bold** and [a link](https://example.com)\n\n- [ ] first\n\n`code`\n\n<img src=x onerror="window.ran=1"> [bad](javascript:window.ran=2)';
+    await page.evaluate(text => { window.db.cards.find(c => c.id === 'cessay0001').description = text; }, markdown);
+    await redraw(page);
+    await page.locator('[data-card="cessay0001"]').click();
+    const details = page.locator('#kanban-card-description');
+    await expect(details.locator('h3')).toHaveText('Plan');
+    await expect(details.locator('strong')).toHaveText('bold');
+    await expect(details.locator('a[href="https://example.com"]')).toHaveText('a link');
+    await expect(details.locator('code')).toHaveText('code');
+    await expect(details.locator('img, script, a[href^="javascript"]')).toHaveCount(0);
+    expect(await page.evaluate(() => window.ran)).toBeUndefined();
+
+    await details.locator('input[type=checkbox]').check();
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001').description)).toContain('- [x] first');
+
+    await details.locator('.blk').first().click();
+    await expect(details.locator('textarea.line-edit')).toHaveValue('## Plan');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' today');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#kanban-panel')).toBeVisible();
+    await expect(details.locator('h3')).toHaveText('Plan today');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001').description)).toMatch(/^## Plan today\n/);
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#kanban-panel')).toBeHidden();
+    await page.locator('[data-card="cessay0001"]').click();
+    await expect(details.locator('h3')).toHaveText('Plan today');
+    await expect(details.locator('input[type=checkbox]')).toBeChecked();
+
+    await page.locator('[data-card="cread00001"]').click();
+    await expect(details).toHaveText('Add details, steps or links…');
+    await details.click();
+    await page.keyboard.type('Notes');
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Notes');
   });
 });
 
