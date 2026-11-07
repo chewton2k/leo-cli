@@ -2419,7 +2419,7 @@ body.files-over main::after {
   .settling > *, .sheet:not(:has(.quick-leo)) > :not(.grip), .settings-section.arrive > *, .chat-main > .chat-head, .chat-main > .chat-body, .chat-main > .chat-foot, .margin-note[data-open] .margin-reply, .margin-note[data-open] .margin-acts { animation: row-in var(--t-follow) var(--ease-arrive) backwards; }
   .settling > :nth-child(2), .sheet > :nth-child(3), .settings-section.arrive > :nth-child(2), .chat-main > .chat-body, .margin-note[data-open] .margin-reply { animation-delay: 30ms; }
   .settling > :nth-child(n+3), .sheet > :nth-child(n+4), .settings-section.arrive > :nth-child(n+3), .chat-main > .chat-foot, .margin-note[data-open] .margin-acts { animation-delay: 60ms; }
-  .kanban-cols.settling > *, .kanban-cards.rows-in > * { animation-name: fade; }
+  .kanban-cols.settling > *, .kanban-cards.rows-in > *, .chat-history-list.rows-in > * { animation-name: fade; }
   .swap-in > :last-child { animation: fade var(--t-follow) var(--ease-arrive); }
   .tab-wipe > .kanban-tab.on { background: linear-gradient(var(--tab-on), var(--tab-on)) no-repeat 0 0 / 100% 100%; animation: tab-wipe var(--t-follow) var(--ease-move); }
 }
