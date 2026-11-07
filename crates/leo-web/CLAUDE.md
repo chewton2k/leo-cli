@@ -230,16 +230,22 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
   Lists (2026-11-06, the user's call): `markdown.js` `MARKER` is the one definition of a
-  list marker, `editing.js` `item` its one reader: `-`, `*`, `+`, `1.`, `1)`, `a.`, `a)`, `A)`,
+  list marker: `-`, `*`, `+`, `1.`, `1)`, `a.`, `a)`, `A)`,
   and `A.` with two spaces (one space stays prose, so `A. Smith` is a name, as in Pandoc), one or
   two of the same letter, so `ok.` and `Hi.` stay prose; after `z` comes `aa`, then `bb`.
-  `Note::checkbox_line` in leo-core counts the same lines. Enter continues with `continueLine`,
+  A lettered list begins at `a` or `A`, continues an item on the line above, or has a box
+  (`listable`; `after` is the option for a note's one-line blocks), so `p. 12`, `c. 1900` and
+  `e. coli` stay prose everywhere, editing included. `listLevels` is the one forward pass over a
+  note; `listed` answers for one line. `Note::checkbox_line` in leo-core stays context-free and
+  counts the same lines, which is why a box always makes an item. Enter continues with `continueLine`,
   keeping the marker's gap; on an empty item it steps out one level, then leaves the list;
   Backspace at the start of an item's text does the same through `stepBack`, keeping the
   text. Tab nests by the width of the marker above, so other apps nest it too; Shift+Tab goes
   back to the parent's indent; old two-space lists still nest (`listLevel` reads depth from the
-  run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines;
-  a new sub-list starts at its first number or letter, and `closeList` closes the numbers
+  run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines,
+  stopping a level at the first marker more than 1 from its place and leaving a lettered level
+  alone unless it starts at `a` or `A`, so `2005.`, `c. 1905` and a sub-list begun at 7 keep their
+  markers; a sub-list Tab just made (`fresh`) starts at its first number or letter, and `closeList` closes the numbers
   over a line that left the list. Nesting looks like Google Docs (2026-11-06, the user's
   call) and only the page changes, never the file: `markdown.js` `list` gives lists below
   the top `list-1`/`-2`/`-3` by depth (`depth` is the option for a note's one-line blocks),
@@ -270,6 +276,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   every other tag stays text. Cmd/Ctrl+B, I and U toggle a selection through `editing.restyle`
   (per line, past list and heading markers, also across rendered lines, skipping tables, code and
   math when it spans lines); a selection inside a longer bold run wraps instead of splitting it.
+  Only marks the page draws come off, so `foo_bar_baz` and `2*3*4` keep theirs, and a callout's
+  `[!type]` is never wrapped.
   Tables: a click lands in that cell's raw text; Tab and Shift+Tab walk cells, Tab past the last
   adds a row. Alignment colons become `align-*` classes, `\|` stays in its cell, a short row is
   filled in. macOS replaces `--` with a dash only while `spellcheck` is on, and cancelling that
@@ -960,8 +968,13 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   notes"): `leoDoc.mount` on `#kanban-card-description` (rendered blocks, click a line to
   edit, checkboxes toggle), no outline, pictures, margin or note id. `description` stays plain
   Markdown in the card JSON; `onChange` feeds the same debounced PATCH, and the panel's `end()`
-  stops the editor, saves and `destroy()`s it. Escape leaves a line first (the doc cancels it),
-  the panel closes on the next one; an edited line never hangs its `##` into the panel's edge.
+  stops the editor, saves and `destroy()`s it. Escape in a line only leaves the line (the panel
+  checks `.line-edit`; events.js prevents every Escape, so `defaultPrevented` says nothing), and the
+  next one closes; from the title or subheading one press closes. An edited line never hangs its
+  `##` into the panel's edge. Closing, opening another card, moving to another board and leaving the
+  page first `settle` every field (`kanbanLeavePanel`, `kanbanSettlePanel`): a failed save or a
+  description over `KANBAN_MOST_DESCRIPTION` keeps the panel, the address and the text, with the
+  reason in `#kanban-card-problem`, so the server's 400 can never cost text.
   The card on the board still previews the raw text.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
