@@ -184,11 +184,8 @@ pub fn save(provider: &str, usage: Usage) {
 }
 
 pub fn ask_codex(program: &Path) -> Option<Usage> {
-    use crate::ai::provider::agent_cli::{codex_disables, codex_native_isolated};
+    use crate::ai::provider::agent_cli::codex_disables;
     use crate::ai::provider::process::{self, Process, Watchdog, MOST_OUTPUT, QUEUED_MESSAGES};
-    if !codex_native_isolated(program) {
-        return None;
-    }
     let room = tempfile::Builder::new()
         .prefix("leo-usage-")
         .tempdir()
@@ -200,8 +197,8 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
     }
     let mut command = leo_core::children::quiet_command(program);
     crate::ai::provider::scoped_cli::plan_environment(&mut command);
-    command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
-    for feature in codex_disables(program).ok()? {
+    command.arg("app-server");
+    for feature in codex_disables(program).unwrap_or_default() {
         command.args(["-c", &format!("features.{feature}=false")]);
     }
     command
@@ -568,7 +565,8 @@ mod tests {
             r#"#!/bin/sh
 test -z "${CI+x}${ANTHROPIC_API_KEY+x}${OPENAI_API_KEY+x}${CODEX_API_KEY+x}${NODE_OPTIONS+x}${BASH_ENV+x}" || exit 17
 if [ "$1" = features ]; then echo 'shell_tool stable true'; exit 0; fi
-if [ "$2" = --help ]; then echo '--ignore-user-config --ignore-rules'; exit 0; fi
+if [ "$2" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi
+case "$*" in *ignore*) exit 9;; esac
 while IFS= read -r line; do
   case "$line" in
     *'"method":"account/rateLimits/read"'*)
@@ -582,18 +580,5 @@ done
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
         let usage = ask_codex(&program).unwrap();
         assert_eq!(usage.five_hour.unwrap().used, 0.12);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn usage_polling_skips_a_cli_without_explicit_native_isolation() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let program = dir.path().join("codex");
-        let marker = dir.path().join("unsafe-app-server");
-        std::fs::write(&program, format!("#!/bin/sh\nif [ \"$2\" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi\ntouch '{}'\n", marker.display())).unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(ask_codex(&program).is_none());
-        assert!(!marker.exists());
     }
 }
