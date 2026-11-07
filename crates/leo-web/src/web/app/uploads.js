@@ -324,20 +324,18 @@ async function viewOriginal(id, name, page = null) {
   if (!kind) return;
   if (state.view === 'note' && state.session && state.session.note.id === id && sourceFits()) return openSource(id, name, page);
   const url = `/api/notes/${enc(id)}/originals/${enc(name)}`;
-  const zoom = kind === 'image'
-    ? '<button class="btn sm plain" data-action="viewer-zoom" data-step="-1" aria-label="Zoom out">−</button><button class="btn sm plain" data-action="viewer-zoom" data-step="1" aria-label="Zoom in">+</button><button class="btn sm plain" data-action="viewer-zoom" data-step="0">Fit</button>'
-    : '';
   const tab = kind === 'text' ? '' : `<a class="btn sm plain" href="${url}?view=1" target="_blank" rel="noopener">Open in a new tab</a>`;
+  const links = `<a class="btn sm plain" href="${url}" download="${esc(name)}">Download</a>${tab}`;
+  if (kind === 'image') {
+    viewPicture({ title: name, links, body: `<img class="viewer-img" src="${url}?view=1" alt="${esc(name)}">` });
+    return;
+  }
   const body = kind === 'pdf'
     ? `<iframe class="viewer-frame" src="${url}?view=1${page ? `#page=${Number(page)}` : ''}" title="${esc(name)}"></iframe>`
-    : kind === 'image'
-      ? `<div class="viewer-pan"><img class="viewer-img" src="${url}?view=1" alt="${esc(name)}"></div>`
-      : '<div class="viewer-text prose">Loading…</div>';
-  const scrim = sheet(`<div class="viewer-head"><b title="${esc(name)}">${esc(name)}</b><span class="viewer-tools">${zoom}<a class="btn sm plain" href="${url}" download="${esc(name)}">Download</a>${tab}<button class="icon-btn" data-action="close" aria-label="Close">${ICON.close}</button></span></div>${body}`);
+    : '<div class="viewer-text prose">Loading…</div>';
+  const scrim = sheet(`<div class="viewer-head"><b title="${esc(name)}">${esc(name)}</b><span class="viewer-tools">${links}<button class="icon-btn" data-action="close" aria-label="Close">${ICON.close}</button></span></div>${body}`);
   scrim.querySelector('.sheet').classList.add('viewer');
   state.viewerZoom = 1;
-  const img = scrim.querySelector('.viewer-img');
-  if (img) img.addEventListener('dblclick', () => setViewerZoom(state.viewerZoom > 1 ? 1 : 2));
   if (kind === 'text') {
     const box = scrim.querySelector('.viewer-text');
     try {
@@ -352,8 +350,17 @@ async function viewOriginal(id, name, page = null) {
   }
 }
 
+function viewPicture({ title, body = '', links = '', nodes = [] }) {
+  const zoom = '<button class="btn sm plain" data-action="viewer-zoom" data-step="-1" aria-label="Zoom out">−</button><button class="btn sm plain" data-action="viewer-zoom" data-step="1" aria-label="Zoom in">+</button><button class="btn sm plain" data-action="viewer-zoom" data-step="0">Fit</button>';
+  const scrim = sheet(`<div class="viewer-head"><b title="${esc(title)}">${esc(title)}</b><span class="viewer-tools">${zoom}${links}<button class="icon-btn" data-action="close" aria-label="Close">${ICON.close}</button></span></div><div class="viewer-pan">${body}</div>`);
+  scrim.querySelector('.sheet').classList.add('viewer');
+  scrim.querySelector('.viewer-pan').append(...nodes);
+  state.viewerZoom = 1;
+  scrim.querySelectorAll('.viewer-img, .viewer-diagram').forEach((el) => el.addEventListener('dblclick', () => setViewerZoom(state.viewerZoom > 1 ? 1 : 2)));
+  return scrim;
+}
+
 function setViewerZoom(level) {
   state.viewerZoom = Math.min(4, Math.max(0.5, level));
-  const img = $('.viewer-img');
-  if (img) img.style.setProperty('--zoom', String(state.viewerZoom));
+  document.querySelectorAll('.viewer-img, .viewer-diagram').forEach((el) => el.style.setProperty('--zoom', String(state.viewerZoom)));
 }

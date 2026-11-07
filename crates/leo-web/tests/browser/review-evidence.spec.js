@@ -662,13 +662,13 @@ test('Settings chooses how often Felix reads and says so in one sentence', async
   await page.goto('/#/settings/felix');
   const rhythm = page.locator('#felix-rhythm');
   await expect(rhythm).toContainText('at most once every 90 sec, up to 40 times a day');
-  await page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '3 min' }).click();
-  await expect(rhythm).toContainText('at most once every 3 min');
+  await page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '15 sec' }).click();
+  await expect(rhythm).toContainText('at most once every 15 sec');
   await page.locator('.segmented[aria-label="Reads a day"]').getByRole('radio', { name: 'No limit' }).click();
   await expect(rhythm).toContainText('with no daily limit');
   await page.reload();
   await expect(page.locator('.segmented[aria-label="Reads a day"]').getByRole('radio', { name: 'No limit' })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '3 min' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '15 sec' })).toHaveAttribute('aria-checked', 'true');
   await page.request.post('/api/margin', { data: { cap: 40, gap: 90 } });
 });
 

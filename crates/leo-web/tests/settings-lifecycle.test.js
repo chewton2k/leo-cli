@@ -41,3 +41,13 @@ test('the note footer keeps its note tools without the bottom Ask button', () =>
   assert.doesNotMatch(html, /data-action="(?:ask-selection|note-map)"/);
   for (const name of ['Transcript', 'Tasks', 'Picture', 'Move', 'PDF', 'Delete']) assert.ok(html.includes('aria-label="' + name + '"'));
 });
+
+test('Codex and Claude Code models list newest release first, then by power', () => {
+  const context = { app: { addEventListener() {} }, document: { addEventListener() {} } };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const order = (ids) => JSON.stringify(context.modelsByRelease(ids.map((id) => ({ id }))).map((m) => m.id));
+  assert.equal(order(['gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra']), JSON.stringify(['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']));
+  assert.equal(order(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']), JSON.stringify(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']));
+  assert.equal(order(['plain', 'gpt-6.9-a', 'gpt-6.10-a']), JSON.stringify(['gpt-6.10-a', 'gpt-6.9-a', 'plain']));
+});

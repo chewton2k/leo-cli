@@ -31,19 +31,71 @@ function appVisibilityChanged() {
 function nativeGeneralCard(view) {
   if (!view) return '';
   const p = view.preferences || {};
-  return `<section class="set-card"><header><h3>This app</h3></header><p class="set-note warn" id="app-preferences-problem"${view.problem ? '' : ' hidden'}>${esc(view.problem || '')}</p><label class="set-row" data-find="open-at-login"><span class="grow">Open at login</span>${settingsSwitch('data-app-pref="open_at_login"', p.open_at_login)}</label><label class="set-row" data-find="menu-bar"><span class="grow">Show in ${view.platform === 'macos' ? 'menu bar' : 'system tray'}</span>${settingsSwitch('data-app-pref="show_tray"', p.show_tray)}</label><div class="set-row" data-find="quit"><button class="btn plain sm" data-action="app-command" data-app-action="quit">Quit leo</button></div></section>`;
+  return `<section class="set-card"><header><h3>This app</h3></header><p class="set-note warn" id="app-preferences-problem"${view.problem ? '' : ' hidden'}>${esc(view.problem || '')}</p><label class="set-row" data-find="open-at-login"><span class="grow">Open at login</span>${settingsSwitch('data-app-pref="open_at_login"', p.open_at_login)}</label><label class="set-row" data-find="menu-bar"><span class="grow">Show in ${view.platform === 'macos' ? 'menu bar' : 'system tray'}</span>${settingsSwitch('data-app-pref="show_tray"', p.show_tray)}</label></section>`;
 }
 function healthCards(view) {
-  if (!view) return '<section class="set-card" data-find="health-checks"><p class="hint">Checking Health…</p></section>';
-  return `<div class="health-intro" data-find="health-checks"><span class="grow hint">Local checks. Your microphone stays closed and no AI request is sent.</span><button class="btn plain sm" data-action="health-refresh">Check again</button></div>` + (view.sections || []).map((section) => `<section class="set-card"><header><h3>${esc(section.title)}</h3></header>${section.checks.map((check) => `<div class="set-row column"><div class="set-line"><span class="set-label">${esc(check.name)}</span><span class="set-status ${check.state === 'ready' ? 'ok' : 'missing'}">${check.state === 'ready' ? 'Ready' : check.state === 'warn' ? 'Check' : 'Needs setup'}</span></div>${check.detail ? `<span class="hint">${esc(check.detail)}</span>` : ''}${check.state !== 'ready' ? `<span class="set-note health-fix">${esc(check.fix || '')}</span>${check.action ? `<button class="btn plain sm" data-action="app-command" data-app-action="${esc(check.action)}">Allow access</button>` : check.section ? `<a class="btn plain sm" href="#/settings/${esc(check.section)}">Open ${esc(settingsTitle(check.section))}</a>` : ''}` : ''}</div>`).join('')}</section>`).join('');
+  if (!view) return '<section class="set-card hc-card hc-loading" data-find="health-checks"><p class="hint">Checking Health…</p></section>';
+  const glyph = (kind, paths) => `<svg class="hc-g ${kind}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const WARN = '<path d="M10.3 4.2 2.6 17.6A2 2 0 0 0 4.3 20.6h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4"/><path d="M12 17h.01"/>';
+  const MISSING = '<circle cx="12" cy="12" r="8.6"/><path d="M8.2 12h7.6"/>';
+  const TICK = '<path d="M5 12.5l4.5 4.5L19 7.5"/>';
+  const TILE_ICONS = {
+    'microphone permission': '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+    'microphone': '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+    'microphone device': '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+    'accessibility permission': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.2" r="1.3"/><path d="M7.5 10.2l4.5 1 4.5-1M12 11.2v3.6l-2.2 3.7M12 14.8l2.2 3.7"/>',
+    'speech model': '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>',
+    'dictation shortcut': '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>',
+    'shortcut clash': '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>',
+    'codex sign-in': '<path d="M4 20h4L18.5 9.5a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13 7l4 4"/>',
+    'claude sign-in': '<path d="M4 20h4L18.5 9.5a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13 7l4 4"/>',
+    'leo': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5l3.5 3.5 3.5-3.5"/>',
+    'leo on your path': '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7.5 10l3 2.5-3 2.5M13 15h3.5"/>',
+    'config file': '<path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16.5" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/>',
+    'app preferences': '<path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16.5" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/>',
+    'credentials': '<path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16.5" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/>',
+    'notes directory': '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    'notes': '<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>',
+    'duplicate note ids': '<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>',
+    'conflict copies': '<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>',
+    'unreadable notes': '<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>',
+    'reading along': '<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>',
+    'finding notes by meaning': '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'
+  };
+  const name = (text) => { const t = String(text || ''); return /^leo/i.test(t) ? t : t.charAt(0).toUpperCase() + t.slice(1); };
+  const isPath = (text) => /^(~|\/|[A-Za-z]:[\\/]|\\\\)/.test(String(text || '')) && /[\\/]/.test(String(text).slice(1));
+  const rich = (text) => esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
+  const checks = (view.sections || []).flatMap((section) => section.checks || []);
+  const problems = checks.filter((check) => check.state !== 'ready').sort((a, b) => (a.state === 'missing' ? 0 : 1) - (b.state === 'missing' ? 0 : 1));
+  const ready = checks.filter((check) => check.state === 'ready');
+  const missing = problems.some((check) => check.state === 'missing');
+  const kind = problems.length ? (missing ? 'missing' : 'warn') : 'ready';
+  const headline = !problems.length ? `All ${checks.length} checks passed` : missing ? `${problems.length} ${problems.length === 1 ? 'check needs' : 'checks need'} you` : `${problems.length} ${problems.length === 1 ? 'check needs' : 'checks need'} a look`;
+  const sub = `${problems.length ? `${ready.length} of ${checks.length} passed just now.` : 'Checked just now, on this computer.'} Your microphone stays closed and no AI request is sent.`;
+  const head = `<div class="hc-sum" data-find="health-checks">${glyph(kind, kind === 'ready' ? TICK : kind === 'warn' ? WARN : MISSING)}<div class="hc-sum-text"><b>${esc(headline)}</b><span>${esc(sub)}</span></div><button class="btn plain sm" data-action="health-refresh">${ICON.refresh}Check again</button></div>`;
+  const rows = problems.map((check) => `<div class="hc-fix ${check.state}">${glyph(check.state === 'warn' ? 'warn' : 'missing', check.state === 'warn' ? WARN : MISSING)}<b class="hc-nm">${esc(name(check.name))}</b><span class="hc-wd">${check.state === 'warn' ? 'Needs a look' : 'Needs setup'}</span>${check.detail && check.detail !== check.fix ? `<span class="hc-dt-line">${esc(check.detail)}</span>` : ''}${check.fix ? `<p class="health-fix">${rich(check.fix)}</p>` : ''}${check.action || check.section ? `<div class="hc-acts">${check.action ? `<button class="btn sm ink" data-action="app-command" data-app-action="${esc(check.action)}">Allow access</button>` : ''}${check.section ? `<a class="btn plain sm" href="#/settings/${esc(check.section)}">Open ${esc(settingsTitle(check.section))}</a>` : ''}</div>` : ''}</div>`).join('');
+  const tiles = ready.map((check) => {
+    const label = name(check.name), wide = isPath(check.detail);
+    const detail = !check.detail ? '<span class="hc-dt">Ready</span>' : wide ? (() => { const text = String(check.detail), tail = text.split(/(?=[\\/])/).slice(-1)[0]; return `<span class="hc-mid" title="${esc(text)}"><span class="h">${esc(text.slice(0, text.length - tail.length))}</span><span class="t">${esc(tail)}</span></span><span class="hc-sr">Ready</span>`; })() : `<span class="hc-dt" title="${esc(check.detail)}">${esc(check.detail)}</span><span class="hc-sr">Ready</span>`;
+    return `<div class="hc-tile${wide ? ' wide' : ''}"><svg class="hc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TILE_ICONS[String(check.name || '').toLowerCase()] || '<path d="M3 12h4l3-8 4 16 3-8h4"/>'}</svg><span class="hc-tn" title="${esc(label)}">${esc(label)}</span><span class="hc-ts">${glyph('ready', TICK)}${detail}</span></div>`;
+  }).join('');
+  return `<section class="set-card hc-card">${head}${rows ? `<div class="hc-needs">${rows}</div>` : ''}${tiles ? `<div class="hc-tiles">${tiles}</div>` : ''}</section>`;
 }
 async function loadHealth() {
   const mine = seq;
-  const view = await api('/api/health');
-  if (mine !== seq || state.view !== 'settings' || state.section !== 'health') return;
-  state.health = view;
-  const box = $('#app-health');
-  refreshPanel(box, healthCards(view));
+  const button = document.querySelector('[data-action="health-refresh"]');
+  const label = button ? button.innerHTML : '';
+  if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); button.textContent = 'Checking…'; }
+  try {
+    const view = await api('/api/health');
+    if (mine !== seq || state.view !== 'settings' || state.section !== 'health') return;
+    state.health = view;
+    const box = $('#app-health');
+    refreshPanel(box, healthCards(view));
+  } finally {
+    const now = document.querySelector('[data-action="health-refresh"]');
+    if (now && now.getAttribute('aria-busy') === 'true') { now.disabled = false; now.removeAttribute('aria-busy'); now.innerHTML = label || `${ICON.refresh}Check again`; }
+  }
 }
 async function appChange(change) {
   const generation = ++appPollGeneration;

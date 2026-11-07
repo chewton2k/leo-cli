@@ -9,7 +9,6 @@ use crate::chat::Spent;
 
 const LATENCIES: usize = 64;
 const KEPT_DAYS: u64 = 90;
-const WEEK_DAYS: u64 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,13 +49,20 @@ pub struct Tools {
     reused: u64,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Model {
-    pub model: String,
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct Day {
+    pub day: String,
+    pub name: String,
     pub calls: u64,
     pub input: u64,
     pub cached: u64,
     pub output: u64,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Days {
+    pub models: Vec<Day>,
+    pub kinds: Vec<Day>,
 }
 
 #[derive(Serialize)]
@@ -127,27 +133,35 @@ impl Usage {
         }
     }
 
-    pub fn week(&self) -> Vec<Model> {
-        let (Some(chats), Some(first)) = (self.saved_in.get(), day_of(WEEK_DAYS - 1)) else {
-            return Vec::new();
+    pub fn days(&self) -> Days {
+        let (Some(chats), Some(first)) = (self.saved_in.get(), day_of(KEPT_DAYS - 1)) else {
+            return Days::default();
         };
-        let rows = crate::db::for_chats(chats).with(|c| {
-            c.prepare(
-                "SELECT model, SUM(calls), SUM(input), SUM(cached), SUM(output)
-                 FROM usage_days WHERE day >= ?1 GROUP BY model ORDER BY SUM(input) DESC",
-            )?
-            .query_map([first], |r| {
-                Ok(Model {
-                    model: r.get(0)?,
-                    calls: r.get::<_, i64>(1)?.max(0) as u64,
-                    input: r.get::<_, i64>(2)?.max(0) as u64,
-                    cached: r.get::<_, i64>(3)?.max(0) as u64,
-                    output: r.get::<_, i64>(4)?.max(0) as u64,
-                })
-            })?
-            .collect()
-        });
-        rows.unwrap_or_default()
+        let db = crate::db::for_chats(chats);
+        let by = |column: &'static str| -> Vec<Day> {
+            db.with(|c| {
+                c.prepare(&format!(
+                    "SELECT day, {column}, SUM(calls), SUM(input), SUM(cached), SUM(output)
+                     FROM usage_days WHERE day >= ?1 GROUP BY day, {column} ORDER BY day, {column}"
+                ))?
+                .query_map([&first], |r| {
+                    Ok(Day {
+                        day: r.get(0)?,
+                        name: r.get(1)?,
+                        calls: r.get::<_, i64>(2)?.max(0) as u64,
+                        input: r.get::<_, i64>(3)?.max(0) as u64,
+                        cached: r.get::<_, i64>(4)?.max(0) as u64,
+                        output: r.get::<_, i64>(5)?.max(0) as u64,
+                    })
+                })?
+                .collect()
+            })
+            .unwrap_or_default()
+        };
+        Days {
+            models: by("model"),
+            kinds: by("purpose"),
+        }
     }
 
     pub(crate) fn tool(&self, failed: bool, reused: bool) {
@@ -334,31 +348,38 @@ mod tests {
 
         let restarted = Usage::default();
         restarted.save_in(chats.clone());
+        let days = restarted.days();
+        let mut by_model: std::collections::BTreeMap<&str, (u64, u64, u64, u64)> =
+            std::collections::BTreeMap::new();
+        for d in &days.models {
+            let sum = by_model.entry(d.name.as_str()).or_default();
+            *sum = (
+                sum.0 + d.calls,
+                sum.1 + d.input,
+                sum.2 + d.cached,
+                sum.3 + d.output,
+            );
+        }
+        let seen: Vec<(&str, u64, u64, u64, u64)> = by_model
+            .into_iter()
+            .map(|(name, (calls, input, cached, output))| (name, calls, input, cached, output))
+            .collect();
         assert_eq!(
-            restarted.week(),
+            seen,
             vec![
-                Model {
-                    model: "big".into(),
-                    calls: 2,
-                    input: 2_000,
-                    cached: 1_900,
-                    output: 100
-                },
-                Model {
-                    model: "small".into(),
-                    calls: 1,
-                    input: 100,
-                    cached: 0,
-                    output: 5
-                },
-                Model {
-                    model: String::new(),
-                    calls: 1,
-                    input: 0,
-                    cached: 0,
-                    output: 0
-                },
+                ("", 1, 0, 0, 0),
+                ("big", 2, 2_000, 1_900, 100),
+                ("small", 1, 100, 0, 5),
             ]
+        );
+        let mut by_kind: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+        for d in &days.kinds {
+            *by_kind.entry(d.name.as_str()).or_default() += d.calls;
+        }
+        let kinds: Vec<(&str, u64)> = by_kind.into_iter().collect();
+        assert_eq!(
+            kinds,
+            vec![("answer", 2), ("quick_review", 1), ("summary", 1)]
         );
     }
 
@@ -370,11 +391,11 @@ mod tests {
         usage.save_in(chats.clone());
         let db = crate::db::for_chats(&chats);
         let row = "INSERT INTO usage_days VALUES (?1, 'answer', 'old', 1, 10, 0, 1)";
-        db.with(|c| c.execute(row, [day_of(WEEK_DAYS).unwrap()]))
+        db.with(|c| c.execute(row, [day_of(KEPT_DAYS).unwrap()]))
             .unwrap();
         db.with(|c| c.execute(row, [day_of(KEPT_DAYS + 1).unwrap()]))
             .unwrap();
-        assert!(usage.week().is_empty());
+        assert!(usage.days().models.is_empty());
         usage.record(
             Purpose::Answer,
             Some(&spent("new", 1, 0, 1)),
@@ -385,7 +406,7 @@ mod tests {
             .with(|c| c.query_row("SELECT COUNT(*) FROM usage_days", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(left, 2);
-        assert_eq!(usage.week().len(), 1);
+        assert_eq!(usage.days().models.len(), 1);
     }
 
     #[test]
@@ -393,6 +414,6 @@ mod tests {
         let usage = Usage::default();
         usage.record(Purpose::Answer, None, Duration::ZERO, false);
         assert_eq!(usage.snapshot().len(), 1);
-        assert!(usage.week().is_empty());
+        assert!(usage.days().models.is_empty());
     }
 }

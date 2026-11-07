@@ -165,6 +165,10 @@ const actions = {
     el.focus({ preventScroll: true });
     return viewOriginal(el.dataset.id, el.dataset.name);
   },
+  'diagram-expand': (el) => {
+    el.focus({ preventScroll: true });
+    expandDiagrams(el);
+  },
   'viewer-zoom': (el) => setViewerZoom(Number(el.dataset.step) === 0 ? 1 : state.viewerZoom * (Number(el.dataset.step) > 0 ? 1.5 : 1 / 1.5)),
   record: (el) => {
     closeSheet();

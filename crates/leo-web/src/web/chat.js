@@ -350,33 +350,99 @@
     return 'under $0.0001';
   }
 
-  function usageRows(rows) {
-    if (!Array.isArray(rows)) return [];
-    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick checks', margin_read: 'Reading along' };
-    const count = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0;
-    const number = (value) => count(value).toLocaleString('en-US');
-    return rows.slice(0, 7).filter((row) => row && Object.hasOwn(names, row.purpose)).map((row) => {
-      const input = count(row.input);
-      const cached = Math.min(input, count(row.cached));
-      const parts = [`${number(row.calls)} requests`, `${number(input)} in${cached ? ` (${number(cached)} cached)` : ''}`, `${number(row.output)} out`];
-      if (count(row.failures)) parts.push(`${number(row.failures)} failed`);
-      if (count(row.unreported)) parts.push(`${number(row.unreported)} without token counts`);
-      if (count(row.estimated)) parts.push(`${number(row.estimated)} estimated`);
-      parts.push(`median ${(count(row.median_ms) / 1000).toFixed(1)} s`, `95% within ${(count(row.p95_ms) / 1000).toFixed(1)} s`);
-      return { label: names[row.purpose], detail: parts.join(' · ') };
-    });
+  const USAGE_KINDS = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick checks', margin_read: 'Reading along' };
+
+  function usageCount(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
   }
 
-  function usageWeek(rows) {
-    if (!Array.isArray(rows) || !rows.length) return [];
-    const count = (value) => Number.isSafeInteger(value) && value > 0 ? value : 0;
-    const line = (calls, input, cached, output) => {
-      const share = input ? ` (${Math.round(cached / input * 100)}% from the cache)` : '';
-      return `${calls.toLocaleString('en-US')} ${calls === 1 ? 'request' : 'requests'} · ${input.toLocaleString('en-US')} in${share} · ${output.toLocaleString('en-US')} out`;
+  function usageKinds(rows) {
+    if (!Array.isArray(rows)) return [];
+    return rows.filter((row) => row && Object.hasOwn(USAGE_KINDS, row.purpose)).map((row) => ({
+      purpose: row.purpose,
+      label: USAGE_KINDS[row.purpose],
+      calls: usageCount(row.calls),
+      failures: usageCount(row.failures),
+      unreported: usageCount(row.unreported),
+      estimated: usageCount(row.estimated),
+      median_ms: usageCount(row.median_ms),
+      p95_ms: usageCount(row.p95_ms),
+    }));
+  }
+
+  function usageBack(offset, today) {
+    const [y, m, d] = String(today).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d - offset)).toISOString().slice(0, 10);
+  }
+
+  function usagePeriod(days, span, today) {
+    const length = [7, 30, 90].includes(span) ? span : 30;
+    const ok = /^\d{4}-\d{2}-\d{2}$/.test(String(today)) && !Number.isNaN(Date.parse(today));
+    const first = ok ? usageBack(length - 1, today) : '';
+    const pick = (list, allowed) => (Array.isArray(list) ? list : []).filter((row) => ok && row && typeof row.day === 'string' && typeof row.name === 'string' && row.day >= first && row.day <= today && allowed(row.name)).map((row) => {
+      const input = usageCount(row.input);
+      return { day: row.day, name: row.name, calls: usageCount(row.calls), input, cached: Math.min(input, usageCount(row.cached)), output: usageCount(row.output) };
+    });
+    const models = pick(days && days.models, () => true);
+    const kinds = pick(days && days.kinds, (name) => Object.hasOwn(USAGE_KINDS, name));
+    const totals = { calls: 0, input: 0, cached: 0, output: 0, share: 0 };
+    for (const row of models) {
+      totals.calls += row.calls;
+      totals.input += row.input;
+      totals.cached += row.cached;
+      totals.output += row.output;
+    }
+    totals.share = totals.input ? totals.cached / totals.input : 0;
+    const size = length === 90 ? 7 : 1;
+    const count = Math.ceil(length / size);
+    const bars = ok ? Array.from({ length: count }, (_, b) => {
+      const ago = count - 1 - b;
+      const from = usageBack(Math.min(length - 1, ago * size + size - 1), today);
+      const to = usageBack(ago * size, today);
+      const by = new Map();
+      const bar = { from, to, calls: 0, input: 0, output: 0, by: [] };
+      for (const row of models) {
+        if (row.day < from || row.day > to) continue;
+        bar.calls += row.calls;
+        bar.input += row.input;
+        bar.output += row.output;
+        by.set(row.name, (by.get(row.name) || 0) + row.input + row.output);
+      }
+      bar.by = [...by].filter(([, tokens]) => tokens > 0);
+      return bar;
+    }) : [];
+    const group = (rows, measures) => {
+      const sums = new Map();
+      for (const row of rows) {
+        const held = sums.get(row.name) || { name: row.name, calls: 0, input: 0, output: 0, tokens: 0 };
+        held.calls += row.calls;
+        held.input += row.input;
+        held.output += row.output;
+        held.tokens += row.input + row.output;
+        sums.set(row.name, held);
+      }
+      return [...sums.values()].sort((a, b) => b[measures] - a[measures] || (a.name < b.name ? -1 : 1));
     };
-    const models = rows.filter((row) => row && typeof row.model === 'string').map((row) => ({ model: row.model || 'Model not reported', calls: count(row.calls), input: count(row.input), cached: Math.min(count(row.input), count(row.cached)), output: count(row.output) }));
-    const total = models.reduce((sum, row) => ({ calls: sum.calls + row.calls, input: sum.input + row.input, cached: sum.cached + row.cached, output: sum.output + row.output }), { calls: 0, input: 0, cached: 0, output: 0 });
-    return [{ label: 'Last 7 days', detail: line(total.calls, total.input, total.cached, total.output) }, ...models.slice(0, 12).map((row) => ({ label: row.model, detail: line(row.calls, row.input, row.cached, row.output) }))];
+    return { length, totals, bars, models: group(models, 'tokens'), kinds: group(kinds, 'calls') };
+  }
+
+  function usageRank(days, today) {
+    const week = usagePeriod(days, 7, today);
+    const all = usagePeriod(days, 90, today);
+    const order = (key, list, ofWeek) => {
+      const recent = new Map(ofWeek.map((row) => [row.name, row[key]]));
+      return list.slice().sort((a, b) => (recent.get(b.name) || 0) - (recent.get(a.name) || 0) || b[key] - a[key] || (a.name < b.name ? -1 : 1)).map((row) => row.name);
+    };
+    return { models: order('tokens', all.models, week.models), kinds: order('calls', all.kinds, week.kinds) };
+  }
+
+  function usageFold(items, keep) {
+    const rows = items.filter((item) => item.value > 0);
+    const shown = rows.filter((item) => keep.includes(item.name)).sort((a, b) => b.value - a.value).map((item) => ({ ...item, rank: keep.indexOf(item.name) }));
+    const rest = rows.filter((item) => !keep.includes(item.name));
+    if (rest.length) shown.push({ name: 'Other', other: true, rank: -1, value: rest.reduce((sum, item) => sum + item.value, 0), calls: rest.reduce((sum, item) => sum + (item.calls || 0), 0) });
+    return shown;
   }
 
   function spentLabel(spent) {
@@ -1103,10 +1169,16 @@
       e.preventDefault();
     });
 
-    const sourceNarrow = () => document.body.classList.contains('with-source') && panel.getBoundingClientRect().width < HISTORY_SIDE_WIDTH;
+    const HISTORY_OVERLAY_WIDTH = 490;
+    const SLIM_WIDTH = 440;
+    const sourceNarrow = () => {
+      if (panel.hidden) return false;
+      const width = panel.getBoundingClientRect().width;
+      return (document.body.classList.contains('with-source') && width < HISTORY_SIDE_WIDTH) || width < HISTORY_OVERLAY_WIDTH;
+    };
     const HISTORY_LEAST_WIDTH = 190;
     const HISTORY_MOST_WIDTH = 360;
-    const HISTORY_CHAT_ROOM = 220;
+    const HISTORY_CHAT_ROOM = 300;
     const history = panel.querySelector('.chat-history');
     const historyGrip = document.createElement('div');
     historyGrip.className = 'pane-resize chat-history-resize';
@@ -1132,7 +1204,13 @@
     if (typeof root.ResizeObserver === 'function') {
       const historySize = new root.ResizeObserver(() => {
         document.body.style.setProperty('--chat-over', `${panel.hidden ? 0 : Math.round(panel.getBoundingClientRect().width)}px`);
-        panel.classList.toggle('source-narrow', sourceNarrow());
+        const narrow = sourceNarrow();
+        const crossed = narrow && !panel.classList.contains('source-narrow') && panel.classList.contains('with-history');
+        if (!panel.hidden) panel.classList.toggle('source-narrow', narrow);
+        if (crossed) {
+          state.sidebar = null;
+          syncSidebar(false);
+        }
         if (state.sidebar === null && !panel.hidden) {
           const on = sidebarOpen();
           const before = panel.classList.contains('with-history');
@@ -1143,6 +1221,22 @@
         historyResize.fit();
       });
       historySize.observe(panel);
+      const chatMain = panel.querySelector('.chat-main');
+      const syncSlim = () => {
+        if (panel.hidden || (history.getAnimations && history.getAnimations().length)) return;
+        const width = chatMain.getBoundingClientRect().width;
+        if (!width || (width < SLIM_WIDTH) === panel.classList.contains('slim')) return;
+        panel.classList.add('slim-switch');
+        panel.classList.toggle('slim', width < SLIM_WIDTH);
+        void panel.offsetWidth;
+        panel.classList.remove('slim-switch');
+      };
+      new root.ResizeObserver(syncSlim).observe(chatMain, { box: 'border-box' });
+      const settled = (e) => {
+        if (e.target === history) syncSlim();
+      };
+      history.addEventListener('transitionend', settled);
+      history.addEventListener('transitioncancel', settled);
     }
 
     function sidebarOpen() {
@@ -1174,7 +1268,7 @@
     function showSidebar(on) {
       state.sidebar = on;
       if (on) root.leoMotion?.cascade($('#chat-history-list'));
-      if (wide()) {
+      if (wide() && !sourceNarrow()) {
         try {
           storage.setItem(SIDEBAR, on ? '1' : '0');
         } catch (e) {
@@ -1184,6 +1278,16 @@
       syncSidebar(on);
       historyResize.fit();
       if (on && !state.chats) loadChats();
+    }
+
+    function leaveOverlay() {
+      state.sidebar = null;
+      syncSidebar(false);
+    }
+
+    function closeHistory() {
+      if (!wide() || sourceNarrow()) leaveOverlay();
+      else showSidebar(false);
     }
 
     syncSidebar(false);
@@ -1346,7 +1450,7 @@
 
     async function resume(id) {
       if (id === state.id) {
-        if (!wide()) showSidebar(false);
+        if (!wide() || sourceNarrow()) leaveOverlay();
         return true;
       }
       if (state.busy) state.busy.abort();
@@ -1383,7 +1487,7 @@
       drawRefs();
       draw();
       drawChats();
-      if (!wide()) showSidebar(false);
+      if (!wide() || sourceNarrow()) leaveOverlay();
       return true;
     }
 
@@ -1793,13 +1897,16 @@
           ? `<button class="msg-act" data-chat="open" data-id="${escape(m.saved)}">Open the saved note</button>`
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
         : '';
-      const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
+      const drew = !m.pending && !m.error && /^\s*(```|~~~)\s*(mermaid|svg)\b/im.test(shown);
+      const bigger = drew ? '<button type="button" class="msg-act icon-act" data-action="diagram-expand" data-reply="all" aria-label="See it larger" title="See it larger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>' : '';
+      const larger = drew ? '<button type="button" class="see-larger" data-action="diagram-expand" data-reply="here">See it larger</button>' : '';
+      const keep = save || meta || bigger ? `<div class="msg-acts">${save}${meta}${bigger}</div>` : '';
       const removed = verdict ? m.text.length - spoken.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
       const taken = parts.flatMap((part) => part.steps || []);
       const newest = parts.findLastIndex((part) => part.steps);
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
-      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
+      const prose = (text) => `<div class="prose">${cite(render(text, { rows: true }), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
       const live = (part, k) => {
         const run = stepRuns(part.steps).at(-1);
         return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
@@ -1809,7 +1916,7 @@
         : '';
       const words = parts.length ? parts.map((part, k) => part.steps ? (m.pending ? live(part, k) : '') : prose(part.text)).join('') : html ? `<div class="prose">${html}</div>` : '';
       const outside = !m.pending && notFromNotes(taken, shown, used.length) ? '<div class="msg-note msg-outside">Not from your notes</div>' : '';
-      const body = `${trace}${words}${outside}`;
+      const body = `${trace}${words}${larger}${outside}`;
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
@@ -2293,7 +2400,7 @@
       const msg = start && start.closest('.msg.leo:not(.pending)');
       if (!msg || !body.contains(msg) || !end || end.closest('.msg.leo') !== msg || !start.closest('.prose') || !end.closest('.prose')) return null;
       const copy = range.cloneContents();
-      for (const chip of copy.querySelectorAll('.cite, .katex-mathml, .msg-steps')) chip.remove();
+      for (const chip of copy.querySelectorAll('.cite, .katex-mathml, .msg-steps, .see-larger')) chip.remove();
       const text = copy.textContent || selection.toString();
       if (!text.trim()) return null;
       const box = range.getBoundingClientRect();
@@ -2751,8 +2858,11 @@
       if (what === 'close') toggle(false);
       else if (what === 'new') {
         begin();
-        if (!wide()) showSidebar(false);
-      } else if (what === 'history') showSidebar(!panel.classList.contains('with-history'));
+        if (!wide() || sourceNarrow()) leaveOverlay();
+      } else if (what === 'history') {
+        if (panel.classList.contains('with-history')) closeHistory();
+        else showSidebar(true);
+      }
       else if (what === 'resume') resume(el.dataset.id);
       else if (what === 'save') saveAnswer(Number(el.dataset.i));
       else if (what === 'add') addAnswer(Number(el.dataset.i), '');
@@ -2968,7 +3078,7 @@
       if (e.key === 'Escape' && !open && !state.doomed && !state.busy && panel.classList.contains('with-history') && (history.contains(e.target) || !wide() || sourceNarrow()) && !e.target.closest('input, textarea') && !document.querySelector('.scrim')) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        showSidebar(false);
+        closeHistory();
         return;
       }
       if (!open) return;
@@ -3020,7 +3130,7 @@
       if (e.key === 'Escape') {
         e.stopPropagation();
         if (state.busy) state.busy.abort();
-        else if (panel.classList.contains('with-history')) showSidebar(false);
+        else if (panel.classList.contains('with-history')) closeHistory();
         else toggle(false);
       }
     });
@@ -3041,7 +3151,7 @@
       if (e.key !== 'Escape' || e.isComposing || !state.open || e.target !== document.body || document.querySelector('.scrim, .scrim-gone')) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (!state.doomed && !state.busy && panel.classList.contains('with-history')) showSidebar(false);
+      if (!state.doomed && !state.busy && panel.classList.contains('with-history')) closeHistory();
       else if (state.busy) state.busy.abort();
       else toggle(false);
     });
@@ -3108,5 +3218,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

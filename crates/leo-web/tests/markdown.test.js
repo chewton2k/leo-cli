@@ -334,6 +334,27 @@ test('read-only previews retain task appearance without editable note controls',
   assert.deepEqual(boxes(render('- [ ] Still editable')), [[1, false]]);
 });
 
+test('a small svg and the paragraph after it become a drawing row only when rows are asked for', () => {
+  const svg = (w) => `\`\`\`svg\n<svg viewBox="0 0 ${w} 80"><title>Cell</title></svg>\n\`\`\``;
+  const rows = (text) => render(text, { rows: true });
+  for (const gap of ['\n', '\n\n']) {
+    const html = rows(`${svg(120)}${gap}**Nucleus**\nHolds the DNA\nIt keeps the genes safe.\n\nAfter.`);
+    assert.equal((html.match(/class="drawing-row"/g) || []).length, 1);
+    assert.ok(html.includes('<span class="drawing-title">Nucleus</span>'));
+    assert.ok(html.includes('<span class="drawing-sub">Holds the DNA</span>'));
+    assert.ok(html.includes('It keeps the genes safe.</p></div>'));
+    assert.ok(html.includes('<p>After.</p>') && !html.includes('```'));
+  }
+  assert.ok(!rows(`${svg(120)}\n\n\nText`).includes('drawing-row'));
+  assert.ok(!rows(`${svg(120)}\n\n- item`).includes('drawing-row'));
+  assert.ok(!rows(`${svg(400)}\n\nText`).includes('drawing-row'));
+  assert.ok(!render(`${svg(120)}\n\nText`).includes('drawing-row'));
+  assert.equal((rows(`${svg(120)}\nOne\n\n${svg(120)}\nTwo`).match(/drawing-row"/g) || []).length, 2);
+  assert.ok(rows(`${svg(120)}\n**Leaf**\nGreen`).includes('<span class="drawing-title">Leaf</span>'));
+  assert.ok(rows(`${svg(120)}\n**Leaf** cell\nGreen`).includes('<span class="drawing-title"><strong>Leaf</strong> cell</span>'));
+  assert.ok(!rows(`${svg(120)}\n**\nGreen`).includes('drawing-title'));
+});
+
 setImmediate(() => {
   for (const [name, fn] of cases) {
     try {

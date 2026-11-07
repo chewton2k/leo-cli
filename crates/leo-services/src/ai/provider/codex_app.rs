@@ -107,6 +107,7 @@ impl CodexThread {
         let mut child = command
             .spawn()
             .map_err(|e| fail(format!("could not run {}: {e}", agent.bin())))?;
+        leo_core::children::mark(child.id(), "Codex");
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let child = Process::new(child);

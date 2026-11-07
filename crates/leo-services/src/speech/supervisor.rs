@@ -961,6 +961,7 @@ impl Worker {
         }
         let mut child = command.spawn()?;
         let pid = child.id();
+        leo_core::children::mark(pid, "Speech engine");
         let stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
         let stderr = child.stderr.take().expect("stderr is piped");

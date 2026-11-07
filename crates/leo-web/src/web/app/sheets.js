@@ -40,7 +40,8 @@ function ghostOf(el) {
   ghost.setAttribute('aria-hidden', 'true');
   ghost.inert = true;
   for (const part of [ghost, ...ghost.querySelectorAll('*')]) {
-    for (const { name } of [...part.attributes]) if (name === 'id' || name.startsWith('data-')) part.removeAttribute(name);
+    const kept = part.closest('.viewer-diagram');
+    for (const { name } of [...part.attributes]) if ((name === 'id' && !kept) || name.startsWith('data-')) part.removeAttribute(name);
   }
   return ghost;
 }
@@ -140,8 +141,14 @@ function closeSheet(now = false) {
     const inner = ghost.querySelector('.sheet');
     if (inner) inner.classList.replace('sheet', 'sheet-gone');
     const scrolled = open.querySelector('.sheet');
+    const panned = open.querySelector('.viewer-pan');
     open.replaceWith(ghost);
     if (inner && scrolled) inner.scrollTop = scrolled.scrollTop;
+    const pan = ghost.querySelector('.viewer-pan');
+    if (pan && panned) {
+      pan.scrollTop = panned.scrollTop;
+      pan.scrollLeft = panned.scrollLeft;
+    }
     setTimeout(() => ghost.remove(), LEAVE_MS);
   }
   if (state.keepPending) {

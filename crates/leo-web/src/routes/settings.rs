@@ -28,7 +28,7 @@ async fn settings_page(state: AppState, note: Option<String>) -> Response {
     let usage = std::sync::Arc::clone(&state.usage);
     let described = tokio::task::spawn_blocking(move || {
         let mut page = settings.describe(&notes_dir);
-        page["felix_week"] = serde_json::json!(usage.week());
+        page["felix_days"] = serde_json::json!(usage.days());
         page
     });
     match described.await {
@@ -88,7 +88,7 @@ pub(crate) async fn change_setting(
         settings.apply(&change).map(|message| {
             warm.clear();
             let mut page = settings.describe(&notes_dir);
-            page["felix_week"] = serde_json::json!(usage.week());
+            page["felix_days"] = serde_json::json!(usage.days());
             page["felix_usage"] = serde_json::json!(usage.snapshot());
             page["felix_tools"] = serde_json::json!(usage.tools());
             (message, page)

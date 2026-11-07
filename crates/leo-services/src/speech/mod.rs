@@ -8,7 +8,7 @@ pub mod supervisor;
 pub mod vad;
 mod worker;
 
-const WORKER_FLAG: &str = "--leo-speech-worker";
+use leo_core::children::WORKER_FLAG;
 const CPU_ONLY_FLAG: &str = "--cpu-only";
 const LOG_LEVEL_ENV: &str = "LEO_TRANSCRIBE_WORKER_LOG";
 

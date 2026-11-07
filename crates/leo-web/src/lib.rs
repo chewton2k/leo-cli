@@ -266,7 +266,7 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
     let polling = path == "/api/activity"
         || matches!(
             path,
-            "/api/app" | "/api/dictation" | "/api/speech" | "/api/tasks"
+            "/api/app" | "/api/dictation" | "/api/speech" | "/api/tasks" | "/api/processes"
         )
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
@@ -919,6 +919,7 @@ fn router(state: AppState) -> Router {
         .route("/api/settings", get(get_settings).post(change_setting))
         .route("/api/settings/test", post(test_setting))
         .route("/api/settings/usage", post(routes::settings::refresh_usage))
+        .route("/api/processes", get(routes::processes::list))
         .route(
             "/api/import",
             post(start_import)
@@ -1050,6 +1051,7 @@ mod activity_tests {
             "/api/dictation",
             "/api/speech",
             "/api/tasks",
+            "/api/processes",
             "/api/activity",
             "/api/record/r1",
             "/api/import/j1",

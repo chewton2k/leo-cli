@@ -411,12 +411,16 @@ async fn no_daily_limit_keeps_reading_past_the_old_cap() {
     let (status, view) = engine
         .post(
             "/api/margin",
-            serde_json::json!({ "cap": margin::NO_CAP, "gap": 300 }),
+            serde_json::json!({ "cap": margin::NO_CAP, "gap": 10 }),
         )
         .await;
     assert_eq!(status, 200);
     assert_eq!(view["cap"], margin::NO_CAP);
-    assert_eq!(view["gap"], 300);
+    assert_eq!(view["gap"], 10);
+    let (status, _) = engine
+        .post("/api/margin", serde_json::json!({ "gap": 300 }))
+        .await;
+    assert_eq!(status, 400);
     for _ in 0..81 {
         assert!(margin::spend_read(&engine.chats(), margin::NO_CAP));
     }
