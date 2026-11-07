@@ -159,26 +159,35 @@
     return /\d/.test(run) ? Number(run) : run.toLowerCase().charCodeAt(0) - 96 + (run.length - 1) * 26;
   }
 
-  const closeAfter = (marker, previous) => Math.abs(place(marker) - place(previous) - 1) <= 1;
+  const gap = (marker, previous) => place(marker) - place(previous);
+  const closeAfter = (marker, previous) => gap(marker, previous) === 0 || gap(marker, previous) === 1 || (gap(marker, previous) === 2 && /\d/.test(marker));
+  const exact = (marker, previous) => gap(marker, previous) === 1;
 
   function renumber(lines, at, fresh = -1) {
-    if (!item(lines[at] ?? '')) return;
+    let after = false;
+    const live = lines.map((line) => (after = Boolean(listable(line, after))));
+    if (!live[at]) return;
     let from = at;
-    while (from > 0 && item(lines[from - 1])) from--;
+    while (from > 0 && live[from - 1]) from--;
     const open = [];
     for (let i = from; i < lines.length; i++) {
+      if (!live[i]) break;
       const found = item(lines[i]);
-      if (!found) break;
       const depth = leadWidth(found.lead);
       while (open.length && open[open.length - 1].depth > depth) open.pop();
       const level = open[open.length - 1]?.depth === depth ? open.pop() : null;
       const kind = listKind(found.marker);
       const same = level && kind !== 'ul' && listKind(level.marker) === kind;
-      const follows = same && (i === fresh || (!level.stopped && (closeAfter(found.marker, level.marker) || closeAfter(found.marker, level.typed))));
-      const starts = !same && i === fresh && open.length > 0 && kind !== 'ul';
+      const early = i < at && i !== fresh;
+      const near = same && level.last <= at && at <= i;
+      const next = near ? closeAfter(found.marker, level.marker) || closeAfter(found.marker, level.typed)
+        : same && (exact(found.marker, level.typed) || (found.marker === level.typed && level.typed === level.before));
+      const chosen = i === fresh && /\d/.test(found.marker) && place(found.marker) > 99;
+      const follows = !early && same && !chosen && (i === fresh || (!level.stopped && next));
+      const starts = !same && i === fresh && !chosen && open.length > 0 && kind !== 'ul';
       const marker = follows ? nextMarker(level.marker) : starts ? kind : found.marker;
-      const stopped = same ? !follows : /[a-z]/i.test(kind) && !/^[aA][.)]/.test(marker);
-      open.push({ depth, marker, typed: found.marker, stopped });
+      const stopped = same ? !follows && !early : /[a-z]/i.test(kind) && !/^[aA][.)]/.test(marker);
+      open.push({ depth, marker, typed: found.marker, before: level?.typed, last: i, stopped });
       if (marker !== found.marker) lines[i] = found.lead + marker + lines[i].slice(found.lead.length + found.marker.length);
     }
   }
@@ -217,7 +226,7 @@
   }
 
   function indent(line, above = []) {
-    const found = item(line);
+    const found = itemIn(line, above);
     if (!found) return '  ' + line;
     const depth = leadWidth(found.lead);
     let sibling = found;
@@ -233,7 +242,7 @@
   }
 
   function outdent(line, above = []) {
-    const found = item(line);
+    const found = itemIn(line, above);
     if (found) {
       for (let k = above.length - 1; k >= 0; k--) {
         const earlier = item(above[k]);
@@ -331,11 +340,11 @@
     const levels = listLevels(rows);
     let base = 0;
     rows.forEach((line, row) => {
-      let lo = Math.max(from - base, hiddenHead(line, levels[row] >= 0));
+      let lo = Math.max(from - base, hiddenHead(line, levels[row] >= 0), line.match(CALLOUT)?.[0].length || 0);
       let hi = Math.min(to - base, line.length);
       while (lo < hi && /\s/.test(line[lo])) lo++;
       while (lo < hi && /\s/.test(line[hi - 1])) hi--;
-      if (lo < hi && !skipped.has(row) && !(line.match(CALLOUT)?.[0].length > lo) && /[\p{L}\p{N}]/u.test(line.slice(lo, hi))) {
+      if (lo < hi && !skipped.has(row) && /[\p{L}\p{N}]/u.test(line.slice(lo, hi))) {
         const region = styleRegion(line, lo, hi, style);
         if (!region.stuck) regions.push({ row, ...region });
       }
@@ -376,7 +385,7 @@
     const left = before.match(/\*+$/)?.[0].length || 0;
     const right = after.match(/^\*+/)?.[0].length || 0;
     const closes = (run) => (style === 'bold' ? run >= 2 : run % 2 === 1);
-    if (left === right && closes(left)) return { text: before.slice(0, at - open.length) + after.slice(close.length), at: at - open.length };
+    if (left >= right && closes(right)) return { text: before.slice(0, at - open.length) + after.slice(close.length), at: at - open.length };
     return closes(right) && line.includes(open) ? { text, at: at + close.length } : insert;
   }
 

@@ -417,7 +417,6 @@ function marginFill(el, t, arriving) {
   dismiss.hidden = draft && Boolean(waiting);
   const area = $('textarea', el);
   area.placeholder = draft ? 'Ask Felix about this' : 'Reply';
-  area.readOnly = Boolean(waiting);
   if (waiting) el.setAttribute('aria-busy', 'true');
   else el.removeAttribute('aria-busy');
   $('.margin-send', el).disabled = Boolean(waiting) || !area.value.trim();
@@ -731,7 +730,7 @@ async function marginSubmit(e) {
   const text = area.value.trim();
   const t = marginThread(el.dataset.id);
   const s = marginPage.s;
-  if (!text || !t || !s) return;
+  if (!text || !t || !s || marginPage.thinking.has(t.id)) return;
   area.value = '';
   marginSized(area);
   if (t.id === 'draft') return marginAskOn(s, t, text);
@@ -765,7 +764,7 @@ function marginSized(area) {
   area.style.height = 'auto';
   area.style.height = `${Math.min(area.scrollHeight, MARGIN_AREA_MAX)}px`;
   const send = area.form?.querySelector('.margin-send');
-  if (send) send.disabled = !area.value.trim();
+  if (send) send.disabled = !area.value.trim() || marginPage.thinking.has(area.closest('.margin-note')?.dataset.id);
 }
 
 function marginRekey(from, to) {

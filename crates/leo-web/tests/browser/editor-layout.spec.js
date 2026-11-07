@@ -663,16 +663,15 @@ test('application controls resist highlighting while note content and text field
     await page.goto(url);
     await page.evaluate(() => {
       const controls = document.createElement('div');
-      controls.innerHTML = '<button>Action label</button><label>Setting label <input value="Editable text"></label><details open><summary>Disclosure label</summary><p class="hint">Helpful explanation</p></details><a href="#test">Readable link</a><img alt="Picture"><div draggable="true">Movable note</div>';
+      controls.innerHTML = '<button>Action label</button><label>Setting label <input value="Editable text"></label><details open><summary>Disclosure label</summary><p class="hint">Helpful explanation</p><p class="prose">Readable explanation</p></details><a href="#test">Readable link</a><img alt="Picture"><div draggable="true">Movable note</div>';
       document.body.appendChild(controls);
       window.controls = controls;
     });
-    for (const selector of ['button', 'label', 'summary', '[draggable="true"]']) {
-      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector)).toBe('none');
+    const selectable = selector => page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector);
+    for (const selector of ['button', 'label', 'summary', '[draggable="true"]', 'input']) {
+      expect(await selectable(selector), selector).toBe('none');
     }
-    for (const selector of ['input', '.hint']) {
-      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector)).toBe('text');
-    }
+    expect(await selectable('.prose')).toBe('text');
     expect(await page.locator('#doc p').evaluate(el => getComputedStyle(el).userSelect)).not.toBe('none');
     for (const selector of ['a', 'img']) {
       expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).webkitUserDrag, selector)).toBe('none');
@@ -684,6 +683,16 @@ test('application controls resist highlighting while note content and text field
     await page.mouse.move(box.x + 140, box.y + box.height / 2, {steps:10});
     await page.mouse.up();
     expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+    const hint = await page.locator('.hint').boundingBox();
+    await page.mouse.move(hint.x + 1, hint.y + hint.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hint.x + hint.width - 1, hint.y + hint.height / 2, {steps:8});
+    await page.mouse.up();
+    expect(await page.evaluate(() => getSelection().toString()), 'a hint is chrome, so a drag across it selects nothing').toBe('');
+    await page.locator('input').focus();
+    expect(await selectable('input')).toBe('text');
+    await page.locator('input').blur();
+    expect(await selectable('input')).toBe('none');
   });
 });
 

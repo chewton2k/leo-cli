@@ -89,7 +89,25 @@
       return false;
     }
 
-    function renderBlock(block, boxes, levels) {
+    function listStarts(levels) {
+      const firsts = [];
+      return levels.map((level, i) => {
+        if (level < 0) {
+          firsts.length = 0;
+          return undefined;
+        }
+        firsts.length = level + 1;
+        const found = lines[i].match(/^\s*(\d+)[.)]/);
+        if (!found) {
+          firsts[level] = null;
+          return undefined;
+        }
+        if (firsts[level] == null) firsts[level] = Number(found[1]);
+        return firsts[level];
+      });
+    }
+
+    function renderBlock(block, boxes, levels, starts) {
       const text = lines.slice(block.start, block.end).join('\n');
       if (!text.trim()) {
         const lone = lines.length === 1;
@@ -100,12 +118,14 @@
         dir,
         depth: block.kind === 'line' ? Math.max(levels[block.start], 0) + 1 : 1,
         after: block.kind === 'line' && levels[block.start - 1] >= 0,
+        first: block.kind === 'line' ? starts[block.start] : undefined,
       });
     }
 
     function draw() {
       blocks = ed.splitBlocks(lines);
       const levels = ed.listLevels(lines);
+      const starts = listStarts(levels);
       let boxes = 0;
       rendered = blocks.map((block, i) => {
         const text = lines.slice(block.start, block.end).join('\n');
@@ -123,7 +143,7 @@
         el.dataset.start = String(block.start);
         el.dataset.i = String(i);
         if (level > 0) el.style.marginLeft = `${level * 1.5}em`;
-        el.innerHTML = renderBlock(block, before, levels);
+        el.innerHTML = renderBlock(block, before, levels, starts);
         if (old && old.el.parentNode === container) old.el.replaceWith(el);
         else container.insertBefore(el, container.querySelector('.doc-tail'));
         return { key, el };
@@ -1017,6 +1037,7 @@
         e.preventDefault();
         const above = lines.slice(0, start);
         const next = e.shiftKey ? ed.outdent(value, above) : ed.indent(value, above);
+        if (next === value) return;
         lines.splice(start, editing.end - start, ...next.split('\n'));
         ed.renumber(lines, start, start);
         const shift = lines[start].length - value.split('\n')[0].length;

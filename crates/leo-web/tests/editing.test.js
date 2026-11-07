@@ -217,12 +217,19 @@ test('a change leaves numbers and letters it did not cause alone', () => {
   stays(['1. a', '   c) sub', '   e) more'], 0);
   stays(['- a', '* b', '+ c'], 0);
   assert.deepEqual(after(['a. one', 'b. two', 'ii. three', 'd. four'], 0), ['a. one', 'b. two', 'ii. three', 'd. four'], 'a run stops at the first marker far from its place');
-  assert.deepEqual(after(['1. a', '   1999. x', '   2005. y', '2. b', '2. c'], 0), ['1. a', '   1999. x', '   2005. y', '2. b', '3. c'], 'a stop holds only on its own level');
+  assert.deepEqual(after(['1. a', '   1999. x', '   2005. y', '2. b', '2. c'], 3), ['1. a', '   1999. x', '   2005. y', '2. b', '3. c'], 'a stop holds only on its own level');
   assert.deepEqual(after(['1. a', '1. b', '1. c'], 0), ['1. a', '2. b', '3. c']);
+  stays(['2019. a', '2020. b', '2020. c', '2021. d'], 0);
+  stays(['2019. a', '2020. b', '2020. c', '2021. d'], 3);
+  stays(['a. x', 'c. 1900'], 0);
+  assert.deepEqual(after(['2019. a', '2020. b', '2020. c', '2021. d'], 1), ['2019. a', '2020. b', '2021. c', '2022. d'], 'an edit beside a repeat does close it up');
+  assert.deepEqual(after(['1. a', '3. b', '4. c'], 1), ['1. a', '2. b', '3. c'], 'a deleted item closes up');
+  assert.deepEqual(after(['5. a', '9. b', '9. c'], 0), ['5. a', '9. b', '9. c'], 'items before the edit and far from their place stay');
   assert.deepEqual(after(['a) a', 'b) b', 'b) c', 'c) d'], 1), ['a) a', 'b) b', 'c) c', 'd) d']);
   assert.deepEqual(after(['z) a', 'z) b'], 0), ['z) a', 'z) b']);
-  assert.deepEqual(after(['a. x', 'b. y'].concat(Array.from({ length: 24 }, (_, i) => `${String.fromCharCode(99 + i)}. k`), ['z. m']), 0)[26], 'aa. m', 'letters run on past z');
+  assert.deepEqual(after(['a. x', 'b. y'].concat(Array.from({ length: 24 }, (_, i) => `${String.fromCharCode(99 + i)}. k`), ['z. m']), 25)[26], 'aa. m', 'letters run on past z');
   assert.deepEqual(after(['1. a', '   7. g'], 1, 1), ['1. a', '   1. g'], 'Tab starts the new sub-list over, wherever its number was');
+  assert.deepEqual(after(['1. a', '   2005. g'], 1, 1), ['1. a', '   2005. g'], 'a year stays');
   assert.deepEqual(after(['1. a', '   1. x', '5. e'].map((l, i) => (i === 2 ? '   5. e' : l)), 2, 2), ['1. a', '   1. x', '   2. e']);
 });
 
@@ -248,9 +255,10 @@ test('a list item knows its level', () => {
 
 test('list levels take one pass over a long note', () => {
   const lines = Array.from({ length: 2000 }, (_, i) => `${i + 1}. item`);
-  const started = performance.now();
-  for (let i = 0; i < 20; i++) ed.listLevels(lines);
-  assert.ok((performance.now() - started) / 20 < 50, 'a draw would wait on this');
+  let reads = 0;
+  const watched = new Proxy(lines, { get: (target, key, receiver) => { if (typeof key === 'string' && /^\d+$/.test(key)) reads++; return Reflect.get(target, key, receiver); } });
+  ed.listLevels(watched);
+  assert.ok(reads <= lines.length * 2, `a draw would wait on ${reads} reads`);
   assert.deepEqual([...new Set(ed.listLevels(lines))], [0]);
 });
 
@@ -418,6 +426,10 @@ test('a style key with no selection opens a pair, and the next press closes it',
     ['**<u>|</u>**', 'underline', '**|**'],
     ['a **word|** b', 'bold', 'a **word**| b'],
     ['a *word|* b', 'italic', 'a *word*| b'],
+    ['**a**|', 'bold', '**a**|****'.replace('|****', '**|**')],
+    ['**a****|**', 'bold', '**a**|'],
+    ['*a*|', 'italic', '*a**|*'],
+    ['*a**|*', 'italic', '*a*|'],
     ['a <u>word|</u> b', 'underline', 'a <u>word</u>| b'],
     ['a **word|** b', 'italic', 'a **word*|*** b'],
     ['one\n|', 'bold', 'one\n**|**'],
@@ -427,10 +439,11 @@ test('a style key with no selection opens a pair, and the next press closes it',
 
 test('a style leaves a callout marker alone', () => {
   const text = '> [!warning] Title\n> body line';
-  assert.equal(ed.restyle(text, 0, text.length, 'bold').text, '> [!warning] Title\n> **body line**');
+  assert.equal(ed.restyle(text, 0, text.length, 'bold').text, '> [!warning] **Title**\n> **body line**', 'a whole callout line styles its title, not the marker');
   const from = text.indexOf('Title');
   assert.equal(ed.restyle(text, from, from + 5, 'bold').text, '> [!warning] **Title**\n> body line', 'the title alone can still be styled');
-  assert.equal(ed.restyle('> [!tip]- Fold\n', 0, 14, 'italic').text, '> [!tip]- Fold\n');
+  assert.equal(ed.restyle('> [!tip]- Fold\n', 0, 14, 'italic').text, '> [!tip]- *Fold*\n');
+  assert.equal(ed.restyle('> [!tip]-', 0, 9, 'italic').text, '> [!tip]-', 'a marker alone has nothing to style');
   assert.equal(ed.restyle('p. 12 here', 0, 10, 'bold').text, '**p. 12 here**', 'prose has no marker to skip');
 });
 
@@ -495,4 +508,25 @@ setImmediate(() => {
   }
   console.log(`${cases.length - failed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
+});
+
+test('Tab and Shift+Tab leave prose and chosen numbers alone', () => {
+  const press = (lines, at, back) => {
+    const out = [...lines];
+    const above = out.slice(0, at);
+    const next = back ? ed.outdent(out[at], above) : ed.indent(out[at], above);
+    if (next === out[at]) return out;
+    out.splice(at, 1, next);
+    ed.renumber(out, at, at);
+    return out;
+  };
+  for (const [lines, at] of [[['p. 12', 'p. 14'], 1], [['i. one', 'ii. two'], 1], [['b. x', 'c. 1905'], 1], [['c. 1905'], 0]]) {
+    assert.equal(press(lines, at, true)[at], lines[at], `${lines[at]} stays on Shift+Tab`);
+    assert.match(press(lines, at, false)[at], new RegExp(`^\\s*${lines[at].replace(/[.]/g, '\\.')}$`), `${lines[at]} keeps its marker on Tab`);
+  }
+  assert.deepEqual(press(['1999. first', '2005. second'], 1, true), ['1999. first', '2005. second']);
+  assert.deepEqual(press(['1. a', '2005. second'], 1, false), ['1. a', '   2005. second']);
+  assert.deepEqual(press(['1. a', '   1. b'], 1, true), ['1. a', '2. b'], 'a sub-list item joins the outer numbering');
+  assert.deepEqual(press(['1. a', '   2005. b'], 1, true), ['1. a', '2005. b'], 'a chosen number survives the move out');
+  assert.deepEqual(press(['1. a', '2. b'], 1, false), ['1. a', '   1. b']);
 });

@@ -88,13 +88,22 @@ async function showBoards(arg) {
   }
 }
 
+let kanbanWrites = 0;
+
+function kanbanWrite(path, options) {
+  kanbanWrites++;
+  return api(path, options);
+}
+
 // Fetch the open board again after a change, so ranks renumbered by leo are known here.
+// A write that starts while it is in flight makes the answer old, so it is dropped.
 async function kanbanRefresh() {
   const board = kanban.board;
   if (!board || state.view !== 'boards') return;
   const mine = seq;
+  const writes = kanbanWrites;
   const data = await api(`/api/boards/${enc(board.id)}`);
-  if (mine !== seq || kanban.board?.id !== board.id || kanban.drag) return;
+  if (mine !== seq || kanban.board?.id !== board.id || kanban.drag || kanbanWrites !== writes) return;
   kanban.board = data.board;
   kanban.cards = data.cards || [];
   drawKanban();
@@ -295,7 +304,7 @@ async function kanbanNewBoard() {
     if (make.disabled) return;
     make.disabled = true;
     try {
-      const board = await api('/api/boards', { method: 'POST', body: { name: name.value.trim() } });
+      const board = await kanbanWrite('/api/boards', { method: 'POST', body: { name: name.value.trim() } });
       closeSheet();
       kanbanRemember(board.id);
       go(`#/boards/${enc(board.id)}`);
@@ -314,7 +323,7 @@ async function kanbanNewBoard() {
 
 async function kanbanSaveBoard(change) {
   const board = kanban.board;
-  const saved = await api(`/api/boards/${enc(board.id)}`, { method: 'PATCH', body: change });
+  const saved = await kanbanWrite(`/api/boards/${enc(board.id)}`, { method: 'PATCH', body: change });
   if (kanban.board?.id !== saved.id) return saved;
   kanban.board = saved;
   kanbanSyncTab();
@@ -452,10 +461,10 @@ function kanbanBoardMenu(owner) {
 }
 
 async function kanbanDeleteBoard(board) {
-  const gone = await api(`/api/boards/${enc(board.id)}`, { method: 'DELETE' });
+  const gone = await kanbanWrite(`/api/boards/${enc(board.id)}`, { method: 'DELETE' });
   toast(`Deleted “${board.name}”`, {
     action: 'Undo',
-    run: () => api('/api/boards/restore', { method: 'POST', body: gone }).then((back) => go(`#/boards/${enc(back.board.id)}`)).catch(fail),
+    run: () => kanbanWrite('/api/boards/restore', { method: 'POST', body: gone }).then((back) => go(`#/boards/${enc(back.board.id)}`)).catch(fail),
   });
   const left = kanban.boards.filter((b) => b.id !== board.id);
   go(left.length ? `#/boards/${enc(left[0].id)}` : '#/boards', { replace: true });
@@ -492,7 +501,7 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
   };
   const post = async (title, priority) => {
     try {
-      const card = await api(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId, priority } });
+      const card = await kanbanWrite(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId, priority } });
       const tab = kanban.boards.find((b) => b.id === boardId);
       if (kanban.board?.id !== boardId) { if (tab) tab.cards = (tab.cards || 0) + 1; return; }
       if (kanbanCard(card.id)) return;
@@ -605,9 +614,11 @@ function kanbanClosePanel(refocus = true) {
 // A card opens beside the board, like a note: edits save as you type and the board stays
 // in view, so the next card is one click away.
 async function kanbanCardPanel(id) {
+  while (kanban.panel) {
+    if (kanban.panel.id === id) { $('#kanban-card-title')?.focus(); return; }
+    if (!await kanbanLeavePanel(false)) return;
+  }
   const box = $('#kanban-panel');
-  if (box && kanban.panel?.id === id) { $('#kanban-card-title', box)?.focus(); return; }
-  if (kanban.panel && !await kanbanLeavePanel(false)) return;
   const card = kanbanCard(id);
   const board = kanban.board;
   if (!card || !board || !box?.isConnected) return;
@@ -654,15 +665,17 @@ async function kanbanCardPanel(id) {
     return extra > 0;
   };
   const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => { tellOver(); queue('description'); } });
+  const valueOf = (name) => name === 'description' ? doc.source().trim() : fields[name].value.replace(/\s+/g, ' ').trim();
+  const dirty = () => names.some((name) => valueOf(name) !== (card[name] || '') && (name !== 'title' || valueOf(name)));
   const save = async (name) => {
     clearTimeout(timers[name]);
     timers[name] = 0;
-    const value = name === 'description' ? doc.source().trim() : fields[name].value.replace(/\s+/g, ' ').trim();
+    const value = valueOf(name);
     if (value === (card[name] || '')) return true;
     if (name === 'title' && !value) { title.value = card.title; fit(title); return true; }
     if (name === 'description' && tellOver()) return false;
     try {
-      const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
+      const done = await kanbanWrite(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
       kanbanUpdate(card, done);
       if (saved.isConnected) saved.textContent = 'Saved';
       if (problem.isConnected) tellOver();
@@ -675,9 +688,10 @@ async function kanbanCardPanel(id) {
     }
   };
   const names = [...Object.keys(fields), 'description'];
+  const flush = () => Promise.all(names.map(save));
   const settle = async () => {
     doc.stop();
-    const done = await Promise.all(names.map(save));
+    const done = await flush();
     return done.every(Boolean) && !names.some((name) => timers[name]);
   };
   const end = () => {
@@ -685,7 +699,7 @@ async function kanbanCardPanel(id) {
     for (const name of names) if (timers[name]) save(name).catch(fail);
     doc.destroy();
   };
-  kanban.panel = { id, end, settle };
+  kanban.panel = { id, end, settle, flush, dirty };
   for (const [name, field] of Object.entries(fields)) {
     field.addEventListener('input', () => {
       if (field === title) fit(field);
@@ -715,7 +729,7 @@ async function kanbanCardPanel(id) {
     const chip = e.target.closest('[data-priority]');
     if (!chip || chip.classList.contains('on')) return;
     try {
-      const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { priority: chip.dataset.priority } });
+      const done = await kanbanWrite(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { priority: chip.dataset.priority } });
       kanbanUpdate(card, done);
       kanbanPriorityPick(chip);
     } catch (err) {
@@ -746,7 +760,7 @@ function kanbanAbove(card) {
 
 async function kanbanMove(card, to) {
   try {
-    const saved = await api(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: to });
+    const saved = await kanbanWrite(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: to });
     Object.assign(card, saved);
   } catch (e) {
     if (e instanceof Locked) throw e;
@@ -760,12 +774,12 @@ async function kanbanMoveToBoard(card, boardId) {
   if (!target || boardId === card.board) return;
   const back = { board: card.board, column: card.column, after: kanbanAbove(card) };
   try {
-    const saved = await api(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: { board: boardId } });
+    const saved = await kanbanWrite(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: { board: boardId } });
     kanban.cards = kanban.cards.filter((c) => c.id !== card.id);
     target.cards = (target.cards || 0) + 1;
     toast(`Moved “${card.title}” to ${target.name}`, {
       action: 'Undo',
-      run: () => api(`/api/cards/${enc(saved.id)}/move`, { method: 'POST', body: back }).then(() => {
+      run: () => kanbanWrite(`/api/cards/${enc(saved.id)}/move`, { method: 'POST', body: back }).then(() => {
         target.cards = Math.max(0, (target.cards || 1) - 1);
         return kanbanRefresh();
       }).catch(fail),
@@ -779,12 +793,12 @@ async function kanbanMoveToBoard(card, boardId) {
 }
 
 async function kanbanDeleteCard(card) {
-  await api(`/api/cards/${enc(card.id)}`, { method: 'DELETE' });
+  await kanbanWrite(`/api/cards/${enc(card.id)}`, { method: 'DELETE' });
   kanban.cards = kanban.cards.filter((c) => c.id !== card.id);
   drawKanban();
   toast(`Deleted “${card.title}”`, {
     action: 'Undo',
-    run: () => api(`/api/boards/${enc(card.board)}/cards`, { method: 'POST', body: { id: card.id, column: card.column, title: card.title, subheading: card.subheading, description: card.description, priority: card.priority, rank: card.rank } }).then(kanbanRefresh).catch(fail),
+    run: () => kanbanWrite(`/api/boards/${enc(card.board)}/cards`, { method: 'POST', body: { id: card.id, column: card.column, title: card.title, subheading: card.subheading, description: card.description, priority: card.priority, rank: card.rank } }).then(kanbanRefresh).catch(fail),
   });
 }
 
@@ -912,6 +926,10 @@ function kanbanCancel() {
 async function kanbanDrop() {
   const d = kanbanEnd(true);
   if (!d) return;
+  if (d.tab && kanban.panel?.id === d.id && !await kanbanLeavePanel(false)) {
+    d.ghost?.remove();
+    return;
+  }
   const home = d.tab ? app.querySelector(`[data-kanban-drop="${CSS.escape(d.tab)}"]`) : null;
   if (home) flyInto(d.ghost, home.matches('.kanban-over') ? app.querySelector('.kanban-more') : home);
   else d.ghost?.remove();

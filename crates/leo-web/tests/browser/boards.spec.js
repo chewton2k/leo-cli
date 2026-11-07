@@ -46,7 +46,10 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     window.failNext=null;window.slow=0;
     async function fakeApi(url,{method='GET',body}={}){
       window.calls.push(method+' '+url);
+      let early=null;
+      if(window.early&&method==='GET'){const found=url.match(/^\\/api\\/boards\\/([^/]+)$/);const b=found&&db.boards.find(x=>x.id===found[1]);if(b)early={board:structuredClone(b),cards:ranked(b.id)};}
       await new Promise(r=>setTimeout(r,5+window.slow));
+      if(early)return early;
       if(window.failNext&&method!=='GET'){const e=new Error(window.failNext);window.failNext=null;throw e;}
       let m;
       if(url==='/api/boards'&&method==='GET')return {boards:db.boards.map(b=>({...b,cards:db.cards.filter(c=>c.board===b.id).length}))};
@@ -404,6 +407,22 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
     await expect(page.locator('.kanban-tab')).toHaveCount(2);
     await page.locator('.toast button').click();
     await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Job search');
+  });
+});
+
+test('a board fetched before a later change cannot overwrite it', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.evaluate(() => { window.slow = 120; window.early = true; });
+    await page.locator('.kanban-col').nth(1).hover();
+    await page.locator('[data-action="kanban-column-menu"][data-col="kdoing0001"]').click();
+    await page.getByRole('menuitem', { name: 'Move left' }).click();
+    await expect.poll(() => page.evaluate(() => window.db.boards[0].columns[0].id), { intervals: [10] }).toBe('kdoing0001');
+    await page.evaluate(() => { window.slow = 0; });
+    await page.locator('[data-action="kanban-add-column"]').click();
+    await settled(page);
+    await expect(page.locator('.kanban-col')).toHaveCount(4);
+    await expect.poll(() => page.evaluate(() => window.db.boards[0].columns.length)).toBe(4);
+    await expect(page.locator('.kanban-col').first().locator('.kanban-col-name')).toHaveValue('In progress');
   });
 });
 

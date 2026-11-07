@@ -684,7 +684,10 @@ ol.list-upper-paren { list-style-type: upper-paren; }
 @media (prefers-reduced-motion: reduce) { .actions button::after { transition: none; } }
 @media (forced-colors: active) { .actions { border: 1px solid CanvasText; } .actions button::after { border: 1px solid CanvasText; background: Canvas; color: CanvasText; } }
 
-@media (max-width: 1199px) { body.chat-open .actions { left: calc(var(--side) + (100% - var(--side) - var(--chat-over, 0px)) / 2); } }
+@media (max-width: 1199px) {
+  body.chat-open .actions { left: calc(var(--side) + (100% - var(--side) - var(--chat-over, 0px)) / 2); max-width: calc(100% - var(--side) - var(--chat-over, 0px) - 12px); flex-wrap: wrap; justify-content: center; }
+  body.chat-open .actions button { flex: 1 1 30px; min-width: 30px; max-width: 44px; }
+}
 @media (max-width: 599px) { body.chat-open .actions { display: none; } }
 .fab {
   position: fixed; right: calc(var(--right) + max(20px, (100% - var(--side) - var(--right)) / 2 - 360px)); bottom: calc(var(--bottom) + 22px); z-index: 25;
@@ -1507,6 +1510,8 @@ body.kanban-dragging, body.kanban-dragging * { cursor: grabbing !important; user
 .kanban-composer .segment { min-height: 26px; padding: 0 2px; font-size: 12px; }
 .kanban-composer-row { display: flex; gap: 6px; margin-top: 6px; }
 body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(440px, 42vw); }
+#app:has(.kanban-layout) { container: kanbanroom / inline-size; }
+@container kanbanroom (max-width: 800px) { body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr); } body.kanban-panel-on .kanban-board { display: none; } }
 .kanban-panel { --tone: var(--hue-slate); min-height: 0; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 12px 20px 24px; border-radius: var(--radius); background: var(--tint); }
 .kanban-panel[hidden] { display: none; }
 .kanban-panel-bar { display: flex; align-items: center; gap: 6px; margin: 0 -8px 10px 0; min-height: 36px; }
@@ -1657,6 +1662,8 @@ body.on-calendar main { max-width: none; margin: 0; padding: 0 0 var(--bottom); 
 .cal-item.task { padding: 5px 8px; font-size: 13px; line-height: 1.3; }
 .cal-item.task .cal-check { position: absolute; top: 6px; left: 8px; margin: 0; }
 .cal-item.task .cal-title { text-indent: 20px; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cal-col { container: calcol / inline-size; }
+@container calcol (max-width: 140px) { .cal-item.task .cal-check { display: none; } .cal-item.task .cal-title { text-indent: 0; } }
 .cal-cell .cal-item.task { min-height: 64px; align-items: flex-start; padding: 5px 8px; }
 .cal-cell .cal-item.task .cal-open { flex-direction: column; align-items: flex-start; gap: 2px; }
 .cal-item.peeked { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -2412,7 +2419,7 @@ body.files-over main::after {
   .settling > *, .sheet:not(:has(.quick-leo)) > :not(.grip), .settings-section.arrive > *, .chat-main > .chat-head, .chat-main > .chat-body, .chat-main > .chat-foot, .margin-note[data-open] .margin-reply, .margin-note[data-open] .margin-acts { animation: row-in var(--t-follow) var(--ease-arrive) backwards; }
   .settling > :nth-child(2), .sheet > :nth-child(3), .settings-section.arrive > :nth-child(2), .chat-main > .chat-body, .margin-note[data-open] .margin-reply { animation-delay: 30ms; }
   .settling > :nth-child(n+3), .sheet > :nth-child(n+4), .settings-section.arrive > :nth-child(n+3), .chat-main > .chat-foot, .margin-note[data-open] .margin-acts { animation-delay: 60ms; }
-  .kanban-cols.settling > *, .kanban-cards.rows-in > * { animation-name: fade; }
+  .kanban-cols.settling > *, .kanban-cards.rows-in > *, .chat-history-list.rows-in > * { animation-name: fade; }
   .swap-in > :last-child { animation: fade var(--t-follow) var(--ease-arrive); }
   .tab-wipe > .kanban-tab.on { background: linear-gradient(var(--tab-on), var(--tab-on)) no-repeat 0 0 / 100% 100%; animation: tab-wipe var(--t-follow) var(--ease-move); }
 }

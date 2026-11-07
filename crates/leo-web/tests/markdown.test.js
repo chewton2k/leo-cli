@@ -202,7 +202,12 @@ test('pictures in a note are shown from leo, and outside ones stay links', () =>
 test('nested lists take their look from their depth, repeating after three', () => {
   const html = md.render(['- one', '  - two', '    - three', '      - four', '', '1. one', '  1. two', '    1. three', '      1. four'].join('\n'));
   assert.deepEqual(html.match(/<[uo]l[^>]*>/g), ['<ul>', '<ul class="list-2">', '<ul class="list-3">', '<ul class="list-1">', '<ol>', '<ol class="list-2">', '<ol class="list-3">', '<ol class="list-1">']);
-  assert.ok(md.render('2. b', { depth: 2 }).startsWith('<ol class="list-2" start="2">'));
+  assert.ok(md.render('2. b', { depth: 2 }).startsWith('<ol class="list-1" start="2">'), 'a list that does not start at 1 keeps its numbers at any depth');
+  assert.ok(md.render('1. a\n   7. g\n   8. h').includes('<ol class="list-1" start="7"><li>g</li><li>h</li></ol>'));
+  assert.ok(md.render('1) a\n   7) g').includes('<ol class="list-paren" start="7">'));
+  assert.ok(md.render('2. d', { depth: 3, first: 1 }).startsWith('<ol class="list-3" start="2">'), 'a line that continues a list from 1 keeps the depth look');
+  assert.ok(md.render('8. h', { depth: 2, first: 7 }).startsWith('<ol class="list-1" start="8">'), 'a line in a list that began at 7 stays decimal');
+  assert.ok(md.render('1. a\n   1. g').includes('<ol class="list-2"><li>g</li>'));
   assert.ok(md.render('- c', { depth: 3 }).startsWith('<ul class="list-3">'));
   assert.ok(md.render('# not a list', { depth: 2 }).startsWith('<h'));
 });
