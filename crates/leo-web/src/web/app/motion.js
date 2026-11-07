@@ -60,12 +60,18 @@ function flipPlay(els, keyOf, before, ms) {
   return played;
 }
 
-function dockPanel(el) {
+function dockPanel(el, box = null) {
   if (!el || stillMotion() || typeof el.animate !== 'function') return null;
   const from = el.getBoundingClientRect().top;
+  const side = box ? box.getBoundingClientRect() : null;
   return () => {
     const dy = from - el.getBoundingClientRect().top;
     if (Math.abs(dy) >= 1) el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: DRAWER_MS, easing: EASE_MOVE });
+    const to = side ? box.getBoundingClientRect() : null;
+    if (to && Math.abs(side.width - to.width) >= 1) {
+      const dx = side.left - to.left;
+      box.animate([{ transform: `translateX(${dx}px)`, width: `${side.width}px` }, { transform: 'none', width: `${to.width}px` }], { duration: DRAWER_MS, easing: EASE_MOVE });
+    }
   };
 }
 

@@ -2381,7 +2381,7 @@
       const recap = session && session.state === 'finished' ? recapCard(session) : '';
       const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}` : welcome();
       const perched = !state.messages.length;
-      const land = perched !== panel.classList.contains('perched') && !panel.hidden && root.leoMotion?.dock ? root.leoMotion.dock($('.chat-foot')) : null;
+      const land = perched !== panel.classList.contains('perched') && !panel.hidden && root.leoMotion?.dock ? root.leoMotion.dock($('.chat-foot'), $('#chat-form')) : null;
       const first = body.firstElementChild;
       const next = document.createElement('div');
       next.innerHTML = html;
