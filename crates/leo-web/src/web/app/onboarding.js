@@ -14,7 +14,7 @@ const ONBOARDING_STEPS = [['access', 'Access'], ['model', 'Speech model']];
 function onboardingHere(step) { return document.querySelector(`[data-onboarding-step="${step}"]`); }
 function onboardingStepper(step) {
   const at = step === 0 ? 0 : 1;
-  return `<ol class="onboarding-steps" aria-label="Setup steps">${ONBOARDING_STEPS.map(([id, label], index) => `<li class="${index < at ? 'done' : index === at ? 'on' : ''}"${index === at ? ' aria-current="step"' : ''}><span class="onboarding-step-dot">${index < at ? ICON.check : index + 1}</span>${label}</li>`).join('')}</ol>`;
+  return `<ol class="onboarding-steps" aria-label="Setup, step ${at + 1} of ${ONBOARDING_STEPS.length}">${ONBOARDING_STEPS.map(([id, label], index) => `<li class="${index < at ? 'done' : index === at ? 'on' : ''}"${index === at ? ' aria-current="step"' : ''}><span class="onboarding-step-dot">${index < at ? ICON.check : index + 1}</span>${label}</li>`).join('')}</ol>`;
 }
 // What each permission row shows. A denied microphone cannot be asked again on
 // macOS (the system ignores a second request), so its button opens Settings.
@@ -32,11 +32,11 @@ function onboardingCanContinue() {
   return microphone === 'allowed' || microphone === 'unavailable' || microphone === 'unknown';
 }
 function onboardingPermissionRow(permission, icon, name, why) {
-  return `<div class="set-row onboarding-permission" data-onboarding-permission="${permission}"><span class="onboarding-icon">${icon}</span><div class="grow"><strong>${name}</strong><p class="hint">${why}</p><p class="hint onboarding-denied" hidden>Leo is turned off in System Settings. Turn it on there, then come back.</p></div><div class="onboarding-permission-action"><button class="btn primary sm" data-action="app-command" data-app-action="${permission}">Allow</button><span role="status" class="set-status" hidden></span></div></div>`;
+  return `<div class="set-row onboarding-permission" data-onboarding-permission="${permission}"><span class="onboarding-icon">${icon}</span><div class="grow"><strong>${name}</strong><p class="hint">${why}</p><p class="hint onboarding-denied" hidden>leo is turned off in System Settings. Turn it on there, then come back.</p></div><div class="onboarding-permission-action"><button class="btn plain sm" data-action="app-command" data-app-action="${permission}">Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}</button><span role="status" class="set-status" hidden></span></div></div>`;
 }
 function onboardingPermissionsPage() {
   const windows = desktopApp.platform === 'windows';
-  return `<section class="set-card onboarding-card">${onboardingPermissionRow('microphone', ICON.mic, 'Microphone', 'For dictation and recording. Leo opens it only while you capture speech.')}${windows ? '' : onboardingPermissionRow('accessibility', ICON.access, 'Accessibility', 'Pastes dictated words into the app you are using. Without it, you paste from the clipboard yourself.')}</section>`;
+  return `<section class="set-card onboarding-card">${onboardingPermissionRow('microphone', ICON.mic, 'Microphone', 'For dictation and recording. leo opens it only while you capture speech.')}${windows ? '' : onboardingPermissionRow('accessibility', ICON.access, 'Accessibility', 'Pastes dictated words into the app you are using. Without it, you paste from the clipboard yourself.')}</section>`;
 }
 function maybeOnboarding(force = false, only = null) {
   if (!desktopApp || !desktopApp.preferences || !force && onboardingShown || document.querySelector('.scrim')) return;
@@ -45,12 +45,12 @@ function maybeOnboarding(force = false, only = null) {
   onboardingShown = true;
   const permissions = step === 0;
   const title = permissions ? 'Allow access' : 'Choose a speech model';
-  const description = permissions ? 'Leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
+  const description = permissions ? 'leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
   const foot = permissions
     ? `<button class="btn plain" data-action="onboarding-skip">Skip setup</button><button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="0" disabled>Continue</button>`
     : `<button class="btn plain" data-action="onboarding-back">Back</button><button class="btn plain" data-action="onboarding-next" data-step="2">Skip for now</button>`;
   const body = permissions ? onboardingPermissionsPage() : '<div id="onboarding-models" class="onboarding-models"><p class="hint">Opening the model library…</p></div>';
-  sheet(`<div class="onboarding" data-onboarding-step="${step}">${onboardingStepper(step)}<h3>${title}</h3><p>${description}</p>${body}<p class="hint onboarding-later">You can finish anything you skip in Settings → Health.</p><div class="buttons onboarding-foot">${foot}</div></div>`, { modal: true });
+  sheet(`<div class="onboarding" data-onboarding-step="${step}">${onboardingStepper(step)}<h3>${title}</h3><p>${description}</p>${body}<p class="hint onboarding-later">${permissions ? 'You can finish anything you skip in Settings → Health.' : 'You can choose a model later in Settings → Speech models.'}</p><div class="buttons onboarding-foot">${foot}</div></div>`, { modal: true });
   updateOnboardingPermissions();
   if (step === 2) loadOnboardingModels(++onboardingGeneration);
 }
@@ -63,7 +63,7 @@ function updateOnboardingPermissions() {
     const allowed = now === 'allowed';
     const button = row.querySelector('button');
     button.hidden = allowed || now === 'unavailable';
-    const label = now === 'denied' ? 'Open System Settings' : 'Allow';
+    const label = now === 'denied' ? 'Open System Settings' : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`;
     if (button.textContent !== label) button.textContent = label;
     button.setAttribute('aria-label', now === 'denied' ? `Open System Settings for ${permission === 'microphone' ? 'the microphone' : 'Accessibility'}` : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`);
     row.querySelector('.onboarding-denied').hidden = now !== 'denied';
