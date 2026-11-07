@@ -191,7 +191,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
 - Stagger: `cascade(list)` staggers direct children by 30 ms (capped at 150) on first arrival only,
   never on a re-render; `cascade(el, 'settling')` and the CSS for sheets, `.settings-section.arrive`,
   the chat panel and margin replies bring inner groups in 30 and 60 ms apart. Board lanes and cards
-  only fade: transforms there would count as overflow in `kanbanFit`.
+  only fade: transforms there would count as overflow in `kanbanFit`. The Chats list only fades too (2026-11-06):
+  a 4 px slide on a scrolled list moved its `scrollTop` by 4.
 - Moves: `flipList`, `pillGlide`, `settle`. `settle` follows an arc (x and y on different progress,
   `arcPoints`) and lifts onto a fixed carrier when an ancestor clips (`clippedBy`), so a drop
   passes lane and row bounds. `flyInto(ghost, target)` carries a card into another board's tab, or
@@ -242,15 +243,20 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   Backspace at the start of an item's text does the same through `stepBack`, keeping the
   text. Tab nests by the width of the marker above, so other apps nest it too; Shift+Tab goes
   back to the parent's indent; old two-space lists still nest (`listLevels` reads depth from the
-  run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines,
-  stopping a level at the first marker more than 1 from its place and leaving a lettered level
+  run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines (only `listable` lines),
+  from the edited item: an item far from the edit follows only if it continues its own run's numbers, so
+  `2019/2020/2020/2021` and `a./c. 1900` stay as typed (2026-11-06); a letter list never skips a letter.
+  Tab and Shift+Tab ask `itemIn` too, so `p. 14` or `ii. two` is prose and keeps its marker, a Tab or
+  Shift+Tab that changes nothing writes nothing, and a number of 100 or more is a chosen number (a year) that
+  nesting never renumbers. It stops a level at the first marker more than 1 from its place and leaving a lettered level
   alone unless it starts at `a` or `A`, so `2005.`, `c. 1905` and a sub-list begun at 7 keep their
   markers; a sub-list Tab just made (`fresh`) starts at its first number or letter, and `closeList` closes the numbers
   over a line that left the list. Nesting looks like Google Docs (2026-11-06, the user's
   call) and only the page changes, never the file: `markdown.js` `list` gives lists below
   the top `list-1`/`-2`/`-3` by depth (`depth` is the option for a note's one-line blocks),
   CSS draws disc, circle, square and `1.`, `a.`, `i.`, repeating; a typed top-level `1)` is
-  `list-paren`. Letters draw as typed at any depth (`list-lower`, `list-upper`, `-paren`), each
+  `list-paren`. Letters draw as typed at any depth (`list-lower`, `list-upper`, `-paren`; a nested numbered list that does not start at 1 keeps decimal, so `7.` never
+  draws as `g.`), each
   `li` with a `value` because CSS counts `aa` as 27 and `bb` as 54. Different markers side by
   side are separate lists.
   The source field in a list item is `inline-block`: as a block,
@@ -278,8 +284,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   math when it spans lines); a selection inside a longer bold run wraps instead of splitting it.
   Only marks the page draws come off, so `foo_bar_baz` and `2*3*4` keep theirs, and a callout's
   `[!type]` is never wrapped. With no selection the key opens an empty pair around the caret (`stylePair`,
-  not in code or math): the next press removes an empty pair, or steps past the closing marks
-  once something was typed.
+  not in code or math): the next press removes an empty pair (also right after a closed span, `**a**|`),
+  or steps past the closing marks once something was typed. A whole callout line styles its title.
   Tables: a click lands in that cell's raw text; Tab and Shift+Tab walk cells, Tab past the last
   adds a row. Alignment colons become `align-*` classes, `\|` stays in its cell, a short row is
   filled in. macOS replaces `--` with a dash only while `spellcheck` is on, and cancelling that
@@ -569,8 +575,12 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   step (`steer.rs`). Esc stops an answer, or closes the panel. Felix's Escape handling is on the
   document (capture), not the panel, because WebKit does not focus a button on click and the
   press would otherwise reach the page's Back and close the note (2026-11-06): an open attach or
-  access menu, then the Chats list, then the panel take it first; `routing-chat-review.spec.js`
-  presses it with focus on `body`.
+  access menu and the Chats list (when focus is in the list or the window is narrow) take it in capture;
+  with focus on `body` Felix's close is a `window` bubble listener, so the owners of an Escape inside the
+  page (a board drag, the picture frame, the outline preview, a margin thread, the card panel) get it
+  first, and `events.js` leaves a body Escape to Felix instead of going Back. An open sheet, or one still
+  closing (`.scrim-gone`), always wins. In Felix's input Escape closes the Chats list, then Felix.
+  `routing-chat-review.spec.js` presses it with focus on `body`.
 
 - Panel look (2026-11-04, the user's call; plan phase 1): the panel sits one
   tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
@@ -606,12 +616,14 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
 - Perch (2026-11-06, the user's call: "i like A. perch best flow and it's simple"; replaces the header and surface description above): the Chats list sits on `--ground`, the chat on `--page` with the 16 px corner, the composer, selected row and user bubble on `--raised`; `--field` and `--field-hi` are gone, pills and circles are 9 to 16 px rounded rectangles. An empty chat is `.chat.perched`: the greeting, composer and starters are one block centred in the panel at any height (`display: contents` on the body and hello, DOM order (`#chat-below` holds the starters after the footer) and two flex spacers), Felix perched on the composer's top edge with his `hi!!`. The first send docks the composer to the bottom (`leoMotion.dock`, `DRAWER_MS`, snaps under Reduced Motion) and it stays docked while the chat has messages. Felix lives in `#chat-face` inside the composer, so his state classes still apply (`mood` finds every `.felix`). The header is toggle, chat title (or "New chat") and close; New chat is in the Chats heading while Chats is open and in the header otherwise (one `[data-chat="new"]` shows at a time; specs use `:visible`). The composer holds paperclip, the note chip (the `data-chat="drop"` eye toggle, hidden with no note, `.off` when not reading), the access chip (no indigo for Auto; "⇧Tab to switch" is only its tooltip) and send.
 - Chat titles (2026-11-06): a short question is told apart as `<question>: <note>` only by the open
   note (a source with `why: "open"`, `chats::note_of`), so the row reads the same while Felix answers
-  (`draftTitle` uses the same rule) and after. Starters that need the note hide while the eye is off.
+  (`draftTitle` uses the same rule, including attached notes and chat references, and the same clip of 80
+  characters plus an ellipsis) and after. A streamed line that is only digits or a letter that could still
+  become a list marker is held until it has text (`held`). Starters that need the note hide while the eye is off.
 - Felix's toolbar face does not bob while idle and the panel is closed (`#chat-toggle .felix.idle`);
   only an open panel animates him idle (2026-11-06). The composer's dock moves its width as well as its
   height. In a narrow panel the placeholder keeps one line (ellipsis), the note chip keeps 76 px and the
   access chip drops its chevron (`@container chatmain`); under 1200 px the note toolbar centres in the
-  room left of the overlaying panel (`--chat-over`), and is hidden on phones while Felix is open.
+  room left of the overlaying panel (`--chat-over`), its buttons shrink to 30 px and then wrap so it never passes the panel, and is hidden on phones while Felix is open.
 - Chat panel (2026-11-06, the owner; simulation in `docs/superpowers/user-simulation-report.md`): the eye
   (`data-chat="drop"`) is a toggle that shows while a note is open, eye or eye-off, "Stop reading this
   note" or "Read this note again", and keeps focus. New chat adds a placeholder row to the Chats list
@@ -697,7 +709,8 @@ target. Check the page sequence after loading preferences.
   (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
   leaves the thread closed when it lands, and a closed failure toasts. An open failure
   shows the problem and lets the user type a question (2026-11-06, the user's call).
-  Replies show the sent text and dots the same way; a failed one restores the text.
+  Replies show the sent text and dots the same way; a failed one restores the text. The box stays editable
+  while Felix thinks and only Send waits (2026-11-06).
   Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
   Add to note. A closed thread with more messages says "N more" (marks get a ring).
   Word arrival animates colour only, never opacity (blur on WebKit); positions are rounded. With Felix open, under
@@ -992,7 +1005,14 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   `##` into the panel's edge. Closing, opening another card, moving to another board and leaving the
   page first `settle` every field (`kanbanLeavePanel`, `kanbanSettlePanel`): a failed save or a
   description over `KANBAN_MOST_DESCRIPTION` keeps the panel, the address and the text, with the
-  reason in `#kanban-card-problem`, so the server's 400 can never cost text.
+  reason in `#kanban-card-problem`, so the server's 400 can never cost text. Dragging the open card to
+  a board tab settles it first (2026-11-06; a refusal keeps the card where it was); a refused departure
+  puts back the board's own address, not the old one; opening a card re-checks the panel after each
+  settle, so quick clicks mount one panel; hiding or quitting flushes the fields (`panel.flush`) and an
+  unsaved or over-limit field keeps the close warning (`panel.dirty`). A board fetched after a change is
+  dropped if a write began meanwhile (`kanbanWrite`, `kanbanRefresh`). When the page is under 800 px wide
+  (Felix or the explorer beside it) an open card panel takes the whole page and the board is hidden
+  (container query on `#app`), so no sliver of it shows.
   The card on the board still previews the raw text.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
@@ -1392,8 +1412,10 @@ and "Updated …" sits in each plan's header (`planUpdated`). A window past its 
 response shows as a quiet line. Usage and New task share the `sheetroom` container on both
 `.scrim` and `.scrim-gone`, so a closing ghost keeps its layout.
 
-A week column shows only as many side-by-side tiles as it is wide enough for (`CAL_TILE_PX`, 40); the
-rest become a `+N` that opens the day (2026-11-06). The Tasks window stops short of the outline rail's
+A week column shows only as many side-by-side tiles as it is wide enough for (`CAL_TILE_PX`, 64, after
+a 30 px strip kept for the count); the rest become a `+N` in that strip beside the tiles that opens the day
+(2026-11-06). `calFit` re-measures after every draw and on resize (`ResizeObserver` on `#cal-main`), so the
+count is right at any width; columns under 140 px hide the task checkbox so a title keeps whole words. The Tasks window stops short of the outline rail's
 foot (`fitTasksWindow` scrolls it inside or folds it) and the outline sits above the dock.
 Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
 minimum timed block. Overlap layout includes that visual minimum; saved task
