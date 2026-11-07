@@ -361,6 +361,25 @@
     return { text: rows.join('\n'), from: offset(first.row, first.lo) - (marked ? open.length : 0), to: offset(last.row, last.hi) + (marked ? close.length : 0) };
   }
 
+  function stylePair(text, at, style) {
+    const before = text.slice(0, at);
+    const after = text.slice(at);
+    const open = style === 'underline' ? '<u>' : '*'.repeat(STYLES[style]);
+    const close = style === 'underline' ? '</u>' : open;
+    const line = before.slice(before.lastIndexOf('\n') + 1);
+    const insert = { text: before + open + close + after, at: at + open.length };
+    if (style === 'underline') {
+      const found = styleRegion(text, at, at, style);
+      if (found.on) return { text: before.slice(0, at - found.before) + found.keep.join('') + after.slice(found.after), at: at - found.before + found.keep[0].length };
+      return after.startsWith(close) && line.includes(open) ? { text, at: at + close.length } : insert;
+    }
+    const left = before.match(/\*+$/)?.[0].length || 0;
+    const right = after.match(/^\*+/)?.[0].length || 0;
+    const closes = (run) => (style === 'bold' ? run >= 2 : run % 2 === 1);
+    if (left === right && closes(left)) return { text: before.slice(0, at - open.length) + after.slice(close.length), at: at - open.length };
+    return closes(right) && line.includes(open) ? { text, at: at + close.length } : insert;
+  }
+
   function tableCells(text) {
     const found = [];
     let base = 0;
@@ -448,7 +467,7 @@
     });
   }
 
-  const api = { restyle, cellEnd, nextCell, addRow, listPrefix, itemHead, listed, listLevels, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { restyle, stylePair, cellEnd, nextCell, addRow, listPrefix, itemHead, listed, listLevels, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

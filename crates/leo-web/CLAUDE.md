@@ -241,7 +241,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   keeping the marker's gap; on an empty item it steps out one level, then leaves the list;
   Backspace at the start of an item's text does the same through `stepBack`, keeping the
   text. Tab nests by the width of the marker above, so other apps nest it too; Shift+Tab goes
-  back to the parent's indent; old two-space lists still nest (`listLevel` reads depth from the
+  back to the parent's indent; old two-space lists still nest (`listLevels` reads depth from the
   run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines,
   stopping a level at the first marker more than 1 from its place and leaving a lettered level
   alone unless it starts at `a` or `A`, so `2005.`, `c. 1905` and a sub-list begun at 7 keep their
@@ -277,7 +277,9 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (per line, past list and heading markers, also across rendered lines, skipping tables, code and
   math when it spans lines); a selection inside a longer bold run wraps instead of splitting it.
   Only marks the page draws come off, so `foo_bar_baz` and `2*3*4` keep theirs, and a callout's
-  `[!type]` is never wrapped.
+  `[!type]` is never wrapped. With no selection the key opens an empty pair around the caret (`stylePair`,
+  not in code or math): the next press removes an empty pair, or steps past the closing marks
+  once something was typed.
   Tables: a click lands in that cell's raw text; Tab and Shift+Tab walk cells, Tab past the last
   adds a row. Alignment colons become `align-*` classes, `\|` stays in its cell, a short row is
   filled in. macOS replaces `--` with a dash only while `spellcheck` is on, and cancelling that

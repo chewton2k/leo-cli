@@ -820,7 +820,14 @@
       if (editing && document.activeElement === editing.area) {
         e.preventDefault();
         const { area } = editing;
-        if (area.selectionStart === area.selectionEnd) return true;
+        if (area.selectionStart === area.selectionEnd) {
+          if (['code', 'math'].includes(editing.kind)) return true;
+          const pair = ed.stylePair(area.value, area.selectionStart, style);
+          area.value = pair.text;
+          area.setSelectionRange(pair.at, pair.at);
+          onInput();
+          return true;
+        }
         const next = ed.restyle(area.value, area.selectionStart, area.selectionEnd, style);
         area.value = next.text;
         area.setSelectionRange(next.from, next.to);

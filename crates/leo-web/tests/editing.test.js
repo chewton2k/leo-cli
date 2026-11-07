@@ -395,6 +395,36 @@ test('taking a style off removes only real marks', () => {
   assert.equal(on('a _b_ c', 'b', 'italic').text, 'a b c');
 });
 
+test('a style key with no selection opens a pair, and the next press closes it', () => {
+  const press = (marked, style) => {
+    const at = marked.indexOf('|');
+    const made = ed.stylePair(marked.replace('|', ''), at, style);
+    return made.text.slice(0, made.at) + '|' + made.text.slice(made.at);
+  };
+  for (const [from, style, to] of [
+    ['a |', 'bold', 'a **|**'],
+    ['a |', 'italic', 'a *|*'],
+    ['a |', 'underline', 'a <u>|</u>'],
+    ['a **|**', 'bold', 'a |'],
+    ['a *|*', 'italic', 'a |'],
+    ['a <u>|</u>', 'underline', 'a |'],
+    ['**|**', 'italic', '***|***'],
+    ['***|***', 'italic', '**|**'],
+    ['*|*', 'bold', '***|***'],
+    ['***|***', 'bold', '*|*'],
+    ['<u>|</u>', 'bold', '<u>**|**</u>'],
+    ['<u>**|**</u>', 'underline', '**|**'],
+    ['**|**', 'underline', '**<u>|</u>**'],
+    ['**<u>|</u>**', 'underline', '**|**'],
+    ['a **word|** b', 'bold', 'a **word**| b'],
+    ['a *word|* b', 'italic', 'a *word*| b'],
+    ['a <u>word|</u> b', 'underline', 'a <u>word</u>| b'],
+    ['a **word|** b', 'italic', 'a **word*|*** b'],
+    ['one\n|', 'bold', 'one\n**|**'],
+    ['**x**\n|**', 'bold', '**x**\n**|****'],
+  ]) assert.equal(press(from, style), to, `${from} ${style}`);
+});
+
 test('a style leaves a callout marker alone', () => {
   const text = '> [!warning] Title\n> body line';
   assert.equal(ed.restyle(text, 0, text.length, 'bold').text, '> [!warning] Title\n> **body line**');
