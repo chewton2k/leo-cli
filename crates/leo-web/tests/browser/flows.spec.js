@@ -1520,7 +1520,7 @@ test.describe('Felix', () => {
     await page.mouse.down();
     await page.mouse.move(1400, 300, { steps: 4 });
     await page.mouse.up();
-    expect((await chat.boundingBox()).width).toBe(420);
+    await expect.poll(async () => (await chat.boundingBox()).width).toBe(420);
 
     await grip.dblclick();
     expect(Math.abs((await chat.boundingBox()).width - before.width)).toBeLessThan(2);
