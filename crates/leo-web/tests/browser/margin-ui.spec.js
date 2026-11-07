@@ -230,3 +230,14 @@ test('Felix only bobs while his panel is open', async ({ page }) => {
   await expect(page.locator('#chat')).toBeHidden();
   expect(await bobbing()).toBe(0);
 });
+
+test('turning the eye off hides the starters that need the open note', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Starters', body: 'Hello.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await page.locator('#chat-toggle').click();
+  await expect(page.locator('.starter')).toHaveCount(5);
+  await page.locator('[data-chat="drop"]').click();
+  await expect(page.locator('.starter')).toHaveText(['Quiz me across my classes', 'Make me a 3-day review plan']);
+  await page.locator('[data-chat="drop"]').click();
+  await expect(page.locator('.starter')).toHaveCount(5);
+});

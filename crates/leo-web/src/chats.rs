@@ -126,7 +126,11 @@ fn note_of(refs: &[Ref], messages: &[serde_json::Value]) -> Option<String> {
         .and_then(|m| m.get("sources"))
         .and_then(|s| s.as_array())
         .and_then(|s| s.first())
-        .filter(|s| s.get("why").and_then(|w| w.as_str()).is_none_or(|w| w == "open"))
+        .filter(|s| {
+            s.get("why")
+                .and_then(|w| w.as_str())
+                .is_none_or(|w| w == "open")
+        })
         .and_then(|s| s.get("title"))
         .and_then(|t| t.as_str())
         .map(str::to_string);
@@ -635,10 +639,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("chats");
         let found = serde_json::json!({ "role": "assistant", "text": "x", "sources": [{ "id": "a", "title": "Heaps", "why": "matches the question" }] });
-        let chat = save(&dir, "chat-eeee-1", saving(vec![said("user", "Say only: pong"), found]), at(1)).unwrap();
+        let chat = save(
+            &dir,
+            "chat-eeee-1",
+            saving(vec![said("user", "Say only: pong"), found]),
+            at(1),
+        )
+        .unwrap();
         assert_eq!(chat.title, "Say only: pong");
         let open = serde_json::json!({ "role": "assistant", "text": "x", "sources": [{ "id": "a", "title": "Heaps", "why": "open" }] });
-        let chat = save(&dir, "chat-eeee-2", saving(vec![said("user", "Say only: pong"), open]), at(1)).unwrap();
+        let chat = save(
+            &dir,
+            "chat-eeee-2",
+            saving(vec![said("user", "Say only: pong"), open]),
+            at(1),
+        )
+        .unwrap();
         assert_eq!(chat.title, "Say only: pong: Heaps");
     }
 
