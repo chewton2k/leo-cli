@@ -141,7 +141,9 @@ button { cursor: pointer; }
 button, label, summary, [role="button"], [role="tab"], [draggable="true"], .bar, .rail, .actions, .select-bar, .activity-head, .set-label, .kanban-col-head {
   -webkit-user-select: none; user-select: none;
 }
-input, textarea, [contenteditable="true"], .prose .task > span, .prose, .chat-text, .set-note, .hint { -webkit-user-select: text; user-select: text; }
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable="true"], .doc, .prose .task > span, .prose, pre, code, .chat-text, .bubble, .msg-error, .msg-passage-text, .margin-felix, .margin-you, .margin-pending, .margin-problem, .srcs, .set-note, .set-path, .hint, .sched-about, .choice-about, .rec-transcript, .rec-points, .rec-error-details, .upload-error, .diagram-error, .toast { -webkit-user-select: text; user-select: text; }
+.doc-tail, .blk:has(.blank) { -webkit-user-select: none; user-select: none; }
 a, img { -webkit-user-drag: none; }
 a { color: var(--accent); }
 [hidden] { display: none !important; }
