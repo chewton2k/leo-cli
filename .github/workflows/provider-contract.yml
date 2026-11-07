@@ -1,0 +1,34 @@
+name: Provider contract
+
+on:
+  schedule:
+    - cron: '41 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: 1
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Install the latest Codex and Claude Code
+        run: |
+          npm install -g @openai/codex @anthropic-ai/claude-code
+          codex --version
+          claude --version
+      - name: Check what Leo relies on
+        run: cargo test -p leo-services --lib installed_programs_still_match_what_leo_relies_on --locked -- --ignored --nocapture

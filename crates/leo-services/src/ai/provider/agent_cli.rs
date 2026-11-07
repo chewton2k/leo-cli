@@ -1704,6 +1704,69 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "contract check against the installed Codex and Claude Code (provider-contract workflow)"]
+    fn installed_programs_still_match_what_leo_relies_on() {
+        use std::io::Write as _;
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.toml"),
+            "[mcp_servers.fake]\ncommand = \"true\"\n",
+        )
+        .unwrap();
+        std::env::set_var("CODEX_HOME", home.path());
+        let codex = locate("codex").expect("codex is installed");
+        let claude = locate("claude").expect("claude is installed");
+        let help = probe(&claude, &["--help"]).unwrap();
+        assert!(help.contains("--safe-mode") && help.contains("--tools"));
+        assert!(codex_disables(&codex)
+            .unwrap()
+            .iter()
+            .any(|f| f == "shell_tool"));
+        let exec = probe(&codex, &["exec", "--help"]).unwrap();
+        assert!(exec.contains("--sandbox") && exec.contains("--ephemeral"));
+        let scope = codex_scope(&codex, "app-server", home.path()).unwrap();
+        println!("scope: {scope:?}");
+        if !scope.iter().any(|a| a == "--ignore-user-config") {
+            let mut args: Vec<&str> = scope.iter().map(String::as_str).collect();
+            args.extend(["mcp", "list", "--json"]);
+            let listed: Vec<serde_json::Value> =
+                serde_json::from_str(&probe(&codex, &args).unwrap()).unwrap();
+            assert!(!listed.is_empty());
+            assert!(listed.iter().all(|s| s["enabled"] == false), "{listed:?}");
+        }
+        let out = home.path().join("schema");
+        probe(
+            &codex,
+            &[
+                "app-server",
+                "generate-json-schema",
+                "--experimental",
+                "--out",
+                out.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let schema = std::fs::read_to_string(out.join("ClientRequest.json")).unwrap();
+        assert!(schema.contains("dynamicTools"));
+        let mut child = std::process::Command::new(&codex)
+            .arg("app-server")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"clientInfo":{{"name":"contract","version":"0"}}}}}}"#).unwrap();
+        let mut line = String::new();
+        let read = BufReader::new(child.stdout.take().unwrap()).read_line(&mut line);
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+        read.unwrap();
+        assert!(line.contains("\"result\""), "{line}");
+    }
+
+    #[test]
     fn a_missing_program_is_unavailable_and_says_how_to_install_it() {
         let cfg = config(ProviderKind::Codex, "leo-not-a-real-codex", None);
         let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
