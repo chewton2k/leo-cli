@@ -338,7 +338,10 @@ function marginAnswer(line, text, arriving = false) {
   } else {
     line.textContent = text;
   }
-  if (arriving && !stillMotion()) inkNodes(line);
+  if (!arriving) return;
+  if (!stillMotion()) inkNodes(line);
+  const said = line.parentElement;
+  if (said?.classList.contains('margin-said')) said.scrollTop = Math.max(0, line.offsetTop - 28);
 }
 
 function marginElement(t) {

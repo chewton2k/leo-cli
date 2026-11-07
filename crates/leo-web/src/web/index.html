@@ -276,6 +276,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-chat svg { width: 15px; height: 15px; }
 .margin-note.arriving .margin-felix figure { animation: fade .3s var(--ease-arrive) both; }
 .margin-note[data-open] { z-index: 2; }
+.margin-note[data-open] .margin-said { max-height: min(420px, calc(100dvh - 260px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .margin-said { position: relative; display: grid; gap: 7px; }
 .margin-said p, .margin-said > div { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .margin-felix { font-family: var(--felix-letters); font-size: calc(15px * var(--read)); line-height: 1.46; color: var(--text); }
