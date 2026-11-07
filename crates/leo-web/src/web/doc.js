@@ -302,7 +302,7 @@
       const after = end - text.right - 12;
       if (before >= 220) return { left: rail.width + 12, width: Math.min(280, before) };
       if (after >= 220) return { left: text.right + 12 - rail.left, width: Math.min(280, after) };
-      return null;
+      return { left: rail.width + 12, width: Math.min(280, end - rail.right - 12) };
     }
 
     function outlinePointer(y) {
