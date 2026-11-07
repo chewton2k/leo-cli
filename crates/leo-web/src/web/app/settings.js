@@ -209,14 +209,20 @@ function planLimits(plan) {
     const expired = validReset && reset.getTime() <= now;
     const available = valid && !expired;
     const percent = available ? Math.max(0, Math.min(100, 100 - Math.round(used * 100))) : null;
-    const when = expired ? 'Waiting for update' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
-    return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong>${available ? `${percent}% <small>left</small>` : 'Unavailable'}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ' aria-valuetext="Unavailable"'}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
+    const missing = expired ? 'Reset' : 'Not read yet';
+    const when = !available ? 'Refresh to check' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
+    return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong${available ? '' : ' class="plan-none"'}>${available ? `${percent}% <small>left</small>` : missing}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ` aria-valuetext="${missing}"`}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
   }).join('');
+  return windows;
+}
+
+function planUpdated(plan) {
+  const limits = plan.limits;
+  const now = Date.now();
   const seenAt = typeof limits?.seen_at === 'string' && limits.seen_at ? limits.seen_at : null;
   const seen = seenAt ? new Date(seenAt).getTime() : NaN;
   const stale = Number.isFinite(seen) && now - seen >= PLAN_STALE_MS;
-  const status = Number.isFinite(seen) ? `${stale ? 'Saved · ' : ''}Updated ${esc(rel(seenAt))}` : 'Usage has not been reported yet';
-  return windows + `<p class="hint usage-status" role="status">${status}</p>`;
+  return Number.isFinite(seen) ? `${stale ? 'Saved · ' : ''}Updated ${rel(seenAt)}` : '';
 }
 
 function duration(ms) {
@@ -231,7 +237,7 @@ function codingPlans(page, selectable = true) {
   return `<div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selectable && selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><div class="plan-title"><h4>${esc(plan.name)}</h4>${planUpdated(plan) ? `<span class="hint plan-updated">${esc(planUpdated(plan))}</span>` : ''}</div><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selectable && selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
   }).join('')}</div>`;
 }
 
@@ -534,54 +540,63 @@ app.addEventListener('change', (event) => {
 
 async function showUsage(trigger = null) {
   const opener = trigger?.closest?.('.scrim') ? $('#menu') : trigger || document.activeElement;
-  const box = sheet('<header class="usage-head"><h3>Usage</h3><div class="usage-tools"><span aria-current="page">Limits</span><button type="button" class="btn plain sm" data-action="usage-refresh" disabled>Refresh</button><button type="button" class="btn plain sm" data-action="close">Close</button></div></header><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div>');
+  const plan = '<section class="coding-plan"><div class="skeleton plan-sk-head"></div><div class="skeleton plan-sk-row"></div><div class="skeleton plan-sk-row"></div></section>';
+  const box = sheet(`<header class="usage-head"><div><h3>Usage</h3><p class="usage-sub">Plan limits</p></div><div class="usage-tools"><button type="button" class="icon-btn" data-action="usage-refresh" aria-label="Refresh" disabled>${ICON.refresh}</button><button type="button" class="icon-btn" data-action="close" aria-label="Close">${ICON.close}</button></div></header><div class="usage-content" aria-busy="true"><div class="coding-plans" aria-hidden="true">${plan}${plan}</div></div>`);
   box.returnFocus = opener;
   box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
   const mine = seq;
-  let saved = false, refreshing = true;
+  let saved = false, refreshing = true, drawn = false;
   const live = () => mine === seq && box.isConnected && !box.classList.contains('scrim-gone');
   const content = box.querySelector('.usage-content');
-  const refresh = async () => {
+  const button = box.querySelector('[data-action="usage-refresh"]');
+  const busy = (on) => {
+    refreshing = on;
+    button.disabled = on;
+    button.innerHTML = on ? '<span class="activity-spin"></span>' : ICON.refresh;
+  };
+  const draw = (page) => {
+    content.removeAttribute('aria-busy');
+    content.innerHTML = (codingPlans(page, false) || '<p class="hint" role="status">No coding accounts detected.</p>') + (page.note ? `<p class="hint usage-note">${esc(page.note)}</p>` : '');
+    if (!drawn) cascade(content.querySelector('.coding-plans'));
+    drawn = true;
+  };
+  const refresh = async (body = {}) => {
     if (refreshing || !live()) return;
-    refreshing = true;
-    const button = box.querySelector('[data-action="usage-refresh"]');
     const focused = document.activeElement === button;
-    button.disabled = true;
+    busy(true);
     try {
-      const fresh = await api('/api/settings/usage', { method: 'POST' });
+      const fresh = await api('/api/settings/usage', { method: 'POST', body });
       if (!live()) return;
-      content.innerHTML = codingPlans(fresh, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+      draw(fresh);
       saved = true;
     } catch (e) {
       if (!live()) return;
-      if (!saved) content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
+      if (!saved) { content.removeAttribute('aria-busy'); content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>'; }
       else {
         content.querySelector('.usage-error')?.remove();
         content.insertAdjacentHTML('beforeend', '<p class="hint usage-error" role="status">Refresh failed · showing saved usage</p>');
       }
     } finally {
-      refreshing = false;
       if (live()) {
-        button.disabled = false;
+        busy(false);
         if (focused && document.activeElement === document.body) button.focus();
-      }
+      } else refreshing = false;
     }
   };
   box.addEventListener('click', event => {
-    const button = event.target.closest('[data-action="usage-refresh"]');
-    if (button && !refreshing) { button.focus(); refresh(); }
+    if (event.target.closest('[data-action="usage-refresh"]') && !refreshing) { button.focus(); refresh({ claude: true }); }
   });
   try {
     const page = await api('/api/settings');
     if (!live()) return;
-    content.innerHTML = codingPlans(page, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+    draw(page);
     saved = Boolean(page.plans?.length);
   } catch (e) {
     if (!live()) return;
+    content.removeAttribute('aria-busy');
     content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
   }
-  refreshing = false;
-  if (live()) box.querySelector('[data-action="usage-refresh"]').disabled = false;
+  busy(false);
   refresh();
 }

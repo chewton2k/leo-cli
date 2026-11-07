@@ -80,11 +80,12 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
     const rel=()=> '10 minutes ago'; let seq=1, finishUsage, failUsage, usageCalls=0, writer='claude_code';
     const cached={tasks:[{task:'writing',provider:'claude_code'}],plans:[{provider:'codex',name:'Codex',installed:true,signed_in:true,limits:{five_hour:{used:.39,resets_at:Date.now()/1000+3600},seven_day:{used:.06,resets_at:Date.now()/1000+86400},seen_at:new Date(Date.now()-600000).toISOString()}},{provider:'claude_code',name:'Claude Code',installed:true,signed_in:true,limits:{five_hour:{used:1,resets_at:Date.now()/1000+3600},seven_day:{used:.95,resets_at:Date.now()/1000+86400},seen_at:new Date().toISOString()}}]};
     function sheet(html){const box=document.createElement('div');box.className='scrim';box.innerHTML='<div class="sheet" role="dialog" aria-modal="true">'+html+'</div>';box.addEventListener('click',e=>{if(e.target.closest('[data-action="close"]')) box.classList.add('scrim-gone');});document.body.append(box);trapSheetFocus(box);return box;}
-    async function api(url){if(url==='/api/settings')return structuredClone(cached);usageCalls++;return new Promise((resolve,reject)=>{finishUsage=resolve;failUsage=reject;});}
+    const bodies=[], ICON={refresh:'<svg></svg>',close:'<svg></svg>'}, cascade=()=>{};
+    async function api(url,options){if(url==='/api/settings')return structuredClone(cached);usageCalls++;bodies.push(options&&options.body);return new Promise((resolve,reject)=>{finishUsage=resolve;failUsage=reject;});}
     ${focus}
     ${plans}
     ${usage}
-    window.audit={open:showUsage,usageCalls:()=>usageCalls,finish:value=>finishUsage(value),fail:()=>failUsage(new Error('offline')),writer:()=>writer};` });
+    window.audit={open:showUsage,usageCalls:()=>usageCalls,bodies:()=>bodies,finish:value=>finishUsage(value),fail:()=>failUsage(new Error('offline')),writer:()=>writer};` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => audit.open());
   await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
@@ -100,6 +101,7 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await page.screenshot({path:testInfo.outputPath('usage-desktop-dark.png'),animations:'disabled'});
   await expect.poll(() => page.evaluate(() => audit.usageCalls())).toBe(1);
+  expect(await page.evaluate(() => audit.bodies())).toEqual([{}]);
   await expect(page.getByRole('button', { name: 'Refresh' })).toBeDisabled();
   await page.getByRole('button', { name: 'Refresh' }).dispatchEvent('click');
   expect(await page.evaluate(() => audit.usageCalls())).toBe(1);
@@ -117,6 +119,7 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
   await refresh.focus();
   await refresh.click();
   await expect(refresh).toBeDisabled();
+  expect(await page.evaluate(() => audit.bodies())).toEqual([{}, { claude: true }]);
   await page.evaluate(() => audit.finish({tasks:[{task:'writing',provider:'codex'}],plans:[{provider:'codex',name:'Codex',installed:true,signed_in:true,limits:{five_hour:{used:.2,resets_at:Date.now()/1000+3600},seen_at:new Date().toISOString()}}]}));
   await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '80');
   await expect(refresh).toBeEnabled();

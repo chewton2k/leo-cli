@@ -1265,6 +1265,15 @@ Highlight, cleared after five seconds or navigation without changing editor DOM.
 Usage keeps a single provider column with compact Session/Weekly rows: remaining
 percentage at left, a muted provider-colored bar and reset time at right. The
 dialog has no nested settings card or setup prose; unknown readings stay explicit.
+Usage (2026-11-06, the owner: no small modal that grows): the sheet opens at its final
+size (`min-height`) with `.skeleton` shaped as two plans of two rows, then the saved
+readings come in with `cascade`, first draw only. Refresh and Close are icon buttons (labels
+kept; `.activity-spin` replaces the arrows while busy); "Plan limits" is a muted subtitle,
+and "Updated …" sits in each plan's header (`planUpdated`). A window past its reset says
+"Reset", one never read says "Not read yet", both with "Refresh to check". Opening POSTs
+`/api/settings/usage` with `{}`; the Refresh button POSTs `{ "claude": true }`; a `note` in the
+response shows as a quiet line. Usage and New task share the `sheetroom` container on both
+`.scrim` and `.scrim-gone`, so a closing ghost keeps its layout.
 
 Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
 minimum timed block. Overlap layout includes that visual minimum; saved task
