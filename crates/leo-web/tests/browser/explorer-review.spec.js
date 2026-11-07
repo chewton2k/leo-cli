@@ -49,14 +49,14 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('#app')).not.toBeEmpty();
 });
 
-for (const where of ['chip', 'breadcrumb']) test(`desktop ${where} folder click unfolds a hidden explorer`, async ({ page }) => {
+test('desktop breadcrumb folder click unfolds a hidden explorer', async ({ page }) => {
   const dir = await createFolder(page);
   const note = await createNote(page, dir);
   await openNote(page, note);
   await page.locator('#side .side-fold').click();
   await expect(page.locator('body')).toHaveClass(/side-mini/);
   await expect(page.locator('#side .side-explorer')).toBeHidden();
-  const control = where === 'chip' ? page.locator(`#app [data-action="open-folder"][data-dir="${dir}"]`) : page.locator(`#crumbs [data-action="open-folder"][data-dir="${dir}"]`);
+  const control = page.locator(`#crumbs [data-action="open-folder"][data-dir="${dir}"]`);
   await control.click();
   await expect(page.locator('body')).not.toHaveClass(/side-mini/);
   await expect(page.locator('#side .side-explorer')).toBeVisible();

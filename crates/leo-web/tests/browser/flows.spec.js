@@ -785,6 +785,33 @@ test('search finds a note named after a command', async ({ page }) => {
   await expect(page.locator('.card').filter({ hasText: 'backup checklist' })).toBeVisible();
 });
 
+test('search shows placeholder cards while it waits', async ({ page }) => {
+  await page.route('**/api/search*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
+  await page.goto('/#/search/queue');
+  await expect(page.locator('#app .section-title')).toHaveText('Searching…');
+  await expect(page.locator('#app .cards .skeleton')).toHaveCount(3);
+  await expect(page.locator('#app .cards .skeleton')).toHaveCount(0);
+});
+
+test('nothing found offers Felix and a new note', async ({ page }) => {
+  const tag = Date.now().toString(36);
+  const ask = `zzqq-ask-${tag}`;
+  const fresh = `zzqq-new-${tag}`;
+  await page.goto(`/#/search/${ask}`);
+  await expect(page.getByRole('heading', { name: `No notes match “${ask}”` })).toBeVisible();
+  await page.getByRole('button', { name: 'Ask Felix' }).click();
+  await expect(page.locator('#chat')).toBeVisible();
+  await expect(page.locator('#chat-body')).toContainText(ask);
+  await page.locator('#chat [data-chat="close"]').click();
+  await page.goto(`/#/search/${fresh}`);
+  await page.getByRole('button', { name: `New note “${fresh}”` }).click();
+  await expect(page).toHaveURL(/#\/n\//);
+  await expect(page.locator('#title')).toHaveText(fresh);
+});
+
 
 test.describe('note connections', () => {
   test('graph navigation and endpoints are removed', async ({ page }) => {
@@ -3744,13 +3771,13 @@ test.describe('passages', () => {
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
     await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
     await page.goto(`/#/n/${note.id}`);
-    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
     await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'both');
     await page.reload();
-    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
     await page.waitForTimeout(4500);
     expect(reads, 'opening a note must not read it').toEqual([]);
 
@@ -3806,7 +3833,7 @@ test.describe('passages', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
     await page.locator('#doc .blk').first().click();
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');

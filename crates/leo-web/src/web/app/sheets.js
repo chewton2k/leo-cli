@@ -21,6 +21,11 @@ function sheet(html, { modal = false } = {}) {
   scrim.returnFocus = opener;
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
+  const heading = scrim.querySelector('.sheet > h3, .sheet > * > h3');
+  if (heading) {
+    heading.id = heading.id || 'sheet-title';
+    scrim.querySelector('.sheet').setAttribute('aria-labelledby', heading.id);
+  }
   scrim.addEventListener('click', (e) => {
     if (e.target === scrim && !modal) closeSheet();
   });
