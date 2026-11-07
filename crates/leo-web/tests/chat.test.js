@@ -438,7 +438,7 @@ test('tool activity follows streamed text without dropping text or splitting Uni
 test('conversation rows display only escaped titles, including search results', () => {
   const fs = require('node:fs');
   const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
   const row = source.slice(source.indexOf('    function chatRow(c) {'), source.indexOf('\n    let resumeSeq', source.indexOf('    function chatRow(c) {')));
   const context = vm.createContext({ state: { id: 'chat-one', doomed: null }, escape: esc });
   vm.runInContext(row, context);
@@ -456,7 +456,7 @@ test('conversation rows display only escaped titles, including search results', 
 function chatSendFixture(id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
   const send = source.slice(source.indexOf('    async function send('), source.indexOf('    let leaving ='));
   const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const writer = (m) =>'));
   const state = { id, access, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
