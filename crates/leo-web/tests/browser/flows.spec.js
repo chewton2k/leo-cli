@@ -929,14 +929,14 @@ test.describe('Felix', () => {
       const next = (html) => { const t = document.createElement('div'); t.innerHTML = html; return t; };
       const box = document.querySelector('#settle');
       window.__first = box.querySelector('p').firstChild;
-      leoChat.settle(box, next('<div class="msg leo pending"><div class="prose"><p>Hello there my friend</p></div></div>'), false);
+      leoChat.settle(box, next('<div class="msg leo pending"><div class="prose"><p>Hello there my friend</p></div></div>'));
       window.__again = box.querySelector('p').textContent;
     });
-    expect(await page.evaluate(() => ({ kept: document.querySelector('#settle p').firstChild === window.__first, text: window.__again, words: document.querySelectorAll('#settle .word').length }))).toEqual({ kept: true, text: 'Hello there my friend', words: 2 });
+    expect(await page.evaluate(() => ({ kept: document.querySelector('#settle p').firstChild === window.__first, text: window.__again, words: document.querySelectorAll('#settle .word').length }))).toEqual({ kept: true, text: 'Hello there my friend', words: 0 });
     await page.evaluate(() => {
       const t = document.createElement('div');
       t.innerHTML = '<div class="msg leo"><div class="prose"><p>Hello there my friend</p></div></div>';
-      leoChat.settle(document.querySelector('#settle'), t, false);
+      leoChat.settle(document.querySelector('#settle'), t);
     });
     expect(await page.evaluate(() => document.querySelector('#settle p').textContent)).toBe('Hello there my friend');
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [{ n: 1, id: note.id, title: 'Lit', folder: '', why: 'open' }] }, { t: 'It says so [n1 L3-3].' }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' }));

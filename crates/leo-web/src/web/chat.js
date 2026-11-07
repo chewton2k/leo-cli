@@ -679,31 +679,8 @@
   const NOTE_DRAG = 'application/x-leo-note';
 
   const WORDS = /\s*\S+|\s+/g;
-  const NO_ARRIVAL = 'pre, code, button, svg, textarea, input, .katex, .cite';
 
   const greeting = (text, escape) => (text.match(WORDS) || []).map((part, i) => `<span class="word" style="animation-delay:${160 + Math.min(i, 14) * 30}ms">${escape(part)}</span>`).join('');
-
-  function arriving(text) {
-    const out = document.createDocumentFragment();
-    (text.match(WORDS) || []).forEach((part, i) => {
-      const word = document.createElement('span');
-      word.className = 'word';
-      word.style.animationDelay = `${Math.min(i, 8) * 30}ms`;
-      word.textContent = part;
-      out.append(word);
-    });
-    return out;
-  }
-
-  function arrive(node) {
-    if (node.nodeType === 3) return node.data.trim() ? arriving(node.data) : node;
-    if (node.nodeType !== 1) return node;
-    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-    const found = [];
-    for (let t = walker.nextNode(); t; t = walker.nextNode()) if (t.data.trim() && !t.parentElement.closest(NO_ARRIVAL)) found.push(t);
-    for (const t of found) t.replaceWith(arriving(t.data));
-    return node;
-  }
 
   const isWord = (n) => n.nodeType === 1 && n.classList.contains('word');
 
@@ -725,13 +702,13 @@
     for (const { name, value } of to.attributes) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
   }
 
-  function settle(from, to, arrives) {
+  function settle(from, to) {
     const was = runs(from);
     const now = runs(to);
     now.forEach((b, i) => {
       const a = was[i];
       if (!a) {
-        for (const n of b.nodes) from.append(arrives ? arrive(n) : n);
+        for (const n of b.nodes) from.append(n);
         return;
       }
       if (a.run && b.run) {
@@ -739,7 +716,7 @@
         const after = said(b);
         if (before === after) return;
         const end = a.nodes[a.nodes.length - 1];
-        if (arrives && before && after.startsWith(before)) end.after(arriving(after.slice(before.length)));
+        if (before && after.startsWith(before) && end.nodeType === 3) end.appendData(after.slice(before.length));
         else {
           end.after(...b.nodes);
           a.nodes.forEach((n) => n.remove());
@@ -751,10 +728,10 @@
       if (!a.run && !b.run && x.nodeType === 1 && y.nodeType === 1 && x.tagName === y.tagName) {
         if (x.outerHTML === y.outerHTML) return;
         match(x, y);
-        settle(x, y, arrives || (x.classList.contains('prose') && Boolean(x.closest('.msg.pending'))));
+        settle(x, y);
         return;
       }
-      x.before(...b.nodes.map((n) => (arrives ? arrive(n) : n)));
+      x.before(...b.nodes);
       a.nodes.forEach((n) => n.remove());
     });
     for (const a of was.slice(now.length)) a.nodes.forEach((n) => n.remove());
@@ -2375,7 +2352,7 @@
       const next = document.createElement('div');
       next.innerHTML = html;
       const hello = Boolean(first) && first.classList.contains('chat-hello') && Boolean(next.firstElementChild) && next.firstElementChild.dataset.hello === first.dataset.hello;
-      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next, false);
+      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next);
       else body.innerHTML = html;
       drawProgress();
       if (typing) {
