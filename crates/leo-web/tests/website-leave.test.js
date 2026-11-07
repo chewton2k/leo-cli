@@ -14,7 +14,7 @@ function environment({ draft = false, panel = null } = {}) {
     navigationRequest: 0, seq: 0,
     window: { addEventListener: (name, fn) => { windows[name] = fn; } },
     document: { visibilityState: 'visible', activeElement: null, body: {}, addEventListener: (name, fn) => { documents[name] = fn; } },
-    kanban: { panel },
+    kanban: { panel }, pendingAutosaves: () => [],
     state: { view: 'workspace', session: null },
     app: { contains: () => false },
     saving: { unsaved: () => draft, retry: () => { saved.push('notes'); return Promise.resolve([]); } },
