@@ -696,7 +696,7 @@ target. Check the page sequence after loading preferences.
   (`ai::reads_stay_here`).
 - Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (30 s, 90 s, 3 min, 5 min; default 90 s, `Prefs.gap`) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
-  most 8,000 characters in and 220 tokens out. At the defaults, 40 reads An over-limit card offers Discard these changes, the one way out that drops text (2026-11-06).
+  most 8,000 characters in and 220 tokens out. At the defaults, 40 reads
   take an hour of writing at least, and a day's worst case is about 90k input
   tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
   bounded when parsed.
@@ -1009,7 +1009,7 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   a board tab settles it first (2026-11-06; a refusal keeps the card where it was); a refused departure
   puts back the board's own address, not the old one; opening a card re-checks the panel after each
   settle, so quick clicks mount one panel; hiding or quitting flushes the fields (`panel.flush`) and an
-  unsaved or over-limit field keeps the close warning (`panel.dirty`). A board fetched after a change is
+  unsaved or over-limit field keeps the close warning (`panel.dirty`). An over-limit card offers Discard these changes, the one way out that drops text (2026-11-06). A board fetched after a change is
   dropped if a write began meanwhile (`kanbanWrite`, `kanbanRefresh`). When the page is under 800 px wide
   (Felix or the explorer beside it) an open card panel takes the whole page and the board is hidden
   (container query on `#app`), so no sliver of it shows.
