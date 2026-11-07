@@ -20,19 +20,15 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(html.includes('role="radiogroup" aria-label="Popup"'));
   assert.ok(/<input type="checkbox" class="switch" role="switch" data-dictation="writing" data-on="quick">/.test(html));
   assert.ok(html.includes('Adds a few seconds'));
+  assert.ok(!html.includes('dictation-badge'));
+  for (const text of ['<h3>Shortcut and microphone</h3>', '<h3>Text</h3>', '<h3>Popup</h3>', 'Change shortcut']) assert.ok(html.includes(text), text);
+  assert.ok(!/id="dictation-position-row" hidden/.test(html));
+  assert.ok(/id="dictation-position-row" hidden/.test(context.dictationCards({ settings: { popup: 'off' }, recent: [], shortcut: {} })));
   assert.ok(!html.includes('data-action="dictation-save"'));
   assert.ok(!html.includes('Save after editing'));
-  assert.ok(html.includes('>Local<'));
   assert.ok(!html.includes('No writing AI is set up'));
   const unready = context.dictationCards({ settings: { writing: 'quick' }, writing_ready: false, recent: [], shortcut: {} });
   assert.ok(unready.includes('No writing AI is set up'));
-  assert.ok(unready.includes('Uses writing AI'));
-  const badge = { textContent: 'Local' };
-  context.$ = (selector) => (selector === '#dictation-badge' ? badge : null);
-  context.updateDictationStatus({ settings: { writing: 'selected' }, shortcut: {} });
-  assert.equal(badge.textContent, 'Uses writing AI');
-  context.updateDictationStatus({ settings: { writing: 'off' }, shortcut: {} });
-  assert.equal(badge.textContent, 'Local');
   const chosen = context.dictationCards({ settings: { writing: 'selected' }, recent: [], shortcut: {} });
   assert.ok(chosen.includes('data-dictation="writing" data-on="selected" checked'));
   const fields = (checked, on) => [{ dataset: { dictation: 'writing', on }, type: 'checkbox', checked }];
@@ -44,11 +40,22 @@ test('dictation controls escape history and preserve explicit text settings', ()
   context.app.querySelectorAll = () => fields(true, 'quick');
   assert.equal(context.dictationDraft().writing, 'quick');
 });
+test('clearing history asks first', () => {
+  const calls = [];
+  const context = { app: { addEventListener() {} }, confirmSheet: (options) => calls.push(options), state: {}, window: {}, document: { activeElement: null, addEventListener() {} }, setTimeout() {} };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/dictation.js'), 'utf8'), context);
+  context.clearDictationsAsk();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].action, 'dictation-clear-now');
+  assert.equal(calls[0].yes, 'Clear history');
+});
 test('popup live and minimal states keep useful errors and timers', () => {
   const { display } = require('../../leo-desktop/dist/dictation.js');
   assert.equal(display({ state: 'listening', seconds: 62.9, text: 'hello' }).timer, '1:02');
   assert.equal(display({ state: 'listening', minimal: true, text: 'hello' }).text, '');
   assert.equal(display({ state: 'error', minimal: true, message: 'Choose a microphone.' }).text, 'Choose a microphone.');
+  assert.equal(display({ state: 'error', message: 'x' }).label, 'Dictation stopped');
   assert.equal(display({ state: 'loading' }).label, 'Loading model…');
   const starting = display({ state: 'starting' });
   assert.equal(starting.label, 'Starting microphone…');

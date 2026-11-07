@@ -2465,13 +2465,14 @@ test.describe('recording', () => {
     expect(await page.evaluate(() => {
       const pad = document.querySelector('.rec-notepad');
       const heard = document.querySelector('#rec-heard');
-      return Boolean(pad.compareDocumentPosition(heard) & Node.DOCUMENT_POSITION_FOLLOWING) && !heard.open;
+      return Boolean(pad.compareDocumentPosition(heard) & Node.DOCUMENT_POSITION_PRECEDING) && heard.open;
     })).toBe(true);
-    await expect(page.locator('#rec-transcript')).toBeHidden();
-    await page.locator('#rec-heard > summary').click();
     await expect(page.locator('#rec-transcript')).toBeVisible();
+    await page.locator('#rec-heard > summary').click();
+    await expect(page.locator('#rec-transcript')).toBeHidden();
+    expect(await page.evaluate(() => localStorage.getItem('leo-rec-heard'))).toBe('shut');
     await page.waitForTimeout(1500);
-    await expect(page.locator('#rec-heard')).toHaveAttribute('open', '');
+    await expect(page.locator('#rec-heard')).not.toHaveAttribute('open', '');
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound', { timeout: 8000 });
     const drawn = await page.locator('#rec-wave').evaluate((canvas) => {
@@ -3728,6 +3729,20 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.reload();
   await expect(page.locator('.rec-idle')).toBeVisible();
+  await page.unroute('**/api/record');
+  await page.unroute('**/api/record/failed-call-fixture');
+  const base = { id: 'rec-2', session: 'sess-1', source: 'microphone', secs: 5, step: '', steps: null, transcript: '', warnings: [], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: null };
+  let polled = false;
+  const recovered = [];
+  await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job: polled ? { ...base, state: 'failed', error: 'Provider failed' } : { ...base, state: 'writing' }, pending: polled ? [{ id: 'sess-1', title: null, directory: '', source: 'microphone' }] : [] } }));
+  await page.route('**/api/record/rec-2', route => { polled = true; return route.fulfill({ json: { ...base, state: 'failed', error: 'Provider failed' } }); });
+  await page.route('**/api/record/sess-1/recover', route => { recovered.push(route.request().method()); return route.fulfill({ status: 202, json: { id: 'rec-3' } }); });
+  await page.evaluate(() => sessionStorage.removeItem('leo-record-dismissed'));
+  await page.reload();
+  const recover = page.getByRole('button', { name: 'Recover recording' });
+  await expect(recover).toBeVisible({ timeout: 8000 });
+  await recover.click();
+  await expect.poll(() => recovered).toEqual(['POST']);
 });
 
 

@@ -15,7 +15,7 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
     async function api(url,options={}){const response=await fetch(url,{method:options.method||'GET',headers:{'Content-Type':'application/json'},body:options.body?JSON.stringify(options.body):undefined});return response.json();}
     ${source}
     app.innerHTML=dictationCards(state.dictation);
-    app.addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(!b)return;const actions={'segment-pick':()=>pickSegment(b),'dictation-record':()=>dictationChange({action:'record_shortcut'}),'dictation-clear':()=>dictationChange({action:'clear'}),'dictation-use-shortcut':useDictationShortcut};if(actions[b.dataset.action])actions[b.dataset.action]();});
+    app.addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(!b)return;const actions={'segment-pick':()=>pickSegment(b),'dictation-record':()=>dictationChange({action:'record_shortcut'}),'dictation-clear':()=>dictationChange({action:'clear'}),'dictation-clear-now':()=>dictationChange({action:'clear'}),'dictation-use-shortcut':useDictationShortcut};if(actions[b.dataset.action])actions[b.dataset.action]();});
     pollDictation(seq,++dictationGeneration);`;
   const server = http.createServer(async (request, response) => {
     if (request.url === '/api/dictation') {
@@ -59,7 +59,7 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       expect(await keptCopy.evaluate(el=>el.isConnected)).toBe(true);
       await expect(copy).toBeFocused();
       await expect(page.locator('#dictation-recent img')).toHaveCount(0);
-      await page.getByRole('button', { name: 'Record shortcut', exact: true }).click();
+      await page.getByRole('button', { name: 'Change shortcut', exact: true }).click();
       await expect(page.locator('#dictation-shortcut-status')).toHaveText('fn');
       await page.getByRole('button', { name: 'Use shortcut', exact: true }).click();
       await expect(page.locator('[data-dictation="shortcut"]')).toHaveValue('fn');
@@ -69,7 +69,7 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       await page.getByRole('switch', { name: 'Remove filler words' }).uncheck();
       await expect.poll(() => [view.settings.top, view.settings.mode, view.settings.fillers]).toEqual([true, 'tap', false]);
       await expect(page.getByRole('radiogroup', { name: 'Popup position' }).getByRole('radio', { name: 'Top' })).toHaveAttribute('aria-checked', 'true');
-      await page.getByRole('button', { name: 'Clear', exact: true }).click();
+      await page.getByRole('button', { name: 'Clear history', exact: true }).click();
       await expect(page.locator('#dictation-recent')).toContainText('Your dictations will appear here.');
       await context.close();
     }

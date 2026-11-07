@@ -10,7 +10,7 @@ const actions = {
   'dictation-record': () => dictationChange({action:'record_shortcut'}),
   'dictation-resume': () => dictationChange({action:'resume_shortcut'}),
   'dictation-use-shortcut': useDictationShortcut,
-  'dictation-clear': () => dictationChange({action:'clear'}),
+  'dictation-clear': clearDictationsAsk, 'dictation-clear-now': clearDictationsNow,
   'dictation-copy': (el) => dictationChange({action:'copy',id:Number(el.dataset.id)}).then(() => pulse(el)),
   'speech-filter': filterSpeech,
   'speech-model': changeSpeechModel,

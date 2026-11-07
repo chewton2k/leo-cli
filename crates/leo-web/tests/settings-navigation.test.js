@@ -77,16 +77,18 @@ test('search is local, case-insensitive and ranks label matches first', () => {
   assert.equal(ids('theme')[0], 'theme');
   assert.ok(ids('dark').includes('theme'), 'keywords match');
   assert.ok(ids('note width').includes('note-width') && !ids('note width').includes('theme'), 'every word must match');
-  assert.deepEqual(ids('popup'), ['dictation-popup', 'dictation-position']);
+  assert.deepEqual(ids('popup'), ['dictation-popup']);
+  assert.deepEqual(ids('position'), ['dictation-popup']);
   assert.equal(ids('trash')[0], 'trash-notes');
 });
 test('the frame draws results as a listbox, an empty message, and keeps the query', () => {
   const h = helpers();
-  vm.runInContext("settingsFind.query = 'popup'; settingsFind.active = 1", h);
+  vm.runInContext("settingsFind.query = 'dictation'; settingsFind.active = 1", h);
   let html = h.settingsFrame('general', '');
-  assert.ok(html.includes('value="popup"') && html.includes('aria-expanded="true" aria-controls="settings-listbox" aria-activedescendant="settings-result-1"'));
+  assert.ok(html.includes('value="dictation"') && html.includes('aria-expanded="true" aria-controls="settings-listbox" aria-activedescendant="settings-result-1"'));
   assert.ok(html.includes('role="listbox" aria-label="Settings search results"'));
-  assert.ok(html.includes('id="settings-result-1" aria-selected="true" data-find-pick="dictation-position"'));
+  const second = Array.from(h.settingsMatches('dictation'), entry => entry.id)[1];
+  assert.ok(html.includes(`id="settings-result-1" aria-selected="true" data-find-pick="${second}"`));
   assert.ok(html.includes('id="settings-result-0" aria-selected="false"'));
   assert.ok(html.includes('settings-result-where">Dictation<'));
   assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections" data-searching>'));
