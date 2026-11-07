@@ -805,3 +805,15 @@ test('how sure the user felt and their thinking reach Felix on the answer line',
   assert.match(C.quizSay({ ...mc, sure: null, thinking: undefined }, 'b', false), /My answer: b\n/);
   assert.deepEqual(Object.keys(C.SURE), ['sure', 'think', 'guess']);
 });
+
+test('a streamed list marker waits until it has text', () => {
+  assert.equal(C.held('Intro\n-'), 'Intro');
+  assert.equal(C.held('Intro\n- '), 'Intro');
+  assert.equal(C.held('Intro\n  *'), 'Intro');
+  assert.equal(C.held('Steps\n1.'), 'Steps');
+  assert.equal(C.held('Steps\n2)'), 'Steps');
+  assert.equal(C.held('-'), '');
+  assert.equal(C.held('Intro\n- first'), 'Intro\n- first');
+  assert.equal(C.held('Pay 5 -'), 'Pay 5 -');
+  assert.equal(C.held('Intro\n- first\n-'), 'Intro\n- first');
+});

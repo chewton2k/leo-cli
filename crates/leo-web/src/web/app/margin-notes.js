@@ -299,25 +299,30 @@ function marginNow(t) {
   return felixSaid ? felixSaid.text : '';
 }
 
-function inkWords(box, text) {
-  box.textContent = '';
-  if (stillMotion()) {
-    box.textContent = text;
-    return;
+const INK_SKIP = 'pre, code, figure, svg, a, .katex, [class*="math"], [class*="diagram"], [class*="mermaid"]';
+
+function inkNodes(root) {
+  const nodes = [];
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    if (node.data.trim() && !node.parentElement.closest(INK_SKIP)) nodes.push(node);
   }
-  const parts = text.split(/(\s+)/);
-  const count = parts.filter((part) => part.trim()).length;
+  const count = nodes.reduce((sum, node) => sum + node.data.split(/\s+/).filter(Boolean).length, 0);
   let at = 0;
-  for (const part of parts) {
-    if (!part.trim()) {
-      box.append(part);
-      continue;
+  for (const node of nodes) {
+    const pieces = document.createDocumentFragment();
+    for (const part of node.data.split(/(\s+)/)) {
+      if (!part.trim()) {
+        pieces.append(part);
+        continue;
+      }
+      const span = document.createElement('span');
+      span.className = 'ink-word';
+      span.style.animationDelay = `${marginKit.wordDelay(at++, count)}ms`;
+      span.textContent = part;
+      pieces.append(span);
     }
-    const span = document.createElement('span');
-    span.className = 'ink-word';
-    span.style.animationDelay = `${marginKit.wordDelay(at++, count)}ms`;
-    span.textContent = part;
-    box.append(span);
+    node.replaceWith(pieces);
   }
 }
 
@@ -330,8 +335,13 @@ function marginAnswer(line, text, arriving = false) {
   if (shape.childElementCount !== 1 || only.tagName !== 'P' || only.childElementCount) {
     line.classList.add('prose');
     line.innerHTML = html;
-  } else if (arriving) inkWords(line, text);
-  else line.textContent = text;
+  } else {
+    line.textContent = text;
+  }
+  if (!arriving) return;
+  if (!stillMotion()) inkNodes(line);
+  const said = line.parentElement;
+  if (said?.classList.contains('margin-said')) said.scrollTop = Math.max(0, line.offsetTop - 28);
 }
 
 function marginElement(t) {

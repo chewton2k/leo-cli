@@ -110,6 +110,10 @@
     return { verdict: null, text: value };
   }
 
+  function held(text) {
+    return String(text).replace(/(?:^|\n)[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/, '');
+  }
+
   const MOST_REPLY_STEPS = 64;
 
   function timeline(text, steps) {
@@ -1127,6 +1131,7 @@
     });
     if (typeof root.ResizeObserver === 'function') {
       const historySize = new root.ResizeObserver(() => {
+        document.body.style.setProperty('--chat-over', `${panel.hidden ? 0 : Math.round(panel.getBoundingClientRect().width)}px`);
         panel.classList.toggle('source-narrow', sourceNarrow());
         if (state.sidebar === null && !panel.hidden) {
           const on = sidebarOpen();
@@ -1297,7 +1302,7 @@
       }
       const first = state.messages.find((m) => m.role === 'user' && m.text);
       const ghost = state.fresh && !state.chats.some((c) => c.id === state.id)
-        ? [{ id: state.id, title: first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
+        ? [{ id: state.id, title: first ? draftTitle(first.text) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
         : [];
       const list = [...ghost, ...state.chats];
       if (!list.length) {
@@ -1428,13 +1433,13 @@
       state.doomed = null;
       syncChatDelete();
     }
-    panel.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !state.doomed) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       state.doomed = null;
       syncChatDelete();
-    });
+    }, true);
     document.addEventListener('pointerdown', spare, true);
     document.addEventListener('focusin', spare, true);
 
@@ -1718,11 +1723,18 @@
       chip.lastElementChild.textContent = state.context ? state.context.title || 'Untitled' : '';
     }
 
+    function draftTitle(text) {
+      const asked = clipped(text.replace(/\s+/g, ' '), 80);
+      const note = state.context && state.dropped !== state.context.id ? state.context.title : '';
+      if (!note || asked.split(' ').length > 6 || asked.toLowerCase().includes(note.toLowerCase())) return asked;
+      return clipped(`${asked.replace(/[?.! ]+$/, '')}: ${note}`, 80);
+    }
+
     function drawTitle() {
       const first = state.messages.find((m) => m.role === 'user' && m.text);
       const saved = (state.chats || []).find((c) => c.id === state.id);
       const title = $('#chat-title');
-      title.textContent = saved ? saved.title : first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat';
+      title.textContent = saved ? saved.title : first ? draftTitle(first.text) : 'New chat';
       title.classList.toggle('quiet', !saved && !first);
     }
 
@@ -1757,7 +1769,8 @@
         const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
         return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
-      const shown = grade(m.text).text;
+      const spoken = grade(m.text).text;
+      const shown = m.pending ? held(spoken) : spoken;
       const html = !shown && m.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : '';
       const used = cited(m.text, m.sources);
       const marks = numbered(shown, m.sources);
@@ -1775,7 +1788,7 @@
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
         : '';
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
-      const removed = verdict ? m.text.length - shown.length : 0;
+      const removed = verdict ? m.text.length - spoken.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
       const taken = parts.flatMap((part) => part.steps || []);
       const newest = parts.findLastIndex((part) => part.steps);
@@ -1829,7 +1842,8 @@
     function drawBelow() {
       const next = document.createElement('div');
       if (!state.messages.length) {
-        next.innerHTML = `<div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>${asking()}`;
+        const unread = Boolean(state.context) && state.dropped === state.context.id;
+        next.innerHTML = `<div class="chat-starters">${STARTERS.map((s, i) => unread && s.needs === 'note' ? '' : `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>${asking()}`;
       }
       settle($('#chat-below'), next);
     }
@@ -2381,7 +2395,7 @@
       const recap = session && session.state === 'finished' ? recapCard(session) : '';
       const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}` : welcome();
       const perched = !state.messages.length;
-      const land = perched !== panel.classList.contains('perched') && !panel.hidden && root.leoMotion?.dock ? root.leoMotion.dock($('.chat-foot')) : null;
+      const land = perched !== panel.classList.contains('perched') && !panel.hidden && root.leoMotion?.dock ? root.leoMotion.dock($('.chat-foot'), $('#chat-form')) : null;
       const first = body.firstElementChild;
       const next = document.createElement('div');
       next.innerHTML = html;
@@ -2940,10 +2954,24 @@
         findTimer = setTimeout(() => findChats(query), 180);
       }
     });
-    panel.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
+      if (!state.open || e.isComposing) return;
       const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access']]
         .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
         .find((x) => !x.menu.hidden && !x.menu.dataset.folding);
+      if (e.key === 'Escape' && !open && !state.doomed && !state.busy && panel.classList.contains('with-history') && (e.target === document.body || history.contains(e.target) || !wide() || sourceNarrow()) && !e.target.closest('input, textarea')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        showSidebar(false);
+        return;
+      }
+      if (e.key === 'Escape' && !open && e.target === document.body && !document.querySelector('.scrim')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (state.busy) state.busy.abort();
+        else toggle(false);
+        return;
+      }
       if (!open) return;
       const { menu, trigger } = open;
       if (e.key === 'Escape') {
@@ -2964,7 +2992,7 @@
         else next = (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
         items[next].focus();
       }
-    });
+    }, true);
     panel.addEventListener('keydown', (e) => {
       if (e.target.id !== 'chat-pick-search') return;
       if (e.key === 'Escape') {
@@ -3010,9 +3038,10 @@
     panel.addEventListener('focusin', (e) => light(e.target));
     panel.addEventListener('focusout', (e) => light(e.relatedTarget));
     panel.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape' || !state.busy || e.target === input || e.target.id === 'chat-pick-search') return;
+      if (e.key !== 'Escape' || e.target.closest('input, textarea, select, [contenteditable]')) return;
       e.stopPropagation();
-      state.busy.abort();
+      if (state.busy) state.busy.abort();
+      else toggle(false);
     });
 
     return {
@@ -3071,5 +3100,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

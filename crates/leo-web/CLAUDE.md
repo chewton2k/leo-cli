@@ -566,7 +566,11 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
 - Choosing the model (`routing.rs`, 2026-11-06, the user's call; same shape as Copilot Auto and Cursor Router, with rules instead of a trained classifier because leo has one user and a classifier call would cost tokens): `routing::light` sends only obvious cases (short lookups and greetings, no attachments, files, selection, study or Auto access, at most six turns) to the cheapest model of the chosen AI (`ai::quick_config`, through `Instructions.light` or `Powers.light_chat` when no session opens, as on a Codex without app-server isolation); every doubt stays on the chosen model, and other languages stay there too. `Powers.lighter` turns routing off when the quick tier is the same model and effort, and a failing light writer gives way to the chosen one on the last try, so `Auto` always names who really answered. The tier is part of the warm key, and `Slot::light` keeps a warm full chat from moving down, since a switch loses the cache: a chat moves up once when it needs to, never down while warm. Settings → Felix → Cheaper model for lookups (`Prefs.auto_model`, on by default) turns it off; a routed reply says `Auto` in its usage line.
 
 - Steering: messages sent while Felix works are added after the next tool
-  step (`steer.rs`). Esc stops an answer, or closes the panel.
+  step (`steer.rs`). Esc stops an answer, or closes the panel. Felix's Escape handling is on the
+  document (capture), not the panel, because WebKit does not focus a button on click and the
+  press would otherwise reach the page's Back and close the note (2026-11-06): an open attach or
+  access menu, then the Chats list, then the panel take it first; `routing-chat-review.spec.js`
+  presses it with focus on `body`.
 
 - Panel look (2026-11-04, the user's call; plan phase 1): the panel sits one
   tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
@@ -591,7 +595,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `--t-drawer` and leaves over `CHAT_LEAVE_MS` before `chat-open` is removed.
   Hovering or focusing a line-citation chip calls `onCite(id, lines)`; the open
   note's `doc.glow(from, to)` toggles `.blk-glow` on the cited blocks (no
-  redraw, no scroll, no timer) and clears on leave, blur and close.
+  redraw, no scroll, no timer) and clears on leave, blur and close. Lit blocks are square with a side halo
+  only, and a blank block between two lit ones is lit too, so no seam shows (2026-11-06).
   A citation to another note does nothing extra.
   The Chats heading has no New chat action; the main chat header keeps it. History
   titles use 13 px type. Delete keeps its button mounted while X expands to Delete,
@@ -599,6 +604,14 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   Reduced Motion snaps the width and label.
 
 - Perch (2026-11-06, the user's call: "i like A. perch best flow and it's simple"; replaces the header and surface description above): the Chats list sits on `--ground`, the chat on `--page` with the 16 px corner, the composer, selected row and user bubble on `--raised`; `--field` and `--field-hi` are gone, pills and circles are 9 to 16 px rounded rectangles. An empty chat is `.chat.perched`: the greeting, composer and starters are one block centred in the panel at any height (`display: contents` on the body and hello, DOM order (`#chat-below` holds the starters after the footer) and two flex spacers), Felix perched on the composer's top edge with his `hi!!`. The first send docks the composer to the bottom (`leoMotion.dock`, `DRAWER_MS`, snaps under Reduced Motion) and it stays docked while the chat has messages. Felix lives in `#chat-face` inside the composer, so his state classes still apply (`mood` finds every `.felix`). The header is toggle, chat title (or "New chat") and close; New chat is in the Chats heading while Chats is open and in the header otherwise (one `[data-chat="new"]` shows at a time; specs use `:visible`). The composer holds paperclip, the note chip (the `data-chat="drop"` eye toggle, hidden with no note, `.off` when not reading), the access chip (no indigo for Auto; "⇧Tab to switch" is only its tooltip) and send.
+- Chat titles (2026-11-06): a short question is told apart as `<question>: <note>` only by the open
+  note (a source with `why: "open"`, `chats::note_of`), so the row reads the same while Felix answers
+  (`draftTitle` uses the same rule) and after. Starters that need the note hide while the eye is off.
+- Felix's toolbar face does not bob while idle and the panel is closed (`#chat-toggle .felix.idle`);
+  only an open panel animates him idle (2026-11-06). The composer's dock moves its width as well as its
+  height. In a narrow panel the placeholder keeps one line (ellipsis), the note chip keeps 76 px and the
+  access chip drops its chevron (`@container chatmain`); under 1200 px the note toolbar centres in the
+  room left of the overlaying panel (`--chat-over`), and is hidden on phones while Felix is open.
 - Chat panel (2026-11-06, the owner; simulation in `docs/superpowers/user-simulation-report.md`): the eye
   (`data-chat="drop"`) is a toggle that shows while a note is open, eye or eye-off, "Stop reading this
   note" or "Read this note again", and keeps focus. New chat adds a placeholder row to the Chats list
@@ -692,7 +705,10 @@ target. Check the page sequence after loading preferences.
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
   POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
   messages sent), and never run twice at once for a thread.
-- Replies cap at `MOST_REPLY` (4,000) so a sketch fits; `without_open_fence` drops a fence cut off mid-drawing.
+- Word arrival runs over rendered prose too (`inkNodes` walks text nodes, skipping code, maths,
+  diagrams and links); an open thread's replies scroll inside a capped area so the reply box and
+  buttons stay on screen (2026-11-06). `UNSPOKEN` asks for a direct answer in three sentences and no
+  remark about the passage's form. Replies cap at `MOST_REPLY` (4,000) so a sketch fits; `without_open_fence` drops a fence cut off mid-drawing.
 - Add to note uses `/insert` with one request id per thread (`/insert` dedupes on note
   and request, whatever the base), runs once at a time and shows Undo before it closes
   the thread. After a 409 it re-finds the passage, or says it went to the end and
@@ -1166,7 +1182,9 @@ margin layer (z 12) and ignores the pointer.
 Page chrome is not selectable (2026-11-06, the owner): `body` is `user-select: none` and
 the allow list in `index.html` (inputs, `.doc`, `.prose`, chat and margin text, errors,
 transcripts, descriptions, code) turns it back on; new text that people would copy needs a
-class on that list. `.related`, `.doc-tail` and blank blocks stay off it, so a drag down
+class on that list. Hints, card descriptions and notes (`.hint`, `.choice-about`, `.set-note`, but not `.set-note.warn`) are chrome and
+not on it, and an unfocused input or textarea is `user-select: none` so a drag across a form paints no
+placeholder; focusing it makes it selectable (2026-11-06). The note's mode button and menu clear a selection like other chrome. `.related`, `.doc-tail` and blank blocks stay off it, so a drag down
 the note stops at its end instead of painting empty space. A press on non-selectable,
 non-control chrome clears the selection and Ask Felix (`passages.js`), except in
 `[data-keep-selection]` (Ask Felix, `.page-bar`) and the resize grips.
@@ -1374,6 +1392,9 @@ and "Updated …" sits in each plan's header (`planUpdated`). A window past its 
 response shows as a quiet line. Usage and New task share the `sheetroom` container on both
 `.scrim` and `.scrim-gone`, so a closing ghost keeps its layout.
 
+A week column shows only as many side-by-side tiles as it is wide enough for (`CAL_TILE_PX`, 40); the
+rest become a `+N` that opens the day (2026-11-06). The Tasks window stops short of the outline rail's
+foot (`fitTasksWindow` scrolls it inside or folds it) and the outline sits above the dock.
 Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
 minimum timed block. Overlap layout includes that visual minimum; saved task
 times stay unchanged. Google export, .ics download and delete/stop-tracking
