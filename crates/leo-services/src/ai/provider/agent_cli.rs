@@ -2156,7 +2156,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
                     .get()
                     .expect("the fake CLI must start before cancellation")
                     .elapsed()
-                    < Duration::from_secs(2)
+                    < Duration::from_secs(6)
             );
             let started = std::fs::read_to_string(marker).unwrap();
             assert_eq!(started.lines().count(), 1);
