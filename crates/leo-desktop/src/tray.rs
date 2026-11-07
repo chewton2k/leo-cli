@@ -133,8 +133,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 const FLIP_GAP: Duration = Duration::from_secs(1);
 
 #[cfg(target_os = "macos")]
-fn needs_flip(active: bool, window_here: bool, since_last_flip: Option<Duration>) -> bool {
-    !active && !window_here && since_last_flip.is_none_or(|gap| gap > FLIP_GAP)
+fn needs_flip(active: bool, window_here: bool) -> bool {
+    !active && !window_here
 }
 
 #[cfg(target_os = "macos")]
@@ -155,17 +155,18 @@ fn popup<M: tauri::menu::ContextMenu + 'static>(tray: &tauri::tray::TrayIcon, me
             if let Some(menu) = unsafe { raw.cast::<objc2_app_kit::NSMenu>().as_ref() } {
                 let main = objc2::MainThreadMarker::new();
                 let flip = main.filter(|main| {
-                    let mut last = LAST_FLIP.lock().unwrap_or_else(|e| e.into_inner());
-                    let flip = needs_flip(
+                    needs_flip(
                         NSApplication::sharedApplication(*main).isActive(),
                         window_on_active_space(&app),
-                        last.map(|at| at.elapsed()),
-                    );
-                    if flip {
-                        *last = Some(std::time::Instant::now());
-                    }
-                    flip
+                    )
                 });
+                if flip.is_some() {
+                    let mut last = LAST_FLIP.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(rest) = last.and_then(|at| FLIP_GAP.checked_sub(at.elapsed())) {
+                        std::thread::sleep(rest);
+                    }
+                    *last = Some(std::time::Instant::now());
+                }
                 if let Some(main) = flip {
                     NSApplication::sharedApplication(main).setActivationPolicy(Policy::Accessory);
                 }
@@ -284,18 +285,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn the_menu_flips_the_app_only_when_it_is_away_from_this_desktop() {
-        use super::{needs_flip as flip, FLIP_GAP};
-        use std::time::Duration;
-        let long = Some(FLIP_GAP + Duration::from_millis(1));
-        assert!(flip(false, false, None));
-        assert!(flip(false, false, long));
-        assert!(!flip(true, false, None), "Leo in front never flips");
-        assert!(!flip(false, true, None), "Leo beside you here never flips");
-        assert!(
-            !flip(false, false, Some(FLIP_GAP)),
-            "no flip twice within a second"
-        );
-        assert!(!flip(false, false, Some(Duration::ZERO)));
+        use super::needs_flip as flip;
+        assert!(flip(false, false));
+        assert!(!flip(true, false), "Leo in front never flips");
+        assert!(!flip(false, true), "Leo beside you here never flips");
     }
 
     #[test]

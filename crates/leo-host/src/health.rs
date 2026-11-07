@@ -26,7 +26,14 @@ pub fn scan(notes: &Path) -> Result<Value> {
     if let Some(sign_in) = sign_in {
         sections.insert(0, sign_in);
     }
-    if let Some(problem) = leo_services::ai::provider::codex_app::native_problem() {
+    if let Some(problem) = config
+        .chat
+        .chain
+        .iter()
+        .any(|name| name == "codex")
+        .then(leo_services::ai::provider::codex_app::native_problem)
+        .flatten()
+    {
         sections.insert(0, json!({"title":"Felix and Codex","checks":[{"name":"Codex native session","state":"warn","fix":problem,"section":"writing"}]}));
     }
     Ok(json!({"sections":sections}))

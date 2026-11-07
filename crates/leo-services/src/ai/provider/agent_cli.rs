@@ -96,7 +96,7 @@ pub fn known_features(listing: &str) -> Vec<String> {
         .collect()
 }
 
-const PROBE_LIMIT: Duration = Duration::from_secs(5);
+const PROBE_LIMIT: Duration = Duration::from_secs(8);
 
 pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
     probe_in(program, args, None)
@@ -230,7 +230,7 @@ fn scope_from_listing(listing: &str) -> ProviderResult<Vec<String>> {
     let mut args = Vec::new();
     for server in &servers {
         let name = server["name"].as_str().ok_or_else(unknown)?;
-        if server["enabled"].as_bool() != Some(true) {
+        if server["enabled"].as_bool() == Some(false) {
             continue;
         }
         if name.is_empty()
@@ -249,6 +249,10 @@ fn scope_from_listing(listing: &str) -> ProviderResult<Vec<String>> {
     }
     for setting in [
         "notify=[]",
+        "otel.exporter=\"none\"",
+        "otel.trace_exporter=\"none\"",
+        "otel.metrics_exporter=\"none\"",
+        "otel.log_user_prompt=false",
         "skills.include_instructions=false",
         "model_provider=\"openai\"",
     ] {
@@ -1674,7 +1678,10 @@ mod tests {
                 "model_provider=\"openai\"",
             ]
         );
-        assert_eq!(scope_from_listing("[]").unwrap().len(), 6);
+        assert_eq!(scope_from_listing("[]").unwrap().len(), 14);
+        assert!(scope_from_listing(r#"[{"name":"unknown_shape"}]"#)
+            .unwrap()
+            .contains(&"mcp_servers.unknown_shape.enabled=false".to_string()));
     }
 
     #[test]

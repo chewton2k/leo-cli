@@ -200,7 +200,7 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
     let mut command = leo_core::children::quiet_command(program);
     crate::ai::provider::scoped_cli::plan_environment(&mut command);
     command.arg("app-server");
-    for feature in codex_disables(program).unwrap_or_default() {
+    for feature in codex_disables(program).ok()? {
         command.args(["-c", &format!("features.{feature}=false")]);
     }
     command
@@ -427,12 +427,15 @@ pub fn refresh_claude(cfg: &crate::config::Config) -> Option<String> {
         &claude_reader(base),
     )
     .with_limits(limit, limit);
-    let _ = agent.complete(&ChatRequest {
+    let read = agent.complete(&ChatRequest {
         system: None,
         prompt: "Reply with the single word: ok".into(),
         temperature: 0.0,
         max_tokens: 16,
     });
+    if read.is_err() {
+        return Some("Claude Code could not be reached. Try Refresh again.".into());
+    }
     let after = load().get("claude_code").map(|u| u.seen_at);
     (after.is_none() || after == before).then(|| "Claude Code reported no limits.".into())
 }
@@ -600,6 +603,39 @@ mod tests {
         assert_eq!(all["codex"].five_hour.unwrap().used, 0.2);
         std::fs::write(&path, "not json").unwrap();
         assert!(load_from(&path).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_claude_read_spends_nothing_unless_the_account_is_on_a_plan() {
+        use std::os::unix::fs::PermissionsExt;
+        for answer in [
+            r#"{"loggedIn":false}"#,
+            r#"{"loggedIn":true,"authMethod":"api-key"}"#,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let calls = dir.path().join("calls");
+            let program = dir.path().join("claude");
+            std::fs::write(
+                &program,
+                format!(
+                    "#!/bin/sh\necho \"$1\" >> '{}'\nprintf '%s' '{answer}'\n",
+                    calls.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut cfg = crate::config::Config::default();
+            cfg.providers.insert(
+                "claude_code".into(),
+                ProviderConfig {
+                    bin: Some(program.display().to_string()),
+                    ..crate::config::Config::built_in_provider("claude_code").unwrap()
+                },
+            );
+            assert!(refresh_claude(&cfg).unwrap().contains("Claude plan"));
+            assert_eq!(std::fs::read_to_string(&calls).unwrap().trim(), "auth");
+        }
     }
 
     #[test]
