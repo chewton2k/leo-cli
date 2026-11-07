@@ -60,7 +60,7 @@ function flipPlay(els, keyOf, before, ms) {
   return played;
 }
 
-function dock(el) {
+function dockPanel(el) {
   if (!el || stillMotion() || typeof el.animate !== 'function') return null;
   const from = el.getBoundingClientRect().top;
   return () => {
@@ -281,4 +281,4 @@ function liftedRect(el) {
   return { left: r.left + (r.width - r.width / SETTLE_SCALE) / 2, top: r.top + (r.height - r.height / SETTLE_SCALE) / 2 };
 }
 
-window.leoMotion = { unfold, fold, cascade, pulse, rubber, iconSwap, overlapOut, stillMotion, dock };
+window.leoMotion = { unfold, fold, cascade, pulse, rubber, iconSwap, overlapOut, stillMotion, dock: dockPanel };

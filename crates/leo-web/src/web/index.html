@@ -1193,7 +1193,7 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
   :root { --chat-w: clamp(560px, 48vw, 820px); }
   .chat { width: var(--chat-w); }
   .chat { --history-size: clamp(190px, var(--chat-history-w, clamp(190px, 30%, 260px)), max(190px, calc(100% - 220px))); }
-  .chat-history { position: relative; flex: none; width: var(--history-size); margin-left: calc(-1 * var(--history-size)); }
+  .chat-history { position: relative; z-index: 1; flex: none; width: var(--history-size); margin-left: calc(-1 * var(--history-size)); }
   .chat.with-history .chat-history { margin-left: 0; }
 }
 .chat-history-resize { display: none; }
@@ -1278,7 +1278,7 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-class { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 13.5px; }
 .chat-class.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .chat-ask-go { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-.starter { text-align: left; padding: 6px 10px; border-radius: 9px; border: 0; background: var(--tint); color: color-mix(in srgb, var(--text) 80%, var(--muted)); font-size: 13px; line-height: 1.35; animation: starter-in var(--t-drawer) var(--ease-arrive) .6s both; }
+.starter { text-align: left; padding: 6px 10px; border-radius: 9px; border: 0; background: var(--tint); color: var(--text); font-size: 13px; line-height: 1.35; animation: starter-in var(--t-drawer) var(--ease-arrive) .6s both; }
 .starter:hover { background: var(--raised); color: var(--text); }
 .starter.on { background: var(--accent-soft); color: var(--accent); }
 @keyframes starter-in { from { opacity: 0; transform: translateY(4px); } }

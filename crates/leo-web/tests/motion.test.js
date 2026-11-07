@@ -160,3 +160,17 @@ test('a settling object takes a slight curve and ends exactly in place', () => {
   assert.notEqual(middle[0], middle[1]);
   assert.equal(played[0].at(-1).transform, 'none');
 });
+
+test('no two parts of the page script declare the same top-level function', () => {
+  const parts = [...fs.readFileSync(path.join(__dirname, '../src/routes/assets.rs'), 'utf8').matchAll(/include_str!\("\.\.\/web\/(app\/[^"]+)"\)/g)].map((m) => m[1]);
+  assert.ok(parts.length > 10);
+  const seen = new Map();
+  const repeated = [];
+  for (const part of parts) {
+    for (const [, name] of fs.readFileSync(path.join(__dirname, '../src/web', part), 'utf8').matchAll(/^(?:async )?function ([\w$]+)/gm)) {
+      if (seen.has(name)) repeated.push(`${name}: ${seen.get(name)} and ${part}`);
+      seen.set(name, part);
+    }
+  }
+  assert.deepEqual(repeated, []);
+});
