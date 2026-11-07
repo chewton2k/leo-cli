@@ -769,7 +769,7 @@
   function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
-    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
+    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, fresh: false, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -1300,11 +1300,16 @@
           : '<div class="chat-history-none">No chat mentions that.</div>';
         return;
       }
-      if (!state.chats.length) {
+      const first = state.messages.find((m) => m.role === 'user' && m.text);
+      const ghost = state.fresh && !state.chats.some((c) => c.id === state.id)
+        ? [{ id: state.id, title: first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
+        : [];
+      const list = [...ghost, ...state.chats];
+      if (!list.length) {
         box.innerHTML = '<div class="chat-history-none">Your conversations with Felix are kept here, on this computer.</div>';
         return;
       }
-      box.innerHTML = groups(state.chats)
+      box.innerHTML = groups(list)
         .map((g) => `<div class="chat-history-group">${escape(g.name)}</div>${g.chats
           .map((c) => chatRow(c))
           .join('')}`)
@@ -1312,7 +1317,7 @@
     }
 
     function chatRow(c) {
-      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button></div>`;
+      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button>${c.ghost ? '' : `<button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button>`}</div>`;
     }
 
     let resumeSeq = 0;
@@ -1321,6 +1326,7 @@
       resumeSeq++;
       if (state.busy) state.busy.abort();
       state.id = id;
+      state.fresh = true;
       stopCompacting();
       state.messages = [];
       state.refs = [];
@@ -1362,6 +1368,7 @@
         return null;
       }
       state.id = chat.id;
+      state.fresh = false;
       compactLater();
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
@@ -2472,6 +2479,7 @@
         state.messages.push(answer);
         if (input.value.trim() === question) input.value = '';
         fit();
+        drawChats();
       }
       const controller = new AbortController();
       const thread = { id: state.id, refs: state.refs.slice(), messages: state.messages };

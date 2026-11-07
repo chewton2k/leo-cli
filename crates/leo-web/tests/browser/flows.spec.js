@@ -1077,7 +1077,19 @@ test.describe('Felix', () => {
       await openSidebar();
     }
     await expect(sidebar.locator('.chat-history-item', { hasText: `second question ${tag}` })).toBeVisible();
+    if (tag === 'desktop') {
+      await chat.locator('.chat-head [data-chat="new"]').click();
+      const placeholder = sidebar.locator('.chat-history-row.on');
+      await expect(placeholder.locator('.chat-history-title')).toHaveText('New chat');
+      await expect(placeholder.locator('.chat-history-x')).toHaveCount(0);
+      await chat.locator('#chat-input').fill(`third question ${tag}`);
+      await chat.locator('#chat-input').press('Enter');
+      await expect(placeholder.locator('.chat-history-title')).toHaveText(`third question ${tag}`);
+      await chat.locator('.chat-head [data-chat="new"]').click();
+      await expect(sidebar.locator('.chat-history-row', { hasText: 'New chat' })).toHaveCount(1);
+    }
     await sidebar.locator('.chat-history-item', { hasText: `first question ${tag}` }).click();
+    await expect(sidebar.locator('.chat-history-row', { hasText: 'New chat' })).toHaveCount(0);
     await expect(chat.locator('.msg.leo').last()).toContainText(`About first question ${tag}`);
     await expect(chat.locator('.msg.user')).toHaveCount(1);
 
