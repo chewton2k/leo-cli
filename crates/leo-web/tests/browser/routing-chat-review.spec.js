@@ -71,8 +71,8 @@ test('chat history retains its delete control through confirmation and handles f
   const history = page.locator('#chat-history');
   if (!(await history.isVisible())) await page.locator('.chat-head [data-chat="history"]').click();
   await expect(history).toBeVisible();
-  await expect(history.locator('[data-chat="new"]')).toHaveCount(0);
-  await expect(page.locator('.chat-head [data-chat="new"]')).toBeVisible();
+  await expect(history.locator('[data-chat="new"]')).toBeVisible();
+  await expect(page.locator('.chat-head [data-chat="new"]')).toBeHidden();
   const row = history.locator('.chat-history-row').filter({ has: page.locator('[data-id="review-history"]') });
   const button = row.locator('.chat-history-x');
   await button.evaluate(el => {

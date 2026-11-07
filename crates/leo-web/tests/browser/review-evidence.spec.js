@@ -879,8 +879,8 @@ test('R18 Chats history has no New chat, a smaller title and an animated X to De
   if (!(await page.locator('#chat-history').isVisible())) await chat.locator('.chat-history-toggle').click();
   await expect(page.locator('#chat-history')).toBeVisible();
   const head = page.locator('#chat-history .chat-history-head');
-  expect(await head.locator('[data-chat="new"]').count(), 'no New chat in the history header').toBe(0);
-  expect(await head.innerText()).not.toMatch(/new chat/i);
+  await expect(head.locator('[data-chat="new"]'), 'New chat moves to the Chats heading while it is open').toBeVisible();
+  await expect(page.locator('#chat .chat-head [data-chat="new"]')).toBeHidden();
   const size = await page.locator('#chat-history .chat-history-title').first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
   expect(size, `history title is smaller than the old 16px (${size})`).toBeLessThan(16);
   await still(page, 'r18-history');

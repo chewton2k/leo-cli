@@ -19,9 +19,9 @@ test('confirming a chat deletion retains its button and both animated labels', a
   assert.equal(classes.has('sure'), false);
   assert.equal(attrs.get('aria-label'), 'Delete A long chat');
 });
-test('history heading has no duplicate new-chat button and labels are escaped', () => {
+test('history heading carries the new-chat button and labels are escaped', () => {
   const heading = source.slice(source.indexOf('<div class="chat-history-head">'), source.indexOf('<input', source.indexOf('<div class="chat-history-head">')));
-  assert.doesNotMatch(heading, /data-chat="new"/);
+  assert.match(heading, /\$\{NEW_CHAT\}/);
   const row = source.slice(source.indexOf('    function chatRow(c)'), source.indexOf('    let resumeSeq'));
   const context = { state: { id: 'one', doomed: null }, escape: text => text.replaceAll('<', '&lt;').replaceAll('>', '&gt;') };
   vm.createContext(context); vm.runInContext(row, context);

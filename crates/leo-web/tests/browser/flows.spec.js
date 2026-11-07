@@ -846,18 +846,19 @@ test.describe('Felix', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
+    const drop = chat.locator('[data-chat="drop"]');
+    await expect(drop).toHaveText('Signup flow');
+    await expect(drop).not.toHaveClass(/off/);
     await expect(chat.locator('#chat-history')).toBeHidden();
     await expect(chat.locator('#chat-mode-btn')).toHaveCount(0);
-    const drop = chat.locator('[data-chat="drop"]');
     await drop.focus();
     await page.keyboard.press('Enter');
-    await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
+    await expect(drop).toHaveClass(/off/);
     await expect(drop).toBeVisible();
     await expect(drop).toHaveAttribute('aria-label', 'Read this note again');
     await expect(drop).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
+    await expect(drop).not.toHaveClass(/off/);
     await expect(drop).toHaveAttribute('aria-label', 'Stop reading this note');
   });
 
@@ -970,7 +971,7 @@ test.describe('Felix', () => {
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
-    await expect(chat.locator('.chat-context')).toContainText('Heaps');
+    await expect(chat.locator('[data-chat="drop"]')).toContainText('Heaps');
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
     await expect(chat.locator('.msg.leo .cite-n').first()).toHaveText('1');
@@ -1034,7 +1035,7 @@ test.describe('Felix', () => {
     await page.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(2);
     expect(asked[1].refs, 'follow-ups still bring the notes attached earlier').toEqual([dijkstra.id, heaps.id]);
-    await page.locator('#chat .chat-head [data-chat="new"]').click();
+    await page.locator('#chat [data-chat="new"]:visible').click();
     await page.locator('#chat-input').fill('fresh start');
     await page.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(3);
@@ -1061,7 +1062,7 @@ test.describe('Felix', () => {
     await expect(chat.locator('.msg.leo').last()).toContainText(`About first question ${tag}`);
     await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.title === `first question ${tag}`)).toBe(true);
 
-    await chat.locator('.chat-head [data-chat="new"]').click();
+    await chat.locator('[data-chat="new"]:visible').click();
     await expect(chat.locator('.msg')).toHaveCount(0);
     await chat.locator('#chat-input').fill(`second question ${tag}`);
     await chat.locator('#chat-input').press('Enter');
@@ -1079,14 +1080,14 @@ test.describe('Felix', () => {
     }
     await expect(sidebar.locator('.chat-history-item', { hasText: `second question ${tag}` })).toBeVisible();
     if (tag === 'desktop') {
-      await chat.locator('.chat-head [data-chat="new"]').click();
+      await chat.locator('[data-chat="new"]:visible').click();
       const placeholder = sidebar.locator('.chat-history-row.on');
       await expect(placeholder.locator('.chat-history-title')).toHaveText('New chat');
       await expect(placeholder.locator('.chat-history-x')).toHaveCount(0);
       await chat.locator('#chat-input').fill(`third question ${tag}`);
       await chat.locator('#chat-input').press('Enter');
       await expect(placeholder.locator('.chat-history-title')).toHaveText(`third question ${tag}`);
-      await chat.locator('.chat-head [data-chat="new"]').click();
+      await chat.locator('[data-chat="new"]:visible').click();
       await expect(sidebar.locator('.chat-history-row', { hasText: 'New chat' })).toHaveCount(1);
     }
     await sidebar.locator('.chat-history-item', { hasText: `first question ${tag}` }).click();
@@ -1136,7 +1137,7 @@ test.describe('Felix', () => {
     expect(asked[0].messages[0].text).toBe('Quiz me on this note');
     expect(asked[0].refs).toEqual([note.id]);
 
-    await chat.locator('.chat-head [data-chat="new"]').click();
+    await chat.locator('[data-chat="new"]:visible').click();
     await chat.locator('.starter', { hasText: 'Make me a 3-day review plan' }).click();
     await expect(chat.locator('.chat-ask')).toContainText('Which classes should the plan cover?');
     await expect(chat.locator('[data-chat="classes-go"]')).toBeDisabled();
@@ -1145,7 +1146,7 @@ test.describe('Felix', () => {
     await expect.poll(() => asked.length).toBe(2);
     expect(asked[1].messages[0].text).toBe(`Make me a 3-day review plan for algos-${tag}`);
 
-    await chat.locator('.chat-head [data-chat="new"]').click();
+    await chat.locator('[data-chat="new"]:visible').click();
     await chat.locator('.starter', { hasText: 'Teach me this note step by step' }).click();
     await expect(chat.locator('.chat-ask')).toContainText('Which note should I teach you?');
     await chat.locator('[data-chat="ask-cancel"]').click();
@@ -2725,7 +2726,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     await chat.locator('#chat-input').fill('what is a heap?');
     await chat.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(1);
-    await chat.locator('.chat-head [data-chat="new"]').click();
+    await chat.locator('[data-chat="new"]:visible').click();
     release();
     await page.waitForTimeout(600);
     await expect(chat.locator('.msg')).toHaveCount(0);

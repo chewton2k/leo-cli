@@ -60,6 +60,15 @@ function flipPlay(els, keyOf, before, ms) {
   return played;
 }
 
+function dock(el) {
+  if (!el || stillMotion() || typeof el.animate !== 'function') return null;
+  const from = el.getBoundingClientRect().top;
+  return () => {
+    const dy = from - el.getBoundingClientRect().top;
+    if (Math.abs(dy) >= 1) el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: DRAWER_MS, easing: EASE_MOVE });
+  };
+}
+
 function flipList(root, selector, keyOf, change, { ms = FLIP_MS, changed = true } = {}) {
   const els = root ? [...root.querySelectorAll(selector)] : [];
   if (flipSkip({ reduced: stillMotion(), count: els.length, changed })) return change();
@@ -272,4 +281,4 @@ function liftedRect(el) {
   return { left: r.left + (r.width - r.width / SETTLE_SCALE) / 2, top: r.top + (r.height - r.height / SETTLE_SCALE) / 2 };
 }
 
-window.leoMotion = { unfold, fold, cascade, pulse, rubber, iconSwap, overlapOut, stillMotion };
+window.leoMotion = { unfold, fold, cascade, pulse, rubber, iconSwap, overlapOut, stillMotion, dock };

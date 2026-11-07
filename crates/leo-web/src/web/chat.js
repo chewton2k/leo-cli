@@ -20,7 +20,7 @@
     read: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
 
-  const HELLO = 'Ask me anything, or tell me what you want to learn and I will teach you or quiz you; type @ to bring in a note';
+  const NEW_CHAT = '<button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>';
   const STARTERS = [
     { text: 'Teach me this note step by step', needs: 'note', ask: 'Which note should I teach you?' },
     { text: 'Quiz me on this note', needs: 'note', ask: 'Which note should the quiz cover?' },
@@ -771,17 +771,15 @@
     panel.setAttribute('aria-label', 'Ask Felix');
     panel.innerHTML = `
       <nav class="chat-history" id="chat-history" aria-label="Your chats">
-        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b></div>
+        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b>${NEW_CHAT}</div>
         <div class="chat-history-find"><input id="chat-history-search" type="search" placeholder="Search your chats" autocomplete="off" aria-label="Search your chats"></div>
         <div class="chat-history-list" id="chat-history-list"></div>
       </nav>
       <section class="chat-main">
       <header class="chat-head">
         <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
-        <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
-        <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
-        <button type="button" class="icon-btn" data-chat="drop" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg></button>
-        <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <span class="chat-title quiet" id="chat-title">New chat</span>
+        ${NEW_CHAT}
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
       <div class="study-progress" id="study-progress" hidden></div>
@@ -791,17 +789,18 @@
         <div class="chat-pick" id="chat-pick" hidden></div>
         <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
+          <span class="chat-perch" id="chat-face">${felix(100, 'idle')}</span>
           <div class="chat-attach-menu" id="chat-attach-menu" role="menu" hidden><button type="button" role="menuitem" data-chat="attach-note">${icons.note || ''}<span>A note from leo</span></button>${prepare ? `<button type="button" role="menuitem" data-chat="attach-file">${icons.paperclip || ''}<span>A file from this device</span></button>` : ''}</div>
           <input type="file" id="chat-file" multiple accept="${FILE_TYPES}" hidden>
-          <button class="chat-attach" type="button" data-chat="attach" aria-haspopup="menu" aria-controls="chat-attach-menu" aria-expanded="false" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
           <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
-          <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
-        </form>
-        <div class="chat-under">
-          <button type="button" class="chat-access" id="chat-access" data-chat="access" aria-haspopup="menu" aria-expanded="false"></button>
-          <span class="chat-under-hint">⇧Tab to switch</span>
+          <div class="chat-tools">
+            <button class="chat-attach" type="button" data-chat="attach" aria-haspopup="menu" aria-controls="chat-attach-menu" aria-expanded="false" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+            <button type="button" class="chat-chip" data-chat="drop" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg><span></span></button>
+            <button type="button" class="chat-access" id="chat-access" data-chat="access" aria-haspopup="menu" aria-expanded="false"></button>
+            <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+          </div>
           <div class="chat-access-menu" id="chat-access-menu" role="menu" hidden>${ACCESS.map((a) => `<button type="button" role="menuitemradio" data-chat="access-pick" data-access="${a.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACCESS_GLYPHS[a.id]}</svg><span><b>${escape(a.label)}</b><small>${escape(a.hint)}</small></span></button>`).join('')}</div>
-        </div>
+        </form>
       </footer>
       </section>`;
     document.body.appendChild(panel);
@@ -1282,6 +1281,7 @@
     }
 
     function drawChats() {
+      drawTitle();
       const box = $('#chat-history-list');
       if (!box) return;
       if (!state.chats) {
@@ -1705,17 +1705,24 @@
     const EYE_OFF = '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
 
     function drawContext() {
-      const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
-      box.textContent = ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
-      box.title = ctx ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
-      const eye = $('[data-chat="drop"]');
+      const chip = $('[data-chat="drop"]');
       const off = Boolean(state.context) && !ctx;
       const label = off ? 'Read this note again' : 'Stop reading this note';
-      eye.hidden = !state.context;
-      eye.title = label;
-      eye.setAttribute('aria-label', label);
-      eye.firstElementChild.innerHTML = off ? EYE_OFF : EYE;
+      chip.hidden = !state.context;
+      chip.classList.toggle('off', off);
+      chip.title = label;
+      chip.setAttribute('aria-label', label);
+      chip.firstElementChild.innerHTML = off ? EYE_OFF : EYE;
+      chip.lastElementChild.textContent = state.context ? state.context.title || 'Untitled' : '';
+    }
+
+    function drawTitle() {
+      const first = state.messages.find((m) => m.role === 'user' && m.text);
+      const saved = (state.chats || []).find((c) => c.id === state.id);
+      const title = $('#chat-title');
+      title.textContent = saved ? saved.title : first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat';
+      title.classList.toggle('quiet', !saved && !first);
     }
 
     const writer = (m) => (m && m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '');
@@ -1813,7 +1820,7 @@
     function welcome() {
       const where = onNote() ? 'this note' : 'your notes';
       return `<div class="chat-hello" data-hello="${escape(`${state.id}:${where}`)}">
-        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${HELLO}. I also read ${where}, and the notes connected to it.`, escape)}</p>
+        <div class="chat-hello-lead"><b>${greeting("Hi, I'm Felix.", escape)}</b><p class="chat-hello-text">${greeting(`${onNote() ? `I'm reading “${state.context.title || 'Untitled'}” and the notes connected to it.` : "I'm looking through your notes."} Ask anything, or tell me what you want to learn.`, escape)}</p></div>
         ${reviewCard()}
         <div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}
@@ -2366,12 +2373,17 @@
       const session = currentSession();
       const recap = session && session.state === 'finished' ? recapCard(session) : '';
       const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}` : welcome();
+      const perched = !state.messages.length;
+      const land = perched !== panel.classList.contains('perched') && !panel.hidden && root.leoMotion?.dock ? root.leoMotion.dock($('.chat-foot')) : null;
       const first = body.firstElementChild;
       const next = document.createElement('div');
       next.innerHTML = html;
       const hello = Boolean(first) && first.classList.contains('chat-hello') && Boolean(next.firstElementChild) && next.firstElementChild.dataset.hello === first.dataset.hello;
       if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next);
       else body.innerHTML = html;
+      panel.classList.toggle('perched', perched);
+      if (land) land();
+      drawTitle();
       drawProgress();
       if (typing) {
         const again = body.querySelector(`.${typing.box}[data-i="${typing.i}"][data-k="${typing.k}"]`);
