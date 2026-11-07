@@ -841,7 +841,7 @@ test.describe('note connections', () => {
 });
 
 test.describe('Felix', () => {
-  test('Felix stops reading the note from the head, by keyboard', async ({ page }) => {
+  test('Felix stops and resumes reading the note from the head, by keyboard', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Signup flow', body: 'Save the password.\n\nThen compare it.' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
@@ -853,8 +853,12 @@ test.describe('Felix', () => {
     await drop.focus();
     await page.keyboard.press('Enter');
     await expect(chat.locator('#chat-context')).toHaveText('Looks through your notes');
-    await expect(drop).toBeHidden();
-    await expect(chat.locator('#chat-input')).toBeFocused();
+    await expect(drop).toBeVisible();
+    await expect(drop).toHaveAttribute('aria-label', 'Read this note again');
+    await expect(drop).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(chat.locator('#chat-context')).toHaveText('On “Signup flow”');
+    await expect(drop).toHaveAttribute('aria-label', 'Stop reading this note');
   });
 
   test('a lesson card asks how sure you are and takes your thinking, and a prediction is not marked', async ({ page }) => {

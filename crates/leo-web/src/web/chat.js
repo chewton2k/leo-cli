@@ -786,7 +786,7 @@
         <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
         <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
-        <button type="button" class="icon-btn" data-chat="drop" aria-label="Stop reading this note" title="Stop reading this note" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button>
+        <button type="button" class="icon-btn" data-chat="drop" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg></button>
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
@@ -1700,12 +1700,21 @@
       return `<div class="session-recap" role="status"><h4>Study session done</h4><p>${parts.join(' · ')}</p>${lines.join('')}<div class="session-acts">${again ? '<button type="button" class="btn primary sm" data-chat="session-again">Study those again</button>' : ''}<button type="button" class="btn plain sm" data-chat="session-done">Done</button></div></div>`;
     }
 
+    const EYE = '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>';
+    const EYE_OFF = '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
+
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
       box.textContent = ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
       box.title = ctx ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
-      $('[data-chat="drop"]').hidden = !ctx;
+      const eye = $('[data-chat="drop"]');
+      const off = Boolean(state.context) && !ctx;
+      const label = off ? 'Read this note again' : 'Stop reading this note';
+      eye.hidden = !state.context;
+      eye.title = label;
+      eye.setAttribute('aria-label', label);
+      eye.firstElementChild.innerHTML = off ? EYE_OFF : EYE;
     }
 
     const writer = (m) => (m && m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '');
@@ -2799,8 +2808,7 @@
         remember();
       }
       else if (what === 'drop') {
-        input.focus();
-        state.dropped = state.context && state.context.id;
+        state.dropped = state.dropped === state.context.id ? null : state.context.id;
         drawContext();
         if (!state.messages.length) draw();
       } else if (what === 'open') {
