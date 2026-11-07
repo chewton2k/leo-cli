@@ -1428,13 +1428,13 @@
       state.doomed = null;
       syncChatDelete();
     }
-    panel.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !state.doomed) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       state.doomed = null;
       syncChatDelete();
-    });
+    }, true);
     document.addEventListener('pointerdown', spare, true);
     document.addEventListener('focusin', spare, true);
 
@@ -2940,10 +2940,24 @@
         findTimer = setTimeout(() => findChats(query), 180);
       }
     });
-    panel.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
+      if (!state.open || e.isComposing) return;
       const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access']]
         .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
         .find((x) => !x.menu.hidden && !x.menu.dataset.folding);
+      if (e.key === 'Escape' && !open && !state.doomed && !state.busy && panel.classList.contains('with-history') && (e.target === document.body || history.contains(e.target) || !wide() || sourceNarrow()) && !e.target.closest('input, textarea')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        showSidebar(false);
+        return;
+      }
+      if (e.key === 'Escape' && !open && e.target === document.body && !document.querySelector('.scrim')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (state.busy) state.busy.abort();
+        else toggle(false);
+        return;
+      }
       if (!open) return;
       const { menu, trigger } = open;
       if (e.key === 'Escape') {
@@ -2964,7 +2978,7 @@
         else next = (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
         items[next].focus();
       }
-    });
+    }, true);
     panel.addEventListener('keydown', (e) => {
       if (e.target.id !== 'chat-pick-search') return;
       if (e.key === 'Escape') {
@@ -3010,9 +3024,10 @@
     panel.addEventListener('focusin', (e) => light(e.target));
     panel.addEventListener('focusout', (e) => light(e.relatedTarget));
     panel.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape' || !state.busy || e.target === input || e.target.id === 'chat-pick-search') return;
+      if (e.key !== 'Escape' || e.target.closest('input, textarea, select, [contenteditable]')) return;
       e.stopPropagation();
-      state.busy.abort();
+      if (state.busy) state.busy.abort();
+      else toggle(false);
     });
 
     return {
