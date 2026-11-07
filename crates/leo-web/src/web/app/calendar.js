@@ -1550,15 +1550,17 @@ function fitTasksWindow() {
   const box = tasksBox.hidden ? null : dock().getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
   const over = Boolean(card && card.left < box.right && card.top + scrollY < box.bottom);
-  const room = over ? Math.floor(box.bottom - card.bottom - scrollY - 12) : 0;
-  if (over) {
-    tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, room)}px`);
-    document.body.style.setProperty('--dock-room', `${Math.ceil(innerHeight - dock().getBoundingClientRect().top + 16)}px`);
-  } else {
-    tasksBox.style.removeProperty('--tasks-room');
-    document.body.style.removeProperty('--dock-room');
-  }
-  const cramped = over && room < TASKS_LEAST_ROOM;
+  const rail = box && box.width ? [...app.querySelectorAll('.note-outline .outline-ticks, .note-outline summary')]
+    .filter((el) => el.offsetParent)
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.right > box.left && r.left < box.right && r.bottom > 0) : [];
+  let room = over ? Math.floor(box.bottom - card.bottom - scrollY - 12) : Infinity;
+  if (rail.length) room = Math.min(room, Math.floor(box.bottom - Math.max(...rail.map((r) => r.bottom)) - 12));
+  if (Number.isFinite(room)) tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, room)}px`);
+  else tasksBox.style.removeProperty('--tasks-room');
+  if (over) document.body.style.setProperty('--dock-room', `${Math.ceil(innerHeight - dock().getBoundingClientRect().top + 16)}px`);
+  else document.body.style.removeProperty('--dock-room');
+  const cramped = Number.isFinite(room) && room < TASKS_LEAST_ROOM;
   if (cramped !== Boolean(tasksWin.cramped)) {
     tasksWin.cramped = cramped;
     drawTasksWindow();
@@ -1566,6 +1568,11 @@ function fitTasksWindow() {
 }
 
 new MutationObserver(fitTasksWindow).observe(app, { childList: true });
+let railFit = 0;
+new MutationObserver(() => {
+  if (railFit || !(app.querySelector('.outline-ticks') || tasksWin.cramped || tasksBox.style.getPropertyValue('--tasks-room'))) return;
+  railFit = requestAnimationFrame(() => { railFit = 0; fitTasksWindow(); });
+}).observe(app, { childList: true, subtree: true });
 window.addEventListener('resize', fitTasksWindow);
 
 function setTasksFolded(folded) {

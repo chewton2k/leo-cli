@@ -117,3 +117,29 @@ test('a drag across page chrome paints nothing, fields stay selectable once focu
   await page.locator('#margin-mode').click();
   expect(await page.evaluate(() => getSelection().toString())).toBe('');
 });
+
+test('the Tasks window leaves every outline tick reachable and the preview sits above it', async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 640 });
+  const today = new Date().toLocaleDateString('en-CA');
+  for (const title of ['Submit lab report', 'Email prof', 'Pay rent', 'Buy lab coat', 'Book flights']) {
+    await page.request.post('/api/tasks', { data: { title, date: today } });
+  }
+  const body = Array.from({ length: 12 }, (_, i) => `## Heading number ${i + 1}\n\nText under heading ${i + 1}.\n`).join('\n');
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Outline over tasks', body } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await page.reload();
+  await expect(page.locator('#tasks-window')).toBeVisible();
+  await expect(page.locator('.outline-ticks span')).toHaveCount(12);
+  await page.waitForTimeout(400);
+  const hits = await page.evaluate(() => [...document.querySelectorAll('.outline-ticks span')].map((tick) => {
+    const r = tick.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + 4, r.top + r.height / 2);
+    return hit && !!hit.closest('.dock');
+  }));
+  expect(hits).not.toContain(true);
+  const last = await page.locator('.outline-ticks span').last().boundingBox();
+  await page.mouse.move(last.x + 3, last.y + last.height / 2);
+  await expect(page.locator('.outline-preview')).toBeVisible();
+  const z = await page.evaluate(() => ({ outline: +getComputedStyle(document.querySelector('.note-outline')).zIndex, dock: +getComputedStyle(document.querySelector('.dock')).zIndex }));
+  expect(z.outline).toBeGreaterThan(z.dock);
+});
