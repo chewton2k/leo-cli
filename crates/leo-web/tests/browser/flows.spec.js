@@ -3666,7 +3666,7 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await expect(page.locator('.rec-error-details')).not.toHaveAttribute('open', '');
   await expect(page.locator('.rec-failed-card .hint')).not.toContainText('Others:');
   await page.locator('[data-action="rec-dismiss"]').click();
-  await expect(page.locator('.rec-idle')).toBeVisible();
+  await expect(page.locator('#rec-box .rec-idle')).toBeVisible();
   await page.reload();
   await expect(page.locator('.rec-idle')).toBeVisible();
   expect(deletions).toBe(0);

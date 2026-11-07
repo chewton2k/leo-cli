@@ -112,8 +112,9 @@ async function marginLoad(s, current = () => true, id = s.note.id) {
   marginPage.mode = view.mode;
   marginPage.threads = view.threads || [];
   marginPage.loaded = true;
+  cancelAnimationFrame(marginPage.frame);
+  marginDraw();
   marginControl();
-  marginRedraw();
 }
 
 async function marginCreated(s, note) {
