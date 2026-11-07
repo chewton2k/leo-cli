@@ -143,3 +143,17 @@ test('the Tasks window leaves every outline tick reachable and the preview sits 
   const z = await page.evaluate(() => ({ outline: +getComputedStyle(document.querySelector('.note-outline')).zIndex, dock: +getComputedStyle(document.querySelector('.dock')).zIndex }));
   expect(z.outline).toBeGreaterThan(z.dock);
 });
+
+test('lit passages join across the blank line between them without a seam', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Glow seams', body: 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc .blk')).toHaveCount(5);
+  await page.evaluate(() => [0, 2, 4].forEach(i => document.querySelectorAll('#doc .blk')[i].classList.add('blk-glow')));
+  await page.waitForTimeout(800);
+  const paint = await page.evaluate(() => [...document.querySelectorAll('#doc .blk')].map(el => {
+    const style = getComputedStyle(el);
+    return { fill: style.backgroundColor !== 'rgba(0, 0, 0, 0)', top: style.borderTopLeftRadius, bottom: style.borderBottomLeftRadius };
+  }));
+  expect(paint.map(p => p.fill)).toEqual([true, true, true, true, true]);
+  expect(paint.map(p => p.top + p.bottom)).toEqual(Array(5).fill('0px0px'));
+});
