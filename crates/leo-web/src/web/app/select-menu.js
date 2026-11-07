@@ -146,10 +146,12 @@ function listKeyTarget(items, current, e, label = (el) => el.textContent) {
   if (e.key.length !== 1 || e.key === ' ' || e.metaKey || e.ctrlKey || e.altKey) return null;
   listTyped = (Date.now() - listTypedAt < 700 ? listTyped : '') + e.key.toLowerCase();
   listTypedAt = Date.now();
-  const start = listTyped.length === 1 ? at + 1 : Math.max(at, 0);
+  const repeat = listTyped.split('').every((c) => c === listTyped[0]);
+  const needle = repeat ? listTyped[0] : listTyped;
+  const start = repeat ? at + 1 : Math.max(at, 0);
   for (let i = 0; i < items.length; i++) {
     const item = items[(start + i) % items.length];
-    if (label(item).trim().toLowerCase().startsWith(listTyped)) return item;
+    if (label(item).trim().toLowerCase().startsWith(needle)) return item;
   }
   return null;
 }
