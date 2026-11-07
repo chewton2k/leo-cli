@@ -46,9 +46,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved();
+const unsaved = () => saving.unsaved() || Boolean(kanban.panel?.dirty());
 
 function saveWebsiteWork() {
+  kanban.panel?.flush().catch(() => {});
   saving.retry().catch(() => {});
 }
 
@@ -109,7 +110,7 @@ window.addEventListener('hashchange', async (e) => {
   }
   if (kanban.panel) {
     if (!await kanbanSettlePanel()) {
-      if (location.hash === hash) history.replaceState(history.state, '', e.oldURL);
+      if (location.hash === hash) history.replaceState(history.state, '', `#/boards/${enc(kanban.board.id)}`);
       return;
     }
     if (request !== navigationRequest || location.hash !== hash) return;

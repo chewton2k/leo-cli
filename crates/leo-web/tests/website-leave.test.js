@@ -7,13 +7,14 @@ const start = source.indexOf('const unsaved =');
 const end = source.indexOf("window.addEventListener(\n  'scroll',", start);
 assert.ok(start > 0 && end > start);
 
-function environment({ draft = false } = {}) {
+function environment({ draft = false, panel = null } = {}) {
   const windows = {}, documents = {}, sent = [], saved = [], places = [];
   let rendered = 0;
   const context = {
     navigationRequest: 0, seq: 0,
     window: { addEventListener: (name, fn) => { windows[name] = fn; } },
     document: { visibilityState: 'visible', activeElement: null, body: {}, addEventListener: (name, fn) => { documents[name] = fn; } },
+    kanban: { panel },
     state: { view: 'workspace', session: null },
     app: { contains: () => false },
     saving: { unsaved: () => draft, retry: () => { saved.push('notes'); return Promise.resolve([]); } },
@@ -75,4 +76,18 @@ test('returning to a note being edited keeps its draft and focus intact', () => 
   e.documents.visibilitychange();
   assert.equal(e.rendered(), 0);
   assert.deepEqual(e.sent, []);
+});
+
+test('an open card panel is saved on hide and keeps the close warning while its text is unsaved', () => {
+  for (const dirty of [false, true]) {
+    const flushed = [];
+    const panel = { dirty: () => dirty, flush: () => { flushed.push('card'); return Promise.resolve([]); } };
+    const e = environment({ panel });
+    let prevented = false;
+    e.windows.beforeunload({ preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, dirty);
+    assert.deepEqual(flushed, dirty ? ['card'] : []);
+    e.windows.pagehide();
+    assert.equal(flushed.length, dirty ? 2 : 1);
+  }
 });

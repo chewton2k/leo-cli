@@ -1507,6 +1507,8 @@ body.kanban-dragging, body.kanban-dragging * { cursor: grabbing !important; user
 .kanban-composer .segment { min-height: 26px; padding: 0 2px; font-size: 12px; }
 .kanban-composer-row { display: flex; gap: 6px; margin-top: 6px; }
 body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(440px, 42vw); }
+#app:has(.kanban-layout) { container: kanbanroom / inline-size; }
+@container kanbanroom (max-width: 800px) { body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr); } body.kanban-panel-on .kanban-board { display: none; } }
 .kanban-panel { --tone: var(--hue-slate); min-height: 0; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 12px 20px 24px; border-radius: var(--radius); background: var(--tint); }
 .kanban-panel[hidden] { display: none; }
 .kanban-panel-bar { display: flex; align-items: center; gap: 6px; margin: 0 -8px 10px 0; min-height: 36px; }
