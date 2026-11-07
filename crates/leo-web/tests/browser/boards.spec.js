@@ -13,6 +13,9 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const sheets = read('app/sheets.js');
   const sheetParts = sheets.slice(sheets.indexOf('function sheet('), sheets.indexOf('const QUICK_PLACES'));
+  const events = read('app/events.js');
+  const escapeCapture = events.slice(events.indexOf("window.addEventListener('keydown'"), events.indexOf("document.addEventListener('keydown'"));
+  if (!escapeCapture.includes('preventDefault')) throw new Error('The capture listener moved out of events.js.');
   const fixture = `const $=(selector,root=document)=>root.querySelector(selector);
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const enc=encodeURIComponent, app=$('#app'), LEAVE_MS=150;
@@ -57,7 +60,7 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
       }
       if((m=url.match(/^\\/api\\/boards\\/([^/]+)\\/cards$/))){const card={id:body.id||'cmade'+(++made)+'00000',board:m[1],column:body.column||db.boards.find(b=>b.id===m[1]).columns[0].id,title:body.title,subheading:body.subheading||'',description:body.description||'',priority:body.priority||''};place(card,undefined);return {...card,rank:0};}
       if((m=url.match(/^\\/api\\/cards\\/([^/]+)\\/move$/))){const card=db.cards.find(c=>c.id===m[1]);const from=db.boards.find(b=>b.id===card.board);if(body.board&&body.board!==card.board){const to=db.boards.find(b=>b.id===body.board);const name=from.columns.find(c=>c.id===card.column)?.name;card.board=to.id;card.column=body.column||(to.columns.find(c=>c.name===name)||to.columns[0]).id;}else if(body.column)card.column=body.column;place(card,'after' in body?body.after:undefined);return {...card,rank:0};}
-      if((m=url.match(/^\\/api\\/cards\\/([^/]+)$/))){const card=db.cards.find(c=>c.id===m[1]);if(method==='DELETE'){db.cards=db.cards.filter(c=>c!==card);return {...card,rank:0};}Object.assign(card,body);return {...card,rank:0};}
+      if((m=url.match(/^\\/api\\/cards\\/([^/]+)$/))){const card=db.cards.find(c=>c.id===m[1]);if(method==='DELETE'){db.cards=db.cards.filter(c=>c!==card);return {...card,rank:0};}if([...(body.description||'')].length>8000){const e=new Error('Keep the description within 8,000 characters.');e.status=400;throw e;}Object.assign(card,body);return {...card,rank:0};}
       throw new Error('No fake for '+method+' '+url);
     }
     ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
@@ -72,6 +75,7 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     ${read('app/boards.js')}
     const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':kanbanBoardMenu,'kanban-column-menu':kanbanColumnMenu,'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
+    ${escapeCapture}
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     async function route(){closeSheet(true);const m=location.hash.match(/^#\\/boards\\/?(.*)$/);if(!m){leaveBoards();state={view:'other'};app.innerHTML='<p id="elsewhere">Elsewhere</p>';return;}await showBoards(decodeURIComponent(m[1]));}
     window.addEventListener('hashchange',()=>route().catch(fail));
@@ -276,6 +280,86 @@ test('a card\'s details render as Markdown like a note, toggle checkboxes, edit 
     await page.keyboard.type('Notes');
     await page.locator('#kanban-panel [data-kanban="close"]').click();
     await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Notes');
+  });
+});
+
+test('Escape and Close each leave a card at one press', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const panel = page.locator('#kanban-panel');
+    await page.locator('[data-card="cessay0001"]').click();
+    await expect(page.locator('#kanban-card-title')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(page.locator('[data-card="cessay0001"]')).toBeFocused();
+
+    await page.locator('[data-card="cessay0001"]').click();
+    await page.locator('#kanban-card-sub').click();
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+
+    await page.locator('[data-card="cessay0001"]').click();
+    await page.locator('#kanban-card-description .blk').click();
+    await expect(page.locator('#kanban-card-description textarea.line-edit')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeVisible();
+    await expect(page.locator('#kanban-card-description textarea.line-edit')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+
+    await page.locator('[data-card="cessay0001"]').click();
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(panel).toBeHidden();
+  });
+});
+
+test('details past the limit stay on screen with the reason until they fit', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const panel = page.locator('#kanban-panel');
+    const problem = page.locator('#kanban-card-problem');
+    const description = () => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description);
+    await page.locator('[data-card="cread00001"]').click();
+    await page.locator('#kanban-card-description').click();
+    await page.keyboard.insertText('x'.repeat(8010));
+    await expect(problem).toContainText('8,000 characters');
+    await expect(problem).toContainText('10 over');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(panel).toBeVisible();
+    await page.locator('[data-card="cessay0001"]').click();
+    await expect(page.locator('#kanban-card-title')).toHaveValue('Read chapter 3');
+    await expect(page.locator('#kanban-card-description')).toContainText('x'.repeat(8010));
+    await expect(problem).toBeVisible();
+    expect(await description()).toBe('');
+    expect(await page.evaluate(() => window.calls.filter(call => call.startsWith('PATCH')).length)).toBe(0);
+
+    await page.locator('#kanban-card-description .blk').click();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End');
+    for (let i = 0; i < 10; i++) await page.keyboard.press('Backspace');
+    await expect(problem).toBeHidden();
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(panel).toBeHidden();
+    expect(await description()).toBe('x'.repeat(8000));
+  });
+});
+
+test('a failed save keeps the card open with its text', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const panel = page.locator('#kanban-panel');
+    await page.locator('[data-card="cread00001"]').click();
+    await page.locator('#kanban-card-description').click();
+    await page.keyboard.type('Keep me');
+    await page.evaluate(() => { window.failNext = 'Leo could not save the card.'; });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#kanban-card-problem')).toHaveText('Leo could not save the card.');
+    await page.evaluate(() => { window.failNext = 'Leo still could not save the card.'; });
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(page.locator('#kanban-card-problem')).toHaveText('Leo still could not save the card.');
+    await expect(panel).toBeVisible();
+    await expect(page.locator('#kanban-card-description')).toHaveText('Keep me');
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    expect(await page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Keep me');
   });
 });
 
