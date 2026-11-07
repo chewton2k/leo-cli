@@ -172,6 +172,13 @@ Downloads use public HTTPS resolution, deadlines and a one-GiB cap. Signed bytes
 stay in memory. Core activity leases cover capture through clipboard restoration;
 installation takes an exclusive lease, unloads/reaps the speech worker, and keeps
 the lease until exit. Failed installation leaves the engine actor usable.
+macOS restart after an update (2026-11-06): Tauri's `restart` ran `open -n` while the
+old process was alive, so a second Dock tile stayed. Now a detached `/bin/sh` (own
+process group, null stdio, no interpolated strings) waits for this pid (30 s at most),
+then `open <bundle>` with one retry, and the app exits with `RESTART_EXIT_CODE`; if the
+spawn fails or the binary is not in a bundle, `app.restart()` runs as before. The first
+update INTO this build still restarts with the old binary and may show two icons. Only
+argv and the wait are tested; a real update needs a release.
 
 Release-only `tauri.release.conf.json` includes the root CLI as `binaries/leo`,
 so ordinary checks/dev need no prebuilt sidecar. CI builds that command first,
