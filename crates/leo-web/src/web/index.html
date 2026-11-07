@@ -1377,7 +1377,8 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-ask { margin-top: 14px; text-align: left; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); padding: 12px 14px; animation: fade var(--t-follow) var(--ease-arrive); }
 .chat-ask-top { display: flex; align-items: center; gap: 10px; }
 .chat-ask-top b { flex: 1; font-size: 14.5px; }
-.chat-ask-x { border: 0; background: none; color: var(--faint); font-size: 18px; line-height: 1; padding: 2px 6px; }
+.chat-ask-x { border: 0; background: none; color: var(--faint); display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border-radius: var(--r-sm); }
+.chat-ask-x svg { width: 16px; height: 16px; }
 .chat-ask-how { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); max-width: none; }
 .chat-ask-classes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .chat-class { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: var(--r-pill); padding: 6px 12px; font-size: 13.5px; }
@@ -1401,7 +1402,7 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .msg.leo .prose h3 { font-size: calc(16px * var(--read)); }
 @media (prefers-reduced-motion: no-preference) { .msg.pending > .prose:not(:has(~ :not(.msg-clock))):not(:has(.typing)) { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), rgb(0 0 0 / .35)); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), rgb(0 0 0 / .35)); } }
 .chat-switch { align-self: center; font-size: var(--fs-xs); color: var(--muted); padding: 2px 10px; background: var(--tint); border-radius: 9px; margin: 4px 0; }
-.msg-note { font-size: var(--fs-xs); color: var(--muted); text-align: right; margin-top: 4px; }
+.msg-note { font-size: var(--fs-xs); color: var(--muted); text-align: right; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .msg.user.queued .bubble { background: none; color: var(--muted); outline: 1px dashed color-mix(in srgb, var(--text) 30%, transparent); outline-offset: -1px; }
 .ask-card, .quiz-card { margin: 10px 0 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); display: grid; gap: 10px; }
 .ask-card { border-left: 3px solid var(--accent); }
@@ -1552,7 +1553,7 @@ body.kanban-dragging .kanban-tab.kanban-over { display: inline-flex; }
 .icon-btn.kanban-col-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .kanban-cards { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 2px 8px; }
 .kanban-cards:empty { padding: 0; }
-.kanban-card { position: relative; flex: none; box-sizing: border-box; padding: 12px; border-radius: 8px; background: color-mix(in srgb, #fff 8%, var(--raised)); box-shadow: var(--shadow-sm); cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+.kanban-card { position: relative; flex: none; box-sizing: border-box; padding: 12px; border-radius: calc(var(--radius) - 8px); background: color-mix(in srgb, #fff 8%, var(--raised)); box-shadow: var(--shadow-sm); cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 @media (hover: hover) { .kanban-card:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 18%, transparent), 0 1px 2px rgba(0, 0, 0, .08); } }
 .kanban-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .kanban-card-title { font-size: var(--fs-base); font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
@@ -1568,16 +1569,17 @@ body.kanban-dragging .kanban-tab.kanban-over { display: inline-flex; }
 .kanban-placeholder > * { visibility: hidden; }
 .kanban-ghost { position: fixed; left: 0; top: 0; z-index: 1000; margin: 0; pointer-events: none; overflow: hidden; scale: 1.02; box-shadow: var(--shadow-lift); opacity: .96; }
 body.kanban-dragging, body.kanban-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
-.kanban-add-card { flex: none; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: calc(100% - 16px); min-height: 32px; margin: 6px 8px 8px; padding: 4px 12px; border: 0; border-radius: 8px; background: none; color: var(--lane-ink); font-size: var(--fs-sm); font-weight: 550; text-align: left; }
+.kanban-add-card { flex: none; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: calc(100% - 16px); min-height: 32px; margin: 6px 8px 8px; padding: 4px 12px; border: 0; border-radius: calc(var(--radius) - 8px); background: none; color: var(--lane-ink); font-size: var(--fs-sm); font-weight: 550; text-align: left; }
 .kanban-add-card svg, .kanban-head .btn svg { width: 15px; height: 15px; flex: none; }
 .kanban-add-card:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
 .kanban-add-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (hover: hover) {
-  .kanban-add-card, .kanban-col-more { opacity: 0; }
+  .kanban-col-more { opacity: 0; }
+  .kanban-add-card { opacity: .7; }
   .kanban-col:hover :is(.kanban-add-card, .kanban-col-more), .kanban-col:focus-within :is(.kanban-add-card, .kanban-col-more), .kanban-cards:empty + .kanban-add-card, .kanban-col.kanban-full .kanban-add-card, .kanban-col-more[aria-expanded="true"] { opacity: 1; }
 }
 .kanban-composer { flex: none; margin: 6px 8px 8px; }
-.kanban-composer-box { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--raised); }
+.kanban-composer-box { border: 1px solid var(--line); border-radius: calc(var(--radius) - 8px); background: var(--raised); }
 .kanban-composer-box:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 .kanban-composer textarea.set-input { display: block; width: 100%; padding: 10px 12px 4px; border: 0; background: none; resize: none; font-size: var(--fs-base); }
 .kanban-composer textarea.set-input:focus { outline: none; }
@@ -1690,7 +1692,8 @@ body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(
 .task-sheet-title { overflow-wrap: anywhere; }
 .task-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .task-acts .icon-btn { width: 36px; height: 36px; flex: none; border: 1px solid var(--line); border-radius: 9px; text-decoration: none; }
-.task-acts [data-action="task-delete"] { margin-left: auto; color: var(--danger); }
+.task-acts [data-action="task-delete"] { margin-left: auto; }
+.task-saved { float: right; }
 .task-acts .btn svg { width: 16px; height: 16px; }
 body.on-calendar main { max-width: none; margin: 0; padding: 0 0 var(--bottom); container: cal / inline-size; }
 .cal-page { --cal-line: var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 248px; height: calc(100dvh - var(--top) - 62px - var(--bottom)); min-height: 420px; }
@@ -1703,6 +1706,7 @@ body.on-calendar main { max-width: none; margin: 0; padding: 0 0 var(--bottom); 
 .cal-arrow svg { width: 18px; height: 18px; }
 .cal-arrow.next svg { transform: scaleX(-1); }
 .cal-status { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
+.cal-status .cal-refresh { color: inherit; text-decoration: none; }
 .cal-status .activity-spin { width: 12px; height: 12px; }
 .cal-head .btn.primary svg { width: 16px; height: 16px; }
 .cal-week { flex: 1; min-height: 0; display: flex; flex-direction: column; --gutter: 52px; }
@@ -1776,7 +1780,7 @@ body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; user-selec
 .cal-cell .cal-item .cal-open { flex-direction: row; align-items: baseline; gap: 6px; }
 .cal-cell .cal-item .cal-title { flex: 0 1 auto; }
 .cal-cell .cal-item .cal-sub { flex: 1 1 0; min-width: 0; }
-.cal-stack-more { position: absolute; right: 4px; height: 18px; padding: 0 6px; border: 0; border-radius: 9px; background: var(--raised); box-shadow: var(--shadow); font-size: 11px; font-weight: 650; line-height: 18px; color: var(--muted); }
+.cal-stack-more { font-variant-numeric: tabular-nums; position: absolute; right: 4px; height: 18px; padding: 0 6px; border: 0; border-radius: 9px; background: var(--raised); box-shadow: var(--shadow); font-size: 11px; font-weight: 650; line-height: 18px; color: var(--muted); }
 .cal-more { align-self: flex-start; padding: 0 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
 .cal-side { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 18px; padding: 14px 14px 24px; border-radius: var(--radius); background: var(--tint); }
 .cal-side > * { flex-shrink: 0; }
@@ -1794,16 +1798,17 @@ body.cal-dragging, body.cal-dragging * { cursor: grabbing !important; user-selec
 .cal-mini-day:hover { background: var(--surface-2); }
 .cal-mini-day.out { color: var(--faint); }
 .cal-mini-day.shown { background: var(--surface-2); border-radius: 0; }
-.cal-mini-day.today { background: var(--accent); color: var(--accent-text); border-radius: 50%; font-weight: 650; }
+.cal-mini-day.today { background: none; color: var(--accent); border-radius: 7px; font-weight: var(--fw-bold); }
 .cal-tray-list h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
 .cal-tray-list h2.late { color: var(--danger); }
-.cal-count { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--surface-2); font-size: 11px; font-weight: 650; text-align: center; }
+.cal-count { font-variant-numeric: tabular-nums; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--surface-2); font-size: 11px; font-weight: 650; text-align: center; }
 .cal-tray-row { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; padding: 8px 10px; border-radius: 9px; background: var(--raised); font-size: var(--fs-sm); }
 .cal-tray-row[data-drag] { cursor: grab; }
 .cal-tray-row .cal-open { flex-direction: row; align-items: baseline; gap: 8px; }
 .cal-tray-row .cal-title { flex: 1; font-weight: 550; }
 .cal-hint { margin: -10px 2px 0; font-size: 11.5px; }
 .cal-connect { margin: 0; font-size: 12.5px; }
+.cal-empty { margin: 0; }
 .cal-done-toggle { align-self: flex-start; font-size: 12.5px; }
 .cal-side.peek { gap: 12px; padding: 10px 18px 24px; background: var(--raised); }
 .cal-peek-bar { display: flex; align-items: center; gap: 4px; min-height: 36px; margin-right: -8px; }
@@ -1822,6 +1827,7 @@ h2.cal-peek-title { margin-left: 0; padding: 4px 0; }
 .cal-peek-times .set-input { width: auto; min-width: 0; padding: 6px 8px; font-size: var(--fs-sm); }
 .cal-peek-about { box-sizing: border-box; width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--r-md); background: var(--surface-2); font: inherit; font-size: var(--fs-base); line-height: 1.5; color: var(--text); resize: vertical; }
 .cal-peek-about:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+@media (max-width: 1100px) { .cal-head { flex-wrap: wrap; } .cal-status { order: 9; flex-basis: 100%; } }
 @container cal (max-width: 760px) {
   .cal-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .cal-side:not(.peek) { grid-row: 1; max-height: 200px; gap: 12px; padding: 10px 14px; }

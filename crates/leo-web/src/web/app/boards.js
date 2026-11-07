@@ -626,7 +626,7 @@ async function kanbanCardPanel(id) {
   const column = kanbanColumn(card.column);
   box.dataset.tone = column ? kanbanTone(column) : '';
   box.innerHTML = `<div class="kanban-sheet">
-    <div class="kanban-panel-bar"><span class="kanban-panel-where"><span class="kanban-dot" aria-hidden="true"></span><span>${esc(board.name)}</span></span><span class="hint grow" id="kanban-card-saved" role="status"></span><button type="button" class="icon-btn" data-kanban="delete" aria-label="Delete card" title="Delete card">${ICON.trash}</button><button type="button" class="icon-btn" data-kanban="close" aria-label="Close" title="Close (Esc)">${ICON.close}</button></div>
+    <div class="kanban-panel-bar"><span class="kanban-panel-where"><span class="kanban-dot" aria-hidden="true"></span><span>${esc(board.name)}</span></span><span class="hint grow" id="kanban-card-saved" role="status"></span><button type="button" class="icon-btn danger" data-kanban="delete" aria-label="Delete card" title="Delete card">${ICON.trash}</button><button type="button" class="icon-btn" data-kanban="close" aria-label="Close" title="Close (Esc)">${ICON.close}</button></div>
     <textarea class="kanban-sheet-title" id="kanban-card-title" rows="1" maxlength="300" aria-label="Card title" spellcheck="true">${esc(card.title)}</textarea>
     <input class="kanban-sheet-sub" id="kanban-card-sub" maxlength="200" placeholder="Add a subheading" aria-label="Subheading" autocomplete="off" value="${esc(card.subheading || '')}">
     <div class="kanban-props">

@@ -52,13 +52,14 @@ async function calendarFixture(browser, run, { width = 1360, height = 900, view 
     const db=${JSON.stringify(db)};
     const hms=v=>v?String(v).slice(0,5)+':00':null;
     let made=0;
-    window.calls=[];window.pending=0;window.failNext=null;
+    window.calls=[];window.pending=0;window.failNext=null;window.failSchedule=false;
     async function api(url,options={}){window.pending++;try{return await fakeApi(url,options);}finally{window.pending--;}}
     async function fakeApi(url,{method='GET',body}={}){
       window.calls.push({method,url:url.split('?')[0],body:body?structuredClone(body):null});
       await new Promise(r=>setTimeout(r,5));
       if(window.failNext&&method!=='GET'){const e=new Error(window.failNext);window.failNext=null;throw e;}
       let m;
+      if(url.startsWith('/api/schedule')&&window.failSchedule){window.failSchedule=false;throw new Error('offline');}
       if(url.startsWith('/api/schedule'))return {connected:true,calendars:[{id:'c1',name:'School'}],synced:new Date().toISOString(),refreshing:false,events:structuredClone(db.events),tasks:structuredClone(db.tasks)};
       if(url==='/api/calendar/refresh')return null;
       if(url==='/api/tasks'&&method==='POST'){const t={id:'task-made'+(++made),source:'leo',title:body.title,description:'',kind:body.kind||'other',done:false,date:body.date||null,time:hms(body.time),end:body.time?hms(body.end):null,note:null,found:true,promoted:false};db.tasks.push(t);return structuredClone(t);}
@@ -208,11 +209,24 @@ test('tasks follow the mini calendar and stay visible above a narrow calendar', 
   }
 });
 
+test('the calendar status refreshes on click and offers Retry only after a failure', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    const status = page.locator('.cal-status');
+    await expect(status.locator('.cal-refresh')).toContainText('Updated');
+    await expect(status.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+    await page.evaluate(() => { window.failSchedule = true; });
+    await status.locator('.cal-refresh').click();
+    await expect(status).toContainText("Couldn't update");
+    await status.getByRole('button', { name: 'Retry' }).click();
+    await expect(status.locator('.cal-refresh')).toContainText('Updated');
+  });
+});
+
 test('the task sidebar creates undated tasks from its empty state', async ({ browser }) => {
   await calendarFixture(browser, async page => {
     await page.evaluate(async () => { window.db.tasks = []; await loadSchedule(); });
     const side = page.locator('#cal-side');
-    await expect(side).toContainText('Tasks without a date appear here.');
+    await expect(side).toContainText('Nothing overdue. Tasks without a date land here, ready to drag onto the calendar.');
     await side.getByRole('button', { name: 'New task', exact: true }).click();
     await expect(page.locator('#task-title')).toBeFocused();
     await page.locator('#task-title').fill('Read the next chapter');

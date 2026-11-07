@@ -131,17 +131,17 @@ function calStatus() {
   if (d.refreshing) return `<span class="activity-spin" aria-hidden="true"></span><span>Updating…</span>`;
   const problem = (d.calendars || []).some((c) => c.problem);
   const when = d.synced ? rel(d.synced) : 'not yet';
-  return `<span>${problem ? 'A calendar could not be read' : `Updated ${esc(when)}`}</span> · <button type="button" class="link-btn" data-action="cal-retry">Retry</button>`;
+  return `<button type="button" class="link-btn cal-refresh" data-action="cal-retry" title="Refresh now">${problem ? 'A calendar could not be read' : `Updated ${esc(when)}`}</button>${problem ? ' · <button type="button" class="link-btn" data-action="cal-retry">Retry</button>' : ''}`;
 }
 
-const TONES = 8;
+const EVENT_HUES = [0, 1, 2, 3, 6, 7];
 const TASK_TONES = { exam: '--hue-red', assignment: '--hue-indigo', meeting: '--hue-violet', 'follow-up': '--hue-teal', deadline: '--hue-amber', other: '--hue-slate' };
 
 function toneOfEvent(event) {
   const key = String(event.title || '').toLowerCase().replace(/\s+/g, ' ').trim();
   let hash = 2166136261;
   for (const ch of key) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619) >>> 0;
-  return `--hue-${hash % TONES}`;
+  return `--hue-${EVENT_HUES[hash % EVENT_HUES.length]}`;
 }
 
 function toneOfTask(task) {
@@ -272,7 +272,7 @@ function calHead(days) {
     </div>
     <div class="cal-status" role="status">${calStatus()}</div>
     <div class="cal-views">${segmented({ label: 'View', action: 'cal-view', key: 'view', current: cal.view, choices: CAL_VIEWS.map(([v, label]) => [v, label, '', `${label} (${label[0]})`]) })}</div>
-    <button type="button" class="btn primary sm" data-action="task-new" data-day="${esc(cal.selected)}">${ICON.plus}<span>New</span></button>
+    <button type="button" class="btn primary sm" data-action="task-new" data-day="${esc(cal.selected)}">${ICON.plus}<span>New task</span></button>
   </header>`;
 }
 
@@ -413,7 +413,7 @@ function calTray(plan, today) {
   const undated = list('No date', plan.undated, false);
   const tasks = (d && d.tasks) || [];
   const toggle = tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn cal-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : '';
-  return `${calMini(today)}<div class="cal-tasks-head"><h2>Tasks</h2><button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button></div>${list('Overdue', plan.overdue, true)}${undated}${!plan.overdue.length && !plan.undated.length ? '<p class="hint cal-connect">Tasks without a date appear here.</p>' : ''}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}${connect}`;
+  return `${calMini(today)}<div class="cal-tasks-head"><h2>Tasks</h2><button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button></div>${list('Overdue', plan.overdue, true)}${undated}${!plan.overdue.length && !plan.undated.length ? '<p class="hint cal-empty">Nothing overdue. Tasks without a date land here, ready to drag onto the calendar.</p>' : ''}${plan.undated.length ? '<p class="hint cal-hint">Drag a task onto the calendar to give it a time</p>' : ''}${toggle}${connect}`;
 }
 
 function drawCalendar() {
@@ -1001,7 +1001,7 @@ function calPeekTask(side, id, on) {
     ${leo ? `<div class="set-row column task-repeat" id="cal-peek-repeat"><span class="set-label">Repeat</span>${repeatBubbles(task.repeat || [])}<span class="hint repeat-hint">${esc(repeatHint(task.repeat || []))}</span></div>` : ''}
     <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="cal-peek-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${task.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${task.kind === k}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
     <textarea class="cal-peek-about" id="cal-peek-about" rows="4" maxlength="4000" placeholder="Add a description…" aria-label="Description">${esc(task.description || '')}</textarea>
-    <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in Leo'}</span></div>
+    <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in leo'}</span></div>
     <div class="set-row"><span class="set-label">Google</span><span class="set-value" id="cal-peek-google">${esc(calPeekGoogle(task))}</span></div>
     ${repeating && Object.keys(task.moved || {}).length ? '<p class="hint">Google gets the weekly days; days you moved here stay in leo and the .ics file.</p>' : ''}
     <div class="buttons task-acts" id="cal-peek-acts">${calPeekActs(task)}</div>`;
@@ -1118,9 +1118,9 @@ function pickerBody(box, value, { meeting = false, onChange = () => {} } = {}) {
     const names = grid.slice(0, 7).map((c) => S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'narrow' }));
     const chip = (attrs, label, on) => `<button type="button" class="chip pick-chip${on ? ' on' : ''}" ${attrs} aria-pressed="${on}">${esc(label)}</button>`;
     const quick = [...S.quickDates(today).map((q) => chip(`data-pick-day="${q.key}"`, q.label, pick.date === q.key)), chip('data-pick-day=""', 'No date', !pick.date)].join('');
-    const times = [['', 'All day'], ['09:00', '9:00'], ['12:00', '12:00'], ['15:00', '15:00'], ['18:00', '18:00'], ['23:59', 'End of day']];
+    const times = [['', 'All day'], ...[['09:00', 9], ['12:00', 12], ['15:00', 15], ['18:00', 18]].map(([t, h]) => [t, calHour(h * 60)]), ['23:59', 'End of day']];
     box.innerHTML = `<div class="pick-quick">${quick}</div>
-      <div class="pick-month"><button type="button" class="icon-btn" data-pick-month="-1" aria-label="Previous month">‹</button><span>${esc(pick.month.toLocaleDateString(calLocale(), { month: 'long', year: 'numeric' }))}</span><button type="button" class="icon-btn" data-pick-month="1" aria-label="Next month">›</button></div>
+      <div class="pick-month"><button type="button" class="icon-btn cal-arrow" data-pick-month="-1" aria-label="Previous month">${ICON.back}</button><span>${esc(pick.month.toLocaleDateString(calLocale(), { month: 'long', year: 'numeric' }))}</span><button type="button" class="icon-btn cal-arrow next" data-pick-month="1" aria-label="Next month">${ICON.back}</button></div>
       <div class="sched-grid small">${names.map((n) => `<span class="sched-wd">${esc(n)}</span>`).join('')}${grid.map((c) => `<button type="button" class="sched-day${c.inMonth ? '' : ' out'}${c.key === S.dayKey(today) ? ' today' : ''}${c.key === pick.date ? ' on' : ''}" data-pick-day="${c.key}"><span class="sched-n">${c.day}</span></button>`).join('')}</div>
       ${pick.date ? `<div class="pick-times"><span class="set-label">Time</span>${times.map(([t, label]) => chip(`data-pick-time="${t}"`, label, pick.time === t)).join('')}<input class="set-input pick-time" type="time" value="${esc(pick.time)}" aria-label="Time">${meeting && pick.time ? `<label class="pick-end">Ends <input class="set-input pick-end-time" type="time" value="${esc(pick.end)}"></label>` : ''}</div>` : ''}`;
   };
@@ -1265,11 +1265,11 @@ function taskSheet(id, on = null) {
   const moved = onGoogle && task.date && !onGoogle.all_day && S.dayKey(new Date(onGoogle.start)) !== task.date && task.time;
   const box = sheet(`<h3 class="task-sheet-title">${esc(task.title)}</h3>
     ${task.found === false ? '<p class="set-note warn">leo could not find this checkbox in the note any more. Open the note to check it.</p>' : ''}
-    <div class="set-row column"><label class="set-label" for="task-description">Description <span class="hint">optional</span></label><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…">${esc(task.description || '')}</textarea><button type="button" class="btn sm" id="task-description-save" disabled>Save description</button></div>
+    <div class="set-row column"><label class="set-label" for="task-description">Description <span class="hint">optional</span><span class="hint task-saved" id="task-description-state" role="status"></span></label><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…">${esc(task.description || '')}</textarea></div>
     <div class="set-row"><span class="set-label">${repeating ? 'Starts' : 'Date'}</span><span class="set-value">${esc(when)}<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">${task.date ? 'Change' : 'Set date'}</button></span></div>
     ${task.source === 'leo' ? `<div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles(task.repeat || [])}<span class="hint repeat-hint">${esc(repeatHint(task.repeat || []))}</span></div>` : ''}
     <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${task.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${task.kind === k}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
-    <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in Leo'}</span></div>
+    <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in leo'}</span></div>
     <div class="set-row"><span class="set-label">Google</span><span class="set-value">${esc(google)}</span></div>
     ${moved ? `<p class="set-note">The Google event is on another day. <a href="${esc(S.googleDay(S.dayKey(new Date(onGoogle.start))))}" target="_blank" rel="noopener">Open that day in Google Calendar</a></p>` : ''}
     <div class="buttons task-acts">
@@ -1280,38 +1280,52 @@ function taskSheet(id, on = null) {
       ${task.source === 'leo' ? `<button type="button" class="icon-btn danger" aria-label="Delete" title="Delete" data-action="task-delete" data-id="${esc(task.id)}">${ICON.trash}</button>` : task.promoted ? `<button type="button" class="icon-btn" aria-label="Stop tracking" title="Stop tracking" data-action="task-delete" data-id="${esc(task.id)}">${ICON.close}</button>` : ''}
     </div>`);
   const description = $('#task-description', box);
-  const saveDescription = $('#task-description-save', box);
-  let savingDescription = false;
-  description.addEventListener('input', () => {
-    saveDescription.disabled = savingDescription || description.value.trim() === (task.description || '');
-  });
-  saveDescription.addEventListener('click', async () => {
-    if (savingDescription) return;
-    const before = task.description || '';
+  const descState = $('#task-description-state', box);
+  const opened = task.description || '';
+  let descTimer = 0;
+  let descSaving = false;
+  let descSaved = false;
+  const flushDescription = async () => {
+    clearTimeout(descTimer);
+    if (descSaving) {
+      descTimer = setTimeout(flushDescription, 200);
+      return;
+    }
     const text = description.value.trim();
-    savingDescription = true;
-    saveDescription.disabled = true;
+    if (text === (task.description || '')) return;
+    descSaving = true;
+    descState.textContent = 'Saving…';
     try {
       const saved = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: text } });
       task.description = saved.description;
-      toast('Description saved', { action: 'Undo', run: async () => {
-        const undone = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: before } });
-        task.description = undone.description;
-        if (box.isConnected && description.value.trim() === text) {
-          description.value = before;
-          saveDescription.disabled = true;
-        }
-        loadTasksWindow().catch(() => {});
-      } });
+      descState.textContent = 'Saved';
+      if (!descSaved) {
+        descSaved = true;
+        toast('Description saved', { action: 'Undo', run: async () => {
+          const undone = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: opened } });
+          task.description = undone.description;
+          if (box.isConnected) {
+            description.value = opened;
+            descState.textContent = '';
+          }
+          loadTasksWindow().catch(() => {});
+        } });
+      }
       loadTasksWindow().catch(() => {});
     } catch (err) {
+      descState.textContent = '';
       if (err instanceof Locked) throw err;
       toast(err.message, { bad: true });
     } finally {
-      savingDescription = false;
-      if (box.isConnected) saveDescription.disabled = description.value.trim() === (task.description || '');
+      descSaving = false;
     }
+  };
+  description.addEventListener('input', () => {
+    descState.textContent = '';
+    clearTimeout(descTimer);
+    descTimer = setTimeout(flushDescription, 600);
   });
+  description.addEventListener('blur', flushDescription);
   const repeatBox = $('#task-repeat', box);
   if (repeatBox) {
     repeatPicker(repeatBox, task.repeat || [], async (days) => {

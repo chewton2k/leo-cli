@@ -986,8 +986,8 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   and cards are solid (`--raised`, a step lighter in dark). `kanbanTone`: to do blue, in
   progress amber, done green, blocked red, others by place; a column that would match or
   look like a neighbour (`KANBAN_NEAR`) takes the next place hue. The head is the name
-  (edits in place) and count; ⋯ and a lane's Add card appear on hover and keyboard focus,
-  always on touch, and Add card always shows in an empty or full lane (`.kanban-full`).
+  (edits in place) and count; ⋯ appears on hover and keyboard focus, Add card always shows, softened at rest
+  (2026-11-07, the user's call), both always on touch.
   Cards show the title (three lines at most), the muted subheading, two lines of the
   description when there is one (`.kanban-has-text`) and the priority arrow top right. Add
   card sits directly under the last card; its composer stays open for the next card (adds

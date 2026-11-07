@@ -4267,6 +4267,22 @@ test.describe('calendar', () => {
     await expect(page.locator('#cal-side.peek')).toHaveCount(0);
   });
 
+  test('a task sheet description saves itself, even when closed mid-typing', async ({ page }) => {
+    const title = `Autosave ${test.info().project.name} ${Date.now().toString(36)}`;
+    const made = await (await page.request.post('/api/tasks', { data: { title, description: '', date: null, time: null, kind: 'other', repeat: [] } })).json();
+    const saved = async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === made.id);
+    await page.goto('/#/calendar');
+    await page.evaluate((id) => taskSheet(id), made.id);
+    const description = page.locator('#task-description');
+    await description.fill('First draft');
+    await expect.poll(async () => (await saved()).description).toBe('First draft');
+    await expect(page.locator('#task-description-state')).toHaveText('Saved');
+    await expect(page.locator('#task-description-save')).toHaveCount(0);
+    await description.fill('Typed then closed');
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await saved()).description).toBe('Typed then closed');
+  });
+
   test('tasks are added, dated, ticked off and sent to Google Calendar from the Calendar page', async ({ page }) => {
     const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
     await page.addInitScript(() => {
