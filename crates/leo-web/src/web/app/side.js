@@ -377,7 +377,7 @@ function loadSideNotes(path, offset = 0, force = false) {
   if (path !== '' && !side.folders.some((folder) => folder.name === path)) return;
   if (!Number.isSafeInteger(offset) || offset < 0) return;
   const previous = side.notes.get(path);
-  if (previous?.seq === seq && (previous.loading || !force)) return;
+  if (previous?.seq === seq && (!force || (previous.loading && previous.offset === offset))) return;
   if (!previous && side.notes.size >= SIDE_NOTES_FOLDERS) {
     const oldest = [...side.notes.keys()].find((key) => !side.automatic.has(key));
     side.notes.delete(oldest);

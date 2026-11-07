@@ -269,6 +269,7 @@ test('explorer loads direct notes, escapes titles, pages large folders and recov
     await expect(page.locator('.side-note[data-id="week-note"]')).toBeVisible();
     await row('Personal').click();
     await expect(page.locator('.side-note[data-id^="personal-"]')).toHaveCount(100);
+    await page.waitForFunction(()=>!document.getAnimations().some(run=>run.effect?.target?.closest?.('.side-kids')));
     await page.locator('[data-action="side-notes"][data-dir="Personal"]').filter({hasText:'Next'}).click();
     await expect(page.locator('.side-note[data-id="personal-104"]')).toBeVisible();
     await page.evaluate(()=>{seq++;drawSide();});
