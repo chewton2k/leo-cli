@@ -88,6 +88,27 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
+test('a style key with no selection opens a pair to type in, and leaves it or removes it', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    const editor = page.locator('#doc textarea');
+    await page.locator('#doc .blk').first().click();
+    await page.keyboard.type('plain ');
+    await page.keyboard.press('ControlOrMeta+b');
+    await expect(editor).toHaveValue('plain ****');
+    await page.keyboard.type('bold');
+    await page.keyboard.press('ControlOrMeta+b');
+    await page.keyboard.type(' then ');
+    await page.keyboard.press('ControlOrMeta+u');
+    await page.keyboard.press('ControlOrMeta+u');
+    await page.keyboard.press('ControlOrMeta+i');
+    await page.keyboard.type('slanted');
+    await expect(editor).toHaveValue('plain **bold** then *slanted*');
+    expect(await page.evaluate(() => window.doc.source())).toBe('plain **bold** then *slanted*');
+  }, { body: '' });
+});
+
 test('an active heading refits after pane resizing without clipping text or losing selection', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();

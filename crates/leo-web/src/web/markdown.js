@@ -127,6 +127,11 @@
 
   const isBox = (line) => BOX.test(line.trimStart());
 
+  function listable(line, after) {
+    const found = line.match(ITEM);
+    return found && (after || !/[a-z]/i.test(found[2]) || /^[aA][.)]/.test(found[2]) || isBox(line)) ? found : null;
+  }
+
   const cells = (row) =>
     row
       .trim()
@@ -151,7 +156,7 @@
       FENCE.test(line) ||
       HEADING.test(line) ||
       RULE.test(line) ||
-      ITEM.test(line) ||
+      listable(line, false) ||
       /^\s*>/.test(line) ||
       /^\s*(\$\$|\\\[\s*$|\\begin\{(?:equation|align|aligned|gather|gathered|multline|alignat|flalign|split|cases|matrix|pmatrix|bmatrix|vmatrix|array)\*?\})/.test(line) ||
       (line.includes('|') && next !== undefined && TABLE_RULE.test(next) && next.includes('-'))
@@ -337,9 +342,10 @@
         continue;
       }
 
-      if (ITEM.test(line)) {
-        const items = [];
-        while (i < lines.length && ITEM.test(lines[i])) {
+      if (listable(line, i === 0 && state.after)) {
+        const items = [line];
+        i++;
+        while (i < lines.length && listable(lines[i], true)) {
           items.push(lines[i]);
           i++;
         }
@@ -364,6 +370,7 @@
         boxes: options.boxOffset || 0,
         interactive: options.interactive !== false,
         depth: options.depth || 1,
+        after: options.after,
       });
     } finally {
       pictureDir = '';
@@ -376,7 +383,7 @@
       .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm, ' ')
       .replace(/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/gm, ' ')
       .replace(/\s*\|\s*/g, ' ')
-      .replace(new RegExp(String.raw`^\s*(?:#{1,6}|>|${MARKER})\s+`, 'gm'), '')
+      .replace(new RegExp(String.raw`^\s*(?:#{1,6}|>|${MARKER})\s+`, 'gm'), (head) => (/^\s*[a-z]/i.test(head) && !listable(head, false) ? head : ''))
       .replace(/\[( |x|X)\]\s+/g, '')
       .replace(/!\[\[[^\]]*\]\]/g, ' ')
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, ' ')
@@ -387,7 +394,7 @@
       .trim();
   }
 
-  const api = { render, plain, escape, MARKER };
+  const api = { render, plain, escape, MARKER, listKind, listable };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMarkdown = api;
 })(typeof window !== 'undefined' ? window : globalThis);

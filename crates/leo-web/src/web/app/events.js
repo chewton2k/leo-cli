@@ -89,7 +89,7 @@ function reopenLastPlace() {
   } catch (e) {}
 }
 
-window.addEventListener('hashchange', async () => {
+window.addEventListener('hashchange', async (e) => {
   const request = ++navigationRequest;
   const leaving = state.session;
   const mine = seq;
@@ -106,6 +106,13 @@ window.addEventListener('hashchange', async () => {
     if (!current() || location.hash !== hash) return;
     leaving.doc.destroy();
     state.session = null;
+  }
+  if (kanban.panel) {
+    if (!await kanbanSettlePanel()) {
+      if (location.hash === hash) history.replaceState(history.state, '', e.oldURL);
+      return;
+    }
+    if (request !== navigationRequest || location.hash !== hash) return;
   }
   marginLeave();
   route(true);

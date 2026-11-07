@@ -9,6 +9,7 @@ const KANBAN_HOLD_MS = 300;
 const KANBAN_EDGE = 56;
 const KANBAN_OTHERS = '.kanban-card:not(.kanban-placeholder)';
 const KANBAN_SAVE_MS = 600;
+const KANBAN_MOST_DESCRIPTION = 8000;
 const KANBAN_PRIORITIES = [['', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
 const KANBAN_ICON = {
   pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>'),
@@ -569,6 +570,22 @@ function kanbanPanelStatus() {
   box.dataset.tone = column ? kanbanTone(column) : '';
 }
 
+async function kanbanSettlePanel() {
+  try {
+    return !kanban.panel || await kanban.panel.settle();
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+async function kanbanLeavePanel(refocus = true) {
+  const open = kanban.panel;
+  if (!await kanbanSettlePanel()) return false;
+  if (kanban.panel === open) kanbanClosePanel(refocus);
+  return true;
+}
+
 function kanbanClosePanel(refocus = true) {
   const open = kanban.panel;
   if (!open) return;
@@ -587,13 +604,13 @@ function kanbanClosePanel(refocus = true) {
 
 // A card opens beside the board, like a note: edits save as you type and the board stays
 // in view, so the next card is one click away.
-function kanbanCardPanel(id) {
+async function kanbanCardPanel(id) {
+  const box = $('#kanban-panel');
+  if (box && kanban.panel?.id === id) { $('#kanban-card-title', box)?.focus(); return; }
+  if (kanban.panel && !await kanbanLeavePanel(false)) return;
   const card = kanbanCard(id);
   const board = kanban.board;
-  const box = $('#kanban-panel');
-  if (!card || !board || !box) return;
-  if (kanban.panel?.id === id) { $('#kanban-card-title', box)?.focus(); return; }
-  if (kanban.panel) kanbanClosePanel(false);
+  if (!card || !board || !box?.isConnected) return;
   const others = kanban.boards.filter((b) => b.id !== board.id);
   const column = kanbanColumn(card.column);
   box.dataset.tone = column ? kanbanTone(column) : '';
@@ -607,6 +624,7 @@ function kanbanCardPanel(id) {
       ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
     </div>
     <div class="prose doc kanban-description" id="kanban-card-description" role="group" aria-label="Description"></div>
+    <p class="kanban-limit" id="kanban-card-problem" role="alert" hidden></p>
   </div>`;
   box.hidden = false;
   document.body.classList.add('kanban-panel-on');
@@ -618,6 +636,8 @@ function kanbanCardPanel(id) {
   const description = $('#kanban-card-description', box);
   const status = $('#kanban-card-column', box);
   const saved = $('#kanban-card-saved', box);
+  const problem = $('#kanban-card-problem', box);
+  const tell = (text) => { problem.textContent = text; problem.hidden = !text; };
   const fit = (area) => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; };
   fit(title);
   const fields = { title, subheading: sub };
@@ -627,28 +647,45 @@ function kanbanCardPanel(id) {
     clearTimeout(timers[name]);
     timers[name] = setTimeout(() => save(name).catch(fail), KANBAN_SAVE_MS);
   };
-  const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => queue('description') });
+  const over = () => Array.from(doc.source().trim()).length - KANBAN_MOST_DESCRIPTION;
+  const tellOver = () => {
+    const extra = over();
+    tell(extra > 0 ? `Keep the description within ${KANBAN_MOST_DESCRIPTION.toLocaleString('en')} characters. It is ${extra.toLocaleString('en')} over, so this text is not saved yet.` : '');
+    return extra > 0;
+  };
+  const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => { tellOver(); queue('description'); } });
   const save = async (name) => {
     clearTimeout(timers[name]);
     timers[name] = 0;
     const value = name === 'description' ? doc.source().trim() : fields[name].value.replace(/\s+/g, ' ').trim();
-    if (value === (card[name] || '')) return;
-    if (name === 'title' && !value) { title.value = card.title; fit(title); return; }
+    if (value === (card[name] || '')) return true;
+    if (name === 'title' && !value) { title.value = card.title; fit(title); return true; }
+    if (name === 'description' && tellOver()) return false;
     try {
       const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
       kanbanUpdate(card, done);
       if (saved.isConnected) saved.textContent = 'Saved';
+      if (problem.isConnected) tellOver();
+      return true;
     } catch (e) {
       if (e instanceof Locked) throw e;
       toast(e.message, { bad: true });
+      if (problem.isConnected) tell(e.message);
+      return false;
     }
+  };
+  const names = [...Object.keys(fields), 'description'];
+  const settle = async () => {
+    doc.stop();
+    const done = await Promise.all(names.map(save));
+    return done.every(Boolean) && !names.some((name) => timers[name]);
   };
   const end = () => {
     doc.stop();
-    for (const name of [...Object.keys(fields), 'description']) if (timers[name]) save(name).catch(fail);
+    for (const name of names) if (timers[name]) save(name).catch(fail);
     doc.destroy();
   };
-  kanban.panel = { id, end };
+  kanban.panel = { id, end, settle };
   for (const [name, field] of Object.entries(fields)) {
     field.addEventListener('input', () => {
       if (field === title) fit(field);
@@ -664,10 +701,10 @@ function kanbanCardPanel(id) {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); doc.editStart(); }
   });
   box.onkeydown = (e) => {
-    if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
+    if (e.key !== 'Escape' || e.isComposing || e.target.closest('.line-edit')) return;
     e.preventDefault();
     e.stopPropagation();
-    kanbanClosePanel();
+    kanbanLeavePanel();
   };
   status.addEventListener('change', () => {
     const column = kanbanColumn(status.value);
@@ -686,15 +723,16 @@ function kanbanCardPanel(id) {
       toast(err.message, { bad: true });
     }
   });
-  $('#kanban-card-board', box)?.addEventListener('change', (e) => {
-    kanbanClosePanel(false);
-    kanbanMoveToBoard(card, e.target.value).catch(fail);
+  $('#kanban-card-board', box)?.addEventListener('change', async (e) => {
+    if (await kanbanLeavePanel(false)) return kanbanMoveToBoard(card, e.target.value).catch(fail);
+    e.target.value = board.id;
+    syncSelectMenu(e.target);
   });
   box.querySelector('[data-kanban="delete"]').addEventListener('click', () => {
     kanbanClosePanel(false);
     kanbanDeleteCard(card).catch(fail);
   });
-  box.querySelector('[data-kanban="close"]').addEventListener('click', () => kanbanClosePanel());
+  box.querySelector('[data-kanban="close"]').addEventListener('click', () => kanbanLeavePanel());
   title.focus();
   title.setSelectionRange(title.value.length, title.value.length);
 }
@@ -1002,7 +1040,7 @@ document.addEventListener('keydown', (e) => {
   if (kanban.panel && e.key === 'Escape' && !e.target.closest?.('input, textarea, select, [contenteditable], .scrim')) {
     e.preventDefault();
     e.stopImmediatePropagation();
-    kanbanClosePanel();
+    kanbanLeavePanel();
     return;
   }
   const name = e.target.closest?.('[data-kanban-name]');
@@ -1023,7 +1061,7 @@ document.addEventListener('keydown', (e) => {
   if (!card) return;
   if ((e.key === 'Enter' || e.key === ' ') && !e.altKey && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    kanbanCardPanel(card.id);
+    kanbanCardPanel(card.id).catch(fail);
   } else if (e.altKey && !e.metaKey && !e.ctrlKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
     e.preventDefault();
     kanbanKeyMove(card, e.key).catch(fail);

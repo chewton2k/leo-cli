@@ -1517,7 +1517,9 @@ body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(
 .kanban-props .segmented { flex: 1; max-width: none; margin-left: 0; }
 .kanban-status .kanban-dot { position: absolute; z-index: 1; left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .kanban-status .select-menu-button { padding-left: 28px; }
-.kanban-panel .kanban-description { min-height: 220px; margin-top: 0; font-size: 15px; line-height: 1.6; }
+.kanban-panel .kanban-description { min-height: 220px; margin-top: 0; }
+.kanban-limit { position: sticky; bottom: -24px; margin: 12px 0 0; padding: 8px 0; font-size: 13px; color: var(--danger); background: var(--tint); }
+.kanban-limit[hidden] { display: none; }
 .kanban-panel .kanban-description .blk.editing { margin-left: 0 !important; }
 @media (max-width: 760px) {
   body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr); }

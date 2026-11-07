@@ -218,15 +218,29 @@ test('letters draw as typed at any depth', () => {
   assert.equal(render('a. one\nb. two'), '<ol class="list-lower"><li value="1">one</li><li value="2">two</li></ol>');
   assert.equal(render('A) one\nB) two'), '<ol class="list-upper-paren"><li value="1">one</li><li value="2">two</li></ol>');
   assert.equal(render('A.  one\nB.  two'), '<ol class="list-upper"><li value="1">one</li><li value="2">two</li></ol>');
-  assert.equal(render('c) alone'), '<ol class="list-lower-paren"><li value="3">alone</li></ol>');
-  assert.equal(render('z) one\naa) two\nbb) three'), '<ol class="list-lower-paren"><li value="26">one</li><li value="27">two</li><li value="54">three</li></ol>', 'CSS counts aa as 27 and bb as 54');
+  assert.equal(render('c) alone', { after: true }), '<ol class="list-lower-paren"><li value="3">alone</li></ol>');
+  assert.equal(render('z) one\naa) two\nbb) three', { after: true }), '<ol class="list-lower-paren"><li value="26">one</li><li value="27">two</li><li value="54">three</li></ol>', 'CSS counts aa as 27 and bb as 54');
   assert.ok(render('1. one\n   a) sub').includes('<ol class="list-lower-paren"><li value="1">sub</li></ol></li></ol>'));
-  assert.ok(render('c) alone', { depth: 2 }).startsWith('<ol class="list-lower-paren">'));
+  assert.ok(render('c) alone', { depth: 2, after: true }).startsWith('<ol class="list-lower-paren">'));
   assert.ok(render('a) [ ] task\nA.  [x] done').includes('data-box="2"'));
 });
 
 test('a letter in prose stays prose', () => {
   for (const text of ['We chose a) this and b) that', 'A. Smith wrote this', 'J. R. Tolkien', 'ok. fine', 'Hi. there', 'e.g. this', 'a)b', 'abc) no', 'aaa. no', 'ab) no', 'I. think']) assert.ok(render(text).startsWith('<p>'), text);
+});
+
+test('a lettered list begins at a or A, or continues an item', () => {
+  for (const text of ['p. 12', 'c. 1900', 'e. coli', 'pp. 12-13', 'b) second', 'C) third', 'i. one', 'ii. two']) assert.ok(render(text).startsWith('<p>'), text);
+  assert.equal(render('i. one\nii. two\niii. three\niv. four'), '<p>i. one<br>ii. two<br>iii. three<br>iv. four</p>');
+  assert.equal(render('see\np. 12'), '<p>see<br>p. 12</p>');
+  assert.equal(render('a. one\nb. two'), '<ol class="list-lower"><li value="1">one</li><li value="2">two</li></ol>');
+  assert.equal(render('h. eight\ni. nine', { after: true }), '<ol class="list-lower"><li value="8">eight</li><li value="9">nine</li></ol>');
+  assert.ok(render('1. x\n   c) sub').includes('<li value="3">sub</li>'), 'a sub-list continues the item above it');
+  assert.ok(render('c) [ ] box').includes('data-box="1"'), 'the page and leo-core count the same boxes');
+  assert.equal(render('c. 1900', { after: false }), '<p>c. 1900</p>');
+  assert.ok(render('2005. year').startsWith('<ol start="2005">'), 'numbers stay Markdown');
+  assert.equal(md.plain('p. 12 and a) one\n- two'), 'p. 12 and a) one two');
+  assert.equal(md.plain('a) one'), 'one');
 });
 
 test('lists of different markers do not run together', () => {

@@ -184,16 +184,46 @@ test('numbers and letters follow their place after a change', () => {
     ed.renumber(out, at);
     return out;
   };
+  const nested = (lines, at) => {
+    const out = [...lines];
+    ed.renumber(out, at, at);
+    return out;
+  };
   assert.deepEqual(after(['1. a', '2. ', '2. b', '3. c'], 1), ['1. a', '2. ', '3. b', '4. c']);
   assert.deepEqual(after(['a) a', 'b) ', 'b) b'], 1), ['a) a', 'b) ', 'c) b']);
-  assert.deepEqual(after(['1. a', '  2. b', '3. c'], 1), ['1. a', '  1. b', '2. c'], 'a new sub-list starts over and the outer one closes up');
-  assert.deepEqual(after(['1. a', '2. b', '  2. c'], 1), ['1. a', '2. b', '  1. c']);
-  assert.deepEqual(after(['1. a', '  c) b', '  a) c'], 1), ['1. a', '  a) b', '  b) c']);
+  assert.deepEqual(nested(['1. a', '  2. b', '3. c'], 1), ['1. a', '  1. b', '2. c'], 'a new sub-list starts over and the outer one closes up');
+  assert.deepEqual(nested(['1. a', '2. b', '  2. c'], 2), ['1. a', '2. b', '  1. c']);
+  assert.deepEqual(nested(['1. a', '  c) b', '  a) c'], 1), ['1. a', '  a) b', '  b) c']);
   assert.deepEqual(after(['5. a', '6. b', '  - x', '6. c'], 1), ['5. a', '6. b', '  - x', '7. c'], 'the first number stays and sub-items are skipped');
   assert.deepEqual(after(['9. [ ] a', '9. [x] b'], 1), ['9. [ ] a', '10. [x] b']);
   assert.deepEqual(after(['- a', '1. b', 'plain', '1. c'], 1), ['- a', '1. b', 'plain', '1. c'], 'a plain line ends the list');
   assert.deepEqual(after(['```', '3. in code', '```', '1. a', '1. b'], 3), ['```', '3. in code', '```', '1. a', '2. b']);
   assert.deepEqual(after(['- a', 'plain'], 1), ['- a', 'plain'], 'a plain line changes nothing');
+});
+
+test('a change leaves numbers and letters it did not cause alone', () => {
+  const after = (lines, at, fresh) => {
+    const out = [...lines];
+    ed.renumber(out, at, fresh);
+    return out;
+  };
+  const stays = (lines, at) => assert.deepEqual(after(lines, at), lines);
+  stays(['1999. born', '2005. moved', '2007. left', 'after'], 0);
+  stays(['1. a', '2. b', '2005. moved', '2007. left'], 1);
+  stays(['b. 1900', 'c. 1905', 'c. 1906'], 1);
+  stays(['p. 14', 'p. 15', 'r. 16'], 0);
+  stays(['i. one', 'ii. two'], 0);
+  stays(['1. a', '   7. sub', '   8. more', '2. b'], 3);
+  stays(['1. a', '   c) sub', '   e) more'], 0);
+  stays(['- a', '* b', '+ c'], 0);
+  assert.deepEqual(after(['a. one', 'b. two', 'ii. three', 'd. four'], 0), ['a. one', 'b. two', 'ii. three', 'd. four'], 'a run stops at the first marker far from its place');
+  assert.deepEqual(after(['1. a', '   1999. x', '   2005. y', '2. b', '2. c'], 0), ['1. a', '   1999. x', '   2005. y', '2. b', '3. c'], 'a stop holds only on its own level');
+  assert.deepEqual(after(['1. a', '1. b', '1. c'], 0), ['1. a', '2. b', '3. c']);
+  assert.deepEqual(after(['a) a', 'b) b', 'b) c', 'c) d'], 1), ['a) a', 'b) b', 'c) c', 'd) d']);
+  assert.deepEqual(after(['z) a', 'z) b'], 0), ['z) a', 'z) b']);
+  assert.deepEqual(after(['a. x', 'b. y'].concat(Array.from({ length: 24 }, (_, i) => `${String.fromCharCode(99 + i)}. k`), ['z. m']), 0)[26], 'aa. m', 'letters run on past z');
+  assert.deepEqual(after(['1. a', '   7. g'], 1, 1), ['1. a', '   1. g'], 'Tab starts the new sub-list over, wherever its number was');
+  assert.deepEqual(after(['1. a', '   1. x', '5. e'].map((l, i) => (i === 2 ? '   5. e' : l)), 2, 2), ['1. a', '   1. x', '   2. e']);
 });
 
 test('a line leaving a list closes the numbers around it', () => {
@@ -210,10 +240,34 @@ test('a line leaving a list closes the numbers around it', () => {
 });
 
 test('a list item knows its level', () => {
-  assert.deepEqual(['- a', '  - b', '    1. c', '  a) d', '\t- e', 'plain', '  plain'].map((_, at, all) => ed.listLevel(all, at)), [0, 1, 2, 1, 2, 0, 0]);
-  const wide = ['1. a', '   - b', '     1) c', '   - d', '10. e', '    - f'];
-  assert.deepEqual(wide.map((_, at) => ed.listLevel(wide, at)), [0, 1, 2, 1, 0, 1], 'markers of any width nest by their depth');
-  assert.equal(ed.listLevel(['text', '  - lone'], 1), 1, 'an old indent with nothing above keeps its level');
+  assert.deepEqual(ed.listLevels(['- a', '  - b', '    1. c', '  a) d', '\t- e', 'plain', '  plain']), [0, 1, 2, 1, 2, -1, -1]);
+  assert.deepEqual(ed.listLevels(['1. a', '   - b', '     1) c', '   - d', '10. e', '    - f']), [0, 1, 2, 1, 0, 1], 'markers of any width nest by their depth');
+  assert.equal(ed.listLevels(['text', '  - lone'])[1], 1, 'an old indent with nothing above keeps its level');
+  assert.deepEqual(ed.listLevels(['p. 12', 'q. 13', 'a) one', 'b) two', 'text', 'b) prose']), [-1, -1, 0, 0, -1, -1]);
+});
+
+test('list levels take one pass over a long note', () => {
+  const lines = Array.from({ length: 2000 }, (_, i) => `${i + 1}. item`);
+  const started = performance.now();
+  for (let i = 0; i < 20; i++) ed.listLevels(lines);
+  assert.ok((performance.now() - started) / 20 < 50, 'a draw would wait on this');
+  assert.deepEqual([...new Set(ed.listLevels(lines))], [0]);
+});
+
+test('a line that only looks like a lettered marker is edited as prose', () => {
+  for (const line of ['p. 14 says so', 'c. 1900', 'e. coli', 'pp. 12-13', 'ii. second']) {
+    assert.deepEqual(ed.continueLine(line, []), { prefix: '', exit: false }, line);
+    assert.equal(ed.itemHead(line, ['plain']), '', line);
+    assert.equal(ed.listPrefix(line, []), '', line);
+    assert.equal(ed.stepBack(line, []), line, line);
+    assert.equal(ed.rawOffset(line, line.slice(0, 2), false), 2, line);
+  }
+  assert.equal(ed.itemHead('b) two', ['a) one']), 'b) ', 'it follows an item');
+  assert.equal(ed.continueLine('b) two', ['a) one']).prefix, 'c) ');
+  assert.equal(ed.itemHead('q. 13', ['p. 12']), '', 'a look-alike above is no item');
+  assert.equal(ed.itemHead('c) [ ] task', []), 'c) [ ] ', 'a box always makes an item');
+  assert.equal(ed.listed(['p. 1', 'q. 2'], 1), false);
+  assert.equal(ed.listed(['a. 1', 'b. 2'], 1), true);
 });
 
 test('ticking a box flips only that box', () => {
@@ -310,6 +364,74 @@ test('a style across lines skips markers and blank lines', () => {
   const under = ed.restyle('- one\n- two', 0, 11, 'underline');
   assert.equal(under.text, '- <u>one</u>\n- <u>two</u>');
   assert.equal(ed.restyle(under.text, 5, under.text.length, 'underline').text, '- one\n- two', 'starting inside the first tag');
+});
+
+test('a style stays on the lines the selection reaches', () => {
+  const text = 'hello world\nsecond line here\nthird\n- fourth line\n';
+  const made = ed.restyle(text, 0, 5, 'bold');
+  assert.equal(made.text, '**hello** world\nsecond line here\nthird\n- fourth line\n');
+  assert.equal(made.text.slice(made.from, made.to), 'hello');
+  const middle = 'first line\nsecond line\nthird line\nfourth';
+  assert.equal(ed.restyle(middle, 11, 17, 'italic').text, 'first line\n*second* line\nthird line\nfourth');
+  const across = middle.indexOf('line\nsecond');
+  const both = ed.restyle(middle, across, middle.indexOf(' line\nthird'), 'bold');
+  assert.equal(both.text, 'first **line**\n**second** line\nthird line\nfourth');
+  assert.equal(ed.restyle(both.text, both.from, both.to, 'bold').text, middle);
+  assert.equal(ed.restyle('one\ntwo', 4, 7, 'underline').text, 'one\n<u>two</u>');
+});
+
+test('taking a style off removes only real marks', () => {
+  const on = (text, picked, style) => {
+    const from = text.indexOf(picked);
+    return ed.restyle(text, from, from + picked.length, style);
+  };
+  assert.equal(on('foo_bar_baz', 'bar', 'italic').text, 'foo_*bar*_baz');
+  assert.equal(on('foo_*bar*_baz', 'bar', 'italic').text, 'foo_bar_baz');
+  assert.equal(on('2*3*4', '3', 'italic').text, '2*3*4');
+  assert.equal(on('2*3*4', '3', 'bold').text, '2*3*4');
+  assert.equal(on('snake__case__x', 'case', 'bold').text, 'snake__**case**__x');
+  assert.equal(on('2**3**4', '3', 'bold').text, '234', 'two stars still pair after a word');
+  assert.equal(on('a *b* c', 'b', 'italic').text, 'a b c');
+  assert.equal(on('a _b_ c', 'b', 'italic').text, 'a b c');
+});
+
+test('a style key with no selection opens a pair, and the next press closes it', () => {
+  const press = (marked, style) => {
+    const at = marked.indexOf('|');
+    const made = ed.stylePair(marked.replace('|', ''), at, style);
+    return made.text.slice(0, made.at) + '|' + made.text.slice(made.at);
+  };
+  for (const [from, style, to] of [
+    ['a |', 'bold', 'a **|**'],
+    ['a |', 'italic', 'a *|*'],
+    ['a |', 'underline', 'a <u>|</u>'],
+    ['a **|**', 'bold', 'a |'],
+    ['a *|*', 'italic', 'a |'],
+    ['a <u>|</u>', 'underline', 'a |'],
+    ['**|**', 'italic', '***|***'],
+    ['***|***', 'italic', '**|**'],
+    ['*|*', 'bold', '***|***'],
+    ['***|***', 'bold', '*|*'],
+    ['<u>|</u>', 'bold', '<u>**|**</u>'],
+    ['<u>**|**</u>', 'underline', '**|**'],
+    ['**|**', 'underline', '**<u>|</u>**'],
+    ['**<u>|</u>**', 'underline', '**|**'],
+    ['a **word|** b', 'bold', 'a **word**| b'],
+    ['a *word|* b', 'italic', 'a *word*| b'],
+    ['a <u>word|</u> b', 'underline', 'a <u>word</u>| b'],
+    ['a **word|** b', 'italic', 'a **word*|*** b'],
+    ['one\n|', 'bold', 'one\n**|**'],
+    ['**x**\n|**', 'bold', '**x**\n**|****'],
+  ]) assert.equal(press(from, style), to, `${from} ${style}`);
+});
+
+test('a style leaves a callout marker alone', () => {
+  const text = '> [!warning] Title\n> body line';
+  assert.equal(ed.restyle(text, 0, text.length, 'bold').text, '> [!warning] Title\n> **body line**');
+  const from = text.indexOf('Title');
+  assert.equal(ed.restyle(text, from, from + 5, 'bold').text, '> [!warning] **Title**\n> body line', 'the title alone can still be styled');
+  assert.equal(ed.restyle('> [!tip]- Fold\n', 0, 14, 'italic').text, '> [!tip]- Fold\n');
+  assert.equal(ed.restyle('p. 12 here', 0, 10, 'bold').text, '**p. 12 here**', 'prose has no marker to skip');
 });
 
 test('Tab walks table cells and a new row stays a table', () => {
