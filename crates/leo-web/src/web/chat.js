@@ -1302,7 +1302,7 @@
       }
       const first = state.messages.find((m) => m.role === 'user' && m.text);
       const ghost = state.fresh && !state.chats.some((c) => c.id === state.id)
-        ? [{ id: state.id, title: first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
+        ? [{ id: state.id, title: first ? draftTitle(first.text) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
         : [];
       const list = [...ghost, ...state.chats];
       if (!list.length) {
@@ -1723,11 +1723,18 @@
       chip.lastElementChild.textContent = state.context ? state.context.title || 'Untitled' : '';
     }
 
+    function draftTitle(text) {
+      const asked = clipped(text.replace(/\s+/g, ' '), 80);
+      const note = state.context && state.dropped !== state.context.id ? state.context.title : '';
+      if (!note || asked.split(' ').length > 6 || asked.toLowerCase().includes(note.toLowerCase())) return asked;
+      return clipped(`${asked.replace(/[?.! ]+$/, '')}: ${note}`, 80);
+    }
+
     function drawTitle() {
       const first = state.messages.find((m) => m.role === 'user' && m.text);
       const saved = (state.chats || []).find((c) => c.id === state.id);
       const title = $('#chat-title');
-      title.textContent = saved ? saved.title : first ? clipped(first.text.replace(/\s+/g, ' '), 60) : 'New chat';
+      title.textContent = saved ? saved.title : first ? draftTitle(first.text) : 'New chat';
       title.classList.toggle('quiet', !saved && !first);
     }
 
