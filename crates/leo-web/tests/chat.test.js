@@ -36,6 +36,21 @@ test('citations become note chips, and ones Felix was never given are dropped', 
   assert.deepEqual(C.cited('no citations here n1', sources), []);
 });
 
+test('numbered citations share a number per place, keep note and line, and leave no stray digits in copied text', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Heaps' }, { n: 2, id: 'b', title: 'Queues' }];
+  const text = 'Min on top [n1 L4-6]. Again [n1 L4-6]. Queue [n2]. Other lines [n1 L9]. Gone [n9].';
+  const marks = C.numbered(text, sources);
+  assert.deepEqual(marks.map((m) => [m.n, m.s.id, m.lines, m.where]), [[1, 'a', '4-6', 'lines 4–6'], [2, 'b', '', ''], [3, 'a', '9-9', 'line 9']]);
+  const html = C.cite(`<p>${text}</p>`, sources, esc, [], marks);
+  assert.equal((html.match(/class="cite cite-n"/g) || []).length, 4, 'one button per cite, repeats included');
+  assert.ok(html.includes('data-line="4-6" title="Heaps, lines 4–6" aria-label="Source 1: Heaps, lines 4–6">1</button>'));
+  assert.ok(html.includes('title="Heaps, line 9"'));
+  assert.ok(html.includes('>1</button>.'), 'a number sits against its sentence');
+  assert.ok(!html.includes('[n9]'), 'a citation of nothing is not shown');
+  const plain = html.replace(/<button[^>]*class="cite[^>]*>.*?<\/button>/g, '');
+  assert.ok(!/\d/.test(plain.replace(/<[^>]+>/g, '')), 'removing the buttons removes every number');
+});
+
 test('the conversation is kept per browser and survives broken storage', () => {
   const values = new Map();
   const storage = { getItem: (k) => values.get(k) || null, setItem: (k, v) => values.set(k, v) };

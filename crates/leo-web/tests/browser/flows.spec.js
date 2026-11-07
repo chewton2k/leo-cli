@@ -973,7 +973,8 @@ test.describe('Felix', () => {
     await expect(chat.locator('.chat-context')).toContainText('Heaps');
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
-    await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
+    await expect(chat.locator('.msg.leo .cite-n').first()).toHaveText('1');
+    await expect(chat.locator('.msg.leo .msg-from')).toContainText('Heaps');
     expect(asked[0].note).toBe(note.id);
     await chat.locator('#chat-input').fill('At the root');
     await chat.locator('#chat-input').press('Enter');
@@ -3018,8 +3019,10 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     const chat = await openFelix(page);
     await chat.locator('#chat-input').fill('where does it talk about DFS?');
     await chat.locator('#chat-input').press('Enter');
-    const lineChip = chat.locator('.cite[data-line="7-8"]');
-    await expect(lineChip).toContainText('lines 7–8');
+    const lineChip = chat.locator('.prose .cite[data-line="7-8"]');
+    await expect(lineChip).toHaveText('1');
+    await expect(lineChip).toHaveAttribute('title', `Cited ${tag}, lines 7–8`);
+    await expect(chat.locator('.msg-from .cite[data-line="7-8"]')).toHaveText(`1Cited ${tag} · lines 7–8`);
     const fileChip = chat.locator('.cite-file');
     await expect(fileChip).toContainText('lecture.txt');
     await expect(fileChip).toContainText('line 3');

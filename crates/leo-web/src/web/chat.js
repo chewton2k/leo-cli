@@ -246,7 +246,22 @@
     return `${slide ? 'slide' : 'p.'} ${c.from}`.replace('p. ', 'p.');
   }
 
-  function cite(html, sources, escape, files) {
+  function numbered(text, sources) {
+    const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
+    const out = [];
+    for (const m of String(text).matchAll(CITED)) {
+      for (const c of citations(m[1])) {
+        const s = !c.file && byN.get(c.id);
+        if (!s) continue;
+        const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
+        const key = `${s.id}|${lines}`;
+        if (!out.some((x) => x.key === key)) out.push({ key, n: out.length + 1, s, lines, where: lines ? placeWord(c) : '' });
+      }
+    }
+    return out;
+  }
+
+  function cite(html, sources, escape, files, marks) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
     const byF = new Map((files || []).map((f) => [`f${f.n}`, f]));
     const short = (t) => (t.length > 28 ? t.slice(0, 27) + '…' : t);
@@ -264,10 +279,12 @@
           if (!s) return '';
           const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
           const where = lines ? placeWord(c) : '';
+          const mark = marks && marks.find((x) => x.key === `${s.id}|${lines}`);
+          if (mark) return `<button class="cite cite-n" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}" aria-label="${escape(`Source ${mark.n}: ${s.title}${where ? `, ${where}` : ''}`)}">${mark.n}</button>`;
           return `<button class="cite" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}">${escape(short(s.title))}${where ? `<span class="cite-at">${escape(where)}</span>` : ''}</button>`;
         })
         .filter(Boolean);
-      return chips.length ? `${whole.startsWith(' ') ? ' ' : ''}${chips.join('')}` : '';
+      return chips.length ? `${whole.startsWith(' ') && !chips.every((c) => c.startsWith('<button class="cite cite-n"')) ? ' ' : ''}${chips.join('')}` : '';
     });
   }
 
@@ -1735,8 +1752,9 @@
       const shown = grade(m.text).text;
       const html = !shown && m.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : '';
       const used = cited(m.text, m.sources);
-      const from = !m.pending && used.length > 1
-        ? `<div class="msg-from">${used.map((s) => `<button class="cite" data-chat="open" data-id="${escape(s.id)}">${escape(s.title)}</button>`).join('')}</div>`
+      const marks = numbered(shown, m.sources);
+      const from = !m.pending && marks.length
+        ? `<div class="msg-from">${marks.map((x) => `<button class="cite cite-src" data-chat="open" data-id="${escape(x.s.id)}"${x.lines ? ` data-line="${x.lines}"` : ''}><b>${x.n}</b>${escape(x.s.title)}${x.where ? ` · ${escape(x.where)}` : ''}</button>`).join('')}</div>`
         : '';
       const error = m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
       const verdict = grade(m.text).verdict;
@@ -1754,7 +1772,7 @@
       const taken = parts.flatMap((part) => part.steps || []);
       const newest = parts.findLastIndex((part) => part.steps);
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
-      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`;
+      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
       const live = (part, k) => {
         const run = stepRuns(part.steps).at(-1);
         return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
@@ -3032,5 +3050,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);
