@@ -98,6 +98,7 @@
       return md.render(text.replace(/^\s+/, ''), {
         boxOffset: ed.boxesBefore(lines, block.start),
         dir,
+        depth: block.kind === 'line' ? ed.listLevel(text) + 1 : 1,
       });
     }
 

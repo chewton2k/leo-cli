@@ -116,15 +116,16 @@
       return { indent: m[1].replace(/\t/g, '    ').length, ordered: /\d/.test(m[2]), raw: line, text: m[3] };
     });
 
-    function build(from, indent) {
+    function build(from, indent, depth) {
       const ordered = items[from].ordered;
       const first = ordered ? parseInt(items[from].raw.trim(), 10) : 1;
-      let html = ordered ? (first > 1 ? `<ol start="${first}">` : '<ol>') : '<ul>';
+      const look = depth > 1 ? ` class="list-${(depth - 1) % 3 + 1}"` : ordered && items[from].raw.trimStart().match(/^\d+\)/) ? ' class="list-paren"' : '';
+      let html = ordered ? (first > 1 ? `<ol${look} start="${first}">` : `<ol${look}>`) : `<ul${look}>`;
       let i = from;
       while (i < items.length && items[i].indent >= indent) {
         const item = items[i];
         if (item.indent > indent) {
-          const [inner, next] = build(i, item.indent);
+          const [inner, next] = build(i, item.indent, depth + 1);
           html = html.replace(/<\/li>$/, `${inner}</li>`);
           i = next;
           continue;
@@ -150,7 +151,7 @@
     let html = '';
     let i = 0;
     while (i < items.length) {
-      const [block, next] = build(i, items[i].indent);
+      const [block, next] = build(i, items[i].indent, state.depth);
       html += block;
       i = next;
     }
@@ -307,6 +308,7 @@
       return blocks(String(markdown || '').replace(/\r\n?/g, '\n').split('\n'), {
         boxes: options.boxOffset || 0,
         interactive: options.interactive !== false,
+        depth: options.depth || 1,
       });
     } finally {
       pictureDir = '';

@@ -236,8 +236,11 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   text does the same through `stepBack`, keeping the text. Tab and Shift+Tab move two
   spaces. `renumber` then fixes numbers and letters through the item's run of list lines;
   a new sub-list starts at its first number or letter, and `closeList` closes the numbers
-  over a line that left the list.
-  Lettered lines work in the
+  over a line that left the list. Nesting looks like Google Docs (2026-11-06, the user's
+  call) and only the page changes, never the file: `markdown.js` `list` gives lists below
+  the top `list-1`/`-2`/`-3` by depth (`depth` is the option for a note's one-line blocks),
+  CSS draws disc, circle, square and `1.`, `a.`, `i.`, repeating; a typed top-level `1)` is
+  `list-paren`. Lettered lines work in the
   keyboard but are not drawn as lists yet: `listPrefix` leaves them out until
   `markdown.js` does. The source field in a list item is `inline-block`: as a block,
   WKWebView (not Playwright's WebKit) leaves an empty item's marker on a line of its own.

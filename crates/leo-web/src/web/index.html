@@ -518,6 +518,14 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .prose ul, .prose ol { padding-left: 1.4em; margin: .6em 0; }
 .prose li { margin: .25em 0; }
 .prose li > ul, .prose li > ol { margin: .2em 0; }
+ul.list-1 { list-style-type: disc; }
+ul.list-2 { list-style-type: circle; }
+ul.list-3 { list-style-type: square; }
+ol.list-1 { list-style-type: decimal; }
+ol.list-2 { list-style-type: lower-alpha; }
+ol.list-3 { list-style-type: lower-roman; }
+@counter-style paren { system: extends decimal; suffix: ") "; }
+ol.list-paren { list-style-type: paren; }
 .prose .task-item { list-style: none; margin-left: -1.4em; }
 .prose .task { display: flex; gap: 10px; align-items: flex-start; padding: 4px 0; cursor: pointer; }
 .prose .task input { appearance: none; -webkit-appearance: none; position: relative; width: 20px; height: 20px; margin: 3px 0 0; border: 1.5px solid color-mix(in srgb, var(--text) 38%, transparent); border-radius: 30%; background: transparent; flex: none; cursor: pointer; transition: background-color var(--t-press), border-color var(--t-press); }

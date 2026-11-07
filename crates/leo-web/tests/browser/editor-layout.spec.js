@@ -766,6 +766,43 @@ test('a list is written, nested and left with the keyboard alone', async ({ brow
   });
 });
 
+test('nesting changes the marker like Google Docs, and only on the page', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    const source = () => page.evaluate(() => doc.source());
+    const looks = () => page.evaluate(() => [...document.querySelectorAll('#doc ul, #doc ol')].map(list => getComputedStyle(list).listStyleType));
+    for (const [marker, kinds, file] of [['1. ', ['decimal', 'lower-alpha', 'lower-roman', 'decimal'], '1. a\n  1. b\n    1. c\n      1. d'], ['- ', ['disc', 'circle', 'square', 'disc'], '- a\n  - b\n    - c\n      - d']]) {
+      await page.goto(url + '/?body=');
+      await page.locator('#doc .blk').click();
+      await page.keyboard.type(marker + 'a');
+      for (const text of ['b', 'c', 'd']) {
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('Tab');
+        await page.keyboard.type(text);
+      }
+      expect(await source()).toBe(file);
+      await page.locator('h1').click();
+      expect(await looks()).toEqual(kinds);
+      await page.locator('#doc .blk').last().click();
+      await page.keyboard.press('Shift+Tab');
+      expect((await looks())[3]).toBe(kinds[2]);
+      await page.keyboard.press('Tab');
+      expect((await looks())[3]).toBe(kinds[3]);
+    }
+    await page.goto(url + '/?body=' + encodeURIComponent('1) a\n2) b'));
+    expect(await looks()).toEqual(['paren', 'paren']);
+    await page.locator('#doc .blk').last().click();
+    await page.keyboard.press('Tab');
+    expect(await looks()).toEqual(['paren', 'lower-alpha']);
+    expect(await source()).toBe('1) a\n  1) b');
+    await page.goto(url + '/?body=' + encodeURIComponent('1. a\n2. \n3. c'));
+    await page.locator('#doc .blk').nth(1).click();
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('1. a\n2. c');
+  });
+});
+
 test('a list pasted into an empty line leaves the caret at its end', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
