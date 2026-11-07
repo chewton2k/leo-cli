@@ -1063,7 +1063,6 @@ test('dragging down through the note never highlights the empty space or the pag
     await page.goto(url);
     const first = await page.locator('#doc .blk').first().boundingBox();
     const row = await page.locator('.related-row').boundingBox();
-    const head = await page.locator('.related-head').boundingBox();
     await page.mouse.move(first.x + 4, first.y + first.height / 2);
     await page.mouse.down();
     await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2, { steps: 12 });
@@ -1079,14 +1078,14 @@ test('dragging down through the note never highlights the empty space or the pag
       return 'auto';
     }));
     expect(chrome.slice(0, 4)).toEqual(['none', 'none', 'none', 'none']);
-    await page.mouse.click(head.x + 8, head.y + head.height / 2);
+    await page.locator('.related-head').click({ position: { x: 8, y: 4 } });
     expect(await page.evaluate(() => getSelection().toString())).toBe('');
     await page.mouse.move(first.x + 4, first.y + first.height / 2);
     await page.mouse.down();
     await page.mouse.move(first.x + 200, first.y + first.height / 2, { steps: 4 });
     await page.mouse.up();
     expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
-    await page.mouse.click(head.x + 8, head.y + head.height / 2);
+    await page.locator('.related-head').click({ position: { x: 8, y: 4 } });
     expect(await page.evaluate(() => getSelection().toString())).toBe('');
   }, { body: 'First paragraph of the note.\n\nSecond paragraph of the note.\n\n\n', related: true });
 });
