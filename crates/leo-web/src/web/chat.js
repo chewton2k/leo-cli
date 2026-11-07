@@ -110,6 +110,10 @@
     return { verdict: null, text: value };
   }
 
+  function held(text) {
+    return String(text).replace(/(?:^|\n)[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/, '');
+  }
+
   const MOST_REPLY_STEPS = 64;
 
   function timeline(text, steps) {
@@ -1757,7 +1761,8 @@
         const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
         return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
-      const shown = grade(m.text).text;
+      const spoken = grade(m.text).text;
+      const shown = m.pending ? held(spoken) : spoken;
       const html = !shown && m.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : '';
       const used = cited(m.text, m.sources);
       const marks = numbered(shown, m.sources);
@@ -1775,7 +1780,7 @@
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
         : '';
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
-      const removed = verdict ? m.text.length - shown.length : 0;
+      const removed = verdict ? m.text.length - spoken.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
       const taken = parts.flatMap((part) => part.steps || []);
       const newest = parts.findLastIndex((part) => part.steps);
@@ -3086,5 +3091,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);
