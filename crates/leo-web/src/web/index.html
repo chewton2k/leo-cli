@@ -575,6 +575,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .plan-window > .hint { grid-column: 2; font-size: 11px; color: var(--muted); text-align: right; }
 .plan-meter { height: 18px; border-radius: 4px; overflow: hidden; background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--plan-tone) 12%, transparent) 3px 4px); }
 .plan-meter i { display: block; height: 100%; border-radius: inherit; background: color-mix(in srgb, var(--plan-tone) 48%, var(--surface)); transition: width var(--t-follow) var(--ease-arrive); }
+:is(.scrim, .scrim-gone):has(.task-new, .usage-sheet) { container: sheetroom / inline-size; }
 .scrim:has(.usage-sheet) { padding: 16px; }
 .scrim .sheet.usage-sheet { width: min(960px, 100%); max-width: 960px; max-height: calc(100vh - 32px); padding: 20px 24px; border-radius: 18px; }
 .usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 800px; margin: 0 auto 20px; }
@@ -1531,10 +1532,17 @@ body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(
 .pick-times .set-label { width: 100%; }
 .pick-time, .pick-end-time { width: 120px; }
 .pick-end { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.task-title { width: 100%; margin-bottom: 12px; font-size: 16px; }
-.task-more { margin: 12px 0 4px; }
-.task-more summary { cursor: pointer; font-size: 13.5px; color: var(--muted); }
-.task-more .task-kinds { margin-top: 8px; }
+.task-left .task-title { flex: none; width: 100%; padding: 12px 14px; font-size: 20px; font-weight: 600; }
+.task-new { display: grid; gap: 16px; padding: 4px 12px 8px; }
+.task-left { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.task-left .set-row { padding: 0; }
+.task-left .task-repeat { margin-top: 0; }
+.task-about { flex: 1; }
+.task-about textarea.set-input { flex: 1; min-height: 88px; resize: none; }
+@container sheetroom (min-width: 760px) {
+  :is(.sheet, .sheet-gone):has(.task-new) { max-width: 720px; }
+  .task-new { grid-template-columns: minmax(0, 1fr) 292px; gap: 28px; }
+}
 .task-sheet-title { overflow-wrap: anywhere; }
 .task-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .task-acts .icon-btn { width: 36px; height: 36px; flex: none; border: 1px solid var(--line); border-radius: 9px; text-decoration: none; }

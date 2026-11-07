@@ -1271,6 +1271,13 @@ minimum timed block. Overlap layout includes that visual minimum; saved task
 times stay unchanged. Google export, .ics download and delete/stop-tracking
 actions use icon controls with accessible names and hover titles in both peeks
 and task sheets.
+A block that would hang past midnight (a deadline at 23:59 with its 60 px minimum) is placed
+higher (`calColumn` `placed`, 2026-11-06) so it never adds empty scroll under the grid; its
+label and drags still use the real start.
+New task (2026-11-06, the owner: change the dimensions freely) is two panes at 720 px when the
+scrim is 760 px or wider (a container query, since panes shrink the viewport): title (large),
+description (fills the left column), Type chips, Repeat; the date and time picker on the right.
+One column below that. The footer stays pinned.
 Minimum-height blocks resize from the original end plus pointer movement,
 including scroll movement; a sideways grip drag cannot lengthen a short task.
 Month rows grow to fit their previews and More action; the month grid scrolls
