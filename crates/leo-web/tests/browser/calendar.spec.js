@@ -476,6 +476,28 @@ test('readable minimum task heights participate in calendar overlap layout', asy
   });
 });
 
+test('three tasks at the end of a week day show two readable tiles and a count, and the day shows all three', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      const task = cal.data.tasks.find(task => task.id === 'task-lab');
+      for (const [id, time] of [['task-a', '23:00:00'], ['task-b', '23:30:00'], ['task-c', '23:45:00']]) {
+        const late = { ...task, id, title: 'Late ' + id, time, end: null };
+        cal.data.tasks.push(late);
+        window.db.tasks.push(late);
+      }
+      drawCalendar();
+    });
+    const col = page.locator('.cal-col[data-day="2026-11-05"]');
+    await expect(col.locator('.cal-item[data-id^="task-"]').filter({ hasText: 'Late' })).toHaveCount(2);
+    const more = col.locator('.cal-stack-more');
+    await expect(more).toHaveText('+1');
+    for (const box of await col.locator('.cal-item', { hasText: 'Late' }).evaluateAll(els => els.map(el => el.getBoundingClientRect().width))) expect(box).toBeGreaterThan(45);
+    await more.click();
+    await expect(page.locator('.cal-item', { hasText: 'Late' })).toHaveCount(3);
+    await expect(page.locator('.cal-item', { hasText: 'Late task-c' })).toContainText('11:45');
+  });
+});
+
 test('a task at the end of the day stays inside the grid and keeps its real time', async ({ browser }) => {
   await calendarFixture(browser, async page => {
     await page.evaluate(() => {

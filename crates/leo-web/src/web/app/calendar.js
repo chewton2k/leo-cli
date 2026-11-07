@@ -11,6 +11,7 @@ try {
   cal.showDone = true;
 }
 const CAL_POLL_MS = 150000;
+const CAL_TILE_PX = 40;
 const CAL_HOUR_PX = 48;
 const CAL_TASK_PX = 60;
 const CAL_SNAP = 15;
@@ -304,26 +305,35 @@ function calAllDay(days, plan) {
   return `<div class="cal-allday" style="--cols: ${days.length}; --rows: ${rows};"><span class="cal-allday-label">All day</span><div class="cal-allday-grid">${cells}${bars}</div></div>`;
 }
 
-function calColumn(key, plan, today) {
+function calColumn(key, plan, today, room = Infinity) {
   const day = plan.byDay.get(key) || { timed: [] };
   const items = day.timed.filter(calShown);
   const spans = items.map((item) => S.spanOn(item, key, item.type === 'task' ? Math.ceil((CAL_TASK_PX + 2) / CAL_HOUR_PX * 60) : CAL_SNAP * 2));
   const floor = (item) => 1440 - Math.ceil(((item.type === 'task' ? CAL_TASK_PX : 18) + 2) / CAL_HOUR_PX * 60);
   const placed = spans.map((s, i) => ({ start: Math.min(s.start, floor(items[i])), end: s.end }));
   const cols = S.dayColumns(placed);
+  const more = new Map();
+  items.forEach((item, i) => {
+    if (cols[i].col < room) return;
+    const under = items.findIndex((x, j) => cols[j].col === room - 1 && placed[j].start < placed[i].end && placed[i].start < placed[j].end);
+    if (under >= 0) more.set(under, (more.get(under) || 0) + 1);
+  });
   const blocks = items.map((item, i) => {
+    if (cols[i].col >= room) return '';
     const { start, end } = spans[i];
-    const { col, cols: n } = cols[i];
+    const { col } = cols[i];
+    const n = Math.min(cols[i].cols, room);
     const step = Math.min(40, 70 / n);
     const left = col * step;
     const width = col === n - 1 ? 100 - left : Math.min(100 - left, step * 1.8);
     const top = (placed[i].start / 60) * CAL_HOUR_PX;
     const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - placed[i].start) / 60) * CAL_HOUR_PX - 2);
-    const short = end - start <= 30;
+    const short = end - placed[i].start <= 30;
     const task = item.type === 'task' ? item.task : null;
     const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
     const grip = task && task.source === 'leo' && calMovable(task) ? '<span class="cal-grip" data-drag="resize" aria-hidden="true"></span>' : '';
-    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 });
+    const rest = more.get(i) ? `<button type="button" class="cal-stack-more" data-action="cal-pick" data-day="${key}" data-to="day" style="top: ${top + 2}px; z-index: ${room + 2};" aria-label="${more.get(i)} more at this time, open the day">+${more.get(i)}</button>` : '';
+    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 }) + rest;
   }).join('');
   let now = '';
   if (key === today) {
@@ -335,11 +345,13 @@ function calColumn(key, plan, today) {
 }
 
 function calTimeGrid(days, plan, today) {
+  const wide = (document.querySelector('#cal-scroll .cal-cols')?.clientWidth || Math.max(0, innerWidth - 700)) / days.length;
+  const room = days.length > 1 ? Math.max(1, Math.floor(wide / CAL_TILE_PX)) : Infinity;
   const hours = Array.from({ length: 23 }, (_, i) => `<span style="top: ${(i + 1) * CAL_HOUR_PX}px">${esc(calHour((i + 1) * 60))}</span>`).join('');
   return `<div class="cal-week" style="--cols: ${days.length}; --hour: ${CAL_HOUR_PX}px;">
     <div class="cal-dayheads"><span></span>${calWeekHeads(days, today)}</div>
     ${calAllDay(days, plan)}
-    <div class="cal-scroll" id="cal-scroll"><div class="cal-hours" aria-hidden="true">${hours}</div><div class="cal-cols">${days.map((k) => calColumn(k, plan, today)).join('')}</div></div>
+    <div class="cal-scroll" id="cal-scroll"><div class="cal-hours" aria-hidden="true">${hours}</div><div class="cal-cols">${days.map((k) => calColumn(k, plan, today, room)).join('')}</div></div>
   </div>`;
 }
 
