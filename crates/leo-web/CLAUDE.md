@@ -229,24 +229,30 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `version` (FNV-1a); 409 → "<title> (conflict from leo)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
-  Lists (2026-11-06, the user's call): `editing.js` `item` is the one reader of a
-  marker (`-`, `*`, `+`, `1.`, `1)`, `a.`, `a)`, `A.`, `A)`; after `z` comes `aa`, then
-  `bb`, so `ok.` and `Hi.` stay prose). Enter continues with `continueLine`; on an empty
-  item it steps out one level, then leaves the list; Backspace at the start of an item's
-  text does the same through `stepBack`, keeping the text. Tab and Shift+Tab move two
-  spaces. `renumber` then fixes numbers and letters through the item's run of list lines;
+  Lists (2026-11-06, the user's call): `markdown.js` `MARKER` is the one definition of a
+  list marker, `editing.js` `item` its one reader: `-`, `*`, `+`, `1.`, `1)`, `a.`, `a)`, `A)`,
+  and `A.` with two spaces (one space stays prose, so `A. Smith` is a name, as in Pandoc), one or
+  two of the same letter, so `ok.` and `Hi.` stay prose; after `z` comes `aa`, then `bb`.
+  `Note::checkbox_line` in leo-core counts the same lines. Enter continues with `continueLine`,
+  keeping the marker's gap; on an empty item it steps out one level, then leaves the list;
+  Backspace at the start of an item's text does the same through `stepBack`, keeping the
+  text. Tab nests by the width of the marker above, so other apps nest it too; Shift+Tab goes
+  back to the parent's indent; old two-space lists still nest (`listLevel` reads depth from the
+  run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines;
   a new sub-list starts at its first number or letter, and `closeList` closes the numbers
   over a line that left the list. Nesting looks like Google Docs (2026-11-06, the user's
   call) and only the page changes, never the file: `markdown.js` `list` gives lists below
   the top `list-1`/`-2`/`-3` by depth (`depth` is the option for a note's one-line blocks),
   CSS draws disc, circle, square and `1.`, `a.`, `i.`, repeating; a typed top-level `1)` is
-  `list-paren`. Lettered lines work in the
-  keyboard but are not drawn as lists yet: `listPrefix` leaves them out until
-  `markdown.js` does. The source field in a list item is `inline-block`: as a block,
+  `list-paren`. Letters draw as typed at any depth (`list-lower`, `list-upper`, `-paren`), each
+  `li` with a `value` because CSS counts `aa` as 27 and `bb` as 54. Different markers side by
+  side are separate lists.
+  The source field in a list item is `inline-block`: as a block,
   WKWebView (not Playwright's WebKit) leaves an empty item's marker on a line of its own.
-  Typing a list or checklist marker plus its space (`- `, `1. `, `- [ ] `)
+  Typing a list or checklist marker plus its space (`- `, `1. `, `a) `, `- [ ] `)
   re-renders that line at once with the caret kept (not during IME composition);
-  headings already restyle live. A checked task strikes only its text (`text-decoration`,
+  headings restyle live, one Backspace takes a heading's marker off, and Enter on an empty
+  heading clears it. A checked task strikes only its text (`text-decoration`,
   per wrapped line; an empty one shows none). A box toggles only from a click
   that starts and ends within `DRAG_CLICK_DISTANCE` of one point, so selecting
   text and releasing near the box never ticks it.
@@ -255,6 +261,22 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   and preserves the checkbox’s viewport position and focus.
   Cmd/Ctrl+A selects the whole note at once, even from inside one line
   (2026-10-19; it used to take a second press).
+
+- Rich text (2026-11-06, the user's words: "all different types of bullet points, heading,
+  italics, bold, enumerations with a) b)... or 1) 2), tables, underlining"): the file stays plain
+  Markdown. `spans` in `markdown.js` pairs `*`, `_` and `~~` by delimiter runs, so `***both***`
+  and `**bold *italic***` nest and marks never cross; `_` inside a word and a single `*` after a
+  word stay literal. Underline is `<u>text</u>`: after escaping, only that exact pair comes back,
+  every other tag stays text. Cmd/Ctrl+B, I and U toggle a selection through `editing.restyle`
+  (per line, past list and heading markers, also across rendered lines, skipping tables, code and
+  math when it spans lines); a selection inside a longer bold run wraps instead of splitting it.
+  Tables: a click lands in that cell's raw text; Tab and Shift+Tab walk cells, Tab past the last
+  adds a row. Alignment colons become `align-*` classes, `\|` stays in its cell, a short row is
+  filled in. macOS replaces `--` with a dash only while `spellcheck` is on, and cancelling that
+  replacement corrupts the text, so `look` turns spellcheck off for tables, code, math and lines
+  starting with `-`, `|` or `:`; Playwright's WebKit does not show this, the real WKWebView does.
+  On a Mac End and Home move the caret (WebKit only scrolls); a caret past the rendered end of a
+  line lands past its raw marks.
 
 - `markdown.js` escapes first, numbers checkboxes exactly like
   `Note::toggle_checkbox`, draws `[[Title]]` links, callouts (`> [!type]`,

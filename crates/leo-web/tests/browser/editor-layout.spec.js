@@ -723,7 +723,7 @@ test('a list is written, nested and left with the keyboard alone', async ({ brow
     const page = await context.newPage();
     const source = () => page.evaluate(() => doc.source());
     const area = page.locator('#doc textarea');
-    for (const [marker, second, third] of [['- ', '- ', '  - '], ['* ', '* ', '  * '], ['+ ', '+ ', '  + '], ['1. ', '2. ', '  1. '], ['1) ', '2) ', '  1) '], ['a. ', 'b. ', '  a. '], ['a) ', 'b) ', '  a) '], ['A) ', 'B) ', '  A) ']]) {
+    for (const [marker, second, third] of [['- ', '- ', '  - '], ['* ', '* ', '  * '], ['+ ', '+ ', '  + '], ['1. ', '2. ', '   1. '], ['1) ', '2) ', '   1) '], ['a. ', 'b. ', '   a. '], ['a) ', 'b) ', '   a) '], ['A) ', 'B) ', '   A) ']]) {
       await page.goto(url + '/?body=');
       await page.locator('#doc .blk').click();
       await page.keyboard.type(marker + 'one');
@@ -771,7 +771,7 @@ test('nesting changes the marker like Google Docs, and only on the page', async 
     const page = await context.newPage();
     const source = () => page.evaluate(() => doc.source());
     const looks = () => page.evaluate(() => [...document.querySelectorAll('#doc ul, #doc ol')].map(list => getComputedStyle(list).listStyleType));
-    for (const [marker, kinds, file] of [['1. ', ['decimal', 'lower-alpha', 'lower-roman', 'decimal'], '1. a\n  1. b\n    1. c\n      1. d'], ['- ', ['disc', 'circle', 'square', 'disc'], '- a\n  - b\n    - c\n      - d']]) {
+    for (const [marker, kinds, file] of [['1. ', ['decimal', 'lower-alpha', 'lower-roman', 'decimal'], '1. a\n   1. b\n      1. c\n         1. d'], ['- ', ['disc', 'circle', 'square', 'disc'], '- a\n  - b\n    - c\n      - d']]) {
       await page.goto(url + '/?body=');
       await page.locator('#doc .blk').click();
       await page.keyboard.type(marker + 'a');
@@ -794,7 +794,7 @@ test('nesting changes the marker like Google Docs, and only on the page', async 
     await page.locator('#doc .blk').last().click();
     await page.keyboard.press('Tab');
     expect(await looks()).toEqual(['paren', 'lower-alpha']);
-    expect(await source()).toBe('1) a\n  1) b');
+    expect(await source()).toBe('1) a\n   1) b');
     await page.goto(url + '/?body=' + encodeURIComponent('1. a\n2. \n3. c'));
     await page.locator('#doc .blk').nth(1).click();
     await page.keyboard.press('Backspace');
@@ -1429,4 +1429,80 @@ test('typing a dash then text continues at the next marker through keyboard and 
     await page.mouse.click(1000, 100);
     await expect(nav).toBeHidden();
   }, { body: '# One\nParagraph\n## Two\nMore' });
+});
+
+test('every kind of formatting is typed with the keyboard and stays plain Markdown', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url + '/?body=');
+    await page.locator('#doc .blk').first().click();
+    const keys = page.keyboard;
+    const press = async (...names) => { for (const name of names) await keys.press(name); };
+    const select = async (count) => { for (let i = 0; i < count; i++) await keys.press('Shift+ArrowLeft'); };
+    await keys.type('a) one');
+    await press('Enter');
+    await keys.type('two');
+    await press('Enter', 'Tab');
+    await keys.type('sub');
+    await press('Enter', 'Enter', 'Enter');
+    await keys.type('A) cap');
+    await press('Enter', 'Enter');
+    await keys.type('1) num');
+    await press('Enter', 'Enter');
+    await keys.type('A. Smith');
+    await press('Enter');
+    await keys.type('# Head');
+    await press('Enter');
+    await keys.type('## ');
+    await press('Backspace');
+    await keys.type('***both*** snake_case hello word');
+    await select(4);
+    await press('ControlOrMeta+u');
+    await keys.press('ArrowRight');
+    await press('End', 'Enter');
+    await keys.type('<u onclick=x><script>no</script></u>');
+    await press('Enter');
+    await keys.type('| L | C | R |');
+    await press('Enter');
+    await keys.type('|:--|:-:|--:|');
+    await press('Enter');
+    await keys.type('| 1 | 2 | 3 |');
+    await press('Enter');
+    await page.locator('#doc th').first().click();
+    await press('Tab');
+    await keys.type('Mid');
+    await press('Tab', 'Tab', 'Tab', 'Tab', 'Tab');
+    await keys.type('new');
+    await page.locator('#doc h2').first().click();
+    await page.evaluate(() => document.activeElement.blur());
+    const source = await page.evaluate(() => window.doc.source());
+    expect(source).toBe([
+      'a) one',
+      'b) two',
+      '   a) sub',
+      'A) cap',
+      '1) num',
+      'A. Smith',
+      '# Head',
+      '***both*** snake_case hello <u>word</u>',
+      '<u onclick=x><script>no</script></u>',
+      '| L | Mid | R |',
+      '|:--|:-:|--:|',
+      '| 1 | 2 | 3 |',
+      '| new |  |  |',
+      '',
+    ].join('\n'));
+    const doc = page.locator('#doc');
+    await expect(doc.locator('ol.list-lower-paren li[value="2"]')).toHaveText('two');
+    await expect(doc.locator('ol.list-upper-paren')).toHaveText('cap');
+    await expect(doc.locator('ol.list-paren')).toHaveText('num');
+    await expect(doc.locator('.blk p', { hasText: 'A. Smith' })).toHaveCount(1);
+    await expect(doc.locator('h2')).toHaveText('Head');
+    await expect(doc.locator('em strong')).toHaveText('both');
+    await expect(doc.locator('u')).toHaveText('word');
+    await expect(doc.locator('script, u[onclick]')).toHaveCount(0);
+    await expect(doc.locator('th.align-center')).toHaveText('Mid');
+    await expect(doc.locator('td.align-right').first()).toHaveText('3');
+    await expect(doc.locator('tbody tr')).toHaveCount(2);
+  }, { body: '' });
 });

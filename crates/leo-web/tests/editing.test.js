@@ -124,7 +124,7 @@ test('list prefixes keep every rendered marker out of the text field', () => {
     assert.equal(ed.listPrefix(prefix + '文字 😀'), prefix);
   }
   assert.equal(ed.listPrefix('- [ ]'), '- [ ]');
-  for (const plain of ['Plain text', '# Heading', '> Quote', '![alt](a.png)', '-word', '1.word', 'a) not drawn as a list yet']) assert.equal(ed.listPrefix(plain), '');
+  for (const plain of ['Plain text', '# Heading', '> Quote', '![alt](a.png)', '-word', '1.word', 'A. Smith', 'ok. fine', 'Hi. there']) assert.equal(ed.listPrefix(plain), '');
 });
 
 test('Enter continues every kind of list with the next marker', () => {
@@ -138,11 +138,12 @@ test('Enter continues every kind of list with the next marker', () => {
   assert.equal(next('9. nine'), '10. ');
   assert.equal(next('a. one'), 'b. ');
   assert.equal(next('b) two'), 'c) ');
-  assert.equal(next('C. three'), 'D. ');
+  assert.equal(next('C.  three'), 'D.  ');
   assert.equal(next('  a) nested'), '  b) ');
   assert.equal(next('z) last'), 'aa) ');
   assert.equal(next('aa) doubled'), 'bb) ');
-  assert.equal(next('Z. last'), 'AA. ');
+  assert.equal(next('Z.  last'), 'AA.  ');
+  assert.equal(next('Z) last'), 'AA) ');
   assert.equal(next('a. [ ] box'), 'b. [ ] ');
   assert.equal(next('> quoted'), '> ');
   assert.deepEqual(ed.continueLine('plain'), { prefix: '', exit: false });
@@ -209,7 +210,10 @@ test('a line leaving a list closes the numbers around it', () => {
 });
 
 test('a list item knows its level', () => {
-  assert.deepEqual(['- a', '  - b', '    1. c', '  a) d', '\t- e', 'plain', '  plain'].map(ed.listLevel), [0, 1, 2, 1, 2, 0, 0]);
+  assert.deepEqual(['- a', '  - b', '    1. c', '  a) d', '\t- e', 'plain', '  plain'].map((_, at, all) => ed.listLevel(all, at)), [0, 1, 2, 1, 2, 0, 0]);
+  const wide = ['1. a', '   - b', '     1) c', '   - d', '10. e', '    - f'];
+  assert.deepEqual(wide.map((_, at) => ed.listLevel(wide, at)), [0, 1, 2, 1, 0, 1], 'markers of any width nest by their depth');
+  assert.equal(ed.listLevel(['text', '  - lone'], 1), 1, 'an old indent with nothing above keeps its level');
 });
 
 test('ticking a box flips only that box', () => {
@@ -228,7 +232,113 @@ test('Tab indents a list item and Shift-Tab brings it back', () => {
   assert.equal(ed.outdent('   - item'), ' - item');
 });
 
+test('Tab nests under the marker above and Shift-Tab returns to the parent', () => {
+  assert.equal(ed.indent('- b', ['- a']), '  - b');
+  assert.equal(ed.indent('2. b', ['1. a']), '   2. b');
+  assert.equal(ed.indent('b) b', ['a) a']), '   b) b');
+  assert.equal(ed.indent('11. b', ['10. a']), '    11. b');
+  assert.equal(ed.indent('B.  b', ['A.  a']), '    B.  b');
+  assert.equal(ed.indent('   - b', ['1. a', '   - sibling']), '     - b', 'under the sibling at its own depth');
+  assert.equal(ed.indent('  - old', ['1. a']), '    - old', 'an old two-space child moves a full level');
+  assert.equal(ed.indent('plain'), '  plain');
+  assert.equal(ed.outdent('   - b', ['1. a']), '- b');
+  assert.equal(ed.outdent('      x) c', ['1. a', '   - b']), '   x) c');
+  assert.equal(ed.stepBack('   - ', ['1. a']), '- ');
+  assert.equal(ed.continueLine('   - ', ['1. a']).back, '- ');
+});
+
+test('a heading marker comes off in one Backspace and an empty heading ends on Enter', () => {
+  assert.equal(ed.itemHead('## Title'), '## ');
+  assert.equal(ed.stepBack('## Title'), 'Title');
+  assert.equal(ed.stepBack('# '), '');
+  assert.deepEqual(ed.continueLine('# '), { prefix: '', exit: true, back: '' });
+  assert.deepEqual(ed.continueLine('# Title'), { prefix: '', exit: false });
+  assert.equal(ed.itemHead('#tag'), '');
+  assert.equal(ed.itemHead('####### seven'), '');
+});
+
+test('lettered tasks tick like the others', () => {
+  assert.equal(ed.toggleBox('a) [ ] one'), 'a) [x] one');
+  assert.equal(ed.toggleBox('  bb. [x] two'), '  bb. [ ] two');
+  assert.equal(ed.boxesBefore(['a) [ ] one', 'A.  [ ] two', 'A. [ ] prose', ''], 3), 2);
+});
+
+test('a style wraps a selection and the same key takes it off again', () => {
+  const on = (text, picked, style) => {
+    const from = text.indexOf(picked);
+    return ed.restyle(text, from, from + picked.length, style);
+  };
+  const back = (r, style) => ed.restyle(r.text, r.from, r.to, style).text;
+  for (const [text, picked, style, styled] of [
+    ['a word here', 'word', 'bold', 'a **word** here'],
+    ['a word here', 'word', 'italic', 'a *word* here'],
+    ['a word here', 'word', 'underline', 'a <u>word</u> here'],
+    ['**word**', 'word', 'italic', '***word***'],
+    ['*word*', 'word', 'bold', '***word***'],
+    ['**word**', 'word', 'underline', '**<u>word</u>**'],
+    ['- item', 'item', 'bold', '- **item**'],
+    ['a) item', 'item', 'underline', 'a) <u>item</u>'],
+  ]) {
+    const made = on(text, picked, style);
+    assert.equal(made.text, styled);
+    assert.equal(made.text.slice(made.from, made.to), picked);
+    assert.equal(back(made, style), text, styled);
+  }
+  assert.equal(on('***word***', 'word', 'bold').text, '*word*');
+  assert.equal(on('***word***', 'word', 'italic').text, '**word**');
+  assert.equal(on('_word_', 'word', 'italic').text, 'word');
+  assert.equal(on('__word__', 'word', 'bold').text, 'word');
+  assert.equal(on('**word**', '**word**', 'bold').text, 'word', 'a selection that took the marks in');
+  assert.equal(on('<u>word</u>', '<u>word</u>', 'underline').text, 'word');
+  assert.equal(on('<u>**word**</u>', 'word', 'underline').text, '**word**');
+  assert.equal(on('**<u>word</u>**', '**<u>word</u>**', 'underline').text, '**word**');
+  assert.equal(on('<u>word</u>', 'word</u>', 'underline').text, 'word', 'the page can hand back only one side of the marks');
+  assert.equal(on('**word**', 'word**', 'bold').text, 'word');
+  assert.equal(on('snake_case', 'snake_case', 'bold').text, '**snake_case**');
+});
+
+test('a style across lines skips markers and blank lines', () => {
+  const text = '- one\n\n1. two\n# three';
+  const made = ed.restyle(text, 0, text.length, 'bold');
+  assert.equal(made.text, '- **one**\n\n1. **two**\n# **three**');
+  assert.equal(ed.restyle(made.text, made.from, made.to, 'bold').text, text);
+  assert.equal(ed.restyle('- one', 0, 2, 'bold').text, '- one', 'only the marker was picked');
+  const mixed = 'one\n---\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\ncode\n```\ntwo';
+  assert.equal(ed.restyle(mixed, 0, mixed.length, 'bold').text, mixed.replace('one', '**one**').replace('two', '**two**'), 'select-all leaves tables, code and rules alone');
+  const inCell = '| a | word |\n|---|---|';
+  assert.equal(ed.restyle(inCell, 6, 10, 'bold').text, '| a | **word** |\n|---|---|', 'one cell of a table still can');
+  const under = ed.restyle('- one\n- two', 0, 11, 'underline');
+  assert.equal(under.text, '- <u>one</u>\n- <u>two</u>');
+  assert.equal(ed.restyle(under.text, 5, under.text.length, 'underline').text, '- one\n- two', 'starting inside the first tag');
+});
+
+test('Tab walks table cells and a new row stays a table', () => {
+  const text = '| A | B |\n|---|:-:|\n| 1 |  |';
+  const here = (at, back) => {
+    const cell = ed.nextCell(text, at, back);
+    return cell && text.slice(cell.from, cell.to);
+  };
+  assert.equal(here(2), 'B');
+  assert.equal(here(6), '1', 'the rule row is skipped');
+  assert.equal(here(22, true), 'B');
+  assert.equal(ed.nextCell(text, text.length - 1), null);
+  assert.equal(ed.cellEnd(text, 0, 1), 7);
+  assert.equal(ed.cellEnd(text, 1, 0), 23);
+  assert.equal(ed.cellEnd(text, 4, 4), 'end');
+  const row = ed.addRow(text);
+  assert.equal(row.text, `${text}\n|  |  |`);
+  assert.equal(row.at, text.length + 3);
+  assert.equal(ed.splitBlocks(row.text.split('\n')).length, 1);
+  assert.equal(ed.nextCell('a | b \\| c | d\n--|--|--', 0).from, 4);
+});
+
 test('a tap lands on the same spot in the raw text', () => {
+  assert.equal(ed.rawOffset('see [link](https://x.y)', 'see link'), 'see [link](https://x.y)'.length, 'the end of a link is past its address');
+  assert.equal(ed.rawOffset('**bold**', 'bold'), 8);
+  assert.equal(ed.rawOffset('<u>under</u> word', 'under w'), 14);
+  assert.equal(ed.rawOffset('_it_ word', 'it w'), 6);
+  assert.equal(ed.rawOffset('snake_case word', 'snake_c'), 7);
+  assert.equal(ed.rawOffset('a) item', 'it'), 5);
   assert.equal(ed.rawOffset('**bold** word', 'bold w'), 10);
   assert.equal(ed.rawOffset('- [ ] buy milk', 'buy'), 9);
   assert.equal(ed.rawOffset('## Heading', 'Head'), 7);

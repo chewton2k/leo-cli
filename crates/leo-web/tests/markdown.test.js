@@ -17,6 +17,61 @@ test('text is escaped, so a note cannot inject markup', () => {
   assert.ok(html.includes('&amp;'), html);
 });
 
+test('underline is that one tag pair and nothing else', () => {
+  assert.equal(render('<u>under</u>'), '<p><u>under</u></p>');
+  assert.equal(render('**<u>both</u>**'), '<p><strong><u>both</u></strong></p>');
+  assert.equal(render('<u>**both**</u>'), '<p><u><strong>both</strong></u></p>');
+  assert.ok(render('[<u>x</u>](https://a.b)').includes('><u>x</u></a>'));
+  assert.ok(render('`<u>x</u>`').includes('<code>&lt;u&gt;x&lt;/u&gt;</code>'));
+  assert.equal(md.plain('# <u>Title</u> and <u>more</u>'), 'Title and more');
+  const hostile = [
+    '<script>alert(1)</script>',
+    '<u><script>alert(1)</script></u>',
+    '</u><script>alert(1)</script><u>',
+    '<u onclick=alert(1)>x</u>',
+    '<u style="position:fixed">x</u>',
+    '<u><img src=x onerror=alert(1)></u>',
+    '<u><svg onload=alert(1)></u>',
+    '<U>x</U>',
+    '<u >x</u >',
+    '<ul><li>x</li></ul>',
+    '<b>x</b><i>y</i>',
+    '<iframe src=//a.b></iframe>',
+    '<a href="javascript:alert(1)">x</a>',
+    '&lt;script&gt;',
+    '<u>&lt;script&gt;alert(1)&lt;/script&gt;</u>',
+    '<u><u>x</u></u>',
+    '<<u>script>alert(1)<</u>/script>',
+  ];
+  for (const text of hostile) {
+    for (const shaped of [text, `# ${text}`, `- ${text}`, `a) ${text}`, `> ${text}`, `| ${text} |\n|---|\n| ${text} |`, `**${text}**`, `[${text}](https://a.b)`]) {
+      const html = render(shaped);
+      const tags = [...html.matchAll(/<\/?([a-zA-Z0-9]+)[^>]*>/g)].map((m) => m[1]);
+      for (const tag of tags) assert.ok(['p', 'h2', 'ul', 'ol', 'li', 'blockquote', 'div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'strong', 'a', 'u'].includes(tag), `${tag} in ${html}`);
+      assert.ok(!/<u\s[^>]/.test(html), html);
+      assert.ok(!/<[^>]*\son\w+=/.test(html), html);
+    }
+  }
+});
+
+test('marks nest, and the ones that do not pair stay as written', () => {
+  const line = (text) => render(text).replace(/^<p>|<\/p>$/g, '');
+  assert.equal(line('***both***'), '<em><strong>both</strong></em>');
+  assert.equal(line('___both___'), '<em><strong>both</strong></em>');
+  assert.equal(line('**bold *italic***'), '<strong>bold <em>italic</em></strong>');
+  assert.equal(line('*italic **bold***'), '<em>italic <strong>bold</strong></em>');
+  assert.equal(line('***bold** italic*'), '<em><strong>bold</strong> italic</em>');
+  assert.equal(line('***italic* bold**'), '<strong><em>italic</em> bold</strong>');
+  assert.equal(line('__bold _italic___'), '<strong>bold <em>italic</em></strong>');
+  assert.equal(line('~~**gone**~~'), '<del><strong>gone</strong></del>');
+  assert.equal(line('**`code`**'), '<strong><code>code</code></strong>');
+  assert.equal(line('**a** and **b**'), '<strong>a</strong> and <strong>b</strong>');
+  for (const literal of ['snake_case_word', '2 * 3 * 4', '2*3*4', 'a ** b', 'a _ b', '**open', 'close**', '*open', 'x_ y_', '~~open']) {
+    assert.equal(line(literal), literal);
+  }
+  assert.ok(!line('*a _b* c_').includes('</em> c</em>'), 'marks never cross');
+});
+
 test('headings start below the note title', () => {
   assert.ok(render('# Graphs').includes('<h2>Graphs</h2>'));
   assert.ok(render('## BFS').includes('<h3>BFS</h3>'));
@@ -100,7 +155,18 @@ test('tables', () => {
   const html = render('| a | b |\n|---|:-:|\n| 1 | **2** |');
   assert.ok(html.includes('<table>'), html);
   assert.ok(html.includes('<th>a</th>'), html);
-  assert.ok(html.includes('<td><strong>2</strong></td>'), html);
+  assert.ok(html.includes('<td class="align-center"><strong>2</strong></td>'), html);
+});
+
+test('table columns keep their alignment, and a short row is filled in', () => {
+  const html = render('| L | C | R | N |\n|:--|:-:|--:|---|\n| 1 | 2 |');
+  assert.ok(html.includes('<th class="align-left">L</th><th class="align-center">C</th><th class="align-right">R</th><th>N</th>'), html);
+  assert.ok(html.includes('<td class="align-left">1</td><td class="align-center">2</td><td class="align-right"></td><td></td>'), html);
+});
+
+test('an escaped pipe stays inside its cell', () => {
+  const html = render('| a \\| b | c |\n|---|---|\n| d | e |');
+  assert.ok(html.includes('<th>a | b</th><th>c</th>'), html);
 });
 
 test('quotes and rules', () => {
@@ -147,6 +213,33 @@ test('a typed `1)` keeps its parenthesis at level one; nested lists follow the d
 });
 
 let failed = 0;
+test('letters draw as typed at any depth', () => {
+  assert.equal(render('a) one\nb) two'), '<ol class="list-lower-paren"><li value="1">one</li><li value="2">two</li></ol>');
+  assert.equal(render('a. one\nb. two'), '<ol class="list-lower"><li value="1">one</li><li value="2">two</li></ol>');
+  assert.equal(render('A) one\nB) two'), '<ol class="list-upper-paren"><li value="1">one</li><li value="2">two</li></ol>');
+  assert.equal(render('A.  one\nB.  two'), '<ol class="list-upper"><li value="1">one</li><li value="2">two</li></ol>');
+  assert.equal(render('c) alone'), '<ol class="list-lower-paren"><li value="3">alone</li></ol>');
+  assert.equal(render('z) one\naa) two\nbb) three'), '<ol class="list-lower-paren"><li value="26">one</li><li value="27">two</li><li value="54">three</li></ol>', 'CSS counts aa as 27 and bb as 54');
+  assert.ok(render('1. one\n   a) sub').includes('<ol class="list-lower-paren"><li value="1">sub</li></ol></li></ol>'));
+  assert.ok(render('c) alone', { depth: 2 }).startsWith('<ol class="list-lower-paren">'));
+  assert.ok(render('a) [ ] task\nA.  [x] done').includes('data-box="2"'));
+});
+
+test('a letter in prose stays prose', () => {
+  for (const text of ['We chose a) this and b) that', 'A. Smith wrote this', 'J. R. Tolkien', 'ok. fine', 'Hi. there', 'e.g. this', 'a)b', 'abc) no', 'aaa. no', 'ab) no', 'I. think']) assert.ok(render(text).startsWith('<p>'), text);
+});
+
+test('lists of different markers do not run together', () => {
+  assert.equal(render('- a\n1. b\na) c'), '<ul><li>a</li></ul><ol><li>b</li></ol><ol class="list-lower-paren"><li value="1">c</li></ol>');
+  assert.equal(render('1. a\n1) b'), '<ol><li>a</li></ol><ol class="list-paren"><li>b</li></ol>');
+});
+
+test('old two-space and new marker-width nesting draw the same', () => {
+  const old = render('1. a\n  - b\n  - c');
+  assert.equal(old, render('1. a\n   - b\n   - c'));
+  assert.ok(old.includes('<ul class="list-2">'), old);
+});
+
 test('a mermaid block becomes a diagram slot that keeps its source, escaped', () => {
   const html = render('```mermaid\nflowchart LR\n  A["<b>x</b>"] --> B\n```\n- [ ] after');
   assert.match(html, /<figure class="diagram"><pre class="diagram-src"><code>flowchart LR\n  A\[&quot;&lt;b&gt;x&lt;\/b&gt;&quot;\] --&gt; B<\/code><\/pre><\/figure>/);

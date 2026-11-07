@@ -112,6 +112,16 @@ pub fn checkbox_line(line: &str) -> Option<Checkbox<'_>> {
                 _ => return None,
             }
         }
+        c if c.is_ascii_alphabetic() => {
+            let run = trimmed.chars().take_while(|x| *x == c).count();
+            let rest = &trimmed[run..];
+            match rest.chars().next() {
+                _ if run > 2 => return None,
+                Some(')') => run + 1,
+                Some('.') if c.is_ascii_lowercase() || rest[1..].starts_with("  ") => run + 1,
+                _ => return None,
+            }
+        }
         _ => return None,
     };
     let after_marker = &trimmed[marker..];
@@ -180,6 +190,17 @@ mod tests {
             "- [x] dash\n* [x] star\n+ [ ] plus\n1. [x] one\n2) [ ] two\n  - [x]\n-   [x] wide\n*  [ ] wide\n-[ ] not\n-     [ ] code\n- [y] not\ncode [ ] not\n"
         );
         assert!(note.toggle_checkbox(9).is_none());
+    }
+
+    #[test]
+    fn lettered_checkboxes_count_like_the_page_counts_them() {
+        let note = Note::new(
+            "T",
+            "a) [ ] one\nbb. [x] two\nA) [ ] three\nB.  [x] four\nC. [ ] name\nabc) [ ] no\nab) [ ] no\naaa. [ ] no\n",
+            vec![],
+            "",
+        );
+        assert_eq!(note.checkboxes(), vec![false, true, false, true]);
     }
 
     #[test]
