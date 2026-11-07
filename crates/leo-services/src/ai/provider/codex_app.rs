@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use super::process::{self, Process, Watchdog, MOST_OUTPUT, QUEUED_MESSAGES};
 use crate::ai::error::{ProviderError, ProviderResult};
-use crate::ai::provider::agent_cli::{codex_disables, codex_native_isolated, locate, AgentCli};
+use crate::ai::provider::agent_cli::{codex_disables, codex_scope, locate, AgentCli};
 use crate::ai::provider::{Sink, Spent};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -71,22 +71,29 @@ pub fn declined(method: &str) -> Value {
     }
 }
 
+static NATIVE_PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn note_native(problem: Option<String>) {
+    if let Ok(mut held) = NATIVE_PROBLEM.lock() {
+        *held = problem;
+    }
+}
+
+pub fn native_problem() -> Option<String> {
+    NATIVE_PROBLEM.lock().ok().and_then(|held| held.clone())
+}
+
 impl CodexThread {
     pub fn start(agent: &AgentCli, system: &str, tools: &[Value]) -> ProviderResult<CodexThread> {
         let name = agent.provider_name().to_string();
         let fail = |what: String| ProviderError::Retryable(format!("{name}: {what}"));
         let program =
             locate(agent.bin()).ok_or_else(|| fail(format!("{} is not installed", agent.bin())))?;
-        if !codex_native_isolated(&program) {
-            return Err(fail(
-                "this Codex version cannot isolate native sessions. Update Codex, then try again."
-                    .into(),
-            ));
-        }
         let room = agent.room()?;
         let mut command = leo_core::children::quiet_command(&program);
         super::scoped_cli::plan_environment(&mut command);
-        command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
+        command.arg("app-server");
+        command.args(codex_scope(&program, "app-server", room.path())?);
         for feature in codex_disables(&program)? {
             command.args(["-c", &format!("features.{feature}=false")]);
         }
@@ -583,22 +590,50 @@ done
         assert_eq!(approval["result"]["decision"], "decline");
     }
 
-    #[test]
-    fn a_native_cli_without_config_isolation_never_starts_a_session() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().unwrap();
-        let bin = dir.path().join("codex");
-        let marker = dir.path().join("unsafe-native-started");
-        std::fs::write(&bin, format!("#!/bin/sh\nif [ \"$2\" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi\ntouch '{}'\n", marker.display())).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+    fn fallback_agent(dir: &std::path::Path, listing: &str) -> AgentCli {
+        let bin = fake(dir);
+        let body = std::fs::read_to_string(&bin)
+            .unwrap()
+            .replace(
+                "echo '--ignore-user-config --ignore-rules'; exit 0",
+                "echo 'Usage: codex app-server'; exit 0",
+            )
+            .replace(
+                "printf '%s\\n' \"$@\" >",
+                &format!("case \"$*\" in *'mcp list'*) {listing}; exit $?;; esac\nprintf '%s\\n' \"$@\" >"),
+            );
+        std::fs::write(&bin, body).unwrap();
         let cfg = ProviderConfig {
             kind: Some(ProviderKind::Codex),
-            bin: Some(bin.to_string_lossy().into_owned()),
+            bin: Some(bin),
             ..ProviderConfig::default()
         };
-        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
-        assert!(CodexThread::start(&agent, "Use interpretable language.", &[]).is_err());
-        assert!(!marker.exists());
+        AgentCli::new("codex".into(), Agent::Codex, &cfg)
+    }
+
+    #[test]
+    fn a_codex_without_isolation_flags_is_scoped_by_switching_its_tool_servers_off() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let agent = fallback_agent(
+            dir.path(),
+            r#"echo '[{"name":"srv","enabled":true},{"name":"off","enabled":false}]'"#,
+        );
+        CodexThread::start(&agent, "x", &[]).unwrap();
+        let args = std::fs::read_to_string(dir.path().join("sent.log.args")).unwrap();
+        let lines: Vec<&str> = args.lines().collect();
+        assert_eq!(lines[0], "app-server");
+        assert!(!lines.contains(&"--ignore-user-config"));
+        assert!(lines.contains(&"mcp_servers.srv.enabled=false"));
+        assert!(!lines.contains(&"mcp_servers.off.enabled=false"));
+        assert!(lines.contains(&"notify=[]"));
+    }
+
+    #[test]
+    fn a_codex_whose_tool_servers_cannot_be_listed_never_starts_a_session() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let agent = fallback_agent(dir.path(), "exit 3");
+        assert!(CodexThread::start(&agent, "x", &[]).is_err());
+        assert!(!dir.path().join("sent.log.args").exists());
     }
 
     #[test]

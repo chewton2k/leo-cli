@@ -191,7 +191,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
 - Stagger: `cascade(list)` staggers direct children by 30 ms (capped at 150) on first arrival only,
   never on a re-render; `cascade(el, 'settling')` and the CSS for sheets, `.settings-section.arrive`,
   the chat panel and margin replies bring inner groups in 30 and 60 ms apart. Board lanes and cards
-  only fade: transforms there would count as overflow in `kanbanFit`.
+  only fade: transforms there would count as overflow in `kanbanFit`. The Chats list only fades too (2026-11-06):
+  a 4 px slide on a scrolled list moved its `scrollTop` by 4.
 - Moves: `flipList`, `pillGlide`, `settle`. `settle` follows an arc (x and y on different progress,
   `arcPoints`) and lifts onto a fixed carrier when an ancestor clips (`clippedBy`), so a drop
   passes lane and row bounds. `flyInto(ghost, target)` carries a card into another board's tab, or
@@ -229,10 +230,41 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `version` (FNV-1a); 409 → "<title> (conflict from leo)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
-  Typing a list or checklist marker plus its space (`- `, `1. `, `- [ ] `)
+  Lists (2026-11-06, the user's call): `markdown.js` `MARKER` is the one definition of a
+  list marker: `-`, `*`, `+`, `1.`, `1)`, `a.`, `a)`, `A)`,
+  and `A.` with two spaces (one space stays prose, so `A. Smith` is a name, as in Pandoc), one or
+  two of the same letter, so `ok.` and `Hi.` stay prose; after `z` comes `aa`, then `bb`.
+  A lettered list begins at `a` or `A`, continues an item on the line above, or has a box
+  (`listable`; `after` is the option for a note's one-line blocks), so `p. 12`, `c. 1900` and
+  `e. coli` stay prose everywhere, editing included. `listLevels` is the one forward pass over a
+  note; `listed` answers for one line. `Note::checkbox_line` in leo-core stays context-free and
+  counts the same lines, which is why a box always makes an item. Enter continues with `continueLine`,
+  keeping the marker's gap; on an empty item it steps out one level, then leaves the list;
+  Backspace at the start of an item's text does the same through `stepBack`, keeping the
+  text. Tab nests by the width of the marker above, so other apps nest it too; Shift+Tab goes
+  back to the parent's indent; old two-space lists still nest (`listLevels` reads depth from the
+  run of list lines). `renumber` then fixes numbers and letters through the item's run of list lines (only `listable` lines),
+  from the edited item: an item far from the edit follows only if it continues its own run's numbers, so
+  `2019/2020/2020/2021` and `a./c. 1900` stay as typed (2026-11-06); a letter list never skips a letter.
+  Tab and Shift+Tab ask `itemIn` too, so `p. 14` or `ii. two` is prose and keeps its marker, a Tab or
+  Shift+Tab that changes nothing writes nothing, and a number of 100 or more is a chosen number (a year) that
+  nesting never renumbers. It stops a level at the first marker more than 1 from its place and leaving a lettered level
+  alone unless it starts at `a` or `A`, so `2005.`, `c. 1905` and a sub-list begun at 7 keep their
+  markers; a sub-list Tab just made (`fresh`) starts at its first number or letter, and `closeList` closes the numbers
+  over a line that left the list. Nesting looks like Google Docs (2026-11-06, the user's
+  call) and only the page changes, never the file: `markdown.js` `list` gives lists below
+  the top `list-1`/`-2`/`-3` by depth (`depth` is the option for a note's one-line blocks),
+  CSS draws disc, circle, square and `1.`, `a.`, `i.`, repeating; a typed top-level `1)` is
+  `list-paren`. Letters draw as typed at any depth (`list-lower`, `list-upper`, `-paren`; a nested numbered list that does not start at 1 keeps decimal, so `7.` never
+  draws as `g.`), each
+  `li` with a `value` because CSS counts `aa` as 27 and `bb` as 54. Different markers side by
+  side are separate lists.
+  The source field in a list item is `inline-block`: as a block,
+  WKWebView (not Playwright's WebKit) leaves an empty item's marker on a line of its own.
+  Typing a list or checklist marker plus its space (`- `, `1. `, `a) `, `- [ ] `)
   re-renders that line at once with the caret kept (not during IME composition);
-  headings already restyle live, and Backspace at the start of the text gives the
-  plain Markdown back. A checked task strikes only its text (`text-decoration`,
+  headings restyle live, one Backspace takes a heading's marker off, and Enter on an empty
+  heading clears it. A checked task strikes only its text (`text-decoration`,
   per wrapped line; an empty one shows none). A box toggles only from a click
   that starts and ends within `DRAG_CLICK_DISTANCE` of one point, so selecting
   text and releasing near the box never ticks it.
@@ -241,6 +273,26 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   and preserves the checkbox’s viewport position and focus.
   Cmd/Ctrl+A selects the whole note at once, even from inside one line
   (2026-10-19; it used to take a second press).
+
+- Rich text (2026-11-06, the user's words: "all different types of bullet points, heading,
+  italics, bold, enumerations with a) b)... or 1) 2), tables, underlining"): the file stays plain
+  Markdown. `spans` in `markdown.js` pairs `*`, `_` and `~~` by delimiter runs, so `***both***`
+  and `**bold *italic***` nest and marks never cross; `_` inside a word and a single `*` after a
+  word stay literal. Underline is `<u>text</u>`: after escaping, only that exact pair comes back,
+  every other tag stays text. Cmd/Ctrl+B, I and U toggle a selection through `editing.restyle`
+  (per line, past list and heading markers, also across rendered lines, skipping tables, code and
+  math when it spans lines); a selection inside a longer bold run wraps instead of splitting it.
+  Only marks the page draws come off, so `foo_bar_baz` and `2*3*4` keep theirs, and a callout's
+  `[!type]` is never wrapped. With no selection the key opens an empty pair around the caret (`stylePair`,
+  not in code or math): the next press removes an empty pair (also right after a closed span, `**a**|`),
+  or steps past the closing marks once something was typed. A whole callout line styles its title.
+  Tables: a click lands in that cell's raw text; Tab and Shift+Tab walk cells, Tab past the last
+  adds a row. Alignment colons become `align-*` classes, `\|` stays in its cell, a short row is
+  filled in. macOS replaces `--` with a dash only while `spellcheck` is on, and cancelling that
+  replacement corrupts the text, so `look` turns spellcheck off for tables, code, math and lines
+  starting with `-`, `|` or `:`; Playwright's WebKit does not show this, the real WKWebView does.
+  On a Mac End and Home move the caret (WebKit only scrolls); a caret past the rendered end of a
+  line lands past its raw marks.
 
 - `markdown.js` escapes first, numbers checkboxes exactly like
   `Note::toggle_checkbox`, draws `[[Title]]` links, callouts (`> [!type]`,
@@ -520,7 +572,15 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
 - Choosing the model (`routing.rs`, 2026-11-06, the user's call; same shape as Copilot Auto and Cursor Router, with rules instead of a trained classifier because leo has one user and a classifier call would cost tokens): `routing::light` sends only obvious cases (short lookups and greetings, no attachments, files, selection, study or Auto access, at most six turns) to the cheapest model of the chosen AI (`ai::quick_config`, through `Instructions.light` or `Powers.light_chat` when no session opens, as on a Codex without app-server isolation); every doubt stays on the chosen model, and other languages stay there too. `Powers.lighter` turns routing off when the quick tier is the same model and effort, and a failing light writer gives way to the chosen one on the last try, so `Auto` always names who really answered. The tier is part of the warm key, and `Slot::light` keeps a warm full chat from moving down, since a switch loses the cache: a chat moves up once when it needs to, never down while warm. Settings → Felix → Cheaper model for lookups (`Prefs.auto_model`, on by default) turns it off; a routed reply says `Auto` in its usage line.
 
 - Steering: messages sent while Felix works are added after the next tool
-  step (`steer.rs`). Esc stops an answer, or closes the panel.
+  step (`steer.rs`). Esc stops an answer, or closes the panel. Felix's Escape handling is on the
+  document (capture), not the panel, because WebKit does not focus a button on click and the
+  press would otherwise reach the page's Back and close the note (2026-11-06): an open attach or
+  access menu and the Chats list (when focus is in the list or the window is narrow) take it in capture;
+  with focus on `body` Felix's close is a `window` bubble listener, so the owners of an Escape inside the
+  page (a board drag, the picture frame, the outline preview, a margin thread, the card panel) get it
+  first, and `events.js` leaves a body Escape to Felix instead of going Back. An open sheet, or one still
+  closing (`.scrim-gone`), always wins. In Felix's input Escape closes the Chats list, then Felix.
+  `routing-chat-review.spec.js` presses it with focus on `body`.
 
 - Panel look (2026-11-04, the user's call; plan phase 1): the panel sits one
   tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
@@ -531,28 +591,51 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
   “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
-  attribute says the connected notes are read too), while a note is attached a
-  `Stop reading this note` icon button (`data-chat="drop"`, focus moves to the
-  input) and New/Close. Felix's words (greeting, answers) use
+  attribute says the connected notes are read too), while a note is attached an
+  eye toggle (`data-chat="drop"`) and New/Close. Felix's words (greeting, answers) use
   `--voice`; the user's messages stay sans in a `--field` bubble. The greeting
   and starters arrive once per chat (`data-hello` key): words fade
   in (`.word`, `word-in` .5 s opacity and colour, no blur, nothing moves),
   starters are pills that appear together after it. `draw(stick, live)` no
   longer replaces the transcript on every streamed chunk: `settle(from, to)`
   keeps every node that already matches, appends only the new words of a
-  growing text run (animated while the message is pending) and replaces only
+  growing text run and replaces only
   what changed, so finished text, a selection in it and the greeting animation
   survive; the final redraw settles too. The panel slides on `--ease-drawer` /
   `--t-drawer` and leaves over `CHAT_LEAVE_MS` before `chat-open` is removed.
   Hovering or focusing a line-citation chip calls `onCite(id, lines)`; the open
   note's `doc.glow(from, to)` toggles `.blk-glow` on the cited blocks (no
-  redraw, no scroll, no timer) and clears on leave, blur and close.
+  redraw, no scroll, no timer) and clears on leave, blur and close. Lit blocks are square with a side halo
+  only, and a blank block between two lit ones is lit too, so no seam shows (2026-11-06).
   A citation to another note does nothing extra.
   The Chats heading has no New chat action; the main chat header keeps it. History
   titles use 13 px type. Delete keeps its button mounted while X expands to Delete,
   cancels on Escape or leaving the control, and keeps the chat on a failed request;
   Reduced Motion snaps the width and label.
 
+- Perch (2026-11-06, the user's call: "i like A. perch best flow and it's simple"; replaces the header and surface description above): the Chats list sits on `--ground`, the chat on `--page` with the 16 px corner, the composer, selected row and user bubble on `--raised`; `--field` and `--field-hi` are gone, pills and circles are 9 to 16 px rounded rectangles. An empty chat is `.chat.perched`: the greeting, composer and starters are one block centred in the panel at any height (`display: contents` on the body and hello, DOM order (`#chat-below` holds the starters after the footer) and two flex spacers), Felix perched on the composer's top edge with his `hi!!`. The first send docks the composer to the bottom (`leoMotion.dock`, `DRAWER_MS`, snaps under Reduced Motion) and it stays docked while the chat has messages. Felix lives in `#chat-face` inside the composer, so his state classes still apply (`mood` finds every `.felix`). The header is toggle, chat title (or "New chat") and close; New chat is in the Chats heading while Chats is open and in the header otherwise (one `[data-chat="new"]` shows at a time; specs use `:visible`). The composer holds paperclip, the note chip (the `data-chat="drop"` eye toggle, hidden with no note, `.off` when not reading), the access chip (no indigo for Auto; "⇧Tab to switch" is only its tooltip) and send.
+- Chat titles (2026-11-06): a short question is told apart as `<question>: <note>` only by the open
+  note (a source with `why: "open"`, `chats::note_of`), so the row reads the same while Felix answers
+  (`draftTitle` uses the same rule, including attached notes and chat references, and the same clip of 80
+  characters plus an ellipsis) and after. A streamed line that is only digits or a letter that could still
+  become a list marker is held until it has text (`held`). Starters that need the note hide while the eye is off.
+- Felix's toolbar face does not bob while idle and the panel is closed (`#chat-toggle .felix.idle`);
+  only an open panel animates him idle (2026-11-06). The composer's dock moves its width as well as its
+  height. In a narrow panel the placeholder keeps one line (ellipsis), the note chip keeps 76 px and the
+  access chip drops its chevron (`@container chatmain`); under 1200 px the note toolbar centres in the
+  room left of the overlaying panel (`--chat-over`), its buttons shrink to 30 px and then wrap so it never passes the panel, and is hidden on phones while Felix is open.
+- Chat panel (2026-11-06, the owner; simulation in `docs/superpowers/user-simulation-report.md`): the eye
+  (`data-chat="drop"`) is a toggle that shows while a note is open, eye or eye-off, "Stop reading this
+  note" or "Read this note again", and keeps focus. New chat adds a placeholder row to the Chats list
+  (`state.fresh`, set by `begin()`, cleared by `resume()`; `drawChats` derives it, no ×, titled by the first
+  message) that goes away when the chat is left empty. Answers no longer split into word spans (the greeting
+  still does): streamed text only grows its last text node, and `.msg.pending > .prose` with no later `.prose` gets a
+  28 px CSS soft bottom edge (none under Reduced Motion), so nothing is state on a message. In answers each
+  `[n1 L4-6]` is a small muted superscript button (`numbered()`, one number per note and line in order of
+  appearance, `.cite-n`, title "Note, lines 4–6") and `.msg-from` is a "Sources" line of `.cite-src`
+  buttons with number, note and line; copy, Save and Add to note still drop every `.cite`. `cite()` numbers
+  only when given `marks`: quiz cards and file chips keep their look. The prompt (`BASE`, `REPLY_STYLE`):
+  one cite per bullet, short plain sentences, no bold except a closing "Next:" line.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
@@ -579,7 +662,11 @@ target. Check the page sequence after loading preferences.
 - Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
   without one, the global default applies only to notes leo made (a v4 id, so never a
   headerless file) after it was set (`Prefs.since`), so turning it on never starts
-  reading old notes.
+  reading old notes. Turning the default off pins the notes made while it was on
+  (`margin::pin_modes`, insert-ignore in one transaction, before the prefs are written),
+  so they keep reading along. An unsaved note shows the default and keeps a picked mode
+  in `marginPage.wanted`; the created hook (`marginCreated`) loads the note's margin and
+  POSTs it (2026-11-06, the user's call).
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
   sends changed blocks after a pause (4 s, slow 8 s). Silence is the normal answer:
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
@@ -615,17 +702,30 @@ target. Check the page sequence after loading preferences.
   bounded when parsed.
 - A failed or missing AI shows a fixed, actionable status above the note and leaves `margin::PROBLEM`
   (fixed text, no provider detail) in Settings → Felix and Health until a read works.
-- Selection: Ask Felix (⌘⇧E) opens a draft in the margin, POST
-  `.../margin/threads` (no read-along needed), or Ask in chat. With Felix open, under
+- Selection: Ask Felix (⌘⇧E) opens a draft in the margin and asks at once, POST
+  `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
+  only Felix's message is stored). The draft shows dots (`.margin-pending`, filled from
+  `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
+  (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
+  leaves the thread closed when it lands, and a closed failure toasts. An open failure
+  shows the problem and lets the user type a question (2026-11-06, the user's call).
+  Replies show the sent text and dots the same way; a failed one restores the text. The box stays editable
+  while Felix thinks and only Send waits (2026-11-06).
+  Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
+  Add to note. A closed thread with more messages says "N more" (marks get a ring).
+  Word arrival animates colour only, never opacity (blur on WebKit); positions are rounded. With Felix open, under
   3 or over 600 characters, it goes to the chat as before. The server anchors on
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
   POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
   messages sent), and never run twice at once for a thread.
-- Replies cap at `MOST_REPLY` (4,000) so a sketch fits; `without_open_fence` drops a fence cut off mid-drawing.
+- Word arrival runs over rendered prose too (`inkNodes` walks text nodes, skipping code, maths,
+  diagrams and links); an open thread's replies scroll inside a capped area so the reply box and
+  buttons stay on screen (2026-11-06). `UNSPOKEN` asks for a direct answer in three sentences and no
+  remark about the passage's form. Replies cap at `MOST_REPLY` (4,000) so a sketch fits; `without_open_fence` drops a fence cut off mid-drawing.
 - Add to note uses `/insert` with one request id per thread (`/insert` dedupes on note
   and request, whatever the base), runs once at a time and shows Undo before it closes
   the thread. After a 409 it re-finds the passage, or says it went to the end and
-  skips the glow. Only drafts offer Ask in chat, which attaches the quote. `add_margin_note`'s Undo is refused
+  skips the glow. Ask in chat attaches the quote. `add_margin_note`'s Undo is refused
   once the user has replied. `chat::gather_seeing` adds open threads of the open note
   after the notes (`margin::context`, at most 3,000 characters and an eighth of the
   note room); the block's fence is keyed per process and stable while its content is,
@@ -894,7 +994,26 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   (2026-11-02, the user's call: no modal; `#kanban-panel`, kept across board redraws, a
   full-screen layer under 760 px): title, subheading, status and board (the shared select
   menu), priority (`segmented`, `data-priority`), a borderless description (autosave after
-  600 ms, on blur, and before Escape or × closes it), Delete with Undo.
+  600 ms, on blur, and before Escape or × closes it), Delete with Undo. The description is
+  the note editor itself (2026-11-06, the user's call: "render markdown the same as our
+  notes"): `leoDoc.mount` on `#kanban-card-description` (rendered blocks, click a line to
+  edit, checkboxes toggle), no outline, pictures, margin or note id. `description` stays plain
+  Markdown in the card JSON; `onChange` feeds the same debounced PATCH, and the panel's `end()`
+  stops the editor, saves and `destroy()`s it. Escape in a line only leaves the line (the panel
+  checks `.line-edit`; events.js prevents every Escape, so `defaultPrevented` says nothing), and the
+  next one closes; from the title or subheading one press closes. An edited line never hangs its
+  `##` into the panel's edge. Closing, opening another card, moving to another board and leaving the
+  page first `settle` every field (`kanbanLeavePanel`, `kanbanSettlePanel`): a failed save or a
+  description over `KANBAN_MOST_DESCRIPTION` keeps the panel, the address and the text, with the
+  reason in `#kanban-card-problem`, so the server's 400 can never cost text. Dragging the open card to
+  a board tab settles it first (2026-11-06; a refusal keeps the card where it was); a refused departure
+  puts back the board's own address, not the old one; opening a card re-checks the panel after each
+  settle, so quick clicks mount one panel; hiding or quitting flushes the fields (`panel.flush`) and an
+  unsaved or over-limit field keeps the close warning (`panel.dirty`). An over-limit card offers Discard these changes, the one way out that drops text (2026-11-06). A board fetched after a change is
+  dropped if a write began meanwhile (`kanbanWrite`, `kanbanRefresh`). When the page is under 800 px wide
+  (Felix or the explorer beside it) an open card panel takes the whole page and the board is hidden
+  (container query on `#app`), so no sliver of it shows.
+  The card on the board still previews the raw text.
 
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the placeholder
@@ -926,7 +1045,16 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   every row lines up. No footnote. Each has a row reset (`settingReset`,
   a small icon button that shows only while the value differs from
   `APPEARANCE_DEFAULTS`: Match device, Cute, Wide; `data-action="setting-reset"`,
-  named "Reset <setting> to default"). Add one only where the default is real. `/theme.js`
+  named "Reset <setting> to default"). Text size and Felix's lettering
+  (2026-11-06, the user's request) are two more rows in `theme.js` (`READING`,
+  stored like Note width in `leo-text-size` / `leo-felix-letters`, set as
+  `html[data-text-size]` / `[data-felix-letters]` before paint, default key
+  removed). Small .9, Medium 1, Large 1.12 set `--read`; only reading text
+  multiplies it (`.prose`, headings, code, tables, line editor, `.margin-felix`,
+  `.margin-you`, Felix's chat answers), so chrome keeps its size and line
+  heights stay unitless. Lettering moves `--felix-letters` (`--voice` or
+  `--note-font`) for answers and margin notes only; the hello text keeps
+  `--voice`. Cards are `.read-sample` HTML, really at size. Add one only where the default is real. `/theme.js`
   loads in `<head>` (before any paint, no inline script under the CSP) and
   sets `html[data-theme]`; the dark colours apply under
   `prefers-color-scheme: dark` unless `data-theme="light"`, and always with
@@ -1066,11 +1194,20 @@ gutters and the left one holds a tick per heading (`.outline-ticks`, longer for
 higher levels, the current one in the accent). Hovering or focusing the rail
 magnifies nearby bars (they stay inside the 48 px gutter, at least 6 px from the
 text) and previews the heading and a bounded plain-text excerpt (up to 24 lines /
-800 UTF-16 units, escaped); clicking or Enter/Space jumps there. The preview opens
-only into free space, between the rail and the text or right of the text (over the
-margin), when 220 px fit (`outlineRoom`); with no room it stays hidden and the
-disclosure below the rail lists the headings (2026-11-06, the owner's screenshot of
-a narrow window).
+800 UTF-16 units, escaped); clicking or Enter/Space jumps there. The preview always
+shows (`outlineRoom`): between the rail and the text, else right of the text, else over
+the text (2026-11-06, the owner: "these preview boxes should show even if they cover
+the text"; this reverses the earlier same-day "free space only" rule). It sits above the
+margin layer (z 12) and ignores the pointer.
+Page chrome is not selectable (2026-11-06, the owner): `body` is `user-select: none` and
+the allow list in `index.html` (inputs, `.doc`, `.prose`, chat and margin text, errors,
+transcripts, descriptions, code) turns it back on; new text that people would copy needs a
+class on that list. Hints, card descriptions and notes (`.hint`, `.choice-about`, `.set-note`, but not `.set-note.warn`) are chrome and
+not on it, and an unfocused input or textarea is `user-select: none` so a drag across a form paints no
+placeholder; focusing it makes it selectable (2026-11-06). The note's mode button and menu clear a selection like other chrome. `.related`, `.doc-tail` and blank blocks stay off it, so a drag down
+the note stops at its end instead of painting empty space. A press on non-selectable,
+non-control chrome clears the selection and Ask Felix (`passages.js`), except in
+`[data-keep-selection]` (Ask Felix, `.page-bar`) and the resize grips.
 Arrow keys, Home and End select a preview, Escape dismisses it, and Reduced Motion
 snaps the bars. All 300 markers fit within the viewport. The existing disclosure
 below the rail opens the full nested outline; narrow panes keep their disclosure.
@@ -1265,12 +1402,33 @@ Highlight, cleared after five seconds or navigation without changing editor DOM.
 Usage keeps a single provider column with compact Session/Weekly rows: remaining
 percentage at left, a muted provider-colored bar and reset time at right. The
 dialog has no nested settings card or setup prose; unknown readings stay explicit.
+Usage (2026-11-06, the owner: no small modal that grows): the sheet opens at its final
+size (`min-height`) with `.skeleton` shaped as two plans of two rows, then the saved
+readings come in with `cascade`, first draw only. Refresh and Close are icon buttons (labels
+kept; `.activity-spin` replaces the arrows while busy); "Plan limits" is a muted subtitle,
+and "Updated …" sits in each plan's header (`planUpdated`). A window past its reset says
+"Reset", one never read says "Not read yet", both with "Refresh to check". Opening POSTs
+`/api/settings/usage` with `{}`; the Refresh button POSTs `{ "claude": true }`; a `note` in the
+response shows as a quiet line. Usage and New task share the `sheetroom` container on both
+`.scrim` and `.scrim-gone`, so a closing ghost keeps its layout.
 
+A week column shows only as many side-by-side tiles as it is wide enough for (`CAL_TILE_PX`, 64, after
+a 30 px strip kept for the count); the rest become a `+N` in that strip beside the tiles that opens the day
+(2026-11-06). `calFit` re-measures after every draw and on resize (`ResizeObserver` on `#cal-main`), so the
+count is right at any width; columns under 140 px put the title under the task checkbox so it keeps whole words. The Tasks window stops short of the outline rail's
+foot (`fitTasksWindow` scrolls it inside or folds it) and the outline sits above the dock.
 Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
 minimum timed block. Overlap layout includes that visual minimum; saved task
 times stay unchanged. Google export, .ics download and delete/stop-tracking
 actions use icon controls with accessible names and hover titles in both peeks
 and task sheets.
+A block that would hang past midnight (a deadline at 23:59 with its 60 px minimum) is placed
+higher (`calColumn` `placed`, 2026-11-06) so it never adds empty scroll under the grid; its
+label and drags still use the real start.
+New task (2026-11-06, the owner: change the dimensions freely) is two panes at 720 px when the
+scrim is 760 px or wider (a container query, since panes shrink the viewport): title (large),
+description (fills the left column), Type chips, Repeat; the date and time picker on the right.
+One column below that. The footer stays pinned.
 Minimum-height blocks resize from the original end plus pointer movement,
 including scroll movement; a sideways grip drag cannot lengthen a short task.
 Month rows grow to fit their previews and More action; the month grid scrolls

@@ -172,6 +172,13 @@ Downloads use public HTTPS resolution, deadlines and a one-GiB cap. Signed bytes
 stay in memory. Core activity leases cover capture through clipboard restoration;
 installation takes an exclusive lease, unloads/reaps the speech worker, and keeps
 the lease until exit. Failed installation leaves the engine actor usable.
+macOS restart after an update (2026-11-06): Tauri's `restart` ran `open -n` while the
+old process was alive, so a second Dock tile stayed. Now a detached `/bin/sh` (own
+process group, null stdio, no interpolated strings) waits for this pid (30 s at most),
+then `open <bundle>` with one retry, and the app exits with `RESTART_EXIT_CODE`; if the
+spawn fails or the binary is not in a bundle, `app.restart()` runs as before. The first
+update INTO this build still restarts with the old binary and may show two icons. Only
+argv and the wait are tested; a real update needs a release.
 
 Release-only `tauri.release.conf.json` includes the root CLI as `binaries/leo`,
 so ordinary checks/dev need no prebuilt sidecar. CI builds that command first,
@@ -235,5 +242,13 @@ bundle is removed, and unrelated application copies are never deleted.
 Foreground requests run on the main thread, move the main window to the active
 macOS Space and explicitly make it the main/key window. Initial activation runs
 at Ready, never after an arbitrary page reload; hidden login launches stay hidden.
-The macOS tray opens its menu through NSStatusItem directly for either mouse
-button, avoiding tray-icon's simulated click that fails in other full-screen Spaces.
+The macOS tray opens its menu through NSStatusItem directly for either mouse button
+(`popUpStatusItemMenu`, not tray-icon's simulated click). Spike on a Mac (2026-11-06): a
+Regular app shows no status menu over another app's full-screen Space by any path
+(popUp, performClick, permanent menu, activating first); an Accessory app shows it, with
+or without a window, and Regular flipped to Accessory for the life of the menu shows it
+too. So `popup()` (`tray.rs`) sets Accessory before the menu and Regular after only when
+Leo is not active, its main window is not on the active Space (`isOnActiveSpace`, false
+when hidden, `needs_flip`); a click within a second of the last flip waits out the gap, so rapid changes never leave extra Dock icons; Leo in front or beside
+you never flips. `setCanHide` was not needed in the spike. Only the gate is tested; the
+real behaviour needs a release and a full-screen Space.

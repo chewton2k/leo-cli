@@ -11,6 +11,8 @@ try {
   cal.showDone = true;
 }
 const CAL_POLL_MS = 150000;
+const CAL_TILE_PX = 64;
+const CAL_MORE_PX = 30;
 const CAL_HOUR_PX = 48;
 const CAL_TASK_PX = 60;
 const CAL_SNAP = 15;
@@ -55,6 +57,8 @@ async function showCalendar() {
   cal.peek = null;
   cal.scrolled = '';
   app.innerHTML = '<div class="cal-page" id="cal-page"><section class="cal-main" id="cal-main" aria-label="Calendar"></section><aside class="cal-side" id="cal-side"></aside></div>';
+  calSized.disconnect();
+  calSized.observe($('#cal-main'));
   drawCalendar();
   await loadSchedule(mine);
 }
@@ -304,24 +308,36 @@ function calAllDay(days, plan) {
   return `<div class="cal-allday" style="--cols: ${days.length}; --rows: ${rows};"><span class="cal-allday-label">All day</span><div class="cal-allday-grid">${cells}${bars}</div></div>`;
 }
 
-function calColumn(key, plan, today) {
+function calColumn(key, plan, today, room = Infinity) {
   const day = plan.byDay.get(key) || { timed: [] };
   const items = day.timed.filter(calShown);
   const spans = items.map((item) => S.spanOn(item, key, item.type === 'task' ? Math.ceil((CAL_TASK_PX + 2) / CAL_HOUR_PX * 60) : CAL_SNAP * 2));
-  const cols = S.dayColumns(spans);
+  const floor = (item) => 1440 - Math.ceil(((item.type === 'task' ? CAL_TASK_PX : 18) + 2) / CAL_HOUR_PX * 60);
+  const placed = spans.map((s, i) => ({ start: Math.min(s.start, floor(items[i])), end: s.end }));
+  const cols = S.dayColumns(placed);
+  const more = new Map();
+  items.forEach((item, i) => {
+    if (cols[i].col < room) return;
+    const under = items.findIndex((x, j) => cols[j].col === room - 1 && placed[j].start < placed[i].end && placed[i].start < placed[j].end);
+    if (under >= 0) more.set(under, (more.get(under) || 0) + 1);
+  });
+  const area = more.size ? `(100% - ${CAL_MORE_PX}px)` : '100%';
   const blocks = items.map((item, i) => {
+    if (cols[i].col >= room) return '';
     const { start, end } = spans[i];
-    const { col, cols: n } = cols[i];
+    const { col } = cols[i];
+    const n = Math.min(cols[i].cols, room);
     const step = Math.min(40, 70 / n);
     const left = col * step;
     const width = col === n - 1 ? 100 - left : Math.min(100 - left, step * 1.8);
-    const top = (start / 60) * CAL_HOUR_PX;
-    const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - start) / 60) * CAL_HOUR_PX - 2);
-    const short = end - start <= 30;
+    const top = (placed[i].start / 60) * CAL_HOUR_PX;
+    const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - placed[i].start) / 60) * CAL_HOUR_PX - 2);
+    const short = end - placed[i].start <= 30;
     const task = item.type === 'task' ? item.task : null;
     const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
     const grip = task && task.source === 'leo' && calMovable(task) ? '<span class="cal-grip" data-drag="resize" aria-hidden="true"></span>' : '';
-    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 });
+    const rest = more.get(i) ? `<button type="button" class="cal-stack-more" data-action="cal-pick" data-day="${key}" data-to="day" style="top: ${top + 2}px; z-index: ${room + 2};" aria-label="${more.get(i)} more at this time, open the day">+${more.get(i)}</button>` : '';
+    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${area} * ${left / 100} + 2px); width: calc(${area} * ${width / 100} - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 }) + rest;
   }).join('');
   let now = '';
   if (key === today) {
@@ -332,12 +348,27 @@ function calColumn(key, plan, today) {
   return `<div class="cal-col${wknd}" data-day="${key}">${blocks}${now}</div>`;
 }
 
+function calRoom(count) {
+  if (count < 2) return Infinity;
+  const width = document.querySelector('#cal-scroll .cal-cols')?.clientWidth || Math.max(0, ($('#cal-main')?.clientWidth || innerWidth - 700) - 52);
+  return Math.max(1, Math.floor((width / count - CAL_MORE_PX) / CAL_TILE_PX));
+}
+
+function calFit() {
+  if (state.view !== 'calendar' || cal.view === 'month' || cal.drag || cal.compose || !document.querySelector('#cal-scroll .cal-cols')) return;
+  if (calRoom(calDays().length) !== cal.drawnRoom) drawCalendar();
+}
+
+const calSized = new ResizeObserver(calFit);
+
 function calTimeGrid(days, plan, today) {
+  const room = calRoom(days.length);
+  cal.drawnRoom = room;
   const hours = Array.from({ length: 23 }, (_, i) => `<span style="top: ${(i + 1) * CAL_HOUR_PX}px">${esc(calHour((i + 1) * 60))}</span>`).join('');
   return `<div class="cal-week" style="--cols: ${days.length}; --hour: ${CAL_HOUR_PX}px;">
     <div class="cal-dayheads"><span></span>${calWeekHeads(days, today)}</div>
     ${calAllDay(days, plan)}
-    <div class="cal-scroll" id="cal-scroll"><div class="cal-hours" aria-hidden="true">${hours}</div><div class="cal-cols">${days.map((k) => calColumn(k, plan, today)).join('')}</div></div>
+    <div class="cal-scroll" id="cal-scroll"><div class="cal-hours" aria-hidden="true">${hours}</div><div class="cal-cols">${days.map((k) => calColumn(k, plan, today, room)).join('')}</div></div>
   </div>`;
 }
 
@@ -418,6 +449,7 @@ function drawCalendar() {
       side.innerHTML = calTray(plan, today);
     }
   }
+  requestAnimationFrame(calFit);
 }
 
 function calStep(step) {
@@ -1160,11 +1192,15 @@ async function saveDate(task, pick, confirm) {
 
 function newTaskSheet(day = null) {
   const box = sheet(`<h3>New task</h3>
-    <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing? Like Submit lab report" autocomplete="off">
-    <label class="set-row column"><span class="set-label">Description <span class="hint">optional</span></span><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…"></textarea></label>
-    <div class="picker-box" id="pick-box"></div>
-    <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
-    <details class="task-more source-more"><summary>${ICON.chevron}<span>Details</span></summary><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></details>
+    <div class="task-new">
+      <div class="task-left">
+        <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing?" autocomplete="off" aria-label="Title">
+        <label class="set-row column task-about"><span class="set-label">Description <span class="hint">optional</span></span><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…"></textarea></label>
+        <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
+        <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
+      </div>
+      <div class="picker-box" id="pick-box"></div>
+    </div>
     <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn primary" id="task-add">Add task</button></div>`);
   let kind = 'other';
   let repeat = [];
@@ -1361,12 +1397,13 @@ async function noteTasksSheet() {
   }
   const body = s.doc ? s.doc.source() : '';
   const lines = body.split('\n');
+  const task = new RegExp(String.raw`^\s*(?:${md.MARKER})\s{1,4}\[(?<mark>[ xX])\]\s(?<text>.+)$`);
   const boxes = lines
-    .map((line, n) => ({ n, m: line.match(/^\s*(?:[-*+]|\d+[.)])\s{1,4}\[([ xX])\]\s(.+)$/) }))
-    .filter((b) => b.m && b.m[2].trim());
+    .map((line, n) => ({ n, m: line.match(task)?.groups }))
+    .filter((b) => b.m && b.m.text.trim());
   const rows = boxes.slice(0, 200).map((b) => {
     const tracked = listed.find((t) => t.line === b.n);
-    return `<div class="set-row"><span class="grow">${b.m[1] !== ' ' ? '<s>' : ''}${esc(b.m[2].trim())}${b.m[1] !== ' ' ? '</s>' : ''}</span>${tracked ? `<button type="button" class="btn plain sm" data-action="task-open-here" data-id="${esc(tracked.id)}">In your tasks</button>` : `<button type="button" class="btn sm" data-action="task-promote" data-line="${b.n}">Add to tasks</button>`}</div>`;
+    return `<div class="set-row"><span class="grow">${b.m.mark !== ' ' ? '<s>' : ''}${esc(b.m.text.trim())}${b.m.mark !== ' ' ? '</s>' : ''}</span>${tracked ? `<button type="button" class="btn plain sm" data-action="task-open-here" data-id="${esc(tracked.id)}">In your tasks</button>` : `<button type="button" class="btn sm" data-action="task-promote" data-line="${b.n}">Add to tasks</button>`}</div>`;
   }).join('');
   sheet(`<h3>Tasks in this note</h3>
     <p class="hint">Checkboxes under an Action items heading are tasks already. Add any other checkbox to show it on the Calendar.</p>
@@ -1544,15 +1581,17 @@ function fitTasksWindow() {
   const box = tasksBox.hidden ? null : dock().getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
   const over = Boolean(card && card.left < box.right && card.top + scrollY < box.bottom);
-  const room = over ? Math.floor(box.bottom - card.bottom - scrollY - 12) : 0;
-  if (over) {
-    tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, room)}px`);
-    document.body.style.setProperty('--dock-room', `${Math.ceil(innerHeight - dock().getBoundingClientRect().top + 16)}px`);
-  } else {
-    tasksBox.style.removeProperty('--tasks-room');
-    document.body.style.removeProperty('--dock-room');
-  }
-  const cramped = over && room < TASKS_LEAST_ROOM;
+  const rail = box && box.width ? [...app.querySelectorAll('.note-outline .outline-ticks, .note-outline summary')]
+    .filter((el) => el.offsetParent)
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.right > box.left && r.left < box.right && r.bottom > 0) : [];
+  let room = over ? Math.floor(box.bottom - card.bottom - scrollY - 12) : Infinity;
+  if (rail.length) room = Math.min(room, Math.floor(box.bottom - Math.max(...rail.map((r) => r.bottom)) - 12));
+  if (Number.isFinite(room)) tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, room)}px`);
+  else tasksBox.style.removeProperty('--tasks-room');
+  if (over) document.body.style.setProperty('--dock-room', `${Math.ceil(innerHeight - dock().getBoundingClientRect().top + 16)}px`);
+  else document.body.style.removeProperty('--dock-room');
+  const cramped = Number.isFinite(room) && room < TASKS_LEAST_ROOM;
   if (cramped !== Boolean(tasksWin.cramped)) {
     tasksWin.cramped = cramped;
     drawTasksWindow();
@@ -1560,6 +1599,11 @@ function fitTasksWindow() {
 }
 
 new MutationObserver(fitTasksWindow).observe(app, { childList: true });
+let railFit = 0;
+new MutationObserver(() => {
+  if (railFit || !(app.querySelector('.outline-ticks') || tasksWin.cramped || tasksBox.style.getPropertyValue('--tasks-room'))) return;
+  railFit = requestAnimationFrame(() => { railFit = 0; fitTasksWindow(); });
+}).observe(app, { childList: true, subtree: true });
 window.addEventListener('resize', fitTasksWindow);
 
 function setTasksFolded(folded) {

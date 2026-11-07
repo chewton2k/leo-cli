@@ -126,6 +126,8 @@ const actions = {
   'segment-pick': (el) => pickSegment(el),
   'felix-pick': (el) => { pickFelix(el); pulse(el, { lift: 1.02 }); },
   'width-pick': (el) => { pickWidth(el); pulse(el, { lift: 1.02 }); },
+  'text-size-pick': (el) => { pickTextSize(el); pulse(el, { lift: 1.02 }); },
+  'letters-pick': (el) => { pickLetters(el); pulse(el, { lift: 1.02 }); },
   'setting-reset': (el) => resetSetting(el),
   'usage': () => showUsage(),
   'quick-leo': () => quickLeo(),
@@ -158,7 +160,6 @@ const actions = {
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,
   'test-ai': testAi,
-  'use-plan': (el) => changeSetting({ set: 'provider', task: 'writing', value: el.dataset.provider }),
   'note-picture': () => choosePictures(),
   'view-original': (el) => {
     el.focus({ preventScroll: true });

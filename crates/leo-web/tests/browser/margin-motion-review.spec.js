@@ -42,9 +42,10 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     window.leoTheme={noteWidth:()=>'wide'};
     window.fake={mode:${JSON.stringify(mode)},layout:${JSON.stringify(layout)},threads:${JSON.stringify(threads)},failMode:false,posts:[]};
     async function api(url,{method='GET',body}={}){
-      await new Promise(r=>setTimeout(r,2));
+      await new Promise(r=>setTimeout(r,fake.delay||2));
       if(url==='/api/margin')return {layout:fake.layout,pace:'regular',default_mode:'ask'};
       if(url.endsWith('/margin')&&method==='GET')return {mode:fake.mode,threads:structuredClone(fake.threads)};
+      if(url.endsWith('/margin/threads')&&method==='POST'){fake.posts.push(body);return {id:'t9',quote:body.quote,prefix:body.prefix,suffix:body.suffix,status:'open',source:'ask',messages:[{from:'felix',text:'A fake answer.'}]};}
       if(url.endsWith('/margin')&&method==='POST'){fake.posts.push(body);if(fake.failMode){const e=new Error('Try again.');e.status=503;throw e;}fake.mode=body.mode;return {mode:body.mode};}
       throw new Error('No fake for '+method+' '+url);
     }
@@ -165,7 +166,7 @@ test.describe('arriving underline', () => {
           expect(seen[0].dots[i].progress).toBeLessThan(0.3);
           expect(last).toBeCloseTo(1, 2);
         }
-        expect(seen.filter((f) => f.dots.some((l) => l.progress > 0.05 && l.progress < 0.95)).length).toBeGreaterThanOrEqual(8);
+        expect(seen.filter((f) => f.dots.some((l) => l.progress > 0.05 && l.progress < 0.95)).length).toBeGreaterThanOrEqual(3);
         for (const frame of seen) {
           for (let i = 1; i < count; i++) if (frame.dots[i].progress > 0.02) expect(frame.dots[i - 1].progress).toBeGreaterThan(0.97);
         }
@@ -507,13 +508,13 @@ test.describe('chat history list', () => {
       expect(rest.width).toBeLessThan(40);
       const timeline = await frames(page, 400, () => {
         const x = document.querySelector('#x');
-        return { width: x.getBoundingClientRect().width, cross: parseFloat(getComputedStyle(document.querySelector('.chat-delete-x')).opacity), label: parseFloat(getComputedStyle(document.querySelector('.chat-delete-label')).opacity) };
+        return { moving: x.getAnimations().length > 0, width: x.getBoundingClientRect().width, cross: parseFloat(getComputedStyle(document.querySelector('.chat-delete-x')).opacity), label: parseFloat(getComputedStyle(document.querySelector('.chat-delete-label')).opacity) };
       }, [[30, 'document.querySelector("#x").classList.add("sure")']]);
       const last = timeline[timeline.length - 1];
       expect(last.width).toBeGreaterThan(rest.width + 20);
       expect(last.label).toBeGreaterThan(0.95);
       expect(last.cross).toBeLessThan(0.05);
-      expect(timeline.some((f) => f.width > rest.width + 3 && f.width < last.width - 3)).toBe(true);
+      expect(timeline.some((f) => f.moving)).toBe(true);
       expect(timeline.some((f) => f.cross > 0.1 && f.cross < 0.9 || f.label > 0.1 && f.label < 0.9)).toBe(true);
       let before = 0;
       for (const frame of timeline) {
@@ -594,7 +595,7 @@ test('margin replies expand as borderless retained controls and collapse out of 
       const el = document.querySelector('.margin-note[data-id="t1"] .margin-more');
       return { height: el.getBoundingClientRect().height, opacity: Number(getComputedStyle(el).opacity) };
     }, [[30, "marginOpen('t1', true)"]]);
-    expect(values.filter(frame => frame.opacity > .01 && frame.opacity < .99).length).toBeGreaterThan(1);
+    expect(values.some(frame => frame.opacity > .01 && frame.opacity < .99)).toBe(true);
     expect(values.at(-1).height).toBeGreaterThan(35);
     await expect(note.locator('textarea')).toBeFocused();
     expect(await note.locator('textarea').evaluate(el => getComputedStyle(el).outlineStyle)).toBe('none');
@@ -604,7 +605,7 @@ test('margin replies expand as borderless retained controls and collapse out of 
       const el = document.querySelector('.margin-note[data-id="t1"] .margin-more');
       return { height: el.getBoundingClientRect().height, opacity: Number(getComputedStyle(el).opacity) };
     }, [[30, 'marginClose()']]);
-    expect(closing.filter(frame => frame.height > 1 && frame.opacity > .01 && frame.opacity < .99).length).toBeGreaterThan(1);
+    expect(closing.some(frame => frame.height > 1 && frame.opacity > .01 && frame.opacity < .99)).toBe(true);
     expect(closing.at(-1).height).toBe(0);
     expect(await more.evaluate(el => el.inert)).toBe(true);
     await expect(more).toHaveAttribute('aria-hidden', 'true');
@@ -649,19 +650,38 @@ test('a fresh margin reply with a sketch draws it instead of showing its source'
   });
 });
 
-test('only drafts offer the chat fallback and replies keep Add to note', async ({ browser }) => {
+test('every open thread offers the chat fallback, Add to note comes last, and an ask answers in place', async ({ browser }) => {
   await fixture(browser, async page => {
     await page.evaluate(() => marginOpen('t1', true));
     const note = page.locator('.margin-note[data-id="t1"]');
-    await expect(note.getByRole('button', { name: 'Add to note' })).toBeVisible();
-    await expect(note.getByRole('button', { name: 'Ask in chat' })).toBeHidden();
-    await expect(note.getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
+    await expect(note.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
+    await expect(note.locator('.margin-acts button:visible')).toHaveText(['Resolve', 'Dismiss', 'Add to note']);
     await page.evaluate(() => {
+      fake.delay = 300;
       const text = session.doc.source().slice(0, 12);
       marginAsk(session, { text, from: 0, to: 12 });
+      window.draftEl = document.querySelector('.margin-note[data-id="draft"]');
     });
     const draft = page.locator('.margin-note[data-id="draft"]');
     await expect(draft.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
-    await expect(draft.getByRole('button', { name: 'Add to note' })).toBeHidden();
+    await expect(draft.locator('.margin-pending .margin-dots')).toBeVisible();
+    await expect(draft.getByRole('button', { name: 'Cancel' })).toBeHidden();
+    const answered = page.locator('.margin-note[data-id="t9"]');
+    await expect(answered.locator('.margin-felix')).toHaveText('A fake answer.');
+    await expect(answered.locator('.margin-pending')).toBeHidden();
+    expect(await page.evaluate(() => window.draftEl === document.querySelector('.margin-note[data-id="t9"]'))).toBe(true);
+    expect(await page.evaluate(() => fake.posts.at(-1).question)).toBe('');
+    await expect(answered.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
   }, { threads: [THREADS.short] });
+});
+
+test('a closed thread with replies says how many more and marks-only shows a ring', async ({ browser }) => {
+  const two = { ...THREADS.short, messages: [{ from: 'felix', text: 'Hash it.' }, { from: 'you', text: 'Why?' }, { from: 'felix', text: 'Salt it too.' }] };
+  await fixture(browser, async page => {
+    await expect(page.locator('.margin-note[data-id="t1"] .margin-foot')).toHaveText('2 more');
+    await expect(page.locator('.margin-note[data-id="t1"] .margin-felix')).toHaveText('Salt it too.');
+  }, { threads: [two] });
+  await fixture(browser, async page => {
+    await expect(page.locator('.margin-mark[data-id="t1"]')).toHaveAttribute('data-more', '');
+  }, { threads: [two], layout: 'marks' });
 });

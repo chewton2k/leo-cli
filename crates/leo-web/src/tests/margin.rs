@@ -259,6 +259,25 @@ async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
 }
 
 #[tokio::test]
+async fn turning_the_default_off_keeps_notes_made_while_it_was_on() {
+    let (engine, _) = reading(SAYS).await;
+    let along = serde_json::json!({ "default_mode": "along" });
+    engine.post("/api/margin", along).await;
+    let (_, kept) = engine
+        .post(
+            "/api/notes",
+            serde_json::json!({ "title": "Kept", "body": "" }),
+        )
+        .await;
+    let kept = kept["id"].as_str().unwrap();
+    let ask = serde_json::json!({ "default_mode": "ask" });
+    assert_eq!(engine.post("/api/margin", ask).await.0, 200);
+    let (_, view) = engine.get(&format!("/api/notes/{kept}/margin")).await;
+    assert_eq!(view["mode"], "along");
+    engine.stop().await;
+}
+
+#[tokio::test]
 async fn a_read_saves_one_note_anchored_in_the_text() {
     let (engine, calls) = reading(SAYS).await;
     let (id, version) = engine
@@ -796,6 +815,12 @@ async fn asking_about_selected_words_needs_no_read_along_and_the_words_must_be_t
     assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
     let (status, why) = engine.post(&path, ask("sa", "", &version)).await;
     assert_eq!((status, why["why"].as_str()), (400, Some("short")));
+    let (status, silent) = engine
+        .post(&path, serde_json::json!({ "version": version, "quote": "same words", "prefix": "\n\n", "question": "" }))
+        .await;
+    assert_eq!(status, 200, "{silent}");
+    assert_eq!(silent["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(silent["messages"][0]["from"], "felix");
     engine.stop().await;
 }
 

@@ -175,12 +175,17 @@ Plan limits (`usage.rs`): `<config>/usage.json` keeps the latest `Usage`
 (5h/7d `Window { used 0..1, resets_at }`, `seen_at`) per provider name. Claude
 Code's come free with every answer (`rate_limit_event` → `from_claude`, saved
 in `AgentCli::run` even when the request failed); never send a request just to
-check. Codex's come from an isolation-capable `codex app-server` →
-`account/rateLimits/read` (`ask_codex`, no model call); unsupported versions
+check. Codex's come from a bare `codex app-server` →
+`account/rateLimits/read` (`ask_codex`, no model call); failures
 fall back to recent local Codex `token_count` rate-limit events without starting the
 app-server. This read-only fallback scans bounded recent folders and file tails,
 rejects links, preserves the event timestamp and never exposes conversation text;
-an older event cannot replace newer saved usage. Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
+an older event cannot replace newer saved usage. Claude's limits are read only when the user clicks Refresh
+(`POST /api/settings/usage` with `{ "claude": true }`; no body or `{}` reads Codex only):
+`refresh_claude` runs one tiny request on the first Claude writing model (haiku) with
+`--safe-mode`, no tools, capped at 20 s, for a plan login only (`auth status --json` says
+`claude.ai`); never drop `--safe-mode` (184k tokens without it, 3k with it). No event gives
+the note "Claude Code reported no limits.". Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
 age past `STALE_AFTER`, a window past its reset reads 0%); the Usage action in
 Settings asks Codex; doctor adds `<name> limits` with
 reset times. Never `--bare` (it skips the
@@ -353,12 +358,11 @@ it). Uploads may explain beyond the source; facts stay the source's.
 ### Native tools and text fallback (`ai/session.rs`)
 
 Ollama uses OpenAI-compatible native tool calls when its model supports them;
-Claude Code uses the loopback MCP bridge, and Codex native sessions require the
-isolation capability checks below. Every call
+Claude Code uses the loopback MCP bridge, and Codex native sessions are scoped as
+described below. Every call
 goes through Leo's validated `Turn.call`; malformed arguments receive a repair
 message, never execution. Claude Code that cannot open a native session falls back
-to the shared text protocol. A Codex whose app-server cannot start (an old
-version that cannot isolate native sessions) is skipped for native sessions, so
+to the shared text protocol. A Codex whose app-server cannot start or be scoped is skipped for native sessions, so
 Felix answers through the same text protocol; the `codex exec` resume and
 stateless Codex sessions are gone.
 Tests use local fake servers, never paid APIs.
@@ -405,11 +409,19 @@ share a directory or race on a fixed temporary name.
 
 ### Agent, credential and public-fetch boundaries (2026-10-16)
 
-Native Codex sessions and live usage polling require app-server help to advertise
-both `--ignore-user-config` and `--ignore-rules`, and pass both flags. Unsupported
-versions give an update-Codex error for writing and keep previously saved usage; never
-start an app-server that could load the user's MCP servers, hooks or rules.
-Feature discovery is bounded and fails closed, including the shell control and
+Native Codex sessions and `codex exec` are scoped by `codex_scope(program, sub, room)`
+(2026-11-06; Codex 0.167 dropped the two flags from `app-server`, so a version gate broke
+every native session): `--ignore-user-config --ignore-rules` when `sub --help` lists both,
+else every `enabled` MCP server from `codex --disable <CODEX_OFF> mcp list --json` (run in
+the room, never cached, ~0.9 s, `enabled: true` names only; a name that is not a bare TOML
+key is a named failure the user sees) is switched off with `-c
+mcp_servers.<name>.enabled=false`, plus `notify=[]`, `skills.include_instructions=false`
+and `model_provider="openai"`. Help and feature caches key on canonical path and mtime.
+`memories` is in `CODEX_OFF`. A failed native start is logged through `diag` and shown in
+Health ("Felix and Codex"). `ask_codex` runs a bare `app-server`: no thread, no tools.
+`provider-contract.yml` (weekly and manual, alert only, never the release gate) runs the
+ignored `installed_programs_still_match_what_leo_relies_on` against the latest Codex and
+Claude Code. Feature discovery is bounded and fails closed, including the shell control and
 hooks. CLI probes, native turns and text runs share a process-group watchdog that
 covers stdin, stdout EOF, exit and pipe joins; native queues and output are bounded.
 Claude's loopback MCP bridge caps active connections at eight, closes registered

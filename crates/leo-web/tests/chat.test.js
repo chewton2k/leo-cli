@@ -36,6 +36,21 @@ test('citations become note chips, and ones Felix was never given are dropped', 
   assert.deepEqual(C.cited('no citations here n1', sources), []);
 });
 
+test('numbered citations share a number per place, keep note and line, and leave no stray digits in copied text', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Heaps' }, { n: 2, id: 'b', title: 'Queues' }];
+  const text = 'Min on top [n1 L4-6]. Again [n1 L4-6]. Queue [n2]. Other lines [n1 L9]. Gone [n9].';
+  const marks = C.numbered(text, sources);
+  assert.deepEqual(marks.map((m) => [m.n, m.s.id, m.lines, m.where]), [[1, 'a', '4-6', 'lines 4–6'], [2, 'b', '', ''], [3, 'a', '9-9', 'line 9']]);
+  const html = C.cite(`<p>${text}</p>`, sources, esc, [], marks);
+  assert.equal((html.match(/class="cite cite-n"/g) || []).length, 4, 'one button per cite, repeats included');
+  assert.ok(html.includes('data-line="4-6" title="Heaps, lines 4–6" aria-label="Source 1: Heaps, lines 4–6">1</button>'));
+  assert.ok(html.includes('title="Heaps, line 9"'));
+  assert.ok(html.includes('>1</button>.'), 'a number sits against its sentence');
+  assert.ok(!html.includes('[n9]'), 'a citation of nothing is not shown');
+  const plain = html.replace(/<button[^>]*class="cite[^>]*>.*?<\/button>/g, '');
+  assert.ok(!/\d/.test(plain.replace(/<[^>]+>/g, '')), 'removing the buttons removes every number');
+});
+
 test('the conversation is kept per browser and survives broken storage', () => {
   const values = new Map();
   const storage = { getItem: (k) => values.get(k) || null, setItem: (k, v) => values.set(k, v) };
@@ -423,7 +438,7 @@ test('tool activity follows streamed text without dropping text or splitting Uni
 test('conversation rows display only escaped titles, including search results', () => {
   const fs = require('node:fs');
   const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
   const row = source.slice(source.indexOf('    function chatRow(c) {'), source.indexOf('\n    let resumeSeq', source.indexOf('    function chatRow(c) {')));
   const context = vm.createContext({ state: { id: 'chat-one', doomed: null }, escape: esc });
   vm.runInContext(row, context);
@@ -441,7 +456,7 @@ test('conversation rows display only escaped titles, including search results', 
 function chatSendFixture(id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
   const send = source.slice(source.indexOf('    async function send('), source.indexOf('    let leaving ='));
   const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const writer = (m) =>'));
   const state = { id, access, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
@@ -452,7 +467,7 @@ function chatSendFixture(id = 'practice', access = 'ask', before = async () => t
   const context = vm.createContext({
     state, input, AbortController, TextDecoder, Date: class extends Date { static now() { return stream.clock ? stream.clock() : Date.now(); } }, working: new Map(), MOST_REFS: C.MOST_REFS,
     historyText: C.historyText, modelHistory: C.modelHistory, historyRequest: C.historyRequest, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
-    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, compactLater: noop, stopCompacting: noop, react: noop, talking: noop,
+    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, drawChats: noop, remember: noop, compactLater: noop, stopCompacting: noop, react: noop, talking: noop,
     pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
     onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),
@@ -789,4 +804,25 @@ test('how sure the user felt and their thinking reach Felix on the answer line',
   assert.match(C.heldSay(mc, false).split('\n').slice(0, 3).join('\n'), /first second/, 'a held result keeps them when it is folded into the next message');
   assert.match(C.quizSay({ ...mc, sure: null, thinking: undefined }, 'b', false), /My answer: b\n/);
   assert.deepEqual(Object.keys(C.SURE), ['sure', 'think', 'guess']);
+});
+
+test('a streamed list marker waits until it has text', () => {
+  assert.equal(C.held('Intro\n-'), 'Intro');
+  assert.equal(C.held('Intro\n- '), 'Intro');
+  assert.equal(C.held('Intro\n  *'), 'Intro');
+  assert.equal(C.held('Steps\n1.'), 'Steps');
+  assert.equal(C.held('Steps\n2)'), 'Steps');
+  assert.equal(C.held('-'), '');
+  assert.equal(C.held('Intro\n- first'), 'Intro\n- first');
+  assert.equal(C.held('Pay 5 -'), 'Pay 5 -');
+  assert.equal(C.held('Intro\n- first\n-'), 'Intro\n- first');
+  assert.equal(C.held('Apple\nPear\n\n3'), 'Apple\nPear\n');
+  assert.equal(C.held('Apple\nPear\n\n12'), 'Apple\nPear\n');
+  assert.equal(C.held('Steps\nc'), 'Steps');
+  assert.equal(C.held('Steps\nbb'), 'Steps');
+  assert.equal(C.held('Steps\nA)'), 'Steps');
+  assert.equal(C.held('Steps\nok'), 'Steps\nok');
+  assert.equal(C.held('Steps\nApple'), 'Steps\nApple');
+  assert.equal(C.held('Steps\n3 apples'), 'Steps\n3 apples');
+  assert.equal(C.held('Pay 5'), 'Pay 5');
 });

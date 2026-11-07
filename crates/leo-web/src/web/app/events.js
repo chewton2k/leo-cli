@@ -27,6 +27,7 @@ document.addEventListener('keydown', (e) => {
     if ($('.scrim')) return closeSheet();
     if (source.note && sourcePane.contains(e.target)) return closeSource();
     if (typing) return e.target.blur();
+    if (e.target === document.body && chat.isOpen()) return;
     if (state.view === 'trash' && state.selecting) {
       state.selecting = false;
       state.picked = new Set();
@@ -46,9 +47,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved();
+const unsaved = () => saving.unsaved() || Boolean(kanban.panel?.dirty());
 
 function saveWebsiteWork() {
+  kanban.panel?.flush().catch(() => {});
   saving.retry().catch(() => {});
 }
 
@@ -89,7 +91,7 @@ function reopenLastPlace() {
   } catch (e) {}
 }
 
-window.addEventListener('hashchange', async () => {
+window.addEventListener('hashchange', async (e) => {
   const request = ++navigationRequest;
   const leaving = state.session;
   const mine = seq;
@@ -106,6 +108,13 @@ window.addEventListener('hashchange', async () => {
     if (!current() || location.hash !== hash) return;
     leaving.doc.destroy();
     state.session = null;
+  }
+  if (kanban.panel) {
+    if (!await kanbanSettlePanel()) {
+      if (location.hash === hash) history.replaceState(history.state, '', `#/boards/${enc(kanban.board.id)}`);
+      return;
+    }
+    if (request !== navigationRequest || location.hash !== hash) return;
   }
   marginLeave();
   route(true);

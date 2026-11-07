@@ -85,7 +85,9 @@ pub use vectors::Meaning;
 
 pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
-    fn refresh_usage(&self) {}
+    fn refresh_usage(&self, _claude: bool) -> Option<String> {
+        None
+    }
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
 }

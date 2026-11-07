@@ -89,28 +89,50 @@
       return false;
     }
 
-    function levelOf(text) {
-      const lead = text.match(/^\s*/)[0].replace(/\t/g, '    ').length;
-      return /^\s*([-*+]|\d+[.)])\s/.test(text) ? Math.floor(lead / 2) : 0;
+    function listStarts(levels) {
+      const firsts = [];
+      return levels.map((level, i) => {
+        if (level < 0) {
+          firsts.length = 0;
+          return undefined;
+        }
+        firsts.length = level + 1;
+        const found = lines[i].match(/^\s*(\d+)[.)]/);
+        if (!found) {
+          firsts[level] = null;
+          return undefined;
+        }
+        if (firsts[level] == null) firsts[level] = Number(found[1]);
+        return firsts[level];
+      });
     }
 
-    function renderBlock(block) {
+    function renderBlock(block, boxes, levels, starts) {
       const text = lines.slice(block.start, block.end).join('\n');
       if (!text.trim()) {
         const lone = lines.length === 1;
         return lone ? `<p class="placeholder">${md.escape(placeholder || 'Tap to start writing')}</p>` : '<p class="blank">&#8203;</p>';
       }
       return md.render(text.replace(/^\s+/, ''), {
-        boxOffset: ed.boxesBefore(lines, block.start),
+        boxOffset: boxes,
         dir,
+        depth: block.kind === 'line' ? Math.max(levels[block.start], 0) + 1 : 1,
+        after: block.kind === 'line' && levels[block.start - 1] >= 0,
+        first: block.kind === 'line' ? starts[block.start] : undefined,
       });
     }
 
     function draw() {
       blocks = ed.splitBlocks(lines);
+      const levels = ed.listLevels(lines);
+      const starts = listStarts(levels);
+      let boxes = 0;
       rendered = blocks.map((block, i) => {
         const text = lines.slice(block.start, block.end).join('\n');
-        const key = JSON.stringify([block.kind, text, ed.boxesBefore(lines, block.start)]);
+        const level = block.kind === 'line' ? levels[block.start] : 0;
+        const before = boxes;
+        for (let at = block.start; at < block.end && at < lines.length; at++) if (ed.isBox(lines[at])) boxes++;
+        const key = JSON.stringify([block.kind, text, before, level]);
         const old = rendered[i];
         if (old && old.key === key && old.el.isConnected && !old.el.classList.contains('editing')) {
           old.el.dataset.start = String(block.start);
@@ -120,9 +142,8 @@
         el.className = `blk blk-${block.kind}`;
         el.dataset.start = String(block.start);
         el.dataset.i = String(i);
-        const level = block.kind === 'line' ? levelOf(text) : 0;
-        if (level) el.style.marginLeft = `${level * 1.5}em`;
-        el.innerHTML = renderBlock(block);
+        if (level > 0) el.style.marginLeft = `${level * 1.5}em`;
+        el.innerHTML = renderBlock(block, before, levels, starts);
         if (old && old.el.parentNode === container) old.el.replaceWith(el);
         else container.insertBefore(el, container.querySelector('.doc-tail'));
         return { key, el };
@@ -302,7 +323,7 @@
       const after = end - text.right - 12;
       if (before >= 220) return { left: rail.width + 12, width: Math.min(280, before) };
       if (after >= 220) return { left: text.right + 12 - rail.left, width: Math.min(280, after) };
-      return null;
+      return { left: rail.width + 12, width: Math.min(280, end - rail.right - 12) };
     }
 
     function outlinePointer(y) {
@@ -615,7 +636,6 @@
       if (margin !== null) area.style.margin = margin;
       area.value = raw.slice(prefix.length);
       area.rows = 1;
-      area.spellcheck = true;
       area.setAttribute('autocapitalize', 'sentences');
       if (prefix && el.querySelector('li')) {
         const text = el.querySelector('.task > span') || el.querySelector('li');
@@ -629,7 +649,7 @@
       editing = { index: first, last, start: block.start, end: end.end, originalEnd: end.end, kind: first === last ? block.kind : 'span', prefix, initialHeight, area };
       look(area);
       if (shown !== null && raw.trim()) {
-        const from = caretBox(area, ed.rawOffset(raw, '')).x;
+        const from = caretBox(area, ed.rawOffset(raw, '', false)).x;
         if (Math.abs(shown - from) > 0.5) el.style.marginLeft = `${shown - from}px`;
       }
       fit(area);
@@ -660,6 +680,7 @@
     }
 
     function look(area) {
+      area.spellcheck = !(editing && ['table', 'code', 'math'].includes(editing.kind)) && !/^\s*[-|:]/.test(area.value);
       const head = editing && editing.kind === 'line' && !editing.prefix && area.value.match(/^\s{0,3}(#{1,6})\s/);
       if (head) area.dataset.head = String(Math.min(head[1].length + 1, 6));
       else delete area.dataset.head;
@@ -685,11 +706,12 @@
       const whole = { node: blk, offset: inside > 0 ? blk.childNodes.length : 0 };
       if (block.kind !== 'line' || !raw.trim() || !texts.length) return whole;
       const total = texts.reduce((n, text) => n + text.data.replace(/\u200b/g, '').length, 0);
+      const isItem = ed.listed(lines, block.start);
       let low = 0;
       let high = total;
       while (low < high) {
         const mid = (low + high) >> 1;
-        if (ed.rawOffset(raw, 'x'.repeat(mid)) >= inside) high = mid;
+        if (ed.rawOffset(raw, 'x'.repeat(mid), isItem) >= inside) high = mid;
         else low = mid + 1;
       }
       let seen = 0;
@@ -775,7 +797,7 @@
         range.setStart(blk, 0);
         try {
           range.setEnd(node, offset);
-          inside = ed.rawOffset(raw, range.toString().replace(/\u200b/g, ''));
+          inside = ed.rawOffset(raw, range.toString().replace(/\u200b/g, ''), ed.listed(lines, start));
         } catch (e) {
           inside = side === 'start' ? 0 : raw.length;
         }
@@ -798,7 +820,7 @@
       if (!container.isConnected || e.isComposing || e.defaultPrevented) return;
       if (editing && document.activeElement === editing.area) return;
       const focus = document.activeElement;
-      if ((!focus || focus === document.body || container.contains(focus)) && historyKey(e)) return;
+      if ((!focus || focus === document.body || container.contains(focus)) && (historyKey(e) || styleKey(e))) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && (!focus || focus === document.body || container.contains(focus))) {
         e.preventDefault();
         stop();
@@ -812,15 +834,48 @@
       e.preventDefault();
     }
 
+    function styleKey(e) {
+      const style = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && { b: 'bold', i: 'italic', u: 'underline' }[e.key.toLowerCase()];
+      if (!style) return false;
+      if (editing && document.activeElement === editing.area) {
+        e.preventDefault();
+        const { area } = editing;
+        if (area.selectionStart === area.selectionEnd) {
+          if (['code', 'math'].includes(editing.kind)) return true;
+          const pair = ed.stylePair(area.value, area.selectionStart, style);
+          area.value = pair.text;
+          area.setSelectionRange(pair.at, pair.at);
+          onInput();
+          return true;
+        }
+        const next = ed.restyle(area.value, area.selectionStart, area.selectionEnd, style);
+        area.value = next.text;
+        area.setSelectionRange(next.from, next.to);
+        onInput();
+        return true;
+      }
+      const span = selectedSpan();
+      if (!span) return false;
+      e.preventDefault();
+      stop();
+      const next = ed.restyle(lines.join('\n'), span[0], span[1], style);
+      lines = next.text.split('\n');
+      changed();
+      draw();
+      selectSpan(next.from, next.to);
+      return true;
+    }
+
     function replaceSelection(text) {
       const span = selectedSpan();
       if (!span) return false;
       stop();
       const before = lines.join('\n');
       lines = (before.slice(0, span[0]) + text + before.slice(span[1])).split('\n');
+      const at = span[0] + text.length;
+      ed.renumber(lines, lineOf(at));
       changed();
       draw();
-      const at = span[0] + text.length;
       editSpan(at, at);
       return true;
     }
@@ -869,11 +924,13 @@
       look(area);
       fit(area);
       changed();
-      const marker = ed.listPrefix(editing.prefix + area.value);
-      if (editing.kind === 'line' && !e.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker) && !marker.includes('\n')) {
-        const caret = editing.prefix.length + area.selectionStart;
+      const marker = ed.listPrefix(editing.prefix + area.value, lines.slice(0, start));
+      if (editing.kind === 'line' && !e?.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker)) {
+        const caret = lineStart(start) + editing.prefix.length + area.selectionStart;
+        const line = lineOf(caret);
+        const inside = caret - lineStart(line);
         stop();
-        editLine(start, caret);
+        editLine(line, inside);
       }
     }
 
@@ -888,20 +945,23 @@
       const value = prefix + area.value;
       const before = value.slice(0, prefix.length + area.selectionStart).split('\n');
       const after = value.slice(prefix.length + area.selectionEnd);
-      const next = ed.continueLine(before[before.length - 1]);
+      const above = lines.slice(0, start).concat(before.slice(0, -1));
+      const next = ed.continueLine(before[before.length - 1], above);
       const span = editing.end - start;
       if (next.exit && !after.trim()) {
-        before[before.length - 1] = '';
+        before[before.length - 1] = next.back;
         lines.splice(start, span, ...before);
+        ed.closeList(lines, start + before.length - 1);
         changed();
         stop();
         editLine(start + before.length - 1, 'end');
         return;
       }
       lines.splice(start, span, ...before, ...(next.prefix + after).split('\n'));
+      ed.renumber(lines, start + before.length);
       changed();
       stop();
-      editLine(start + before.length, next.prefix.length);
+      editLine(start + before.length, ed.itemHead(lines[start + before.length], lines.slice(0, start + before.length)).length);
     }
 
     function onBeforeInput(e) {
@@ -916,7 +976,7 @@
     function onKey(e) {
       if (e.isComposing || e.keyCode === 229) return;
       editing.softBreak = e.key === 'Enter' && e.shiftKey;
-      if (historyKey(e)) return;
+      if (historyKey(e) || styleKey(e)) return;
       const { area, start, kind } = editing;
       const prefix = editing.prefix;
       const pos = prefix.length + area.selectionStart;
@@ -935,12 +995,13 @@
         return;
       }
 
-      if (prefix && e.key === 'Backspace' && collapsed && area.selectionStart === 0) {
+      if (kind === 'line' && e.key === 'Backspace' && collapsed && pos && pos === ed.itemHead(value, lines.slice(0, start)).length) {
         e.preventDefault();
-        lines.splice(start, editing.end - start, ...area.value.split('\n'));
+        lines.splice(start, editing.end - start, ...ed.stepBack(value, lines.slice(0, start)).split('\n'));
+        ed.closeList(lines, start);
         changed();
         stop();
-        editLine(start, 'start');
+        editLine(start, ed.itemHead(lines[start], lines.slice(0, start)).length);
         return;
       }
 
@@ -950,6 +1011,7 @@
           e.preventDefault();
           const above = lines[start - 1];
           lines.splice(start - 1, 1 + editing.end - start, ...(above + value).split('\n'));
+          ed.renumber(lines, start - 1);
           changed();
           stop();
           editLine(start - 1, above.length);
@@ -957,11 +1019,28 @@
         return;
       }
 
+      if (kind === 'table' && e.key === 'Tab') {
+        e.preventDefault();
+        const cell = ed.nextCell(area.value, area.selectionEnd, e.shiftKey);
+        if (cell) {
+          area.setSelectionRange(cell.from, cell.to);
+          return;
+        }
+        const row = ed.addRow(area.value);
+        area.value = row.text;
+        area.setSelectionRange(row.at, row.at);
+        onInput();
+        return;
+      }
+
       if (kind === 'line' && e.key === 'Tab') {
         e.preventDefault();
-        const next = e.shiftKey ? ed.outdent(value) : ed.indent(value);
-        const shift = next.length - value.length;
+        const above = lines.slice(0, start);
+        const next = e.shiftKey ? ed.outdent(value, above) : ed.indent(value, above);
+        if (next === value) return;
         lines.splice(start, editing.end - start, ...next.split('\n'));
+        ed.renumber(lines, start, start);
+        const shift = lines[start].length - value.split('\n')[0].length;
         changed();
         stop();
         editLine(start, Math.max(0, pos + shift));
@@ -972,6 +1051,13 @@
         e.preventDefault();
         stop();
         selectSpan(0, docLength());
+        return;
+      }
+
+      if (MAC && kind === 'line' && (e.key === 'End' || e.key === 'Home') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        const to = e.key === 'End' ? area.value.length : 0;
+        area.setSelectionRange(e.shiftKey ? Math.min(to, area.selectionStart) : to, e.shiftKey ? Math.max(to, area.selectionEnd) : to);
         return;
       }
 
@@ -1123,7 +1209,7 @@
       const prefix = block.kind === 'line' ? caretIn(blk, e.clientX, e.clientY) : null;
       const anchor = lineStart(editing.start) + editing.prefix.length + editing.area.selectionStart;
       const below = start >= editing.end;
-      const inside = prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix) : below ? raw.length : 0;
+      const inside = prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix, ed.listed(lines, start)) : below ? raw.length : 0;
       e.preventDefault();
       extended = true;
       const target = lineStart(start) + inside;
@@ -1336,7 +1422,7 @@
           changed();
           const input = wasEditing ? container.querySelector(`.blk[data-start="${line}"] input[data-box]`) : box;
           if (input) {
-            const checked = /^\s*(?:[-*+]|\d+[.)]) +\[x\]/.test(lines[line]);
+            const checked = ed.itemHead(lines[line]).includes('[x]');
             input.checked = checked;
             input.defaultChecked = checked;
             input.closest('label.task').classList.toggle('done', checked);
@@ -1367,9 +1453,10 @@
       const block = blocks[Number(blk.dataset.i)];
       const prefix = block && block.kind === 'line' ? caretIn(blk, e.clientX, e.clientY) : null;
       const line = shifted(Number(blk.dataset.start));
+      const cell = block && block.kind === 'table' ? e.target.closest('td, th') : null;
       stop();
       const raw = lines[line] || '';
-      const caret = prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix) : 'end';
+      const caret = cell ? ed.cellEnd(lines.slice(line, line + block.end - block.start).join('\n'), cell.parentNode.rowIndex, cell.cellIndex) : prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix, ed.listed(lines, line)) : 'end';
       editLine(line, caret, false);
     });
 
@@ -1526,6 +1613,7 @@
   }
 
   const CITED_FOR = 4000;
+  const MAC = /Mac/.test(root.navigator?.platform || '');
 
   root.leoDoc = { mount };
 })(window);

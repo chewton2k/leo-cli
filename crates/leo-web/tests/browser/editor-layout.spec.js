@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
-async function editorFixture(browser, run, { remember = false, body = null, touch = false } = {}) {
+async function editorFixture(browser, run, { remember = false, body = null, touch = false, related = false } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -17,6 +17,8 @@ async function editorFixture(browser, run, { remember = false, body = null, touc
   const syncSegmented = () => {}, syncAppearanceResets = () => {};
   ${pickWidth}
   window.audit = { pick: width => pickWidth({dataset:{width}}), anchor: () => JSON.parse(localStorage.getItem('fixture-reading') || 'null') };
+  ${related ? `const hideAskFloat = () => {};
+  ${passages.slice(passages.indexOf('const KEEP_SELECTION'), passages.indexOf("document.addEventListener('keydown'"))}` : ''}
   ${remember ? `const $ = selector => document.querySelector(selector), enc = encodeURIComponent;
     const seq = 1, citedLines = null, state = {view:'note',session:{doc:window.doc}};
     async function api(url, options = {}) {
@@ -34,7 +36,7 @@ async function editorFixture(browser, run, { remember = false, body = null, touc
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     const sidebar = remember ? '<aside class="side"><div class="side-head">Folders</div><div class="side-explorer"><nav class="side-tree">' + Array.from({length:100},(_,i)=>'<button class="side-row">Folder '+i+'</button>').join('') + '</nav></div></aside>' : '';
-    res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"></head><body class="on-note">'+sidebar+'<header id="bar" class="bar"><div class="bar-row">Leo</div></header><main><div class="note-layout"><div class="note-columns"><aside class="note-outline" hidden><details class="source-more"><summary aria-label="Headings in this note"></summary><nav aria-label="Headings"></nav></details></aside><article class="note"><h1>My note</h1><div id="doc" class="doc prose"></div></article></div></div></main><script src="/markdown.js"></script><script src="/editing.js"></script><script src="/doc.js"></script><script src="/fixture.js"></script></body></html>');
+    res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"></head><body class="on-note">'+sidebar+'<header id="bar" class="bar"><div class="bar-row">Leo</div></header><main><div class="note-layout"><div class="note-columns"><aside class="note-outline" hidden><details class="source-more"><summary aria-label="Headings in this note"></summary><nav aria-label="Headings"></nav></details></aside><article class="note"><h1>My note</h1><div id="doc" class="doc prose"></div>'+(related?'<section class="related" id="related"><h2 class="related-head">Related notes</h2><div class="related-list"><a class="list-row related-row" href="/away"><span class="related-title">Another note</span><span class="sub">Shares a topic</span></a></div></section>':'')+'</article></div></div></main><script src="/markdown.js"></script><script src="/editing.js"></script><script src="/doc.js"></script><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const context = await browser.newContext({ hasTouch: touch });
@@ -85,6 +87,27 @@ for (const theme of ['light', 'dark']) {
     });
   });
 }
+
+test('a style key with no selection opens a pair to type in, and leaves it or removes it', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    const editor = page.locator('#doc textarea');
+    await page.locator('#doc .blk').first().click();
+    await page.keyboard.type('plain ');
+    await page.keyboard.press('ControlOrMeta+b');
+    await expect(editor).toHaveValue('plain ****');
+    await page.keyboard.type('bold');
+    await page.keyboard.press('ControlOrMeta+b');
+    await page.keyboard.type(' then ');
+    await page.keyboard.press('ControlOrMeta+u');
+    await page.keyboard.press('ControlOrMeta+u');
+    await page.keyboard.press('ControlOrMeta+i');
+    await page.keyboard.type('slanted');
+    await expect(editor).toHaveValue('plain **bold** then *slanted*');
+    expect(await page.evaluate(() => window.doc.source())).toBe('plain **bold** then *slanted*');
+  }, { body: '' });
+});
 
 test('an active heading refits after pane resizing without clipping text or losing selection', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
@@ -640,16 +663,15 @@ test('application controls resist highlighting while note content and text field
     await page.goto(url);
     await page.evaluate(() => {
       const controls = document.createElement('div');
-      controls.innerHTML = '<button>Action label</button><label>Setting label <input value="Editable text"></label><details open><summary>Disclosure label</summary><p class="hint">Helpful explanation</p></details><a href="#test">Readable link</a><img alt="Picture"><div draggable="true">Movable note</div>';
+      controls.innerHTML = '<button>Action label</button><label>Setting label <input value="Editable text"></label><details open><summary>Disclosure label</summary><p class="hint">Helpful explanation</p><p class="prose">Readable explanation</p></details><a href="#test">Readable link</a><img alt="Picture"><div draggable="true">Movable note</div>';
       document.body.appendChild(controls);
       window.controls = controls;
     });
-    for (const selector of ['button', 'label', 'summary', '[draggable="true"]']) {
-      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector)).toBe('none');
+    const selectable = selector => page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector);
+    for (const selector of ['button', 'label', 'summary', '[draggable="true"]', 'input']) {
+      expect(await selectable(selector), selector).toBe('none');
     }
-    for (const selector of ['input', '.hint']) {
-      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector)).toBe('text');
-    }
+    expect(await selectable('.prose')).toBe('text');
     expect(await page.locator('#doc p').evaluate(el => getComputedStyle(el).userSelect)).not.toBe('none');
     for (const selector of ['a', 'img']) {
       expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).webkitUserDrag, selector)).toBe('none');
@@ -661,6 +683,16 @@ test('application controls resist highlighting while note content and text field
     await page.mouse.move(box.x + 140, box.y + box.height / 2, {steps:10});
     await page.mouse.up();
     expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+    const hint = await page.locator('.hint').boundingBox();
+    await page.mouse.move(hint.x + 1, hint.y + hint.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hint.x + hint.width - 1, hint.y + hint.height / 2, {steps:8});
+    await page.mouse.up();
+    expect(await page.evaluate(() => getSelection().toString()), 'a hint is chrome, so a drag across it selects nothing').toBe('');
+    await page.locator('input').focus();
+    expect(await selectable('input')).toBe('text');
+    await page.locator('input').blur();
+    expect(await selectable('input')).toBe('none');
   });
 });
 
@@ -714,6 +746,105 @@ test('typing a list or checklist marker renders it at once and keeps the caret i
     await expect(page.locator('#doc li')).toHaveCount(0);
     await expect(area).toHaveValue('buy milk');
   }, {body: 'Start'});
+});
+
+test('a list is written, nested and left with the keyboard alone', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    const source = () => page.evaluate(() => doc.source());
+    const area = page.locator('#doc textarea');
+    for (const [marker, second, third] of [['- ', '- ', '  - '], ['* ', '* ', '  * '], ['+ ', '+ ', '  + '], ['1. ', '2. ', '   1. '], ['1) ', '2) ', '   1) '], ['a. ', 'b. ', '   a. '], ['a) ', 'b) ', '   a) '], ['A) ', 'B) ', '   A) ']]) {
+      await page.goto(url + '/?body=');
+      await page.locator('#doc .blk').click();
+      await page.keyboard.type(marker + 'one');
+      await page.keyboard.press('Enter');
+      expect(await source()).toBe(`${marker}one\n${second}`);
+      await page.keyboard.press('Tab');
+      expect(await source(), marker).toBe(`${marker}one\n${third}`);
+      await page.keyboard.type('sub');
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
+      expect(await source(), marker).toBe(`${marker}one\n${third}sub\n${second}`);
+      await page.keyboard.press('Enter');
+      expect(await source(), marker).toBe(`${marker}one\n${third}sub\n`);
+      await page.keyboard.type('plain');
+      await expect(area).toHaveValue('plain');
+    }
+    await page.goto(url + '/?body=');
+    await page.locator('#doc .blk').click();
+    await page.keyboard.type('- ');
+    const marked = await page.evaluate(() => ({ item: document.querySelector('#doc li').getBoundingClientRect().height, area: document.querySelector('#doc textarea').getBoundingClientRect().height }));
+    expect(marked.item).toBeLessThan(marked.area + 1);
+    await page.keyboard.type('[ ] ');
+    await expect(page.locator('#doc input[data-box]')).toHaveCount(1);
+    await page.keyboard.type('box');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    expect(await source()).toBe('- [ ] box\n  - [ ] ');
+    await page.keyboard.press('Shift+Tab');
+    expect(await source()).toBe('- [ ] box\n- [ ] ');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('deep');
+    await area.evaluate(el => el.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('- [ ] box\n- [ ] deep');
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('- [ ] box\ndeep');
+    await expect(area).toHaveValue('deep');
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await source()).toBe('- [ ] box\n- [ ] deep');
+  });
+});
+
+test('nesting changes the marker like Google Docs, and only on the page', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    const source = () => page.evaluate(() => doc.source());
+    const looks = () => page.evaluate(() => [...document.querySelectorAll('#doc ul, #doc ol')].map(list => getComputedStyle(list).listStyleType));
+    for (const [marker, kinds, file] of [['1. ', ['decimal', 'lower-alpha', 'lower-roman', 'decimal'], '1. a\n   1. b\n      1. c\n         1. d'], ['- ', ['disc', 'circle', 'square', 'disc'], '- a\n  - b\n    - c\n      - d']]) {
+      await page.goto(url + '/?body=');
+      await page.locator('#doc .blk').click();
+      await page.keyboard.type(marker + 'a');
+      for (const text of ['b', 'c', 'd']) {
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('Tab');
+        await page.keyboard.type(text);
+      }
+      expect(await source()).toBe(file);
+      await page.locator('h1').click();
+      expect(await looks()).toEqual(kinds);
+      await page.locator('#doc .blk').last().click();
+      await page.keyboard.press('Shift+Tab');
+      expect((await looks())[3]).toBe(kinds[2]);
+      await page.keyboard.press('Tab');
+      expect((await looks())[3]).toBe(kinds[3]);
+    }
+    await page.goto(url + '/?body=' + encodeURIComponent('1) a\n2) b'));
+    expect(await looks()).toEqual(['paren', 'paren']);
+    await page.locator('#doc .blk').last().click();
+    await page.keyboard.press('Tab');
+    expect(await looks()).toEqual(['paren', 'lower-alpha']);
+    expect(await source()).toBe('1) a\n   1) b');
+    await page.goto(url + '/?body=' + encodeURIComponent('1. a\n2. \n3. c'));
+    await page.locator('#doc .blk').nth(1).click();
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('1. a\n2. c');
+  });
+});
+
+test('a list pasted into an empty line leaves the caret at its end', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url + '/?body=');
+    await page.locator('#doc .blk').click();
+    await page.locator('#doc textarea').evaluate(el => {
+      el.setRangeText('- one\n- two', 0, 0, 'end');
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+    });
+    await page.keyboard.type('!');
+    expect(await page.evaluate(() => doc.source())).toBe('- one\n- two!');
+  });
 });
 
 test('a checked task strikes only its own text, line by line', async ({ browser }) => {
@@ -780,7 +911,11 @@ test('list text supports caret clicks, removing formatting, undo and navigation 
     await area.evaluate(el => el.setSelectionRange(0, 0));
     await page.keyboard.press('Backspace');
     await expect(area).toHaveValue('New Task text');
+    expect(await page.evaluate(() => doc.source())).toContain('\n- [x] New Task text\n');
+    await page.keyboard.press('Backspace');
+    await expect(area).toHaveValue('New Task text');
     expect(await page.evaluate(() => doc.source())).toContain('\nNew Task text\n');
+    await page.keyboard.press('ControlOrMeta+z');
     await page.keyboard.press('ControlOrMeta+z');
     expect(await page.evaluate(() => doc.source())).toContain('  - [x] New Task text');
     await page.keyboard.press('Escape');
@@ -798,13 +933,13 @@ test('list text supports caret clicks, removing formatting, undo and navigation 
 test('empty lists exit and a whole single list item can be deleted, cut or replaced', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    for (const source of ['- [ ] ', '2. [ ] ', '-   [ ] ', '  - ', '3) ']) {
+    for (const [source, left] of [['- [ ] ', ''], ['2. [ ] ', ''], ['-   [ ] ', ''], ['  - ', '- '], ['3) ', '']]) {
       await page.goto(url + '/?body=' + encodeURIComponent(source));
       await page.locator('#doc .blk').click({position:{x:80,y:10}});
       await expect(page.locator('#doc textarea')).toBeFocused();
       expect((await page.locator('#doc textarea').boundingBox()).height).toBeGreaterThan(20);
       await page.keyboard.press('Enter');
-      expect(await page.evaluate(() => doc.source()), source).toBe('');
+      expect(await page.evaluate(() => doc.source()), source).toBe(left);
     }
     for (const source of ['- [ ] Task', '12. Item', '* Bullet']) {
       for (const action of ['delete', 'cut', 'replace']) {
@@ -892,7 +1027,7 @@ test('heading rail previews magnify nearby bars without opening the whole outlin
   }, { body });
 });
 
-test('the heading rail and its preview never cover the note text, whatever the width', async ({ browser }) => {
+test('the heading rail keeps clear of the note text and its preview shows at every width', async ({ browser }) => {
   const body = ['# One', 'Text '.repeat(80), '## Two', 'More '.repeat(80), '# Three', 'End'].join('\n');
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
@@ -913,14 +1048,46 @@ test('the heading rail and its preview never cover the note text, whatever the w
           return { left: text.left, right: text.right, bar: Math.max(...bars), tip: box && [box.left, box.right] };
         });
         expect(seen.bar, `ticks clear the text at ${width}px`).toBeLessThanOrEqual(seen.left - 6);
-        if (width === 2000) expect(seen.tip, 'a wide window still previews the heading').not.toBeNull();
-        if (!seen.tip) continue;
-        expect(seen.tip[1] <= seen.left || seen.tip[0] >= seen.right, `the preview opens beside the text at ${width}px`).toBe(true);
+        expect(seen.tip, `the preview shows at ${width}px, over the text if it must`).not.toBeNull();
         expect(seen.tip[0]).toBeGreaterThanOrEqual(0);
         expect(seen.tip[1]).toBeLessThanOrEqual(width);
       }
     }
   }, { body });
+});
+
+test('dragging down through the note never highlights the empty space or the page chrome under it', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await page.goto(url);
+    const first = await page.locator('#doc .blk').first().boundingBox();
+    const row = await page.locator('.related-row').boundingBox();
+    await page.mouse.move(first.x + 4, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2, { steps: 12 });
+    await page.mouse.up();
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('First paragraph');
+    expect(picked).not.toMatch(/Related notes|Another note|Shares a topic/);
+    const chrome = await page.evaluate(() => ['.related', '.doc-tail', '.blk:has(.blank)', '.related-head', '#bar'].map((selector) => {
+      for (let el = document.querySelector(selector); el; el = el.parentElement) {
+        const pick = getComputedStyle(el).webkitUserSelect;
+        if (pick && pick !== 'auto') return pick;
+      }
+      return 'auto';
+    }));
+    expect(chrome.slice(0, 4)).toEqual(['none', 'none', 'none', 'none']);
+    await page.locator('.related-head').click({ position: { x: 8, y: 4 } });
+    expect(await page.evaluate(() => getSelection().toString())).toBe('');
+    await page.mouse.move(first.x + 4, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(first.x + 200, first.y + first.height / 2, { steps: 4 });
+    await page.mouse.up();
+    expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+    await page.locator('.related-head').click({ position: { x: 8, y: 4 } });
+    expect(await page.evaluate(() => getSelection().toString())).toBe('');
+  }, { body: 'First paragraph of the note.\n\nSecond paragraph of the note.\n\n\n', related: true });
 });
 
 test('heading previews preserve edits, refresh body text, and release their elements on destroy', async ({ browser }) => {
@@ -1078,6 +1245,7 @@ test('Enter keeps every continued list item on its marker line and an empty item
       expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next + 'Second item');
       await area.press('Enter');
       await area.press('Enter');
+      if (source.startsWith(' ')) await area.press('Enter');
       expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next + 'Second item\n');
       await expect(area).toBeFocused();
       await expect(page.locator('#doc .blk').last().locator('li')).toHaveCount(0);
@@ -1290,4 +1458,80 @@ test('typing a dash then text continues at the next marker through keyboard and 
     await page.mouse.click(1000, 100);
     await expect(nav).toBeHidden();
   }, { body: '# One\nParagraph\n## Two\nMore' });
+});
+
+test('every kind of formatting is typed with the keyboard and stays plain Markdown', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url + '/?body=');
+    await page.locator('#doc .blk').first().click();
+    const keys = page.keyboard;
+    const press = async (...names) => { for (const name of names) await keys.press(name); };
+    const select = async (count) => { for (let i = 0; i < count; i++) await keys.press('Shift+ArrowLeft'); };
+    await keys.type('a) one');
+    await press('Enter');
+    await keys.type('two');
+    await press('Enter', 'Tab');
+    await keys.type('sub');
+    await press('Enter', 'Enter', 'Enter');
+    await keys.type('A) cap');
+    await press('Enter', 'Enter');
+    await keys.type('1) num');
+    await press('Enter', 'Enter');
+    await keys.type('A. Smith');
+    await press('Enter');
+    await keys.type('# Head');
+    await press('Enter');
+    await keys.type('## ');
+    await press('Backspace');
+    await keys.type('***both*** snake_case hello word');
+    await select(4);
+    await press('ControlOrMeta+u');
+    await keys.press('ArrowRight');
+    await press('End', 'Enter');
+    await keys.type('<u onclick=x><script>no</script></u>');
+    await press('Enter');
+    await keys.type('| L | C | R |');
+    await press('Enter');
+    await keys.type('|:--|:-:|--:|');
+    await press('Enter');
+    await keys.type('| 1 | 2 | 3 |');
+    await press('Enter');
+    await page.locator('#doc th').first().click();
+    await press('Tab');
+    await keys.type('Mid');
+    await press('Tab', 'Tab', 'Tab', 'Tab', 'Tab');
+    await keys.type('new');
+    await page.locator('#doc h2').first().click();
+    await page.evaluate(() => document.activeElement.blur());
+    const source = await page.evaluate(() => window.doc.source());
+    expect(source).toBe([
+      'a) one',
+      'b) two',
+      '   a) sub',
+      'A) cap',
+      '1) num',
+      'A. Smith',
+      '# Head',
+      '***both*** snake_case hello <u>word</u>',
+      '<u onclick=x><script>no</script></u>',
+      '| L | Mid | R |',
+      '|:--|:-:|--:|',
+      '| 1 | 2 | 3 |',
+      '| new |  |  |',
+      '',
+    ].join('\n'));
+    const doc = page.locator('#doc');
+    await expect(doc.locator('ol.list-lower-paren li[value="2"]')).toHaveText('two');
+    await expect(doc.locator('ol.list-upper-paren')).toHaveText('cap');
+    await expect(doc.locator('ol.list-paren')).toHaveText('num');
+    await expect(doc.locator('.blk p', { hasText: 'A. Smith' })).toHaveCount(1);
+    await expect(doc.locator('h2')).toHaveText('Head');
+    await expect(doc.locator('em strong')).toHaveText('both');
+    await expect(doc.locator('u')).toHaveText('word');
+    await expect(doc.locator('script, u[onclick]')).toHaveCount(0);
+    await expect(doc.locator('th.align-center')).toHaveText('Mid');
+    await expect(doc.locator('td.align-right').first()).toHaveText('3');
+    await expect(doc.locator('tbody tr')).toHaveCount(2);
+  }, { body: '' });
 });

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const source = fs.readFileSync(path.join(__dirname, '../src/web/chat.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
 test('confirming a chat deletion retains its button and both animated labels', async () => {
   const classes = new Set(), attrs = new Map([['aria-label', 'Delete A long chat']]);
   const button = { focus() {}, dataset: { id: 'one' }, isConnected: true, classList: { toggle: (key, on) => on ? classes.add(key) : classes.delete(key), remove: key => classes.delete(key) }, setAttribute: (key, value) => attrs.set(key, value), getAttribute: key => attrs.get(key) };
@@ -19,9 +19,9 @@ test('confirming a chat deletion retains its button and both animated labels', a
   assert.equal(classes.has('sure'), false);
   assert.equal(attrs.get('aria-label'), 'Delete A long chat');
 });
-test('history heading has no duplicate new-chat button and labels are escaped', () => {
+test('history heading carries the new-chat button and labels are escaped', () => {
   const heading = source.slice(source.indexOf('<div class="chat-history-head">'), source.indexOf('<input', source.indexOf('<div class="chat-history-head">')));
-  assert.doesNotMatch(heading, /data-chat="new"/);
+  assert.match(heading, /\$\{NEW_CHAT\}/);
   const row = source.slice(source.indexOf('    function chatRow(c)'), source.indexOf('    let resumeSeq'));
   const context = { state: { id: 'one', doomed: null }, escape: text => text.replaceAll('<', '&lt;').replaceAll('>', '&gt;') };
   vm.createContext(context); vm.runInContext(row, context);
@@ -30,16 +30,19 @@ test('history heading has no duplicate new-chat button and labels are escaped', 
   assert.match(html, /&lt;title&gt;/); assert.doesNotMatch(html, /<title>/);
 });
 
-test('Escape cancels a pending delete before another panel listener can stop an answer', () => {
-  const panel = new EventTarget();
+test('Escape cancels a pending delete before another listener can stop an answer', () => {
+  const document = new EventTarget();
+  document.body = document;
+  document.querySelector = () => null;
   let stopped = 0;
-  const context = { panel, input: {}, state: { doomed: 'one', busy: { abort: () => stopped++ } }, syncChatDelete() {} };
-  const start = source.indexOf("    panel.addEventListener('keydown', (e) => {", source.indexOf('    function spare(e)'));
+  const context = { document, window: document, $: () => ({ hidden: true, dataset: {} }), panel: { classList: { contains: () => false } }, history: { contains: () => false }, state: { open: true, doomed: 'one', busy: { abort: () => stopped++ } }, syncChatDelete() {}, showSidebar() {}, toggle() {}, popMenu() {} };
+  const start = source.indexOf("    document.addEventListener('keydown', (e) => {\n      if (e.key !== 'Escape' || !state.doomed)");
   const end = source.indexOf("    document.addEventListener('pointerdown', spare", start);
-  const busy = source.lastIndexOf("    panel.addEventListener('keydown', (e) => {");
+  const busy = source.indexOf("    document.addEventListener('keydown', (e) => {\n      if (!state.open || e.isComposing)");
   vm.createContext(context);
-  vm.runInContext(source.slice(start, end) + source.slice(busy, source.indexOf('    return {', busy)), context);
-  const escape = () => { const event = new Event('keydown', { cancelable: true }); Object.defineProperty(event, 'key', { value: 'Escape' }); panel.dispatchEvent(event); return event; };
+  const bare = source.indexOf("    window.addEventListener('keydown', (e) => {\n      if (e.key !== 'Escape' || e.isComposing || !state.open");
+  vm.runInContext(source.slice(start, end) + source.slice(busy, source.indexOf("    panel.addEventListener('keydown'", busy)) + source.slice(bare, source.indexOf("    panel.addEventListener('keydown'", bare)), context);
+  const escape = () => { const event = new Event('keydown', { cancelable: true }); Object.defineProperty(event, 'key', { value: 'Escape' }); document.dispatchEvent(event); return event; };
   assert.equal(escape().defaultPrevented, true);
   assert.equal(context.state.doomed, null);
   assert.equal(stopped, 0);

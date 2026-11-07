@@ -3,6 +3,7 @@ askFloat.type = 'button';
 askFloat.className = 'float-act ask-float';
 askFloat.innerHTML = `${ICON.chat}<span>Ask Felix</span>`;
 askFloat.hidden = true;
+askFloat.dataset.keepSelection = '';
 askFloat.addEventListener('mousedown', (e) => e.preventDefault());
 askFloat.addEventListener('click', () => askAboutSelection());
 document.body.appendChild(askFloat);
@@ -36,6 +37,22 @@ function askAboutSelection() {
 
 document.addEventListener('mousedown', (e) => {
   if (e.target.closest && e.target.closest('[data-keep-selection]')) e.preventDefault();
+});
+
+const KEEP_SELECTION = '[data-keep-selection], a, button, input, textarea, select, summary, [role="button"], [contenteditable], .pane-resize, .chat-resize, .source-grip, .cal-grip';
+
+document.addEventListener('pointerdown', (e) => {
+  if (!(e.target instanceof Element) || (e.target.closest(KEEP_SELECTION) && !e.target.closest('#margin-mode, #margin-mode-menu'))) return;
+  for (let node = e.target; node; node = node.parentElement) {
+    const pick = getComputedStyle(node).webkitUserSelect;
+    if (pick && pick !== 'auto') {
+      if (pick === 'none') {
+        getSelection().removeAllRanges();
+        hideAskFloat();
+      }
+      return;
+    }
+  }
 });
 
 document.addEventListener('keydown', (e) => {

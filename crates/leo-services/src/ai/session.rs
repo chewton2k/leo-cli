@@ -3,7 +3,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::ai::provider::agent_cli::{Agent, AgentCli, ClaudeSession};
-use crate::ai::provider::codex_app::{tool_specs, CodexThread, CodexTurn};
+use crate::ai::provider::codex_app::{self, tool_specs, CodexThread, CodexTurn};
 use crate::ai::provider::mcp;
 use crate::ai::provider::openai::{self, OpenAiChat};
 use crate::ai::provider::Spent;
@@ -401,14 +401,20 @@ pub fn open(
                     .collect();
                 match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
                     Ok(thread) => {
+                        codex_app::note_native(None);
                         return Some(Box::new(CodexTalk {
                             sent: schemas + systems.native.len(),
                             thread,
                             provider: name.clone(),
                             config: config.clone(),
-                        }))
+                        }));
                     }
-                    Err(_) => continue,
+                    Err(e) => {
+                        let reason = e.to_string();
+                        leo_core::diag::warn(format!("codex native session: {reason}"));
+                        codex_app::note_native(Some(reason));
+                        continue;
+                    }
                 }
             }
             Some(ProviderKind::Openai) => {

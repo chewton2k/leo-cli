@@ -62,7 +62,7 @@ pub fn locate(bin: &str) -> Option<PathBuf> {
     leo_core::paths::find(bin)
 }
 
-const CODEX_OFF: [&str; 18] = [
+const CODEX_OFF: [&str; 19] = [
     "shell_tool",
     "browser_use",
     "browser_use_external",
@@ -81,6 +81,7 @@ const CODEX_OFF: [&str; 18] = [
     "tool_suggest",
     "hooks",
     "daemon_auto_start",
+    "memories",
 ];
 
 pub fn known_features(listing: &str) -> Vec<String> {
@@ -95,11 +96,18 @@ pub fn known_features(listing: &str) -> Vec<String> {
         .collect()
 }
 
-const PROBE_LIMIT: Duration = Duration::from_secs(5);
+const PROBE_LIMIT: Duration = Duration::from_secs(8);
 
 pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
+    probe_in(program, args, None)
+}
+
+fn probe_in(program: &Path, args: &[&str], cwd: Option<&Path>) -> ProviderResult<String> {
     let mut command = leo_core::children::quiet_command(program);
     command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     super::scoped_cli::plan_environment(&mut command);
     probe_command(command)
 }
@@ -157,12 +165,20 @@ fn probe_status(mut command: Command) -> ProviderResult<(bool, String)> {
     Ok((status.success(), text))
 }
 
+type Stamp = (PathBuf, Option<std::time::SystemTime>);
+
+fn stamp(program: &Path) -> Stamp {
+    let path = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
+    let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    (path, modified)
+}
+
 pub(crate) fn codex_disables(program: &Path) -> ProviderResult<Vec<String>> {
-    static KNOWN: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<String>>>,
-    > = std::sync::OnceLock::new();
+    static KNOWN: std::sync::OnceLock<Mutex<std::collections::HashMap<Stamp, Vec<String>>>> =
+        std::sync::OnceLock::new();
     let cache = KNOWN.get_or_init(Default::default);
-    if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).cloned()) {
+    let key = stamp(program);
+    if let Some(found) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
         return Ok(found);
     }
     let found = probe(program, &["features", "list"]).and_then(|listing| {
@@ -175,27 +191,93 @@ pub(crate) fn codex_disables(program: &Path) -> ProviderResult<Vec<String>> {
         Ok(found)
     })?;
     if let Ok(mut c) = cache.lock() {
-        c.insert(program.to_path_buf(), found.clone());
+        c.insert(key, found.clone());
     }
     Ok(found)
 }
 
-pub(crate) fn codex_native_isolated(program: &Path) -> bool {
-    static KNOWN: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
+fn lists_isolation(help: &str) -> bool {
+    let words: Vec<&str> = help.split_whitespace().collect();
+    words.contains(&"--ignore-user-config") && words.contains(&"--ignore-rules")
+}
+
+fn codex_flags(program: &Path, sub: &str) -> bool {
+    static KNOWN: std::sync::OnceLock<Mutex<std::collections::HashMap<(Stamp, String), bool>>> =
         std::sync::OnceLock::new();
     let cache = KNOWN.get_or_init(Default::default);
-    if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).copied()) {
+    let key = (stamp(program), sub.to_string());
+    if let Some(found) = cache.lock().ok().and_then(|c| c.get(&key).copied()) {
         return found;
     }
-    let Ok(help) = probe(program, &["app-server", "--help"]) else {
+    let Ok(help) = probe(program, &[sub, "--help"]) else {
         return false;
     };
-    let found = help.split_whitespace().any(|s| s == "--ignore-user-config")
-        && help.split_whitespace().any(|s| s == "--ignore-rules");
+    let found = lists_isolation(&help);
     if let Ok(mut c) = cache.lock() {
-        c.insert(program.to_path_buf(), found);
+        c.insert(key, found);
     }
     found
+}
+
+fn scope_from_listing(listing: &str) -> ProviderResult<Vec<String>> {
+    let unknown = || {
+        ProviderError::Retryable(
+            "Codex listed its tool servers in a form Leo does not know. Update Leo, then try again."
+                .into(),
+        )
+    };
+    let servers: Vec<serde_json::Value> = serde_json::from_str(listing).map_err(|_| unknown())?;
+    let mut args = Vec::new();
+    for server in &servers {
+        let name = server["name"].as_str().ok_or_else(unknown)?;
+        if server["enabled"].as_bool() == Some(false) {
+            continue;
+        }
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(ProviderError::Retryable(format!(
+                "Codex has a tool server named \"{name}\" that Leo cannot switch off safely. Rename or remove it in Codex, then try again."
+            )));
+        }
+        args.extend([
+            "-c".to_string(),
+            format!("mcp_servers.{name}.enabled=false"),
+        ]);
+    }
+    for setting in [
+        "notify=[]",
+        "otel.exporter=\"none\"",
+        "otel.trace_exporter=\"none\"",
+        "otel.metrics_exporter=\"none\"",
+        "otel.log_user_prompt=false",
+        "skills.include_instructions=false",
+        "model_provider=\"openai\"",
+    ] {
+        args.extend(["-c".to_string(), setting.to_string()]);
+    }
+    Ok(args)
+}
+
+pub(crate) fn codex_scope(program: &Path, sub: &str, room: &Path) -> ProviderResult<Vec<String>> {
+    if codex_flags(program, sub) {
+        return Ok(vec!["--ignore-user-config".into(), "--ignore-rules".into()]);
+    }
+    let mut list: Vec<String> = codex_disables(program)?
+        .into_iter()
+        .flat_map(|feature| ["--disable".to_string(), feature])
+        .collect();
+    list.extend(["mcp", "list", "--json"].map(String::from));
+    let refs: Vec<&str> = list.iter().map(String::as_str).collect();
+    let text = probe_in(program, &refs, Some(room)).map_err(|_| {
+        ProviderError::Retryable(
+            "Codex's tool servers could not be listed. Update Codex, or run `codex mcp list`, then try again."
+                .into(),
+        )
+    })?;
+    scope_from_listing(&text)
 }
 
 pub(crate) fn stop_all(child: &mut std::process::Child) {
@@ -270,6 +352,7 @@ impl AgentCli {
         &self,
         req: &ChatRequest,
         images: &[Image],
+        scope: &[String],
         disables: &[String],
         files: &[PathBuf],
     ) -> (Vec<String>, String) {
@@ -331,8 +414,6 @@ impl AgentCli {
                         "exec",
                         "--skip-git-repo-check",
                         "--ephemeral",
-                        "--ignore-user-config",
-                        "--ignore-rules",
                         "--sandbox",
                         "read-only",
                         "--color",
@@ -341,6 +422,7 @@ impl AgentCli {
                     ]
                     .map(String::from),
                 );
+                args.extend(scope.iter().cloned());
                 args.extend(["-c".into(), "skills.include_instructions=false".into()]);
                 if self.no_tools {
                     args.extend(["-c".into(), "web_search=\"disabled\"".into()]);
@@ -974,11 +1056,14 @@ impl AgentCli {
         }
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
-        let disables = match self.agent {
-            Agent::Codex => codex_disables(&program)?,
-            Agent::ClaudeCode => Vec::new(),
-        };
         let room = self.room()?;
+        let (disables, scope) = match self.agent {
+            Agent::Codex => (
+                codex_disables(&program)?,
+                codex_scope(&program, "exec", room.path())?,
+            ),
+            Agent::ClaudeCode => (Vec::new(), Vec::new()),
+        };
         let files = self.image_files(room.path(), images)?;
         let instructions = req
             .system
@@ -995,7 +1080,7 @@ impl AgentCli {
             temperature: req.temperature,
             max_tokens: req.max_tokens,
         };
-        let (mut args, input) = self.arguments(&material, images, &disables, &files);
+        let (mut args, input) = self.arguments(&material, images, &scope, &disables, &files);
         if let Some(file) = &instructions {
             match self.agent {
                 Agent::Codex => {
@@ -1309,7 +1394,7 @@ impl ChatProvider for AgentCli {
     }
 }
 
-pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
+fn auth_probe(agent: Agent, bin: &str) -> Option<(bool, String)> {
     let mut command = leo_core::children::quiet_command(locate(bin)?);
     super::scoped_cli::plan_environment(&mut command);
     command.args(match agent {
@@ -1319,7 +1404,11 @@ pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
     command
         .current_dir(std::env::temp_dir())
         .env("NO_COLOR", "1");
-    probe_status(command).ok().and_then(|(success, text)| {
+    probe_status(command).ok()
+}
+
+pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
+    auth_probe(agent, bin).and_then(|(success, text)| {
         let evidence = sign_in_evidence(agent, &text);
         if evidence == Some(true) && !success {
             None
@@ -1328,6 +1417,18 @@ pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
         }
     })
 }
+
+fn claude_on_plan(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .is_some_and(|v| v["loggedIn"] == true && v["authMethod"] == "claude.ai")
+}
+
+pub fn claude_plan(bin: &str) -> bool {
+    auth_probe(Agent::ClaudeCode, bin)
+        .is_some_and(|(success, text)| success && claude_on_plan(&text))
+}
+
 fn sign_in_evidence(agent: Agent, text: &str) -> Option<bool> {
     if text.len() > 64 * 1024 {
         return None;
@@ -1385,7 +1486,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let (args, _) = claude.arguments(&request(), &[], &[], &[]);
+        let (args, _) = claude.arguments(&request(), &[], &[], &[], &[]);
         let at = args.iter().position(|a| a == "--tools").unwrap();
         assert_eq!(args[at + 1], "");
         assert!(!args
@@ -1399,7 +1500,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let (args, _) = codex.arguments(&request(), &[], &[], &[]);
+        let (args, _) = codex.arguments(&request(), &[], &[], &[], &[]);
         assert!(args.iter().any(|a| a == "web_search=\"disabled\""));
     }
 
@@ -1411,7 +1512,7 @@ mod tests {
             Some("claude-sonnet-5-5"),
         );
         let agent = AgentCli::new("claude_code".into(), Agent::of(&cfg).unwrap(), &cfg);
-        let (args, input) = agent.arguments(&request(), &[], &[], &[]);
+        let (args, input) = agent.arguments(&request(), &[], &[], &[], &[]);
         assert_eq!(
             &args[..7],
             [
@@ -1435,12 +1536,11 @@ mod tests {
     fn codex_runs_read_only_outside_any_project_and_gets_one_message() {
         let cfg = config(ProviderKind::Codex, "codex", None);
         let agent = AgentCli::new("codex".into(), Agent::of(&cfg).unwrap(), &cfg);
-        let (args, input) = agent.arguments(&request(), &[], &[], &[]);
+        let (args, input) = agent.arguments(&request(), &[], &[], &[], &[]);
         assert_eq!(args[0], "exec");
         assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
         assert!(args.contains(&"--ephemeral".to_string()));
-        assert!(args.contains(&"--ignore-user-config".to_string()));
-        assert!(args.contains(&"--ignore-rules".to_string()));
+        assert!(!args.contains(&"--ignore-user-config".to_string()));
         assert!(args
             .windows(2)
             .any(|w| w == ["-c", "skills.include_instructions=false"]));
@@ -1457,7 +1557,7 @@ mod tests {
             mime: "image/png".into(),
             bytes: vec![1, 2, 3],
         };
-        let (args, input) = agent.arguments(&request(), &[image], &[], &[]);
+        let (args, input) = agent.arguments(&request(), &[image], &[], &[], &[]);
         assert!(args.windows(2).any(|w| w == ["--tools", "WebSearch"]));
         assert!(args
             .windows(2)
@@ -1477,7 +1577,7 @@ mod tests {
         let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
         let off = vec!["shell_tool".to_string(), "browser_use".to_string()];
         let files = vec![PathBuf::from("/tmp/a.jpg")];
-        let (args, _) = agent.arguments(&request(), &[], &off, &files);
+        let (args, _) = agent.arguments(&request(), &[], &[], &off, &files);
         assert!(args.windows(2).any(|w| w == ["--disable", "shell_tool"]));
         assert!(args.windows(2).any(|w| w == ["--disable", "browser_use"]));
         assert!(args.windows(2).any(|w| w == ["-i", "/tmp/a.jpg"]));
@@ -1527,6 +1627,157 @@ mod tests {
     }
 
     #[test]
+    fn exec_takes_the_scope_it_is_given_in_place_of_fixed_flags() {
+        let cfg = config(ProviderKind::Codex, "codex", None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        let scope = vec![
+            "--ignore-user-config".to_string(),
+            "--ignore-rules".to_string(),
+        ];
+        let (args, _) = agent.arguments(&request(), &[], &scope, &[], &[]);
+        assert!(args.contains(&"--ignore-rules".to_string()));
+        let scope = vec!["-c".to_string(), "mcp_servers.a.enabled=false".to_string()];
+        let (args, _) = agent.arguments(&request(), &[], &scope, &[], &[]);
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-c", "mcp_servers.a.enabled=false"]));
+        assert!(!args.contains(&"--ignore-rules".to_string()));
+    }
+
+    #[test]
+    fn help_must_list_both_isolation_flags() {
+        assert!(lists_isolation(
+            "  --ignore-user-config\n  --ignore-rules\n"
+        ));
+        assert!(!lists_isolation("  --ignore-user-config\n"));
+        assert!(!lists_isolation("Usage: codex app-server [OPTIONS]"));
+    }
+
+    #[test]
+    fn without_the_flags_every_enabled_tool_server_is_switched_off_by_name() {
+        let listing = r#"[
+            {"name":"context7","enabled":true,"transport":{"http_headers":{"K":"secret"}}},
+            {"name":"computer-use","enabled":false},
+            {"name":"node_repl","enabled":true}
+        ]"#;
+        let args = scope_from_listing(listing).unwrap();
+        let pairs: Vec<&str> = args
+            .chunks(2)
+            .map(|c| {
+                assert_eq!(c[0], "-c");
+                c[1].as_str()
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                "mcp_servers.context7.enabled=false",
+                "mcp_servers.node_repl.enabled=false",
+                "notify=[]",
+                "otel.exporter=\"none\"",
+                "otel.trace_exporter=\"none\"",
+                "otel.metrics_exporter=\"none\"",
+                "otel.log_user_prompt=false",
+                "skills.include_instructions=false",
+                "model_provider=\"openai\"",
+            ]
+        );
+        assert_eq!(scope_from_listing("[]").unwrap().len(), 14);
+        assert!(scope_from_listing(r#"[{"name":"unknown_shape"}]"#)
+            .unwrap()
+            .contains(&"mcp_servers.unknown_shape.enabled=false".to_string()));
+    }
+
+    #[test]
+    fn a_tool_server_leo_cannot_name_safely_is_a_named_failure() {
+        for bad in ["a.b", "a b", "", "x\"y"] {
+            let listing = format!(r#"[{{"name":{},"enabled":true}}]"#, serde_json::json!(bad));
+            let error = format!("{:?}", scope_from_listing(&listing).unwrap_err());
+            assert!(error.contains("cannot switch off"), "{bad}: {error}");
+        }
+        assert!(scope_from_listing(r#"[{"name":"a.b","enabled":false}]"#).is_ok());
+        assert!(scope_from_listing("Error: nope").is_err());
+        assert!(scope_from_listing(r#"[{"enabled":true}]"#).is_err());
+    }
+
+    #[test]
+    fn only_a_claude_plan_login_counts_as_plan_auth() {
+        assert!(claude_on_plan(
+            r#"{"loggedIn":true,"authMethod":"claude.ai"}"#
+        ));
+        assert!(!claude_on_plan(
+            r#"{"loggedIn":true,"authMethod":"api_key"}"#
+        ));
+        assert!(!claude_on_plan(
+            r#"{"loggedIn":false,"authMethod":"claude.ai"}"#
+        ));
+        assert!(!claude_on_plan("not json"));
+    }
+
+    #[test]
+    #[ignore = "contract check against the installed Codex and Claude Code (provider-contract workflow)"]
+    fn installed_programs_still_match_what_leo_relies_on() {
+        use std::io::Write as _;
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.toml"),
+            "[mcp_servers.fake]\ncommand = \"true\"\n",
+        )
+        .unwrap();
+        std::env::set_var("CODEX_HOME", home.path());
+        let codex = locate("codex").expect("codex is installed");
+        let claude = locate("claude").expect("claude is installed");
+        let help = probe(&claude, &["--help"]).unwrap();
+        assert!(help.contains("--safe-mode") && help.contains("--tools"));
+        assert!(codex_disables(&codex)
+            .unwrap()
+            .iter()
+            .any(|f| f == "shell_tool"));
+        let exec = probe(&codex, &["exec", "--help"]).unwrap();
+        assert!(exec.contains("--sandbox") && exec.contains("--ephemeral"));
+        let scope = codex_scope(&codex, "app-server", home.path()).unwrap();
+        println!("scope: {scope:?}");
+        if !scope.iter().any(|a| a == "--ignore-user-config") {
+            let mut args: Vec<&str> = scope.iter().map(String::as_str).collect();
+            args.extend(["mcp", "list", "--json"]);
+            let listed: Vec<serde_json::Value> =
+                serde_json::from_str(&probe(&codex, &args).unwrap()).unwrap();
+            assert!(!listed.is_empty());
+            assert!(listed.iter().all(|s| s["enabled"] == false), "{listed:?}");
+        }
+        let out = home.path().join("schema");
+        probe(
+            &codex,
+            &[
+                "app-server",
+                "generate-json-schema",
+                "--experimental",
+                "--out",
+                out.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let schema = std::fs::read_to_string(out.join("ClientRequest.json")).unwrap();
+        assert!(schema.contains("dynamicTools"));
+        let mut child = std::process::Command::new(&codex)
+            .arg("app-server")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"clientInfo":{{"name":"contract","version":"0"}}}}}}"#).unwrap();
+        let mut line = String::new();
+        let read = BufReader::new(child.stdout.take().unwrap()).read_line(&mut line);
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+        read.unwrap();
+        assert!(line.contains("\"result\""), "{line}");
+    }
+
+    #[test]
     fn a_missing_program_is_unavailable_and_says_how_to_install_it() {
         let cfg = config(ProviderKind::Codex, "leo-not-a-real-codex", None);
         let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
@@ -1544,7 +1795,7 @@ mod tests {
     fn script(dir: &Path, body: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join("fake-agent");
-        std::fs::write(&path, format!("#!/bin/sh\ntest -z \"${{CI+x}}${{ANTHROPIC_API_KEY+x}}${{OPENAI_API_KEY+x}}${{CODEX_API_KEY+x}}${{NODE_OPTIONS+x}}${{BASH_ENV+x}}\" || exit 17\nif [ \"$1\" = features ]; then echo 'shell_tool stable true'; exit 0; fi\n{body}\n")).unwrap();
+        std::fs::write(&path, format!("#!/bin/sh\ntest -z \"${{CI+x}}${{ANTHROPIC_API_KEY+x}}${{OPENAI_API_KEY+x}}${{CODEX_API_KEY+x}}${{NODE_OPTIONS+x}}${{BASH_ENV+x}}\" || exit 17\nif [ \"$1\" = features ]; then echo 'shell_tool stable true'; exit 0; fi\nif [ \"$2\" = --help ]; then echo '--ignore-user-config --ignore-rules'; exit 0; fi\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.to_string_lossy().to_string()
     }
@@ -1905,7 +2156,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
                     .get()
                     .expect("the fake CLI must start before cancellation")
                     .elapsed()
-                    < Duration::from_secs(2)
+                    < Duration::from_secs(6)
             );
             let started = std::fs::read_to_string(marker).unwrap();
             assert_eq!(started.lines().count(), 1);
@@ -2197,18 +2448,19 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
             &[],
             &[],
             &[],
+            &[],
         );
         assert!(args.windows(2).any(|w| w == ["--effort", "high"]));
         let mut cfg = config(ProviderKind::Codex, "codex", None);
         cfg.effort = Some("medium".into());
         let (args, _) =
-            AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[]);
+            AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[], &[]);
         assert!(args
             .windows(2)
             .any(|w| w == ["-c", "model_reasoning_effort=\"medium\""]));
         cfg.effort = Some("high\"; rm".into());
         let (args, _) =
-            AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[]);
+            AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[], &[]);
         assert!(args
             .windows(2)
             .any(|w| w == ["-c", "model_reasoning_effort=\"medium\""]));

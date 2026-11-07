@@ -18,13 +18,8 @@ test('coding accounts distinguish signed in, signed out, unknown and unavailable
     const page = { tasks: [{ task: 'writing', provider: 'ollama' }], plans: [{ provider: 'codex', name: 'Codex <img>', installed, signed_in, signin: 'codex login' }] };
     const html = value.codingPlans(page);
     assert.ok(html.includes(label));
-    assert.equal(html.includes('data-action="use-plan"'), installed && signed_in === true);
     assert.ok(!html.includes('<img>'));
-    assert.equal(page.tasks[0].provider, 'ollama');
-    assert.ok(!value.codingPlans(page, false).includes('data-action="use-plan"'));
-    page.tasks[0].provider = 'codex';
-    assert.ok(value.codingPlans(page).includes('Selected for writing'));
-    assert.ok(!value.codingPlans(page).includes('data-action="use-plan"'));
+    assert.ok(!html.includes('data-action="use-plan"'));
   }
   assert.equal(value.codingPlans({ tasks: [] }), '');
 });
@@ -38,7 +33,8 @@ test('usage shows both windows, clamps remaining percentages, and labels missing
   assert.match(html, /Session/);
   assert.match(html, /Weekly/);
   assert.match(html, /Resets in/);
-  assert.match(html, /Updated just now/);
+  assert.match(value.planUpdated(plan), /^Updated just now$/);
+  assert.doesNotMatch(html, /Updated/);
   for (const [used, percent] of [[-1, 100], [0, 100], [0.95, 5], [0.39, 61], [0.06, 94], [1, 0], [2, 0]]) {
     plan.limits = { five_hour: { used, resets_at: now + 3600 }, seen_at: new Date().toISOString() };
     html = value.planLimits(plan);
@@ -46,16 +42,18 @@ test('usage shows both windows, clamps remaining percentages, and labels missing
   }
   plan.limits = { five_hour: { used: 0.2, resets_at: now - 1 }, seven_day: { used: Infinity }, seen_at: 'bad-date' };
   html = value.planLimits(plan);
-  assert.match(html, /Waiting for update/);
-  assert.match(html, /Unavailable/);
+  assert.match(html, />Reset</);
+  assert.match(html, /Not read yet/);
+  assert.match(html, /Refresh to check/);
   assert.doesNotMatch(html, /aria-valuenow/);
   assert.doesNotMatch(html, /Invalid Date/);
   plan.limits = { five_hour: { used: 0.2, resets_at: now + 3600 }, seen_at: new Date(Date.now() - 600000).toISOString() };
-  assert.match(value.planLimits(plan), /Saved · Updated/);
+  assert.match(value.planUpdated(plan), /^Saved · Updated/);
   for (const limits of [null, {}, ...['bad', NaN, Infinity, -Infinity, null].map(used => ({ five_hour: { used } }))]) {
     html = value.planLimits({ provider: 'codex', name: 'Codex', limits });
-    assert.match(html, /Unavailable/);
-    assert.match(html, /Usage has not been reported yet/);
+    assert.match(html, /Not read yet/);
+    assert.match(html, /Refresh to check/);
+    assert.equal(value.planUpdated({ limits }), '');
   }
   for (const resets_at of ['bad', NaN, Infinity, null, 1e300]) {
     html = value.planLimits({ ...plan, limits: { five_hour: { used: .39, resets_at } } });

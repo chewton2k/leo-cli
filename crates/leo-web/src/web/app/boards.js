@@ -9,6 +9,7 @@ const KANBAN_HOLD_MS = 300;
 const KANBAN_EDGE = 56;
 const KANBAN_OTHERS = '.kanban-card:not(.kanban-placeholder)';
 const KANBAN_SAVE_MS = 600;
+const KANBAN_MOST_DESCRIPTION = 8000;
 const KANBAN_PRIORITIES = [['', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
 const KANBAN_ICON = {
   pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>'),
@@ -87,13 +88,22 @@ async function showBoards(arg) {
   }
 }
 
+let kanbanWrites = 0;
+
+function kanbanWrite(path, options) {
+  kanbanWrites++;
+  return api(path, options);
+}
+
 // Fetch the open board again after a change, so ranks renumbered by leo are known here.
+// A write that starts while it is in flight makes the answer old, so it is dropped.
 async function kanbanRefresh() {
   const board = kanban.board;
   if (!board || state.view !== 'boards') return;
   const mine = seq;
+  const writes = kanbanWrites;
   const data = await api(`/api/boards/${enc(board.id)}`);
-  if (mine !== seq || kanban.board?.id !== board.id || kanban.drag) return;
+  if (mine !== seq || kanban.board?.id !== board.id || kanban.drag || kanbanWrites !== writes) return;
   kanban.board = data.board;
   kanban.cards = data.cards || [];
   drawKanban();
@@ -223,7 +233,7 @@ function drawKanban() {
     host = app.querySelector('.kanban-board');
     kanbanSized?.disconnect();
     kanbanSized?.observe(host);
-    kanban.panel?.flush();
+    kanban.panel?.end();
     kanban.panel = null;
     document.body.classList.remove('kanban-panel-on');
   }
@@ -294,7 +304,7 @@ async function kanbanNewBoard() {
     if (make.disabled) return;
     make.disabled = true;
     try {
-      const board = await api('/api/boards', { method: 'POST', body: { name: name.value.trim() } });
+      const board = await kanbanWrite('/api/boards', { method: 'POST', body: { name: name.value.trim() } });
       closeSheet();
       kanbanRemember(board.id);
       go(`#/boards/${enc(board.id)}`);
@@ -313,7 +323,7 @@ async function kanbanNewBoard() {
 
 async function kanbanSaveBoard(change) {
   const board = kanban.board;
-  const saved = await api(`/api/boards/${enc(board.id)}`, { method: 'PATCH', body: change });
+  const saved = await kanbanWrite(`/api/boards/${enc(board.id)}`, { method: 'PATCH', body: change });
   if (kanban.board?.id !== saved.id) return saved;
   kanban.board = saved;
   kanbanSyncTab();
@@ -451,10 +461,10 @@ function kanbanBoardMenu(owner) {
 }
 
 async function kanbanDeleteBoard(board) {
-  const gone = await api(`/api/boards/${enc(board.id)}`, { method: 'DELETE' });
+  const gone = await kanbanWrite(`/api/boards/${enc(board.id)}`, { method: 'DELETE' });
   toast(`Deleted “${board.name}”`, {
     action: 'Undo',
-    run: () => api('/api/boards/restore', { method: 'POST', body: gone }).then((back) => go(`#/boards/${enc(back.board.id)}`)).catch(fail),
+    run: () => kanbanWrite('/api/boards/restore', { method: 'POST', body: gone }).then((back) => go(`#/boards/${enc(back.board.id)}`)).catch(fail),
   });
   const left = kanban.boards.filter((b) => b.id !== board.id);
   go(left.length ? `#/boards/${enc(left[0].id)}` : '#/boards', { replace: true });
@@ -491,7 +501,7 @@ function kanbanComposer(columnId, { text: typed = '', start = null, end = null, 
   };
   const post = async (title, priority) => {
     try {
-      const card = await api(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId, priority } });
+      const card = await kanbanWrite(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId, priority } });
       const tab = kanban.boards.find((b) => b.id === boardId);
       if (kanban.board?.id !== boardId) { if (tab) tab.cards = (tab.cards || 0) + 1; return; }
       if (kanbanCard(card.id)) return;
@@ -569,10 +579,26 @@ function kanbanPanelStatus() {
   box.dataset.tone = column ? kanbanTone(column) : '';
 }
 
+async function kanbanSettlePanel() {
+  try {
+    return !kanban.panel || await kanban.panel.settle();
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+async function kanbanLeavePanel(refocus = true) {
+  const open = kanban.panel;
+  if (!await kanbanSettlePanel()) return false;
+  if (kanban.panel === open) kanbanClosePanel(refocus);
+  return true;
+}
+
 function kanbanClosePanel(refocus = true) {
   const open = kanban.panel;
   if (!open) return;
-  open.flush();
+  open.end();
   kanban.panel = null;
   const box = $('#kanban-panel');
   if (box) { box.hidden = true; box.innerHTML = ''; }
@@ -587,13 +613,15 @@ function kanbanClosePanel(refocus = true) {
 
 // A card opens beside the board, like a note: edits save as you type and the board stays
 // in view, so the next card is one click away.
-function kanbanCardPanel(id) {
+async function kanbanCardPanel(id) {
+  while (kanban.panel) {
+    if (kanban.panel.id === id) { $('#kanban-card-title')?.focus(); return; }
+    if (!await kanbanLeavePanel(false)) return;
+  }
+  const box = $('#kanban-panel');
   const card = kanbanCard(id);
   const board = kanban.board;
-  const box = $('#kanban-panel');
-  if (!card || !board || !box) return;
-  if (kanban.panel?.id === id) { $('#kanban-card-title', box)?.focus(); return; }
-  if (kanban.panel) kanbanClosePanel(false);
+  if (!card || !board || !box?.isConnected) return;
   const others = kanban.boards.filter((b) => b.id !== board.id);
   const column = kanbanColumn(card.column);
   box.dataset.tone = column ? kanbanTone(column) : '';
@@ -606,7 +634,8 @@ function kanbanCardPanel(id) {
       <div class="set-row kanban-priorities"><span class="set-label">Priority</span>${segmented({ label: 'Priority', action: 'kanban-priority', key: 'priority', current: card.priority || '', choices: KANBAN_PRIORITIES })}</div>
       ${others.length ? `<div class="set-row"><span class="set-label">Board</span><label class="select-control"><select id="kanban-card-board" aria-label="Board"><option value="${esc(board.id)}" selected>${esc(board.name)}</option>${others.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>${ICON.chevron}</label></div>` : ''}
     </div>
-    <textarea class="kanban-description" id="kanban-card-description" maxlength="8000" aria-label="Description" placeholder="Add details, steps or links…">${esc(card.description || '')}</textarea>
+    <div class="prose doc kanban-description" id="kanban-card-description" role="group" aria-label="Description"></div>
+    <p class="kanban-limit" id="kanban-card-problem" role="alert" hidden></p><button type="button" class="btn plain sm" id="kanban-card-discard" hidden>Discard these changes</button>
   </div>`;
   box.hidden = false;
   document.body.classList.add('kanban-panel-on');
@@ -618,49 +647,86 @@ function kanbanCardPanel(id) {
   const description = $('#kanban-card-description', box);
   const status = $('#kanban-card-column', box);
   const saved = $('#kanban-card-saved', box);
+  const problem = $('#kanban-card-problem', box);
+  const tell = (text) => { problem.textContent = text; problem.hidden = !text; };
+  const discard = $('#kanban-card-discard', box);
   const fit = (area) => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; };
   fit(title);
-  fit(description);
-  const fields = { title, subheading: sub, description };
+  const fields = { title, subheading: sub };
   const timers = {};
+  const queue = (name) => {
+    if (saved.isConnected) saved.textContent = '';
+    clearTimeout(timers[name]);
+    timers[name] = setTimeout(() => save(name).catch(fail), KANBAN_SAVE_MS);
+  };
+  const over = () => Array.from(doc.source().trim()).length - KANBAN_MOST_DESCRIPTION;
+  const tellOver = () => {
+    const extra = over();
+    tell(extra > 0 ? `Keep the description within ${KANBAN_MOST_DESCRIPTION.toLocaleString('en')} characters. It is ${extra.toLocaleString('en')} over, so this text is not saved yet.` : '');
+    discard.hidden = extra <= 0;
+    return extra > 0;
+  };
+  const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => { tellOver(); queue('description'); } });
+  const valueOf = (name) => name === 'description' ? doc.source().trim() : fields[name].value.replace(/\s+/g, ' ').trim();
+  const dirty = () => names.some((name) => valueOf(name) !== (card[name] || '') && (name !== 'title' || valueOf(name)));
   const save = async (name) => {
     clearTimeout(timers[name]);
     timers[name] = 0;
-    const field = fields[name];
-    const value = name === 'description' ? field.value.trim() : field.value.replace(/\s+/g, ' ').trim();
-    if (value === (card[name] || '')) return;
-    if (name === 'title' && !value) { field.value = card.title; fit(title); return; }
+    const value = valueOf(name);
+    if (value === (card[name] || '')) return true;
+    if (name === 'title' && !value) { title.value = card.title; fit(title); return true; }
+    if (name === 'description' && tellOver()) return false;
     try {
-      const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
+      const done = await kanbanWrite(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { [name]: value } });
       kanbanUpdate(card, done);
       if (saved.isConnected) saved.textContent = 'Saved';
+      if (problem.isConnected) tellOver();
+      return true;
     } catch (e) {
       if (e instanceof Locked) throw e;
       toast(e.message, { bad: true });
+      if (problem.isConnected) tell(e.message);
+      return false;
     }
   };
-  const flush = () => { for (const name of Object.keys(fields)) if (timers[name]) save(name).catch(fail); };
-  kanban.panel = { id, flush };
+  const names = [...Object.keys(fields), 'description'];
+  const flush = () => Promise.all(names.map(save));
+  const settle = async () => {
+    doc.stop();
+    const done = await flush();
+    return done.every(Boolean) && !names.some((name) => timers[name]);
+  };
+  const end = () => {
+    doc.stop();
+    for (const name of names) if (timers[name]) save(name).catch(fail);
+    doc.destroy();
+  };
+  kanban.panel = { id, end, settle, flush, dirty };
+  discard.addEventListener('click', () => {
+    doc.stop();
+    clearTimeout(timers.description);
+    timers.description = 0;
+    kanbanClosePanel();
+  });
   for (const [name, field] of Object.entries(fields)) {
     field.addEventListener('input', () => {
-      if (field.tagName === 'TEXTAREA') fit(field);
-      if (saved.isConnected) saved.textContent = '';
-      clearTimeout(timers[name]);
-      timers[name] = setTimeout(() => save(name).catch(fail), KANBAN_SAVE_MS);
+      if (field === title) fit(field);
+      queue(name);
     });
     field.addEventListener('blur', () => { if (timers[name]) save(name).catch(fail); });
   }
+  description.addEventListener('focusout', () => { if (timers.description) save('description').catch(fail); });
   title.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sub.focus(); }
   });
   sub.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); description.focus(); }
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); doc.editStart(); }
   });
   box.onkeydown = (e) => {
-    if (e.key !== 'Escape' || e.isComposing) return;
+    if (e.key !== 'Escape' || e.isComposing || e.target.closest('.line-edit')) return;
     e.preventDefault();
     e.stopPropagation();
-    kanbanClosePanel();
+    kanbanLeavePanel();
   };
   status.addEventListener('change', () => {
     const column = kanbanColumn(status.value);
@@ -671,7 +737,7 @@ function kanbanCardPanel(id) {
     const chip = e.target.closest('[data-priority]');
     if (!chip || chip.classList.contains('on')) return;
     try {
-      const done = await api(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { priority: chip.dataset.priority } });
+      const done = await kanbanWrite(`/api/cards/${enc(card.id)}`, { method: 'PATCH', body: { priority: chip.dataset.priority } });
       kanbanUpdate(card, done);
       kanbanPriorityPick(chip);
     } catch (err) {
@@ -679,15 +745,16 @@ function kanbanCardPanel(id) {
       toast(err.message, { bad: true });
     }
   });
-  $('#kanban-card-board', box)?.addEventListener('change', (e) => {
-    kanbanClosePanel(false);
-    kanbanMoveToBoard(card, e.target.value).catch(fail);
+  $('#kanban-card-board', box)?.addEventListener('change', async (e) => {
+    if (await kanbanLeavePanel(false)) return kanbanMoveToBoard(card, e.target.value).catch(fail);
+    e.target.value = board.id;
+    syncSelectMenu(e.target);
   });
   box.querySelector('[data-kanban="delete"]').addEventListener('click', () => {
     kanbanClosePanel(false);
     kanbanDeleteCard(card).catch(fail);
   });
-  box.querySelector('[data-kanban="close"]').addEventListener('click', () => kanbanClosePanel());
+  box.querySelector('[data-kanban="close"]').addEventListener('click', () => kanbanLeavePanel());
   title.focus();
   title.setSelectionRange(title.value.length, title.value.length);
 }
@@ -701,7 +768,7 @@ function kanbanAbove(card) {
 
 async function kanbanMove(card, to) {
   try {
-    const saved = await api(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: to });
+    const saved = await kanbanWrite(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: to });
     Object.assign(card, saved);
   } catch (e) {
     if (e instanceof Locked) throw e;
@@ -715,12 +782,12 @@ async function kanbanMoveToBoard(card, boardId) {
   if (!target || boardId === card.board) return;
   const back = { board: card.board, column: card.column, after: kanbanAbove(card) };
   try {
-    const saved = await api(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: { board: boardId } });
+    const saved = await kanbanWrite(`/api/cards/${enc(card.id)}/move`, { method: 'POST', body: { board: boardId } });
     kanban.cards = kanban.cards.filter((c) => c.id !== card.id);
     target.cards = (target.cards || 0) + 1;
     toast(`Moved “${card.title}” to ${target.name}`, {
       action: 'Undo',
-      run: () => api(`/api/cards/${enc(saved.id)}/move`, { method: 'POST', body: back }).then(() => {
+      run: () => kanbanWrite(`/api/cards/${enc(saved.id)}/move`, { method: 'POST', body: back }).then(() => {
         target.cards = Math.max(0, (target.cards || 1) - 1);
         return kanbanRefresh();
       }).catch(fail),
@@ -734,12 +801,12 @@ async function kanbanMoveToBoard(card, boardId) {
 }
 
 async function kanbanDeleteCard(card) {
-  await api(`/api/cards/${enc(card.id)}`, { method: 'DELETE' });
+  await kanbanWrite(`/api/cards/${enc(card.id)}`, { method: 'DELETE' });
   kanban.cards = kanban.cards.filter((c) => c.id !== card.id);
   drawKanban();
   toast(`Deleted “${card.title}”`, {
     action: 'Undo',
-    run: () => api(`/api/boards/${enc(card.board)}/cards`, { method: 'POST', body: { id: card.id, column: card.column, title: card.title, subheading: card.subheading, description: card.description, priority: card.priority, rank: card.rank } }).then(kanbanRefresh).catch(fail),
+    run: () => kanbanWrite(`/api/boards/${enc(card.board)}/cards`, { method: 'POST', body: { id: card.id, column: card.column, title: card.title, subheading: card.subheading, description: card.description, priority: card.priority, rank: card.rank } }).then(kanbanRefresh).catch(fail),
   });
 }
 
@@ -867,6 +934,10 @@ function kanbanCancel() {
 async function kanbanDrop() {
   const d = kanbanEnd(true);
   if (!d) return;
+  if (d.tab && kanban.panel?.id === d.id && !await kanbanLeavePanel(false)) {
+    d.ghost?.remove();
+    return;
+  }
   const home = d.tab ? app.querySelector(`[data-kanban-drop="${CSS.escape(d.tab)}"]`) : null;
   if (home) flyInto(d.ghost, home.matches('.kanban-over') ? app.querySelector('.kanban-more') : home);
   else d.ghost?.remove();
@@ -995,7 +1066,7 @@ document.addEventListener('keydown', (e) => {
   if (kanban.panel && e.key === 'Escape' && !e.target.closest?.('input, textarea, select, [contenteditable], .scrim')) {
     e.preventDefault();
     e.stopImmediatePropagation();
-    kanbanClosePanel();
+    kanbanLeavePanel();
     return;
   }
   const name = e.target.closest?.('[data-kanban-name]');
@@ -1016,7 +1087,7 @@ document.addEventListener('keydown', (e) => {
   if (!card) return;
   if ((e.key === 'Enter' || e.key === ' ') && !e.altKey && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    kanbanCardPanel(card.id);
+    kanbanCardPanel(card.id).catch(fail);
   } else if (e.altKey && !e.metaKey && !e.ctrlKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
     e.preventDefault();
     kanbanKeyMove(card, e.key).catch(fail);

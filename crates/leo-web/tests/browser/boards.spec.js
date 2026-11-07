@@ -13,6 +13,9 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const sheets = read('app/sheets.js');
   const sheetParts = sheets.slice(sheets.indexOf('function sheet('), sheets.indexOf('const QUICK_PLACES'));
+  const events = read('app/events.js');
+  const escapeCapture = events.slice(events.indexOf("window.addEventListener('keydown'"), events.indexOf("document.addEventListener('keydown'"));
+  if (!escapeCapture.includes('preventDefault')) throw new Error('The capture listener moved out of events.js.');
   const fixture = `const $=(selector,root=document)=>root.querySelector(selector);
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const enc=encodeURIComponent, app=$('#app'), LEAVE_MS=150;
@@ -43,7 +46,10 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     window.failNext=null;window.slow=0;
     async function fakeApi(url,{method='GET',body}={}){
       window.calls.push(method+' '+url);
+      let early=null;
+      if(window.early&&method==='GET'){const found=url.match(/^\\/api\\/boards\\/([^/]+)$/);const b=found&&db.boards.find(x=>x.id===found[1]);if(b)early={board:structuredClone(b),cards:ranked(b.id)};}
       await new Promise(r=>setTimeout(r,5+window.slow));
+      if(early)return early;
       if(window.failNext&&method!=='GET'){const e=new Error(window.failNext);window.failNext=null;throw e;}
       let m;
       if(url==='/api/boards'&&method==='GET')return {boards:db.boards.map(b=>({...b,cards:db.cards.filter(c=>c.board===b.id).length}))};
@@ -57,7 +63,7 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
       }
       if((m=url.match(/^\\/api\\/boards\\/([^/]+)\\/cards$/))){const card={id:body.id||'cmade'+(++made)+'00000',board:m[1],column:body.column||db.boards.find(b=>b.id===m[1]).columns[0].id,title:body.title,subheading:body.subheading||'',description:body.description||'',priority:body.priority||''};place(card,undefined);return {...card,rank:0};}
       if((m=url.match(/^\\/api\\/cards\\/([^/]+)\\/move$/))){const card=db.cards.find(c=>c.id===m[1]);const from=db.boards.find(b=>b.id===card.board);if(body.board&&body.board!==card.board){const to=db.boards.find(b=>b.id===body.board);const name=from.columns.find(c=>c.id===card.column)?.name;card.board=to.id;card.column=body.column||(to.columns.find(c=>c.name===name)||to.columns[0]).id;}else if(body.column)card.column=body.column;place(card,'after' in body?body.after:undefined);return {...card,rank:0};}
-      if((m=url.match(/^\\/api\\/cards\\/([^/]+)$/))){const card=db.cards.find(c=>c.id===m[1]);if(method==='DELETE'){db.cards=db.cards.filter(c=>c!==card);return {...card,rank:0};}Object.assign(card,body);return {...card,rank:0};}
+      if((m=url.match(/^\\/api\\/cards\\/([^/]+)$/))){const card=db.cards.find(c=>c.id===m[1]);if(method==='DELETE'){db.cards=db.cards.filter(c=>c!==card);return {...card,rank:0};}if([...(body.description||'')].length>8000){const e=new Error('Keep the description within 8,000 characters.');e.status=400;throw e;}Object.assign(card,body);return {...card,rank:0};}
       throw new Error('No fake for '+method+' '+url);
     }
     ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
@@ -65,9 +71,14 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     ${read('app/motion.js')}
     ${read('app/popup-menu.js')}
     ${read('app/settings-navigation.js')}
+    ${read('markdown.js')}
+    ${read('editing.js')}
+    ${read('doc.js')}
+    const leoDoc=window.leoDoc;
     ${read('app/boards.js')}
     const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':kanbanBoardMenu,'kanban-column-menu':kanbanColumnMenu,'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
+    ${escapeCapture}
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     async function route(){closeSheet(true);const m=location.hash.match(/^#\\/boards\\/?(.*)$/);if(!m){leaveBoards();state={view:'other'};app.innerHTML='<p id="elsewhere">Elsewhere</p>';return;}await showBoards(decodeURIComponent(m[1]));}
     window.addEventListener('hashchange',()=>route().catch(fail));
@@ -196,9 +207,12 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await expect(page.locator('.scrim')).toHaveCount(0);
     await expect(page.locator('[data-card="cessay0001"]')).toHaveClass(/\bopen\b/);
     await expect(sheet.locator('#kanban-card-title')).toHaveValue('Write essay');
-    await expect(sheet.locator('#kanban-card-description')).toHaveValue('Outline first');
+    await expect(sheet.locator('#kanban-card-description')).toHaveText('Outline first');
     await sheet.locator('#kanban-card-sub').fill('History · draft 2');
-    await sheet.locator('#kanban-card-description').fill('Outline first\nThen write');
+    await sheet.locator('#kanban-card-description .blk').click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Then write');
     await sheet.locator('[data-priority="medium"]').click();
     await expect(sheet.locator('[data-priority="medium"]')).toHaveAttribute('aria-pressed', 'true');
     await sheet.locator('#kanban-card-column').selectOption({ label: 'In progress' });
@@ -228,6 +242,127 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await page.locator('.toast button').click();
     await expect(page.locator('[data-card="cessay0001"]')).toHaveCount(1);
     expect(await page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001').description)).toBe('Outline first\nThen write');
+  });
+});
+
+test('a card\'s details render as Markdown like a note, toggle checkboxes, edit by line and stay plain Markdown', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const markdown = '## Plan\n\nSome **bold** and [a link](https://example.com)\n\n- [ ] first\n\n`code`\n\n<img src=x onerror="window.ran=1"> [bad](javascript:window.ran=2)';
+    await page.evaluate(text => { window.db.cards.find(c => c.id === 'cessay0001').description = text; }, markdown);
+    await redraw(page);
+    await page.locator('[data-card="cessay0001"]').click();
+    const details = page.locator('#kanban-card-description');
+    await expect(details.locator('h3')).toHaveText('Plan');
+    await expect(details.locator('strong')).toHaveText('bold');
+    await expect(details.locator('a[href="https://example.com"]')).toHaveText('a link');
+    await expect(details.locator('code')).toHaveText('code');
+    await expect(details.locator('img, script, a[href^="javascript"]')).toHaveCount(0);
+    expect(await page.evaluate(() => window.ran)).toBeUndefined();
+
+    await details.locator('input[type=checkbox]').check();
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001').description)).toContain('- [x] first');
+
+    await details.locator('.blk').first().click();
+    await expect(details.locator('textarea.line-edit')).toHaveValue('## Plan');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' today');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#kanban-panel')).toBeVisible();
+    await expect(details.locator('h3')).toHaveText('Plan today');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001').description)).toMatch(/^## Plan today\n/);
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#kanban-panel')).toBeHidden();
+    await page.locator('[data-card="cessay0001"]').click();
+    await expect(details.locator('h3')).toHaveText('Plan today');
+    await expect(details.locator('input[type=checkbox]')).toBeChecked();
+
+    await page.locator('[data-card="cread00001"]').click();
+    await expect(details).toHaveText('Add details, steps or links…');
+    await details.click();
+    await page.keyboard.type('Notes');
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Notes');
+  });
+});
+
+test('Escape and Close each leave a card at one press', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const panel = page.locator('#kanban-panel');
+    await page.locator('[data-card="cessay0001"]').click();
+    await expect(page.locator('#kanban-card-title')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(page.locator('[data-card="cessay0001"]')).toBeFocused();
+
+    await page.locator('[data-card="cessay0001"]').click();
+    await page.locator('#kanban-card-sub').click();
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+
+    await page.locator('[data-card="cessay0001"]').click();
+    await page.locator('#kanban-card-description .blk').click();
+    await expect(page.locator('#kanban-card-description textarea.line-edit')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeVisible();
+    await expect(page.locator('#kanban-card-description textarea.line-edit')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+
+    await page.locator('[data-card="cessay0001"]').click();
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(panel).toBeHidden();
+  });
+});
+
+test('details past the limit stay on screen with the reason until they fit', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const panel = page.locator('#kanban-panel');
+    const problem = page.locator('#kanban-card-problem');
+    const description = () => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description);
+    await page.locator('[data-card="cread00001"]').click();
+    await page.locator('#kanban-card-description').click();
+    await page.keyboard.insertText('x'.repeat(8010));
+    await expect(problem).toContainText('8,000 characters');
+    await expect(problem).toContainText('10 over');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(panel).toBeVisible();
+    await page.locator('[data-card="cessay0001"]').click();
+    await expect(page.locator('#kanban-card-title')).toHaveValue('Read chapter 3');
+    await expect(page.locator('#kanban-card-description')).toContainText('x'.repeat(8010));
+    await expect(problem).toBeVisible();
+    expect(await description()).toBe('');
+    expect(await page.evaluate(() => window.calls.filter(call => call.startsWith('PATCH')).length)).toBe(0);
+
+    await page.locator('#kanban-card-description .blk').click();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End');
+    for (let i = 0; i < 10; i++) await page.keyboard.press('Backspace');
+    await expect(problem).toBeHidden();
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(panel).toBeHidden();
+    expect(await description()).toBe('x'.repeat(8000));
+  });
+});
+
+test('a failed save keeps the card open with its text', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const panel = page.locator('#kanban-panel');
+    await page.locator('[data-card="cread00001"]').click();
+    await page.locator('#kanban-card-description').click();
+    await page.keyboard.type('Keep me');
+    await page.evaluate(() => { window.failNext = 'Leo could not save the card.'; });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#kanban-card-problem')).toHaveText('Leo could not save the card.');
+    await page.evaluate(() => { window.failNext = 'Leo still could not save the card.'; });
+    await page.locator('#kanban-panel [data-kanban="close"]').click();
+    await expect(page.locator('#kanban-card-problem')).toHaveText('Leo still could not save the card.');
+    await expect(panel).toBeVisible();
+    await expect(page.locator('#kanban-card-description')).toHaveText('Keep me');
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    expect(await page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Keep me');
   });
 });
 
@@ -272,6 +407,22 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
     await expect(page.locator('.kanban-tab')).toHaveCount(2);
     await page.locator('.toast button').click();
     await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Job search');
+  });
+});
+
+test('a board fetched before a later change cannot overwrite it', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.evaluate(() => { window.slow = 120; window.early = true; });
+    await page.locator('.kanban-col').nth(1).hover();
+    await page.locator('[data-action="kanban-column-menu"][data-col="kdoing0001"]').click();
+    await page.getByRole('menuitem', { name: 'Move left' }).click();
+    await expect.poll(() => page.evaluate(() => window.db.boards[0].columns[0].id), { intervals: [10] }).toBe('kdoing0001');
+    await page.evaluate(() => { window.slow = 0; });
+    await page.locator('[data-action="kanban-add-column"]').click();
+    await settled(page);
+    await expect(page.locator('.kanban-col')).toHaveCount(4);
+    await expect.poll(() => page.evaluate(() => window.db.boards[0].columns.length)).toBe(4);
+    await expect(page.locator('.kanban-col').first().locator('.kanban-col-name')).toHaveValue('In progress');
   });
 });
 

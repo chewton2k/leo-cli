@@ -56,7 +56,6 @@ test('coding accounts show readable usage and sign-in states in both themes and 
       await expect(page.getByRole('meter', { name: 'Codex 7 day remaining' })).toHaveAttribute('aria-valuenow', '7');
       await expect(page.getByText('Signed in', { exact: true })).toBeVisible();
       await expect(page.getByText('Signed out', { exact: true })).toBeVisible();
-      await expect(page.getByText('Selected for writing')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       for (const card of await page.locator('.coding-plan').all()) {
         expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
@@ -80,11 +79,12 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
     const rel=()=> '10 minutes ago'; let seq=1, finishUsage, failUsage, usageCalls=0, writer='claude_code';
     const cached={tasks:[{task:'writing',provider:'claude_code'}],plans:[{provider:'codex',name:'Codex',installed:true,signed_in:true,limits:{five_hour:{used:.39,resets_at:Date.now()/1000+3600},seven_day:{used:.06,resets_at:Date.now()/1000+86400},seen_at:new Date(Date.now()-600000).toISOString()}},{provider:'claude_code',name:'Claude Code',installed:true,signed_in:true,limits:{five_hour:{used:1,resets_at:Date.now()/1000+3600},seven_day:{used:.95,resets_at:Date.now()/1000+86400},seen_at:new Date().toISOString()}}]};
     function sheet(html){const box=document.createElement('div');box.className='scrim';box.innerHTML='<div class="sheet" role="dialog" aria-modal="true">'+html+'</div>';box.addEventListener('click',e=>{if(e.target.closest('[data-action="close"]')) box.classList.add('scrim-gone');});document.body.append(box);trapSheetFocus(box);return box;}
-    async function api(url){if(url==='/api/settings')return structuredClone(cached);usageCalls++;return new Promise((resolve,reject)=>{finishUsage=resolve;failUsage=reject;});}
+    const bodies=[], ICON={refresh:'<svg></svg>',close:'<svg></svg>'}, cascade=()=>{};
+    async function api(url,options){if(url==='/api/settings')return structuredClone(cached);usageCalls++;bodies.push(options&&options.body);return new Promise((resolve,reject)=>{finishUsage=resolve;failUsage=reject;});}
     ${focus}
     ${plans}
     ${usage}
-    window.audit={open:showUsage,usageCalls:()=>usageCalls,finish:value=>finishUsage(value),fail:()=>failUsage(new Error('offline')),writer:()=>writer};` });
+    window.audit={open:showUsage,usageCalls:()=>usageCalls,bodies:()=>bodies,finish:value=>finishUsage(value),fail:()=>failUsage(new Error('offline')),writer:()=>writer};` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => audit.open());
   await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
@@ -100,6 +100,7 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await page.screenshot({path:testInfo.outputPath('usage-desktop-dark.png'),animations:'disabled'});
   await expect.poll(() => page.evaluate(() => audit.usageCalls())).toBe(1);
+  expect(await page.evaluate(() => audit.bodies())).toEqual([{}]);
   await expect(page.getByRole('button', { name: 'Refresh' })).toBeDisabled();
   await page.getByRole('button', { name: 'Refresh' }).dispatchEvent('click');
   expect(await page.evaluate(() => audit.usageCalls())).toBe(1);
@@ -117,6 +118,7 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
   await refresh.focus();
   await refresh.click();
   await expect(refresh).toBeDisabled();
+  expect(await page.evaluate(() => audit.bodies())).toEqual([{}, { claude: true }]);
   await page.evaluate(() => audit.finish({tasks:[{task:'writing',provider:'codex'}],plans:[{provider:'codex',name:'Codex',installed:true,signed_in:true,limits:{five_hour:{used:.2,resets_at:Date.now()/1000+3600},seen_at:new Date().toISOString()}}]}));
   await expect(page.getByRole('meter', { name: 'Codex 5 hour remaining' })).toHaveAttribute('aria-valuenow', '80');
   await expect(refresh).toBeEnabled();
@@ -214,7 +216,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     const cascade=()=>{}, pulse=()=>{}, overlapOut=()=>{};
     ${read('app/core.js').slice(read('app/core.js').indexOf('const MOTION_MS'), read('app/core.js').indexOf('function stillMotion'))}
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
-    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="width-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else if(act==='width-pick') pickWidth(el); else resetSetting(el);});
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="width-pick"],[data-action="text-size-pick"],[data-action="letters-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else if(act==='width-pick') pickWidth(el); else if(act==='text-size-pick') pickTextSize(el); else if(act==='letters-pick') pickLetters(el); else resetSetting(el);});
     ${read('theme.js')}
     ${read('app/refresh.js')}
     ${read('app/trash.js')}
@@ -347,6 +349,15 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.locator('html')).toHaveAttribute('data-note-width','full');
       await page.getByRole('button',{name:'Reset Note width to default'}).click();
       await expect(page.getByRole('button',{name:'Wide',exact:true})).toHaveAttribute('aria-pressed','true');
+      for(const [find,count] of [['text-size',3],['felix-lettering',2]]) await expect(page.locator(`[data-find="${find}"] .choice-cards button.choice-pick:has(.read-sample)`),`${find} is a row of sample cards`).toHaveCount(count);
+      await page.getByRole('button',{name:'Large',exact:true}).click();
+      await expect(page.locator('html')).toHaveAttribute('data-text-size','large');
+      await page.getByRole('button',{name:'Like your notes',exact:true}).click();
+      await expect(page.locator('html')).toHaveAttribute('data-felix-letters','notes');
+      await page.getByRole('button',{name:'Reset Text size to default'}).click();
+      await page.getByRole('button',{name:"Reset Felix's lettering to default"}).click();
+      await expect(page.locator('html')).toHaveAttribute('data-text-size','medium');
+      await expect(page.locator('html')).toHaveAttribute('data-felix-letters','own');
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
       await page.waitForTimeout(400);
       expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);

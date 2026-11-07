@@ -200,7 +200,7 @@ const PLAN_STALE_MS = 5 * 60 * 1000;
 function planLimits(plan) {
   const limits = plan.limits;
   const now = Date.now();
-  const windows = [['five_hour', 'Session', '5 hour'], ['seven_day', 'Weekly', '7 day']].map(([key, name, period]) => {
+  return [['five_hour', 'Session', '5 hour'], ['seven_day', 'Weekly', '7 day']].map(([key, name, period]) => {
     const window = limits?.[key];
     const used = window?.used;
     const valid = Number.isFinite(used);
@@ -209,14 +209,19 @@ function planLimits(plan) {
     const expired = validReset && reset.getTime() <= now;
     const available = valid && !expired;
     const percent = available ? Math.max(0, Math.min(100, 100 - Math.round(used * 100))) : null;
-    const when = expired ? 'Waiting for update' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
-    return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong>${available ? `${percent}% <small>left</small>` : 'Unavailable'}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ' aria-valuetext="Unavailable"'}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
+    const missing = expired ? 'Reset' : 'Not read yet';
+    const when = !available ? 'Refresh to check' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
+    return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong${available ? '' : ' class="plan-none"'}>${available ? `${percent}% <small>left</small>` : missing}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ` aria-valuetext="${missing}"`}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
   }).join('');
+}
+
+function planUpdated(plan) {
+  const limits = plan.limits;
+  const now = Date.now();
   const seenAt = typeof limits?.seen_at === 'string' && limits.seen_at ? limits.seen_at : null;
   const seen = seenAt ? new Date(seenAt).getTime() : NaN;
   const stale = Number.isFinite(seen) && now - seen >= PLAN_STALE_MS;
-  const status = Number.isFinite(seen) ? `${stale ? 'Saved · ' : ''}Updated ${esc(rel(seenAt))}` : 'Usage has not been reported yet';
-  return windows + `<p class="hint usage-status" role="status">${status}</p>`;
+  return Number.isFinite(seen) ? `${stale ? 'Saved · ' : ''}Updated ${rel(seenAt)}` : '';
 }
 
 function duration(ms) {
@@ -225,17 +230,17 @@ function duration(ms) {
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${rest}m` : `${rest}m`;
 }
 
-function codingPlans(page, selectable = true) {
+function codingPlans(page) {
   if (!page.plans?.length) return '';
-  const selected = page.tasks.find(task => task.task === 'writing')?.provider;
   return `<div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><h4>${esc(plan.name)}</h4><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selectable && selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+    const updated = planUpdated(plan);
+    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><div class="plan-title"><h4>${esc(plan.name)}</h4>${updated ? `<span class="hint plan-updated">${esc(updated)}</span>` : ''}</div><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}</section>`;
   }).join('')}</div>`;
 }
 
-const APPEARANCE_DEFAULTS = { theme: 'system', felix: 'cute', width: 'wide' };
+const APPEARANCE_DEFAULTS = { theme: 'system', felix: 'cute', width: 'wide', size: 'medium', letters: 'own' };
 const THEME_LABELS = { system: 'Match device', light: 'Light', dark: 'Dark' };
 
 const THEME_SURFACES = {
@@ -251,6 +256,9 @@ const THEME_DIAGRAMS = {
   light: `<svg viewBox="0 0 120 52">${themeScene('light')}</svg>`,
   dark: `<svg viewBox="0 0 120 52">${themeScene('dark')}</svg>`,
 };
+const TEXT_SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large' };
+const LETTERING_LABELS = { own: "Felix's own", notes: 'Like your notes' };
+const LETTERING_SAMPLE = 'Found it, in your Tuesday note.';
 const WIDTH_COLUMNS = { comfortable: 44, wide: 70, full: 108 };
 function widthDiagram(width) {
   const w = WIDTH_COLUMNS[width], x = (120 - w) / 2, line = (share) => Math.round((w - 12) * share);
@@ -261,16 +269,20 @@ function themeCard() {
   const now = window.leoTheme.choice();
   const felixNow = window.leoTheme.felix();
   const widthNow = window.leoTheme.noteWidth();
+  const sizeNow = window.leoTheme.textSize();
+  const lettersNow = window.leoTheme.felixLetters();
   return `<section class="set-card appearance">
       <header><h3>Appearance</h3></header>
       <div class="set-row column" data-find="theme"><span class="set-label">Theme${settingReset('Theme', 'theme', now !== APPEARANCE_DEFAULTS.theme)}</span>${choiceCards({ label: 'Theme', action: 'theme-pick', key: 'theme', current: now, choices: window.leoTheme.CHOICES.map((choice) => [choice, THEME_LABELS[choice], '', THEME_DIAGRAMS[choice]]) })}</div>
       <div class="set-row column" data-find="felix-look"><span class="set-label">Felix${settingReset('Felix', 'felix', felixNow !== APPEARANCE_DEFAULTS.felix)}</span>${choiceCards({ label: 'Felix', action: 'felix-pick', key: 'felix', current: felixNow, columns: 3, choices: [['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => [kind, label, '', `<svg viewBox="0 0 120 52">${felix.felix(40, `felix-preview ${kind}-look`).replace('<svg ', '<svg x="40" y="10" ')}</svg>`]) })}</div>
       <div class="set-row column" data-find="note-width"><span class="set-label">Note width${settingReset('Note width', 'width', widthNow !== APPEARANCE_DEFAULTS.width)}</span>${choiceCards({ label: 'Note width', action: 'width-pick', key: 'width', current: widthNow, choices: window.leoTheme.WIDTHS.map((width) => [width, WIDTH_LABELS[width], '', widthDiagram(width)]) })}</div>
+      <div class="set-row column" data-find="text-size"><span class="set-label">Text size${settingReset('Text size', 'size', sizeNow !== APPEARANCE_DEFAULTS.size)}</span>${choiceCards({ label: 'Text size', action: 'text-size-pick', key: 'size', current: sizeNow, choices: window.leoTheme.TEXT_SIZES.map((size) => [size, TEXT_SIZE_LABELS[size], '', `<span class="read-sample size" data-text-size="${size}">Notes</span>`]) })}</div>
+      <div class="set-row column" data-find="felix-lettering"><span class="set-label">Felix's lettering${settingReset("Felix's lettering", 'letters', lettersNow !== APPEARANCE_DEFAULTS.letters)}</span>${choiceCards({ label: "Felix's lettering", action: 'letters-pick', key: 'letters', current: lettersNow, choices: window.leoTheme.LETTERINGS.map((letters) => [letters, LETTERING_LABELS[letters], '', `<span class="read-sample letters" data-letters="${letters}">${LETTERING_SAMPLE}</span>`]) })}</div>
     </section>`;
 }
 
 function syncAppearanceResets() {
-  const now = { theme: window.leoTheme.choice(), felix: window.leoTheme.felix(), width: window.leoTheme.noteWidth() };
+  const now = { theme: window.leoTheme.choice(), felix: window.leoTheme.felix(), width: window.leoTheme.noteWidth(), size: window.leoTheme.textSize(), letters: window.leoTheme.felixLetters() };
   for (const button of document.querySelectorAll('[data-action="setting-reset"]')) button.toggleAttribute('data-on', now[button.dataset.reset] !== APPEARANCE_DEFAULTS[button.dataset.reset]);
 }
 function resetSetting(el) {
@@ -278,6 +290,8 @@ function resetSetting(el) {
   if (key === 'theme') pickTheme({ dataset: { theme: APPEARANCE_DEFAULTS.theme } });
   else if (key === 'felix') pickFelix({ dataset: { felix: APPEARANCE_DEFAULTS.felix } });
   else if (key === 'width') pickWidth({ dataset: { width: APPEARANCE_DEFAULTS.width } });
+  else if (key === 'size') pickTextSize({ dataset: { size: APPEARANCE_DEFAULTS.size } });
+  else if (key === 'letters') pickLetters({ dataset: { letters: APPEARANCE_DEFAULTS.letters } });
 }
 
 function pickTheme(el) {
@@ -319,6 +333,25 @@ function pickFelix(el) {
   const box = document.querySelector('[data-action="felix-pick"]')?.closest('.choice-cards');
   if (box) syncChoiceCards(box);
   syncAppearanceResets();
+}
+
+function pickReading(action, field, now) {
+  for (const button of document.querySelectorAll(`[data-action="${action}"]`)) {
+    const on = button.dataset[field] === now;
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+  }
+  const box = document.querySelector(`[data-action="${action}"]`)?.closest('.choice-cards');
+  if (box) syncChoiceCards(box);
+  syncAppearanceResets();
+}
+function pickTextSize(el) {
+  window.leoTheme.setTextSize(el.dataset.size);
+  pickReading('text-size-pick', 'size', window.leoTheme.textSize());
+}
+function pickLetters(el) {
+  window.leoTheme.setFelixLetters(el.dataset.letters);
+  pickReading('letters-pick', 'letters', window.leoTheme.felixLetters());
 }
 
 function felixUsageCard(page) {
@@ -534,54 +567,63 @@ app.addEventListener('change', (event) => {
 
 async function showUsage(trigger = null) {
   const opener = trigger?.closest?.('.scrim') ? $('#menu') : trigger || document.activeElement;
-  const box = sheet('<header class="usage-head"><h3>Usage</h3><div class="usage-tools"><span aria-current="page">Limits</span><button type="button" class="btn plain sm" data-action="usage-refresh" disabled>Refresh</button><button type="button" class="btn plain sm" data-action="close">Close</button></div></header><div class="usage-content"><p class="hint" role="status">Checking coding accounts…</p></div>');
+  const plan = '<section class="coding-plan"><div class="skeleton plan-sk-head"></div><div class="skeleton plan-sk-row"></div><div class="skeleton plan-sk-row"></div></section>';
+  const box = sheet(`<header class="usage-head"><div><h3>Usage</h3><p class="usage-sub">Plan limits</p></div><div class="usage-tools"><button type="button" class="icon-btn" data-action="usage-refresh" aria-label="Refresh" title="Refresh" disabled>${ICON.refresh}</button><button type="button" class="icon-btn" data-action="close" aria-label="Close" title="Close">${ICON.close}</button></div></header><div class="usage-content" aria-busy="true"><div class="coding-plans" aria-hidden="true">${plan}${plan}</div></div>`);
   box.returnFocus = opener;
   box.querySelector('.sheet').classList.add('usage-sheet');
   box.querySelector('[data-action="close"]').focus();
   const mine = seq;
-  let saved = false, refreshing = true;
+  let saved = false, refreshing = true, drawn = false;
   const live = () => mine === seq && box.isConnected && !box.classList.contains('scrim-gone');
   const content = box.querySelector('.usage-content');
-  const refresh = async () => {
+  const button = box.querySelector('[data-action="usage-refresh"]');
+  const busy = (on) => {
+    refreshing = on;
+    button.disabled = on;
+    button.innerHTML = on ? '<span class="activity-spin"></span>' : ICON.refresh;
+  };
+  const draw = (page) => {
+    content.removeAttribute('aria-busy');
+    content.innerHTML = (codingPlans(page) || '<p class="hint" role="status">No coding accounts detected.</p>') + (page.note ? `<p class="hint usage-note">${esc(page.note)}</p>` : '');
+    if (!drawn) cascade(content.querySelector('.coding-plans'));
+    drawn = true;
+  };
+  const refresh = async (body = {}) => {
     if (refreshing || !live()) return;
-    refreshing = true;
-    const button = box.querySelector('[data-action="usage-refresh"]');
     const focused = document.activeElement === button;
-    button.disabled = true;
+    busy(true);
     try {
-      const fresh = await api('/api/settings/usage', { method: 'POST' });
+      const fresh = await api('/api/settings/usage', { method: 'POST', body });
       if (!live()) return;
-      content.innerHTML = codingPlans(fresh, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+      draw(fresh);
       saved = true;
     } catch (e) {
       if (!live()) return;
-      if (!saved) content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
+      if (!saved) { content.removeAttribute('aria-busy'); content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>'; }
       else {
         content.querySelector('.usage-error')?.remove();
         content.insertAdjacentHTML('beforeend', '<p class="hint usage-error" role="status">Refresh failed · showing saved usage</p>');
       }
     } finally {
-      refreshing = false;
       if (live()) {
-        button.disabled = false;
+        busy(false);
         if (focused && document.activeElement === document.body) button.focus();
-      }
+      } else refreshing = false;
     }
   };
   box.addEventListener('click', event => {
-    const button = event.target.closest('[data-action="usage-refresh"]');
-    if (button && !refreshing) { button.focus(); refresh(); }
+    if (event.target.closest('[data-action="usage-refresh"]') && !refreshing) { button.focus(); refresh({ claude: true }); }
   });
   try {
     const page = await api('/api/settings');
     if (!live()) return;
-    content.innerHTML = codingPlans(page, false) || '<p class="hint" role="status">No coding accounts detected.</p>';
+    draw(page);
     saved = Boolean(page.plans?.length);
   } catch (e) {
     if (!live()) return;
+    content.removeAttribute('aria-busy');
     content.innerHTML = '<p class="hint" role="status">Usage could not be loaded.</p>';
   }
-  refreshing = false;
-  if (live()) box.querySelector('[data-action="usage-refresh"]').disabled = false;
+  busy(false);
   refresh();
 }

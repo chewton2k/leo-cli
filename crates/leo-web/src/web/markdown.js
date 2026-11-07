@@ -9,14 +9,50 @@
   const link = (url, label) =>
     `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
 
-  function emphasis(s) {
-    return s
-      .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
-      .replace(/__(?=\S)([\s\S]*?\S)__(?![A-Za-z0-9])/g, '<strong>$1</strong>')
-      .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>')
-      .replace(/(^|[^*\w])\*(?=\S)([^*]*?\S)\*(?!\*)/g, '$1<em>$2</em>')
-      .replace(/(^|[^_\w])_(?=\S)([^_]*?\S)_(?![_\w])/g, '$1<em>$2</em>');
+  const SPAN_TAGS = { '*1': 'em', '*2': 'strong', '_1': 'em', '_2': 'strong', '~2': 'del' };
+  const wordy = (c) => /[\p{L}\p{N}]/u.test(c);
+
+  function spans(s) {
+    const bits = s.split(/(\*+|_+|~~)/);
+    const runs = [];
+    const open = [];
+    const beside = (i, step) => {
+      for (let k = i + step; k >= 0 && k < bits.length; k += step) if (bits[k]) return step > 0 ? bits[k][0] : bits[k].at(-1);
+      return '';
+    };
+    for (let i = 1; i < bits.length; i += 2) {
+      const run = { at: i, mark: bits[i][0], left: bits[i].length, opens: '', shuts: '' };
+      runs.push(run);
+      const before = beside(i, -1);
+      const after = beside(i, 1);
+      let canOpen = /\S/.test(after);
+      let canClose = /\S/.test(before);
+      if (run.mark === '_') {
+        canOpen = canOpen && !wordy(before);
+        canClose = canClose && !wordy(after);
+      }
+      if (run.mark === '*' && run.left === 1 && wordy(before)) canOpen = false;
+      while (canClose && run.left) {
+        let k = open.length - 1;
+        while (k >= 0 && open[k].mark !== run.mark) k--;
+        if (k < 0) break;
+        const first = open[k];
+        open.length = k + 1;
+        const size = Math.min(first.left, run.left) >= 2 ? 2 : 1;
+        const tag = SPAN_TAGS[run.mark + size];
+        first.left -= size;
+        run.left -= size;
+        first.opens = `<${tag}>${first.opens}`;
+        run.shuts += `</${tag}>`;
+        if (!first.left) open.pop();
+      }
+      if (canOpen && run.left) open.push(run);
+    }
+    for (const run of runs) bits[run.at] = run.shuts + run.mark.repeat(run.left) + run.opens;
+    return bits.join('');
   }
+
+  const emphasis = (s) => spans(s).replace(/&lt;u&gt;(.+?)&lt;\/u&gt;/g, '<u>$1</u>');
 
   let pictureDir = '';
 
@@ -84,26 +120,43 @@
   const FENCE = /^\s*(```|~~~)\s*([\w+-]*)/;
   const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
   const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
-  const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const MARKER = String.raw`[-*+]|\d+[.)]|(?<low>[a-z])\k<low>?[.)]|(?<up>[A-Z])\k<up>?(?:\)|\.(?=[^\S\n]{2}|\t))`;
+  const ITEM = new RegExp(String.raw`^(\s*)(${MARKER})\s+(?<text>.*)$`);
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
-  const BOX = /^(?:[-*+]|\d+[.)]) {1,4}\[( |x|X)\](?: |$)/;
+  const BOX = new RegExp(String.raw`^(?:${MARKER}) {1,4}\[( |x|X)\](?: |$)`);
 
   const isBox = (line) => BOX.test(line.trimStart());
+
+  function listable(line, after) {
+    const found = line.match(ITEM);
+    return found && (after || !/[a-z]/i.test(found[2]) || /^[aA][.)]/.test(found[2]) || isBox(line)) ? found : null;
+  }
 
   const cells = (row) =>
     row
       .trim()
       .replace(/^\|/, '')
-      .replace(/\|$/, '')
-      .split('|')
-      .map((c) => c.trim());
+      .replace(/(?<!\\)\|$/, '')
+      .split(/(?<!\\)\|/)
+      .map((c) => c.trim().replace(/\\\|/g, '|'));
+
+  const aligned = (rule) => cells(rule).map((c) => (c.startsWith(':') ? (c.endsWith(':') ? 'center' : 'left') : c.endsWith(':') ? 'right' : ''));
+  const cell = (tag, text, align) => `<${tag}${align ? ` class="align-${align}"` : ''}>${inline(text)}</${tag}>`;
+
+  function letterValue(marker) {
+    const run = marker.slice(0, -1).toLowerCase();
+    const place = run.charCodeAt(0) - 96;
+    return run.length === 2 ? place * 27 : place;
+  }
+
+  const listKind = (marker) => (/^[-*+]$/.test(marker) ? 'ul' : marker.replace(/\d+/, '1').replace(/[a-z]+/, 'a').replace(/[A-Z]+/, 'A'));
 
   function startsBlock(line, next) {
     return (
       FENCE.test(line) ||
       HEADING.test(line) ||
       RULE.test(line) ||
-      ITEM.test(line) ||
+      listable(line, false) ||
       /^\s*>/.test(line) ||
       /^\s*(\$\$|\\\[\s*$|\\begin\{(?:equation|align|aligned|gather|gathered|multline|alignat|flalign|split|cases|matrix|pmatrix|bmatrix|vmatrix|array)\*?\})/.test(line) ||
       (line.includes('|') && next !== undefined && TABLE_RULE.test(next) && next.includes('-'))
@@ -113,18 +166,24 @@
   function list(lines, state) {
     const items = lines.map((line) => {
       const m = line.match(ITEM);
-      return { indent: m[1].replace(/\t/g, '    ').length, ordered: /\d/.test(m[2]), raw: line, text: m[3] };
+      return { indent: m[1].replace(/\t/g, '    ').length, kind: listKind(m[2]), marker: m[2], raw: line, text: m.groups.text };
     });
 
-    function build(from, indent) {
-      const ordered = items[from].ordered;
-      const first = ordered ? parseInt(items[from].raw.trim(), 10) : 1;
-      let html = ordered ? (first > 1 ? `<ol start="${first}">` : '<ol>') : '<ul>';
+    function build(from, indent, depth) {
+      const { kind } = items[from];
+      const ordered = kind !== 'ul';
+      const lettered = ordered && /[a-z]/i.test(kind);
+      const paren = kind.endsWith(')') ? '-paren' : '';
+      const first = lettered || !ordered ? 1 : parseInt(items[from].marker, 10);
+      const style = lettered ? `list-${kind[0] === 'a' ? 'lower' : 'upper'}${paren}` : depth > 1 && ordered && (depth === state.depth && state.first !== undefined ? state.first : first) > 1 ? paren && 'list-paren' || 'list-1' : depth > 1 ? `list-${(depth - 1) % 3 + 1}` : paren && 'list-paren';
+      const look = style ? ` class="${style}"` : '';
+      let html = ordered ? (first > 1 ? `<ol${look} start="${first}">` : `<ol${look}>`) : `<ul${look}>`;
       let i = from;
       while (i < items.length && items[i].indent >= indent) {
         const item = items[i];
+        if (item.indent === indent && item.kind !== kind) break;
         if (item.indent > indent) {
-          const [inner, next] = build(i, item.indent);
+          const [inner, next] = build(i, item.indent, depth + 1);
           html = html.replace(/<\/li>$/, `${inner}</li>`);
           i = next;
           continue;
@@ -140,7 +199,7 @@
           const done = task[1] !== ' ';
           html += `<li class="task-item"><label class="task${done ? ' done' : ''}"><input type="checkbox" disabled${done ? ' checked' : ''}><span>${inline(task[2] || '')}</span></label></li>`;
         } else {
-          html += `<li>${inline(item.text)}</li>`;
+          html += `<li${lettered ? ` value="${letterValue(item.marker)}"` : ''}>${inline(item.text)}</li>`;
         }
         i++;
       }
@@ -150,7 +209,7 @@
     let html = '';
     let i = 0;
     while (i < items.length) {
-      const [block, next] = build(i, items[i].indent);
+      const [block, next] = build(i, items[i].indent, state.depth);
       html += block;
       i = next;
     }
@@ -269,21 +328,24 @@
 
       if (line.includes('|') && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]) && lines[i + 1].includes('-')) {
         const head = cells(line);
+        const aligns = aligned(lines[i + 1]);
         i += 2;
         let rows = '';
         while (i < lines.length && lines[i].includes('|') && lines[i].trim()) {
-          rows += `<tr>${cells(lines[i]).map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`;
+          const row = cells(lines[i]);
+          rows += `<tr>${head.map((_, n) => cell('td', row[n] || '', aligns[n])).join('')}</tr>`;
           i++;
         }
         html += `<div class="table"><table><thead><tr>${head
-          .map((c) => `<th>${inline(c)}</th>`)
+          .map((c, n) => cell('th', c, aligns[n]))
           .join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
         continue;
       }
 
-      if (ITEM.test(line)) {
-        const items = [];
-        while (i < lines.length && ITEM.test(lines[i])) {
+      if (listable(line, i === 0 && state.after)) {
+        const items = [line];
+        i++;
+        while (i < lines.length && listable(lines[i], true)) {
           items.push(lines[i]);
           i++;
         }
@@ -307,6 +369,9 @@
       return blocks(String(markdown || '').replace(/\r\n?/g, '\n').split('\n'), {
         boxes: options.boxOffset || 0,
         interactive: options.interactive !== false,
+        depth: options.depth || 1,
+        after: options.after,
+        first: options.first,
       });
     } finally {
       pictureDir = '';
@@ -319,17 +384,18 @@
       .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm, ' ')
       .replace(/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/gm, ' ')
       .replace(/\s*\|\s*/g, ' ')
-      .replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
+      .replace(new RegExp(String.raw`^\s*(?:#{1,6}|>|${MARKER})\s+`, 'gm'), (head) => (/^\s*[a-z]/i.test(head) && !listable(head, false) ? head : ''))
       .replace(/\[( |x|X)\]\s+/g, '')
       .replace(/!\[\[[^\]]*\]\]/g, ' ')
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, ' ')
       .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/<\/?u>/g, '')
       .replace(/[*_~`]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
 
-  const api = { render, plain, escape };
+  const api = { render, plain, escape, MARKER, listKind, listable };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMarkdown = api;
 })(typeof window !== 'undefined' ? window : globalThis);

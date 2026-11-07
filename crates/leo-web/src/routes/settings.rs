@@ -14,6 +14,10 @@ fn no_settings() -> Response {
 }
 
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
+    settings_page(state, None).await
+}
+
+async fn settings_page(state: AppState, note: Option<String>) -> Response {
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
@@ -31,13 +35,21 @@ pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
         Ok(mut page) => {
             page["felix_usage"] = serde_json::json!(state.usage.snapshot());
             page["felix_tools"] = serde_json::json!(state.usage.tools());
+            if let Some(note) = note {
+                page["note"] = serde_json::json!(note);
+            }
             Json(page).into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
-pub(crate) async fn refresh_usage(State(state): State<AppState>) -> Response {
+pub(crate) async fn refresh_usage(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> Response {
+    let claude = serde_json::from_slice::<serde_json::Value>(&body)
+        .is_ok_and(|asked| asked["claude"] == true);
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
@@ -46,11 +58,11 @@ pub(crate) async fn refresh_usage(State(state): State<AppState>) -> Response {
     };
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        settings.refresh_usage();
+        settings.refresh_usage(claude)
     })
     .await
     {
-        Ok(()) => get_settings(State(state)).await,
+        Ok(note) => settings_page(state, note).await,
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "Could not refresh usage. Try again in a moment." })),

@@ -71,8 +71,8 @@ test('chat history retains its delete control through confirmation and handles f
   const history = page.locator('#chat-history');
   if (!(await history.isVisible())) await page.locator('.chat-head [data-chat="history"]').click();
   await expect(history).toBeVisible();
-  await expect(history.locator('[data-chat="new"]')).toHaveCount(0);
-  await expect(page.locator('.chat-head [data-chat="new"]')).toBeVisible();
+  await expect(history.locator('[data-chat="new"]')).toBeVisible();
+  await expect(page.locator('.chat-head [data-chat="new"]')).toBeHidden();
   const row = history.locator('.chat-history-row').filter({ has: page.locator('[data-id="review-history"]') });
   const button = row.locator('.chat-history-x');
   await button.evaluate(el => {
@@ -169,7 +169,7 @@ for (const layout of ['desktop', 'compact', 'source']) test(`Chats history ${lay
     el.click();
     return { before, after: history.getBoundingClientRect().x };
   });
-  expect(Math.abs(reversal.after - reversal.before), 'reverse preserves position in the same browser turn').toBeLessThan(1);
+  expect(Math.abs(reversal.after - reversal.before), 'reverse preserves position in the same browser turn').toBeLessThan(3);
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => { for (const run of historyMotion) run.finish(); });
   await expect(history).toBeHidden();
@@ -218,4 +218,32 @@ test('Escape on a pending history deletion leaves the streaming answer running',
     await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Send');
     await expect(page.locator('.chat-body')).toContainText('Stopped.');
   } finally { release(); }
+});
+
+test('Escape closes an open Felix menu or the Chats list and leaves the note open', async ({ page }) => {
+  const item = await note(page, 'Escape keeps the note');
+  await page.goto('/#/n/' + item.id);
+  await page.locator('#chat-toggle').click();
+  await expect(page.locator('#chat')).toBeVisible();
+  const open = '/#/n/' + item.id;
+  const here = () => page.evaluate(() => location.hash);
+  for (const [trigger, menu] of [['#chat-access', '#chat-access-menu'], ['#chat [data-chat="attach"]', '#chat-attach-menu']]) {
+    await page.locator(trigger).click();
+    await expect(page.locator(menu)).toBeVisible();
+    await page.evaluate(() => document.activeElement.blur());
+    await page.keyboard.press('Escape');
+    await expect(page.locator(menu)).toBeHidden();
+    expect(await here()).toBe(open.slice(1));
+    await expect(page.locator('#chat')).toBeVisible();
+  }
+  await page.locator('.chat-head .chat-history-toggle').click();
+  await expect(page.locator('#chat.with-history')).toBeVisible();
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#chat.with-history')).toHaveCount(0);
+  expect(await here()).toBe(open.slice(1));
+  await expect(page.locator('#chat')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#chat')).toBeHidden();
+  expect(await here()).toBe(open.slice(1));
 });

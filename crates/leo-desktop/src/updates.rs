@@ -218,7 +218,7 @@ impl Updates {
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner()) = Some(lease);
                                 self.installed.store(true, Ordering::Release);
-                                self.app.restart();
+                                restart(&self.app);
                             }
                             Err(_) => {
                                 self.failed("The update could not be installed. Quit and reopen Leo, then try Restart to update again.");
@@ -340,6 +340,63 @@ fn apply(
     Ok(lease)
 }
 
+#[cfg(target_os = "macos")]
+const REOPEN_SCRIPT: &str = r#"i=0; while kill -0 "$3" 2>/dev/null && [ "$i" -lt "$4" ]; do sleep 0.1; i=$((i+1)); done; "$1" "$2" || { sleep 1; "$1" "$2"; }"#;
+
+#[cfg(target_os = "macos")]
+const REOPEN_WAIT_TENTHS: u32 = 300;
+
+#[cfg(target_os = "macos")]
+fn bundle_of(binary: &std::path::Path) -> Option<std::path::PathBuf> {
+    let macos = binary.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    (macos.file_name()? == "MacOS" && contents.file_name()? == "Contents")
+        .then(|| bundle.to_path_buf())
+}
+
+#[cfg(target_os = "macos")]
+fn reopen_arguments(opener: &str, bundle: &std::path::Path, pid: u32, tenths: u32) -> Vec<String> {
+    vec![
+        "-c".into(),
+        REOPEN_SCRIPT.into(),
+        "sh".into(),
+        opener.into(),
+        bundle.display().to_string(),
+        pid.to_string(),
+        tenths.to_string(),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn reopen_after_exit(bundle: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    leo_core::children::quiet_command("/bin/sh")
+        .args(reopen_arguments(
+            "/usr/bin/open",
+            bundle,
+            std::process::id(),
+            REOPEN_WAIT_TENTHS,
+        ))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(drop)
+}
+
+fn restart(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = std::env::current_exe().ok().and_then(|b| bundle_of(&b)) {
+        if reopen_after_exit(&bundle).is_ok() {
+            app.exit(tauri::RESTART_EXIT_CODE);
+            return;
+        }
+    }
+    app.restart();
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -436,5 +493,73 @@ mod tests {
         )
         .is_err());
         assert!(!gate.busy());
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_app_bundle_comes_from_the_running_binary() {
+        let binary = std::path::Path::new("/Applications/Leo.app/Contents/MacOS/leo-app");
+        assert_eq!(
+            super::bundle_of(binary).unwrap(),
+            std::path::Path::new("/Applications/Leo.app")
+        );
+        assert!(super::bundle_of(std::path::Path::new("/tmp/target/debug/leo-app")).is_none());
+        assert!(super::bundle_of(std::path::Path::new("leo-app")).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    fn reopened_after(pid_lives: bool, tenths: u32) -> (std::time::Duration, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let opener = dir.path().join("open");
+        let log = dir.path().join("opened");
+        std::fs::write(
+            &opener,
+            format!("#!/bin/sh\necho \"$1\" >> '{}'\n", log.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut waited = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = waited.id();
+        let started = std::time::Instant::now();
+        let args = super::reopen_arguments(
+            opener.to_str().unwrap(),
+            std::path::Path::new("/Applications/Leo.app"),
+            pid,
+            tenths,
+        );
+        let mut script = std::process::Command::new("/bin/sh")
+            .args(args)
+            .spawn()
+            .unwrap();
+        if !pid_lives {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert!(!log.exists(), "must wait for the old process");
+            waited.kill().unwrap();
+            waited.wait().unwrap();
+        }
+        script.wait().unwrap();
+        let took = started.elapsed();
+        waited.kill().ok();
+        waited.wait().ok();
+        (took, std::fs::read_to_string(log).unwrap())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_new_app_opens_once_the_old_one_has_exited() {
+        let (took, opened) = reopened_after(false, 300);
+        assert_eq!(opened, "/Applications/Leo.app\n");
+        assert!(took >= std::time::Duration::from_millis(300));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_wait_is_bounded_when_the_old_process_never_exits() {
+        let (took, opened) = reopened_after(true, 3);
+        assert_eq!(opened, "/Applications/Leo.app\n");
+        assert!(took < std::time::Duration::from_secs(5));
     }
 }

@@ -20,7 +20,7 @@
     read: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
 
-  const HELLO = 'Ask me anything, or tell me what you want to learn and I will teach you or quiz you; type @ to bring in a note';
+  const NEW_CHAT = '<button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>';
   const STARTERS = [
     { text: 'Teach me this note step by step', needs: 'note', ask: 'Which note should I teach you?' },
     { text: 'Quiz me on this note', needs: 'note', ask: 'Which note should the quiz cover?' },
@@ -108,6 +108,10 @@
     const head = value.slice(0, VERDICT_WITHIN + 16);
     if (/\[\[?[a-z]*\]?$/i.test(head.trimEnd()) && head.length < VERDICT_WITHIN + 16) return { verdict: null, text: value.slice(0, value.search(/\[\[?[a-z]*\]?$/i)) };
     return { verdict: null, text: value };
+  }
+
+  function held(text) {
+    return String(text).replace(/(?:^|\n)[ \t]*(?:[-*+]|\d{1,9}[.)]?|([a-zA-Z])\1?[.)]?)[ \t]*$/, '');
   }
 
   const MOST_REPLY_STEPS = 64;
@@ -246,7 +250,22 @@
     return `${slide ? 'slide' : 'p.'} ${c.from}`.replace('p. ', 'p.');
   }
 
-  function cite(html, sources, escape, files) {
+  function numbered(text, sources) {
+    const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
+    const out = [];
+    for (const m of String(text).matchAll(CITED)) {
+      for (const c of citations(m[1])) {
+        const s = !c.file && byN.get(c.id);
+        if (!s) continue;
+        const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
+        const key = `${s.id}|${lines}`;
+        if (!out.some((x) => x.key === key)) out.push({ key, n: out.length + 1, s, lines, where: lines ? placeWord(c) : '' });
+      }
+    }
+    return out;
+  }
+
+  function cite(html, sources, escape, files, marks) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
     const byF = new Map((files || []).map((f) => [`f${f.n}`, f]));
     const short = (t) => (t.length > 28 ? t.slice(0, 27) + '…' : t);
@@ -264,10 +283,12 @@
           if (!s) return '';
           const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
           const where = lines ? placeWord(c) : '';
+          const mark = marks && marks.find((x) => x.key === `${s.id}|${lines}`);
+          if (mark) return `<button class="cite cite-n" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}" aria-label="${escape(`Source ${mark.n}: ${s.title}${where ? `, ${where}` : ''}`)}">${mark.n}</button>`;
           return `<button class="cite" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}">${escape(short(s.title))}${where ? `<span class="cite-at">${escape(where)}</span>` : ''}</button>`;
         })
         .filter(Boolean);
-      return chips.length ? `${whole.startsWith(' ') ? ' ' : ''}${chips.join('')}` : '';
+      return chips.length ? `${whole.startsWith(' ') && !chips.every((c) => c.startsWith('<button class="cite cite-n"')) ? ' ' : ''}${chips.join('')}` : '';
     });
   }
 
@@ -679,31 +700,8 @@
   const NOTE_DRAG = 'application/x-leo-note';
 
   const WORDS = /\s*\S+|\s+/g;
-  const NO_ARRIVAL = 'pre, code, button, svg, textarea, input, .katex, .cite';
 
   const greeting = (text, escape) => (text.match(WORDS) || []).map((part, i) => `<span class="word" style="animation-delay:${160 + Math.min(i, 14) * 30}ms">${escape(part)}</span>`).join('');
-
-  function arriving(text) {
-    const out = document.createDocumentFragment();
-    (text.match(WORDS) || []).forEach((part, i) => {
-      const word = document.createElement('span');
-      word.className = 'word';
-      word.style.animationDelay = `${Math.min(i, 8) * 30}ms`;
-      word.textContent = part;
-      out.append(word);
-    });
-    return out;
-  }
-
-  function arrive(node) {
-    if (node.nodeType === 3) return node.data.trim() ? arriving(node.data) : node;
-    if (node.nodeType !== 1) return node;
-    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-    const found = [];
-    for (let t = walker.nextNode(); t; t = walker.nextNode()) if (t.data.trim() && !t.parentElement.closest(NO_ARRIVAL)) found.push(t);
-    for (const t of found) t.replaceWith(arriving(t.data));
-    return node;
-  }
 
   const isWord = (n) => n.nodeType === 1 && n.classList.contains('word');
 
@@ -725,13 +723,13 @@
     for (const { name, value } of to.attributes) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
   }
 
-  function settle(from, to, arrives) {
+  function settle(from, to) {
     const was = runs(from);
     const now = runs(to);
     now.forEach((b, i) => {
       const a = was[i];
       if (!a) {
-        for (const n of b.nodes) from.append(arrives ? arrive(n) : n);
+        for (const n of b.nodes) from.append(n);
         return;
       }
       if (a.run && b.run) {
@@ -739,7 +737,7 @@
         const after = said(b);
         if (before === after) return;
         const end = a.nodes[a.nodes.length - 1];
-        if (arrives && before && after.startsWith(before)) end.after(arriving(after.slice(before.length)));
+        if (before && after.startsWith(before) && end.nodeType === 3) end.appendData(after.slice(before.length));
         else {
           end.after(...b.nodes);
           a.nodes.forEach((n) => n.remove());
@@ -751,10 +749,10 @@
       if (!a.run && !b.run && x.nodeType === 1 && y.nodeType === 1 && x.tagName === y.tagName) {
         if (x.outerHTML === y.outerHTML) return;
         match(x, y);
-        settle(x, y, arrives || (x.classList.contains('prose') && Boolean(x.closest('.msg.pending'))));
+        settle(x, y);
         return;
       }
-      x.before(...b.nodes.map((n) => (arrives ? arrive(n) : n)));
+      x.before(...b.nodes);
       a.nodes.forEach((n) => n.remove());
     });
     for (const a of was.slice(now.length)) a.nodes.forEach((n) => n.remove());
@@ -769,7 +767,7 @@
   function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
-    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
+    const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, fresh: false, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -777,17 +775,15 @@
     panel.setAttribute('aria-label', 'Ask Felix');
     panel.innerHTML = `
       <nav class="chat-history" id="chat-history" aria-label="Your chats">
-        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b></div>
+        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b>${NEW_CHAT}</div>
         <div class="chat-history-find"><input id="chat-history-search" type="search" placeholder="Search your chats" autocomplete="off" aria-label="Search your chats"></div>
         <div class="chat-history-list" id="chat-history-list"></div>
       </nav>
       <section class="chat-main">
       <header class="chat-head">
         <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats" aria-expanded="false" aria-controls="chat-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
-        <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
-        <span class="chat-name"><b>Felix</b><span class="chat-context" id="chat-context"></span></span>
-        <button type="button" class="icon-btn" data-chat="drop" aria-label="Stop reading this note" title="Stop reading this note" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button>
-        <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <span class="chat-title quiet" id="chat-title">New chat</span>
+        ${NEW_CHAT}
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
       <div class="study-progress" id="study-progress" hidden></div>
@@ -797,18 +793,20 @@
         <div class="chat-pick" id="chat-pick" hidden></div>
         <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
+          <span class="chat-perch" id="chat-face">${felix(100, 'idle')}</span>
           <div class="chat-attach-menu" id="chat-attach-menu" role="menu" hidden><button type="button" role="menuitem" data-chat="attach-note">${icons.note || ''}<span>A note from leo</span></button>${prepare ? `<button type="button" role="menuitem" data-chat="attach-file">${icons.paperclip || ''}<span>A file from this device</span></button>` : ''}</div>
           <input type="file" id="chat-file" multiple accept="${FILE_TYPES}" hidden>
-          <button class="chat-attach" type="button" data-chat="attach" aria-haspopup="menu" aria-controls="chat-attach-menu" aria-expanded="false" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
           <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
-          <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
-        </form>
-        <div class="chat-under">
-          <button type="button" class="chat-access" id="chat-access" data-chat="access" aria-haspopup="menu" aria-expanded="false"></button>
-          <span class="chat-under-hint">⇧Tab to switch</span>
+          <div class="chat-tools">
+            <button class="chat-attach" type="button" data-chat="attach" aria-haspopup="menu" aria-controls="chat-attach-menu" aria-expanded="false" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+            <button type="button" class="chat-chip" data-chat="drop" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg><span></span></button>
+            <button type="button" class="chat-access" id="chat-access" data-chat="access" aria-haspopup="menu" aria-expanded="false"></button>
+            <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+          </div>
           <div class="chat-access-menu" id="chat-access-menu" role="menu" hidden>${ACCESS.map((a) => `<button type="button" role="menuitemradio" data-chat="access-pick" data-access="${a.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACCESS_GLYPHS[a.id]}</svg><span><b>${escape(a.label)}</b><small>${escape(a.hint)}</small></span></button>`).join('')}</div>
-        </div>
+        </form>
       </footer>
+      <div class="chat-below" id="chat-below"></div>
       </section>`;
     document.body.appendChild(panel);
     const $ = (sel) => panel.querySelector(sel);
@@ -1133,6 +1131,7 @@
     });
     if (typeof root.ResizeObserver === 'function') {
       const historySize = new root.ResizeObserver(() => {
+        document.body.style.setProperty('--chat-over', `${panel.hidden ? 0 : Math.round(panel.getBoundingClientRect().width)}px`);
         panel.classList.toggle('source-narrow', sourceNarrow());
         if (state.sidebar === null && !panel.hidden) {
           const on = sidebarOpen();
@@ -1288,6 +1287,7 @@
     }
 
     function drawChats() {
+      drawTitle();
       const box = $('#chat-history-list');
       if (!box) return;
       if (!state.chats) {
@@ -1300,11 +1300,16 @@
           : '<div class="chat-history-none">No chat mentions that.</div>';
         return;
       }
-      if (!state.chats.length) {
+      const first = state.messages.find((m) => m.role === 'user' && m.text);
+      const ghost = state.fresh && !state.chats.some((c) => c.id === state.id)
+        ? [{ id: state.id, title: first ? draftTitle(first) : 'New chat', updated_at: new Date().toISOString(), ghost: true }]
+        : [];
+      const list = [...ghost, ...state.chats];
+      if (!list.length) {
         box.innerHTML = '<div class="chat-history-none">Your conversations with Felix are kept here, on this computer.</div>';
         return;
       }
-      box.innerHTML = groups(state.chats)
+      box.innerHTML = groups(list)
         .map((g) => `<div class="chat-history-group">${escape(g.name)}</div>${g.chats
           .map((c) => chatRow(c))
           .join('')}`)
@@ -1312,7 +1317,7 @@
     }
 
     function chatRow(c) {
-      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button></div>`;
+      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}"><span class="chat-history-title">${escape(c.title)}</span></button>${c.ghost ? '' : `<button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}"><span class="chat-delete-x" aria-hidden="true">×</span><span class="chat-delete-label" aria-hidden="true">Delete</span></button>`}</div>`;
     }
 
     let resumeSeq = 0;
@@ -1321,6 +1326,7 @@
       resumeSeq++;
       if (state.busy) state.busy.abort();
       state.id = id;
+      state.fresh = true;
       stopCompacting();
       state.messages = [];
       state.refs = [];
@@ -1362,6 +1368,7 @@
         return null;
       }
       state.id = chat.id;
+      state.fresh = false;
       compactLater();
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
@@ -1426,13 +1433,13 @@
       state.doomed = null;
       syncChatDelete();
     }
-    panel.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !state.doomed) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       state.doomed = null;
       syncChatDelete();
-    });
+    }, true);
     document.addEventListener('pointerdown', spare, true);
     document.addEventListener('focusin', spare, true);
 
@@ -1700,12 +1707,41 @@
       return `<div class="session-recap" role="status"><h4>Study session done</h4><p>${parts.join(' · ')}</p>${lines.join('')}<div class="session-acts">${again ? '<button type="button" class="btn primary sm" data-chat="session-again">Study those again</button>' : ''}<button type="button" class="btn plain sm" data-chat="session-done">Done</button></div></div>`;
     }
 
+    const EYE = '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>';
+    const EYE_OFF = '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
+
     function drawContext() {
-      const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
-      box.textContent = ctx ? `On “${ctx.title || 'Untitled'}”` : 'Looks through your notes';
-      box.title = ctx ? `Also reading “${ctx.title || 'Untitled'}” and notes connected to it` : '';
-      $('[data-chat="drop"]').hidden = !ctx;
+      const chip = $('[data-chat="drop"]');
+      const off = Boolean(state.context) && !ctx;
+      const label = off ? 'Read this note again' : 'Stop reading this note';
+      chip.hidden = !state.context;
+      chip.classList.toggle('off', off);
+      chip.title = label;
+      chip.setAttribute('aria-label', label);
+      chip.firstElementChild.innerHTML = off ? EYE_OFF : EYE;
+      chip.lastElementChild.textContent = state.context ? state.context.title || 'Untitled' : '';
+    }
+
+    const clippedTitle = (text) => {
+      const chars = Array.from(String(text).replace(/\s+/g, ' ').trim());
+      return chars.length > 80 ? `${chars.slice(0, 80).join('')}…` : chars.join('');
+    };
+
+    function draftTitle(first) {
+      const asked = clippedTitle(first.text);
+      const open = state.context && state.dropped !== state.context.id ? state.context.title : undefined;
+      const note = [first.refs?.[0]?.title, first.docs?.[0], state.refs[0]?.title, open].find((t) => typeof t === 'string');
+      if (!note || !note.trim() || asked.split(' ').length > 6 || asked.toLowerCase().includes(note.toLowerCase())) return asked;
+      return clippedTitle(`${asked.replace(/[?.! ]+$/, '')}: ${note}`);
+    }
+
+    function drawTitle() {
+      const first = state.messages.find((m) => m.role === 'user' && m.text);
+      const saved = (state.chats || []).find((c) => c.id === state.id);
+      const title = $('#chat-title');
+      title.textContent = saved ? saved.title : first ? draftTitle(first) : 'New chat';
+      title.classList.toggle('quiet', !saved && !first);
     }
 
     const writer = (m) => (m && m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '');
@@ -1739,11 +1775,13 @@
         const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
         return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
-      const shown = grade(m.text).text;
+      const spoken = grade(m.text).text;
+      const shown = m.pending ? held(spoken) : spoken;
       const html = !shown && m.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : '';
       const used = cited(m.text, m.sources);
-      const from = !m.pending && used.length > 1
-        ? `<div class="msg-from">${used.map((s) => `<button class="cite" data-chat="open" data-id="${escape(s.id)}">${escape(s.title)}</button>`).join('')}</div>`
+      const marks = numbered(shown, m.sources);
+      const from = !m.pending && marks.length
+        ? `<div class="msg-from">${marks.map((x) => `<button class="cite cite-src" data-chat="open" data-id="${escape(x.s.id)}"${x.lines ? ` data-line="${x.lines}"` : ''}><b>${x.n}</b>${escape(x.s.title)}${x.where ? ` · ${escape(x.where)}` : ''}</button>`).join('')}</div>`
         : '';
       const error = m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
       const verdict = grade(m.text).verdict;
@@ -1756,12 +1794,12 @@
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
         : '';
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
-      const removed = verdict ? m.text.length - shown.length : 0;
+      const removed = verdict ? m.text.length - spoken.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
       const taken = parts.flatMap((part) => part.steps || []);
       const newest = parts.findLastIndex((part) => part.steps);
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
-      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`;
+      const prose = (text) => `<div class="prose">${cite(render(text), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
       const live = (part, k) => {
         const run = stepRuns(part.steps).at(-1);
         return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
@@ -1802,11 +1840,18 @@
     function welcome() {
       const where = onNote() ? 'this note' : 'your notes';
       return `<div class="chat-hello" data-hello="${escape(`${state.id}:${where}`)}">
-        <p class="chat-hello-text">${greeting(`Hi, I'm Felix! ${HELLO}. I also read ${where}, and the notes connected to it.`, escape)}</p>
+        <div class="chat-hello-lead"><b>${greeting("Hi, I'm Felix.", escape)}</b><p class="chat-hello-text">${greeting(`${onNote() ? `I'm reading “${state.context.title || 'Untitled'}” and the notes connected to it.` : "I'm looking through your notes."} Ask anything, or tell me what you want to learn.`, escape)}</p></div>
         ${reviewCard()}
-        <div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
-        ${asking()}
       </div>`;
+    }
+
+    function drawBelow() {
+      const next = document.createElement('div');
+      if (!state.messages.length) {
+        const unread = Boolean(state.context) && state.dropped === state.context.id;
+        next.innerHTML = `<div class="chat-starters">${STARTERS.map((s, i) => unread && s.needs === 'note' ? '' : `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>${asking()}`;
+      }
+      settle($('#chat-below'), next);
     }
 
     function reviewCard() {
@@ -2355,12 +2400,18 @@
       const session = currentSession();
       const recap = session && session.state === 'finished' ? recapCard(session) : '';
       const html = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}` : welcome();
+      const perched = !state.messages.length;
+      const land = perched !== panel.classList.contains('perched') && !panel.hidden && root.leoMotion?.dock ? root.leoMotion.dock($('.chat-foot'), $('#chat-form')) : null;
       const first = body.firstElementChild;
       const next = document.createElement('div');
       next.innerHTML = html;
       const hello = Boolean(first) && first.classList.contains('chat-hello') && Boolean(next.firstElementChild) && next.firstElementChild.dataset.hello === first.dataset.hello;
-      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next, false);
+      if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next);
       else body.innerHTML = html;
+      panel.classList.toggle('perched', perched);
+      drawBelow();
+      if (land) land();
+      drawTitle();
       drawProgress();
       if (typing) {
         const again = body.querySelector(`.${typing.box}[data-i="${typing.i}"][data-k="${typing.k}"]`);
@@ -2463,6 +2514,7 @@
         state.messages.push(answer);
         if (input.value.trim() === question) input.value = '';
         fit();
+        drawChats();
       }
       const controller = new AbortController();
       const thread = { id: state.id, refs: state.refs.slice(), messages: state.messages };
@@ -2645,6 +2697,7 @@
       const still = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (state.open) {
         panel.classList.remove('chat-leaving');
+        panel.classList.toggle('perched', !state.messages.length);
         panel.hidden = false;
         document.body.classList.add('chat-open');
         onToggle(true);
@@ -2799,8 +2852,7 @@
         remember();
       }
       else if (what === 'drop') {
-        input.focus();
-        state.dropped = state.context && state.context.id;
+        state.dropped = state.dropped === state.context.id ? null : state.context.id;
         drawContext();
         if (!state.messages.length) draw();
       } else if (what === 'open') {
@@ -2908,10 +2960,17 @@
         findTimer = setTimeout(() => findChats(query), 180);
       }
     });
-    panel.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', (e) => {
+      if (!state.open || e.isComposing) return;
       const open = [['#chat-attach-menu', '[data-chat="attach"]'], ['#chat-access-menu', '#chat-access']]
         .map(([menu, trigger]) => ({ menu: $(menu), trigger: $(trigger) }))
         .find((x) => !x.menu.hidden && !x.menu.dataset.folding);
+      if (e.key === 'Escape' && !open && !state.doomed && !state.busy && panel.classList.contains('with-history') && (history.contains(e.target) || !wide() || sourceNarrow()) && !e.target.closest('input, textarea') && !document.querySelector('.scrim')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        showSidebar(false);
+        return;
+      }
       if (!open) return;
       const { menu, trigger } = open;
       if (e.key === 'Escape') {
@@ -2932,7 +2991,7 @@
         else next = (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
         items[next].focus();
       }
-    });
+    }, true);
     panel.addEventListener('keydown', (e) => {
       if (e.target.id !== 'chat-pick-search') return;
       if (e.key === 'Escape') {
@@ -2961,6 +3020,7 @@
       if (e.key === 'Escape') {
         e.stopPropagation();
         if (state.busy) state.busy.abort();
+        else if (panel.classList.contains('with-history')) showSidebar(false);
         else toggle(false);
       }
     });
@@ -2977,10 +3037,19 @@
     panel.addEventListener('pointerout', (e) => light(e.relatedTarget));
     panel.addEventListener('focusin', (e) => light(e.target));
     panel.addEventListener('focusout', (e) => light(e.relatedTarget));
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.isComposing || !state.open || e.target !== document.body || document.querySelector('.scrim, .scrim-gone')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!state.doomed && !state.busy && panel.classList.contains('with-history')) showSidebar(false);
+      else if (state.busy) state.busy.abort();
+      else toggle(false);
+    });
     panel.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape' || !state.busy || e.target === input || e.target.id === 'chat-pick-search') return;
+      if (e.key !== 'Escape' || e.target.closest('input, textarea, select, [contenteditable]')) return;
       e.stopPropagation();
-      state.busy.abort();
+      if (state.busy) state.busy.abort();
+      else toggle(false);
     });
 
     return {
@@ -3039,5 +3108,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, usageWeek, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);
