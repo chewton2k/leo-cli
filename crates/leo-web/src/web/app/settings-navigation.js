@@ -27,7 +27,6 @@ const SETTINGS_INDEX = [
   { section: 'general', id: 'felix-lettering', label: "Felix's lettering", keywords: 'appearance font typeface serif letters notes writing felix own' },
   { section: 'general', id: 'open-at-login', label: 'Open at login', keywords: 'start startup boot launch computer' },
   { section: 'general', id: 'menu-bar', label: 'Show in menu bar', keywords: 'system tray icon start' },
-  { section: 'general', id: 'quit', label: 'Quit Leo', keywords: 'exit close stop app' },
   { section: 'dictation', id: 'dictation-shortcut', label: 'Dictation shortcut', keywords: 'keys hotkey record speak keyboard' },
   { section: 'dictation', id: 'dictation-activation', label: 'Activation', keywords: 'hold tap press dictation shortcut' },
   { section: 'dictation', id: 'dictation-microphone', label: 'Microphone', keywords: 'dictation input device audio mic' },
@@ -46,7 +45,7 @@ const SETTINGS_INDEX = [
   { section: 'writing', id: 'writing-model', label: 'Writing AI model', keywords: 'effort price cost thinking' },
   { section: 'writing', id: 'writing-key', label: 'API key', keywords: 'secret token credential password' },
   { section: 'writing', id: 'writing-test', label: 'Test the AI', keywords: 'check connection working try' },
-  { section: 'writing', id: 'writing-activity', label: 'Felix activity', keywords: 'usage tokens cache requests tools calls timing' },
+  { section: 'writing', id: 'writing-activity', label: 'Felix activity', keywords: 'usage tokens cache requests tools calls timing processes running codex claude' },
   { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
   { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
   { section: 'felix', id: 'felix-auto-model', label: 'Cheaper model for lookups', keywords: 'felix model routing auto cheap cheaper cost tokens lookup' },
@@ -215,8 +214,9 @@ function settingsFrame(section, content) {
   const ids = settingsItems().map(([id]) => id);
   const from = ids.indexOf(settingsDrawn), to = ids.indexOf(section);
   const oldNav = shown && app.querySelector('.settings-sections'), oldPill = oldNav?.querySelector('.settings-nav-pill.placed');
-  if (oldPill) {
-    const box = oldPill.getBoundingClientRect(), frame = oldNav.getBoundingClientRect();
+  const box = oldPill?.getBoundingClientRect();
+  if (box && box.height) {
+    const frame = oldNav.getBoundingClientRect();
     settingsPillFrom = { top: box.top - frame.top - oldNav.clientTop + oldNav.scrollTop, height: box.height };
   } else settingsPillFrom = null;
   settingsDrawn = section;
@@ -245,9 +245,22 @@ function placeSettingsPill(nav, on) {
 }
 
 const settingsRevealed = new WeakMap();
+const settingsWatched = new WeakSet();
+function watchSettingsNav(frame) {
+  if (!frame || settingsWatched.has(frame) || typeof ResizeObserver !== 'function') return;
+  settingsWatched.add(frame);
+  const watcher = new ResizeObserver(() => {
+    const sections = frame.querySelector('.settings-sections');
+    if (!frame.isConnected || !sections) return watcher.disconnect();
+    settingsRevealed.delete(sections);
+    revealSettingsLink();
+  });
+  watcher.observe(frame);
+}
 function revealSettingsLink() {
   const nav = app.querySelector('.settings-sections'), on = nav?.querySelector('.settings-link.on');
   if (nav) placeSettingsPill(nav, on);
+  watchSettingsNav(nav?.closest('.settings-nav'));
   if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;
   settingsRevealed.set(nav, on.getAttribute('href'));
   if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
@@ -320,19 +333,19 @@ document.addEventListener('keydown', (e) => {
 });
 
 let choiceCardsMade = 0;
-function choiceCards({ label, choices, current, field = '', action = '', key = '', columns = 0 }) {
+function choiceCards({ label, choices, current, field = '', action = '', key = '', columns = 0, className = '' }) {
   const name = `choice-${++choiceCardsMade}`;
   const index = Math.max(0, choices.findIndex(([value]) => String(value) === String(current)));
-  const cards = choices.map(([value, title, about = '', diagram = ''], i) => {
+  const cards = choices.map(([value, title, about = '', diagram = '', icon = ''], i) => {
     const on = i === index;
-    const art = diagram ? `<span class="choice-diagram" aria-hidden="true">${diagram}</span>` : '';
+    const art = (diagram ? `<span class="choice-diagram" aria-hidden="true">${diagram}</span>` : '') + (icon ? `<span class="choice-icon">${icon}</span>` : '');
     const words = `<span class="choice-title">${esc(title)}</span>${about ? `<span class="choice-about">${esc(about)}</span>` : ''}`;
     return action
       ? `<button type="button" class="choice-pick${on ? ' on' : ''}" data-action="${action}" data-${key}="${esc(value)}" aria-pressed="${on}">${art}${words}</button>`
       : `<label class="choice-pick${on ? ' on' : ''}">${art}<input type="radio" name="${name}" value="${esc(value)}"${on ? ' checked' : ''}>${words}</label>`;
   }).join('');
   const hidden = field ? `<input type="hidden" ${field} value="${esc(current ?? '')}">` : '';
-  return `<div class="choice-cards" role="${action ? 'group' : 'radiogroup'}" aria-label="${esc(label)}" style="--count:${columns || choices.length};--at:${index}">${hidden}<span class="choice-ring" aria-hidden="true"></span>${cards}</div>`;
+  return `<div class="choice-cards${className ? ` ${className}` : ''}" role="${action ? 'group' : 'radiogroup'}" aria-label="${esc(label)}" style="--count:${columns || choices.length};--at:${index}">${hidden}<span class="choice-ring" aria-hidden="true"></span>${cards}</div>`;
 }
 function syncChoiceCards(box, from = null) {
   const picks = [...box.querySelectorAll('.choice-pick')];

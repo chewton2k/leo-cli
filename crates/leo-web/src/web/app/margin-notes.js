@@ -300,7 +300,7 @@ function marginNow(t) {
   return felixSaid ? felixSaid.text : '';
 }
 
-const INK_SKIP = 'pre, code, figure, svg, a, .katex, [class*="math"], [class*="diagram"], [class*="mermaid"]';
+const INK_SKIP = 'pre, code, figure, svg, a, .see-larger, .katex, [class*="math"], [class*="diagram"], [class*="mermaid"]';
 
 function inkNodes(root) {
   const nodes = [];
@@ -329,13 +329,14 @@ function inkNodes(root) {
 
 function marginAnswer(line, text, arriving = false) {
   const md = window.leoMarkdown;
-  const html = md.render(text, { interactive: false, dir: marginPage.s?.note.directory || '' });
+  const html = md.render(text, { interactive: false, rows: true, dir: marginPage.s?.note.directory || '' });
   const shape = document.createElement('div');
   shape.innerHTML = html;
   const only = shape.firstElementChild;
   if (shape.childElementCount !== 1 || only.tagName !== 'P' || only.childElementCount) {
     line.classList.add('prose');
     line.innerHTML = html;
+    if (/<figure class="(diagram|drawing)/.test(html)) line.insertAdjacentHTML('beforeend', '<button type="button" class="see-larger" data-action="diagram-expand" data-reply="here">See it larger</button>');
   } else {
     line.textContent = text;
   }
@@ -354,7 +355,7 @@ function marginElement(t) {
   el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}"></button><button type="button" class="margin-chat" data-margin-act="chat" aria-label="Ask in chat" title="Ask in chat">${ICON.chat}</button><div class="margin-said"></div><div class="margin-pending" hidden></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
     <form class="margin-reply"><textarea rows="1" maxlength="1000" aria-label="Reply to Felix" placeholder="Reply"></textarea><button type="submit" class="margin-send" aria-label="Send" disabled>${ICON.send}</button></form>
     <p class="margin-problem" role="status" hidden></p>
-    <div class="margin-acts"><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button><button type="button" class="margin-add" data-margin-act="add">Add to note</button></div></div></div>`;
+    <div class="margin-acts"><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button><button type="button" class="msg-act icon-act" data-action="diagram-expand" data-reply="all" aria-label="See it larger" title="See it larger">${ICON.expand}</button><button type="button" class="margin-add" data-margin-act="add">Add to note</button></div></div></div>`;
   marginPage.layer.appendChild(el);
   marginPage.els.set(t.id, el);
   marginPage.observer?.observe(el);
@@ -710,7 +711,7 @@ function marginKey(e) {
 }
 
 document.addEventListener('pointerdown', (e) => {
-  if (!marginPage.open || e.target.closest?.('.margin-note, .margin-mark')) return;
+  if (!marginPage.open || e.target.closest?.('.margin-note, .margin-mark, .scrim, .scrim-gone')) return;
   const el = marginPage.els.get(marginPage.open);
   if ($('textarea', el)?.value.trim()) return;
   marginPage.open = null;

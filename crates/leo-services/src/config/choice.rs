@@ -76,10 +76,7 @@ pub const WRITING: &[Choice] = &[
             m("claude-haiku-5-5", "included in your Claude plan"),
             m("claude-sonnet-5-5", "included in your Claude plan"),
             m("claude-opus-5-5", "included in your Claude plan"),
-            m(
-                "claude-fable-5-1",
-                "needs usage credits on your Claude plan",
-            ),
+            m("claude-fable-5-1", "included with Max plans and above"),
         ],
     },
 ];
@@ -157,20 +154,23 @@ pub fn ollama_models(base_url: &str) -> Vec<String> {
 }
 
 pub fn ollama_names(json: &serde_json::Value) -> Vec<String> {
-    let mut names: Vec<String> = json["models"]
+    let mut found: Vec<(String, u64)> = json["models"]
         .as_array()
         .map(|models| {
             models
                 .iter()
-                .filter_map(|m| m["name"].as_str().or(m["model"].as_str()))
-                .filter(|n| !n.contains("embed"))
-                .map(str::to_string)
+                .filter_map(|m| {
+                    let name = m["name"].as_str().or(m["model"].as_str())?;
+                    Some((name.to_string(), m["size"].as_u64().unwrap_or(0)))
+                })
+                .filter(|(n, _)| !n.contains("embed"))
                 .collect()
         })
         .unwrap_or_default();
-    names.sort();
-    names.dedup();
-    names
+    found.sort();
+    found.dedup_by(|a, b| a.0 == b.0);
+    found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    found.into_iter().map(|(name, _)| name).collect()
 }
 
 pub fn models_dir() -> PathBuf {
@@ -421,7 +421,7 @@ mod tests {
                     model.price.contains('$')
                         || model.price.starts_with("free")
                         || model.price.starts_with("included in your")
-                        || model.price.contains("usage credits"),
+                        || model.price.starts_with("included with"),
                     "{}: {}",
                     model.id,
                     model.price
@@ -559,14 +559,16 @@ mod tests {
     #[test]
     fn ollama_names_come_from_the_tags_listing_without_embedding_models() {
         let json = serde_json::json!({"models": [
-            {"name": "qwen3:8b", "model": "qwen3:8b"},
+            {"name": "qwen3:8b", "model": "qwen3:8b", "size": 5200000000u64},
             {"name": "nomic-embed-text:latest"},
-            {"model": "llama3.3:70b"},
-            {"name": "gemma3:4b"}
+            {"model": "llama3.3:70b", "size": 42000000000u64},
+            {"name": "gemma3:4b", "size": 3300000000u64},
+            {"name": "alpha"},
+            {"name": "beta"}
         ]});
         assert_eq!(
             ollama_names(&json),
-            vec!["gemma3:4b", "llama3.3:70b", "qwen3:8b"]
+            vec!["llama3.3:70b", "qwen3:8b", "gemma3:4b", "alpha", "beta"]
         );
         assert!(ollama_names(&serde_json::json!({})).is_empty());
     }

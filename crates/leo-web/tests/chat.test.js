@@ -719,41 +719,83 @@ test('only an empty search with nothing cited is marked as not from the notes', 
   assert.equal(C.notFromNotes([...empty, { tool: 'open_note', text: 'Looked for “x”', found: [], failed: true }], 'Wear goggles.', 0), true);
 });
 
-test('the saved week adds up by model and states the cached share', () => {
-  const [week, big, unknown, bad] = C.usageWeek([
-    { model: 'big', calls: 2, input: 1000, cached: 750, output: 40 },
-    { model: '', calls: 1, input: 0, cached: 0, output: 0 },
-    { model: '<b>', calls: NaN, input: -1, cached: 5, output: Infinity },
-    { calls: 1 },
-  ]);
-  assert.equal(week.label, 'Last 7 days');
-  assert.equal(week.detail, '3 requests · 1,000 in (75% from the cache) · 40 out');
-  assert.equal(big.detail, '2 requests · 1,000 in (75% from the cache) · 40 out');
-  assert.equal(unknown.label, 'Model not reported');
-  assert.equal(unknown.detail, '1 request · 0 in · 0 out');
-  assert.equal(bad.detail, '0 requests · 0 in · 0 out');
-  assert.deepEqual(C.usageWeek(null), []);
-  assert.deepEqual(C.usageWeek([]), []);
-  const many = C.usageWeek(Array.from({ length: 20 }, (_, n) => ({ model: `m${n}`, calls: 1, input: 1, cached: 0, output: 0 })));
-  assert.equal(many.length, 13);
-  assert.ok(many[0].detail.startsWith('20 requests'));
+const USAGE_DAYS = {
+  models: [
+    { day: '2026-11-07', name: 'big', calls: 2, input: 1000, cached: 750, output: 40 },
+    { day: '2026-11-06', name: '', calls: 1, input: 0, cached: 0, output: 0 },
+    { day: '2026-11-05', name: '<b>', calls: NaN, input: -1, cached: 5, output: Infinity },
+    { day: '2026-11-01', name: 'small', calls: 3, input: 300, cached: 9999, output: 30 },
+    { day: '2026-09-01', name: 'old', calls: 5, input: 50, cached: 0, output: 5 },
+    { name: 'nameless', calls: 1 },
+    null,
+  ],
+  kinds: [
+    { day: '2026-11-07', name: 'answer', calls: 3, input: 0, cached: 0, output: 0 },
+    { day: '2026-11-07', name: '<script>', calls: 9 },
+    { day: '2026-11-01', name: 'margin_read', calls: 2 },
+  ],
+};
+
+test('a usage period adds up tokens, states the cache share and drops garbage', () => {
+  const week = C.usagePeriod(USAGE_DAYS, 7, '2026-11-07');
+  assert.deepEqual(week.totals, { calls: 6, input: 1300, cached: 1050, output: 70, share: 1050 / 1300 });
+  assert.deepEqual(week.models.map((m) => [m.name, m.tokens]), [['big', 1040], ['small', 330], ['', 0], ['<b>', 0]]);
+  assert.deepEqual(week.kinds.map((k) => [k.name, k.calls]), [['answer', 3], ['margin_read', 2]]);
+  assert.equal(week.bars.length, 7);
+  assert.equal(week.bars[6].to, '2026-11-07');
+  assert.deepEqual(week.bars[6].by, [['big', 1040]]);
+  const month = C.usagePeriod(USAGE_DAYS, 30, '2026-11-07');
+  assert.equal(month.bars.length, 30);
+  assert.ok(!month.models.some((m) => m.name === 'old'));
+  const quarter = C.usagePeriod(USAGE_DAYS, 90, '2026-11-07');
+  assert.equal(quarter.bars.length, 13);
+  assert.equal(quarter.bars[12].to, '2026-11-07');
+  assert.equal(quarter.bars[12].from, '2026-11-01');
+  assert.equal(quarter.bars[0].from, '2026-08-10');
+  assert.ok(quarter.models.some((m) => m.name === 'old'));
 });
 
-test('usage breakdown separates cached input, failures and unknown counts without accepting arbitrary labels', () => {
-  const rows = C.usageRows([
+test('an empty or unreadable usage period is empty and never throws', () => {
+  for (const days of [null, undefined, {}, { models: 'x', kinds: 5 }, { models: [], kinds: [] }]) {
+    const none = C.usagePeriod(days, 30, '2026-11-07');
+    assert.equal(none.totals.calls, 0);
+    assert.equal(none.totals.share, 0);
+    assert.deepEqual(none.models, []);
+    assert.deepEqual(none.kinds, []);
+  }
+  assert.deepEqual(C.usagePeriod(USAGE_DAYS, 30, 'garbage').bars, []);
+  assert.equal(C.usagePeriod(USAGE_DAYS, 12, '2026-11-07').length, 30);
+});
+
+test('colours go to the models in use this week first, and the rest fold into Other', () => {
+  const days = { models: [
+    { day: '2026-11-07', name: 'now', calls: 1, input: 10, cached: 0, output: 0 },
+    { day: '2026-10-01', name: 'then', calls: 1, input: 9000, cached: 0, output: 0 },
+    { day: '2026-10-02', name: 'more', calls: 1, input: 500, cached: 0, output: 0 },
+    { day: '2026-10-03', name: 'least', calls: 1, input: 1, cached: 0, output: 0 },
+  ], kinds: [] };
+  const ranked = C.usageRank(days, '2026-11-07');
+  assert.deepEqual(ranked.models, ['now', 'then', 'more', 'least']);
+  const items = C.usagePeriod(days, 90, '2026-11-07').models.map((m) => ({ name: m.name, value: m.tokens, calls: m.calls }));
+  const folded = C.usageFold(items, ranked.models.slice(0, 3));
+  assert.deepEqual(folded.map((s) => [s.name, s.rank, s.value]), [['then', 1, 9000], ['more', 2, 500], ['now', 0, 10], ['Other', -1, 1]]);
+  assert.equal(folded[3].calls, 1);
+  assert.deepEqual(C.usageFold([{ name: 'x', value: 0 }], ['x']), []);
+});
+
+test('usage kinds keep counts as numbers and refuse arbitrary labels', () => {
+  const rows = C.usageKinds([
     { purpose: 'answer', calls: 3, input: 12000, cached: 10000, output: 400, median_ms: 3200, p95_ms: 5000 },
     { purpose: 'retry', calls: 1, failures: 1, unreported: 1, median_ms: 200, p95_ms: 200 },
     { purpose: '<script>', calls: 1 },
-    { purpose: 'summary', calls: NaN, input: -1, cached: Infinity },
+    { purpose: 'summary', calls: NaN, estimated: 2, failures: -3 },
   ]);
   assert.equal(rows.length, 3);
-  assert.equal(rows[0].label, 'Answers');
-  assert.ok(rows[0].detail.includes('12,000 in (10,000 cached)'));
-  assert.ok(rows[0].detail.includes('median 3.2 s'));
-  assert.ok(rows[1].detail.includes('1 failed'));
-  assert.ok(rows[1].detail.includes('1 without token counts'));
-  assert.ok(!rows[2].detail.includes('NaN'));
-  assert.deepEqual(C.usageRows(null), []);
+  assert.deepEqual(rows[0], { purpose: 'answer', label: 'Answers', calls: 3, failures: 0, unreported: 0, estimated: 0, median_ms: 3200, p95_ms: 5000 });
+  assert.equal(rows[1].failures, 1);
+  assert.equal(rows[1].unreported, 1);
+  assert.deepEqual([rows[2].calls, rows[2].failures, rows[2].estimated], [0, 0, 2]);
+  assert.deepEqual(C.usageKinds(null), []);
 });
 
 test('a confirmed verdict overrides a conflicting hidden marker without changing the explanation', async () => {

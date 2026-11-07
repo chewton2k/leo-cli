@@ -39,14 +39,14 @@ function calendarCard(cal) {
   const rows = linked
     .map((c) => `<div class="set-row cal-row">
       <span class="cal-icon">${ICON.calendar}</span>
-      <span class="grow"><span class="cal-name">${esc(c.name)}</span>${c.problem ? `<span class="set-note warn">${esc(c.problem)}</span>` : `<span class="cal-sub">Added ${esc(rel(c.added_at))}</span>`}</span>
+      <span class="grow"><span class="feed-name">${esc(c.name)}</span>${c.problem ? `<span class="set-note warn">${esc(c.problem)}</span>` : `<span class="feed-sub">Added ${esc(rel(c.added_at))}</span>`}</span>
       <button class="btn plain sm" data-action="calendar-remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Remove</button>
     </div>`)
     .join('');
   const next = (cal.events || [])[0];
   const when = (e) => new Date(e.start).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   const upcoming = count
-    ? `<div class="set-row" data-find="calendar-next"><span class="set-label">Next up</span><span class="grow cal-next">${next ? `${esc(next.title)} <span class="cal-sub">· ${esc(when(next))}</span>` : '<span class="cal-sub">Nothing in the next week</span>'}</span><button class="btn plain sm" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Checking…' : 'Check now'}</button></div>`
+    ? `<div class="set-row" data-find="calendar-next"><span class="set-label">Next up</span><span class="grow cal-next">${next ? `${esc(next.title)}<span class="feed-sub">&nbsp;· <span class="nowrap">${esc(when(next))}</span></span>` : '<span class="feed-sub">Nothing in the next week</span>'}</span><button class="btn plain sm" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Checking…' : 'Check now'}</button></div>`
     : '';
   const open = !count || state.calendarAdding;
   const form = `<ol class="cal-steps">
@@ -117,9 +117,21 @@ function settingsOption(value, label, current) {
 
 const effortName = (e) => (e === 'xhigh' ? 'Extra high' : e[0].toUpperCase() + e.slice(1));
 
+function modelsByRelease(models) {
+  const version = (id) => {
+    const found = /(\d+)(?:[.-](\d+))?/.exec(id);
+    return found ? [Number(found[1]), Number(found[2] || 0)] : [-1, 0];
+  };
+  return models
+    .map((m, power) => ({ m, power, v: version(m.id) }))
+    .sort((a, b) => b.v[0] - a.v[0] || b.v[1] - a.v[1] || b.power - a.power)
+    .map((entry) => entry.m);
+}
+
 function modelPicker(t) {
   const known = t.models.some((m) => m.id === t.model);
-  const list = (known || !t.model ? [] : [{ id: t.model, price: 'not in the list' }]).concat(t.models);
+  const sorted = t.provider === 'codex' || t.provider === 'claude_code' ? modelsByRelease(t.models) : t.models;
+  const list = (known || !t.model ? [] : [{ id: t.model, price: 'not in the list' }]).concat(sorted);
   const efforts = Array.isArray(t.efforts) ? t.efforts : [];
   const effort = efforts.includes(t.effort) ? t.effort : 'medium';
   const shown = `${esc(t.model || 'Default model')}${efforts.length ? `<span class="picker-effort"> · ${esc(`${effortName(effort).toLowerCase()} effort`)}</span>` : ''}`;
@@ -163,6 +175,16 @@ document.addEventListener('keydown', (e) => {
   }
 }, true);
 
+function providerCard(c) {
+  const cards = {
+    ollama: ['Ollama', ON_MAC ? 'On this Mac' : 'On this computer', ICON.logoOllama],
+    codex: ['Codex', 'ChatGPT plan', ICON.logoOpenai],
+    claude_code: ['Claude Code', 'Claude plan', ICON.logoClaude],
+  };
+  const [title, about, icon] = cards[c.id] || [c.label, '', ''];
+  return [c.id, title, about, '', icon];
+}
+
 function taskCard(t) {
   const plan = state.settings?.plans?.find(plan => plan.provider === t.provider);
   const status = plan && plan.installed && plan.signed_in !== true
@@ -181,7 +203,7 @@ function taskCard(t) {
     const form = `<div class="set-key-form"><input type="password" autocomplete="off" spellcheck="false"${has ? ` class="has-key" placeholder="${esc(t.key.hint || '••••••••')}" aria-label="${esc(t.key.name)} key is stored; type a new one to replace it"` : ` placeholder="Paste your ${esc(t.key.name)} API key"`} data-key-input="${esc(t.key.account)}"><button class="btn primary sm" data-action="set-key" data-account="${esc(t.key.account)}">${has ? 'Save' : 'Save key'}</button></div>`;
     key = `<div class="set-row column" data-find="writing-key"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
   }
-  const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text)}</p>` : '';
+  const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '';
   const usage = t.usage && !plan ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
   const note = t.note ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
   return `<section class="set-card" data-task-card="${t.task}" data-find="writing-provider">
@@ -189,7 +211,7 @@ function taskCard(t) {
     <p class="hint">${TASK_USE[t.task]}</p>
     ${t.custom || t.choices.length > 4
       ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
-      : `<div class="set-row"><span class="set-label">Provider</span>${segmented({ label: 'Provider', choices: t.choices.map((c) => [c.id, c.label]), current: t.provider, field: `data-set="provider" data-task="${t.task}"` })}</div>`}
+      : `<div class="set-row column"><span class="set-label">Provider</span>${choiceCards({ label: 'Provider', choices: t.choices.map((c) => providerCard(c)), current: t.provider, field: `data-set="provider" data-task="${t.task}"`, className: 'providers' })}</div>`}
     ${model}${key}${signin}${usage}${note}
     <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
@@ -354,20 +376,385 @@ function pickLetters(el) {
   pickReading('letters-pick', 'letters', window.leoTheme.felixLetters());
 }
 
-function felixUsageCard(page) {
-  const rows = window.leoChat.usageRows(page.felix_usage);
-  const [week, ...models] = window.leoChat.usageWeek(page.felix_week);
-  const tools = page.felix_tools || {};
-  const count = (value) => Number.isSafeInteger(value) && value > 0 ? value.toLocaleString() : '0';
-  return `<section class="set-card" data-find="writing-activity">
-    <header><h3>Felix activity</h3></header>
-    ${week ? `<div class="set-row column"><span class="set-label">${esc(week.label)}</span><span class="set-note">${esc(week.detail)}</span></div>` : ''}
-    ${models.length ? `<details class="source-more"><summary>${ICON.chevron}By model</summary>${models.map((row) => `<div class="set-row column"><span class="set-label">${esc(row.label)}</span><span class="set-note">${esc(row.detail)}</span></div>`).join('')}</details>` : ''}
-    <p class="hint">The rest is since this Leo server started. Cached input is part of total input; these counts are not your subscription balance. Provider retries may have unreported usage. Timing shows the latest 64 requests of each kind.</p>
-    <div class="set-row column"><span class="set-label">Tools</span><span class="set-note">${count(tools.calls)} calls · ${count(tools.reused)} unchanged reads reused · ${count(tools.failures)} failed calls</span></div>
-    ${rows.length ? `<details class="source-more"><summary>${ICON.chevron}Request breakdown</summary>${rows.map((row) => `<div class="set-row column"><span class="set-label">${esc(row.label)}</span><span class="set-note">${esc(row.detail)}</span></div>`).join('')}</details>` : '<p class="set-note">No AI requests recorded yet.</p>'}
-  </section>`;
+let felixActivity = { span: 30, day: null, pin: null, ranks: null, view: null, processes: null, busy: false, roll: false, drawn: false, timer: 0, watching: false, watch: null };
+const faBound = new WeakSet();
+const FA_HEIGHT = 118;
+const FA_RING = 2 * Math.PI * 52;
+const FA_NEUTRAL = 'color-mix(in srgb, var(--text) 45%, transparent)';
+
+function faToday() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
+function faCompact(n) {
+  if (n >= 999950) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+function faExact(n) { return n.toLocaleString('en-US'); }
+function faSeconds(ms) { return `${(ms / 1000).toFixed(1)} s`; }
+function faDate(day, long) {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', long ? { weekday: 'short', month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric' });
+}
+function faBarName(bar, weekly) { return weekly ? `${faDate(bar.from)} – ${faDate(bar.to)}` : faDate(bar.from, true); }
+function faModelName(name) { return name || 'Model not reported'; }
+function faShare(value, total) {
+  const part = total ? value / total * 100 : 0;
+  return part > 0 && part < 0.5 ? '<1%' : `${Math.round(part)}%`;
+}
+function faColour(rank, base) { return rank < 0 ? 'var(--faint)' : `var(--chart-${rank + base})`; }
+function faRanks(page, today) {
+  const held = felixActivity.ranks;
+  if (held && (held.models.length || held.kinds.length)) return held;
+  felixActivity.ranks = window.leoChat.usageRank(page.felix_days, today);
+  return felixActivity.ranks;
+}
+function faKindLabel(purpose) {
+  const row = window.leoChat.usageKinds([{ purpose, calls: 1 }])[0];
+  return row ? row.label : purpose;
+}
+function faParts(bar, ranks) {
+  const items = bar.by.map(([name, value]) => ({ name, value }));
+  return window.leoChat.usageFold(items, ranks.models.slice(0, 3)).sort((a, b) => (a.rank < 0) - (b.rank < 0) || a.rank - b.rank);
+}
+
+function faReadout(i) {
+  const { period, ranks } = felixActivity.view;
+  const bar = period.bars[i];
+  if (!bar) return '';
+  const total = bar.input + bar.output;
+  const head = bar.calls ? `${bar.calls === 1 ? '1 request' : `${faExact(bar.calls)} requests`} · ${faCompact(bar.input)} in · ${faCompact(bar.output)} out` : 'No requests';
+  const parts = faParts(bar, ranks).map((part) => `<span title="${esc(faModelName(part.name))}"><i style="background:${faColour(part.rank, 1)}"></i><em class="fa-rn">${esc(part.other ? 'Other' : faModelName(part.name))}</em><b>${faShare(part.value, total)}</b></span>`).join('');
+  return `<div class="fa-rh"><b>${esc(faBarName(bar, period.length === 90))}</b> · ${head}</div><div class="fa-rm">${parts}</div>`;
+}
+
+function faDonut(kind, slices, total, label) {
+  let at = 0;
+  const arcs = slices.map((slice, i) => {
+    const arc = slice.value / total * FA_RING;
+    const length = Math.max(0, arc - (arc < 3 ? 0 : 2));
+    const ring = `<circle class="fa-slice${felixActivity.pin && felixActivity.pin.d === kind && felixActivity.pin.i === i ? ' on' : ''}" data-fa-d="${kind}" data-fa-i="${i}" cx="60" cy="60" r="52" fill="none" stroke="${faColour(slice.rank, kind === 'm' ? 1 : 4)}" stroke-width="12" stroke-dasharray="${length.toFixed(2)} ${(FA_RING - length).toFixed(2)}" stroke-dashoffset="${(-at).toFixed(2)}" transform="rotate(-90 60 60)"/>`;
+    at += arc;
+    return ring;
+  }).join('');
+  const pinned = felixActivity.pin && felixActivity.pin.d === kind ? slices[felixActivity.pin.i] : null;
+  const shown = pinned ? { big: faCompact(pinned.value), small: pinned.other ? 'Other' : (kind === 'm' ? faModelName(pinned.name) : faKindLabel(pinned.name)) } : { big: faCompact(total), small: label };
+  return `<div class="fa-ring${pinned ? ' hl' : ''}"><svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"><mask id="fa-mask-${kind}"><circle class="fa-sweep" cx="60" cy="60" r="52" fill="none" stroke="#fff" stroke-width="16" stroke-dasharray="${FA_RING.toFixed(2)} ${FA_RING.toFixed(2)}" transform="rotate(-90 60 60)"/></mask><g mask="url(#fa-mask-${kind})">${arcs}</g></svg><div class="fa-centre" data-big="${esc(faCompact(total))}" data-small="${esc(label)}"><b>${esc(shown.big)}</b><span>${esc(shown.small)}</span></div></div>`;
+}
+function faPanel(kind, title, items, unit, label) {
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  const name = (item) => item.other ? 'Other' : (kind === 'm' ? faModelName(item.name) : faKindLabel(item.name));
+  let body;
+  if (!items.length) body = `<p class="set-note">${kind === 'm' ? 'No token counts reported.' : 'No requests.'}</p>`;
+  else if (items.length === 1) body = `<p class="fa-one"><i style="background:${faColour(items[0].rank, kind === 'm' ? 1 : 4)}"></i><b title="${esc(name(items[0]))}">${esc(name(items[0]))}</b><span>${faCompact(items[0].value)} ${unit}</span></p>`;
+  else {
+    const rows = items.map((item, i) => {
+      const on = felixActivity.pin && felixActivity.pin.d === kind && felixActivity.pin.i === i;
+      const calls = kind === 'm' ? `<span class="fa-lg-r">${faCompact(item.calls)} req</span>` : '';
+      return `<button type="button" class="fa-lg${kind === 'k' ? ' k' : ''}${on ? ' on' : ''}" data-fa-d="${kind}" data-fa-i="${i}" data-big="${esc(faCompact(item.value))}" data-small="${esc(name(item))}" aria-pressed="${on}"><i style="background:${faColour(item.rank, kind === 'm' ? 1 : 4)}"></i><span class="fa-lg-n" title="${esc(name(item))}">${esc(name(item))}</span><span class="fa-lg-v" title="${faExact(item.value)}">${faCompact(item.value)}</span>${calls}<span class="fa-lg-s">${faShare(item.value, total)}</span></button>`;
+    }).join('');
+    body = `<div class="fa-dp">${faDonut(kind, items, total, label)}<div class="fa-legend">${rows}</div></div>`;
+  }
+  return `<div class="fa-panel" data-fa-d="${kind}"><div class="fa-h">${title}</div>${body}</div>`;
+}
+
+function faPeriod(period, ranks, span) {
+  const t = period.totals;
+  const bars = period.bars;
+  const weekly = period.length === 90;
+  const latest = bars.length - 1;
+  const at = felixActivity.day !== null && felixActivity.day <= latest ? felixActivity.day : latest;
+  const tallest = bars.reduce((best, bar) => (bar.input + bar.output > best.input + best.output ? bar : best), bars[0] || { input: 0, output: 0, by: [] });
+  const top = tallest.input + tallest.output;
+  const spare = FA_HEIGHT - 2 * Math.max(0, faParts(tallest, ranks).length - 1);
+  const days = bars.map((bar, i) => {
+    const segments = faParts(bar, ranks).map((part) => {
+      const height = top ? part.value / top * spare : 0;
+      return `<i style="height:${height.toFixed(1)}px;background:${faColour(part.rank, 1)}${height < 3 ? ';margin-top:-2px' : ''}"></i>`;
+    }).join('');
+    return `<div class="fa-day${i === at ? ' on' : ''}" data-i="${i}"><div class="fa-stack">${segments}</div></div>`;
+  }).join('');
+  const labels = bars.length ? [bars[0], bars[Math.floor(latest / 2)], bars[latest]].map((bar, i) => (i === 2 ? 'Today' : faDate(bar.from))) : [];
+  const stats = `<div class="fa-stats"><div class="fa-top"><div class="fa-tile fa-hero"><span class="fa-lab">Requests</span><b title="${faExact(t.calls)}">${faCompact(t.calls)}</b></div><span class="fa-cap">in the last ${span} days</span></div>
+    <div class="fa-tile"><span class="fa-lab">Tokens in</span><b title="${faExact(t.input)}">${faCompact(t.input)}</b></div>
+    <div class="fa-tile"><span class="fa-lab">Tokens out</span><b title="${faExact(t.output)}">${faCompact(t.output)}</b></div>
+    <div class="fa-tile"><span class="fa-lab">From cache</span><b>${Math.round(t.share * 100)}%</b><span class="fa-meter"><i style="width:${Math.round(t.share * 100)}%"></i></span></div></div>`;
+  const chart = bars.length ? `<div class="fa-block"><div class="fa-h">Tokens per day</div>
+    <div class="fa-chart" tabindex="0" role="group" aria-roledescription="chart" aria-label="Tokens per day" aria-describedby="fa-hint"><div class="fa-grid"><span>${faCompact(top)}</span></div><div class="fa-days">${days}</div><div class="fa-xl"><span>${labels[0]}</span><span>${labels[1]}</span><span>${labels[2]}</span></div></div>
+    <span id="fa-hint" class="fa-sr">Use arrow keys to move between days</span><div id="fa-say" class="fa-sr" aria-live="polite"></div>
+    <div class="fa-readout">${faReadout(at)}</div></div>` : '';
+  const models = window.leoChat.usageFold(period.models.map((row) => ({ name: row.name, value: row.tokens, calls: row.calls })), ranks.models.slice(0, 3));
+  const kinds = window.leoChat.usageFold(period.kinds.map((row) => ({ name: row.name, value: row.calls, calls: row.calls })), ranks.kinds.slice(0, 2));
+  return `${stats}${chart}<div class="fa-donuts">${faPanel('m', 'Tokens by model', models, 'tokens', 'tokens')}${faPanel('k', 'Requests by kind', kinds, 'requests', 'requests')}</div>`;
+}
+
+function faProcessIcon(name) {
+  if (name === 'Codex') return ICON.logoOpenai;
+  if (name === 'Claude Code') return ICON.logoClaude;
+  if (name === 'Ollama') return ICON.logoOllama;
+  if (name === 'Speech engine') return svg('<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>');
+  if (name === 'App window') return svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 9h17"/>');
+  return svg('<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9.5 9.5h5v5h-5z"/>');
+}
+function faProcessColour(name, ranks) {
+  const pattern = name === 'Codex' ? /^(gpt|codex|o\d)/i : name === 'Claude Code' ? /claude/i : null;
+  const rank = pattern ? ranks.models.slice(0, 3).findIndex((model) => pattern.test(model)) : -1;
+  return rank < 0 ? FA_NEUTRAL : `var(--chart-${rank + 1})`;
+}
+function faRunning() {
+  const held = felixActivity.processes;
+  const ranks = felixActivity.view ? felixActivity.view.ranks : { models: [], kinds: [] };
+  const refresh = `<button type="button" class="icon-btn fa-run-refresh" data-fa-refresh aria-label="Refresh" title="Refresh"${felixActivity.busy && felixActivity.roll ? ' disabled' : ''}>${ICON.refresh}</button>`;
+  let top;
+  let rows = '';
+  let ids = '';
+  if (!held) top = '<span class="set-note">Checking…</span>';
+  else if (held.unavailable) top = '<span class="set-note">Couldn’t read the process list on this computer.</span>';
+  else {
+    if (!held.groups.length) {
+      top = '<b class="fa-total">0 processes</b>';
+      rows = '<p class="set-note">leo has no helper processes running right now.</p>';
+    } else {
+      top = `<b class="fa-total">${held.total === 1 ? '1 process' : `${faExact(held.total)} processes`}</b>`;
+      const most = Math.max(1, ...held.groups.map((group) => group.count));
+      rows = `<div class="fa-run-rows">${held.groups.map((group) => `<div class="fa-run-row"><span class="fa-run-ic">${faProcessIcon(group.name)}</span><span class="fa-run-n" title="${esc(group.name)}">${esc(group.name)}</span><span class="fa-run-c">${faExact(group.count)}</span><span class="fa-run-bar"><i style="width:${Math.round(group.count / most * 100)}%;background:${faProcessColour(group.name, ranks)}"></i></span></div>`).join('')}</div>`;
+      ids = `<details class="source-more fa-run-ids"><summary>${ICON.chevron}Show process IDs</summary><div class="fa-pids">${held.groups.map((group) => `<div><div class="fa-pid-h">${esc(group.name)}</div>${group.pids.map((one) => `<div class="fa-pid"><span>${Number(one.pid) || 0}</span><span>${esc(one.name)}</span></div>`).join('')}</div>`).join('')}</div></details>`;
+    }
+  }
+  return `<div class="fa-h">Running now</div><div class="fa-run-top">${top}${refresh}</div>${rows}${ids}`;
+}
+
+function faKindRows(kinds) {
+  const widest = Math.max(1, ...kinds.map((row) => row.p95_ms));
+  return kinds.map((row) => {
+    const notes = [];
+    if (row.failures) notes.push(`<b>${faExact(row.failures)} failed</b>`);
+    if (row.unreported) notes.push(`${faExact(row.unreported)} without token counts`);
+    if (row.estimated) notes.push(`${faExact(row.estimated)} estimated`);
+    return `<div class="fa-kind"><span class="fa-kn">${esc(row.label)}</span><span class="fa-kb"><span class="fa-track"><i style="width:${Math.min(100, row.median_ms / widest * 100).toFixed(1)}%"></i><u style="left:${Math.min(100, row.p95_ms / widest * 100).toFixed(1)}%"></u></span><span class="fa-kl">${faSeconds(row.median_ms)} · 95% within ${faSeconds(row.p95_ms)}</span></span><span class="fa-kc">${faCompact(row.calls)} ${row.calls === 1 ? 'call' : 'calls'}</span><span class="fa-kx">${notes.join(' · ')}</span></div>`;
+  }).join('');
+}
+
+function felixUsageInner(page) {
+  const chat = window.leoChat;
+  const today = faToday();
+  const span = felixActivity.span;
+  const ranks = faRanks(page, today);
+  const period = chat.usagePeriod(page.felix_days, span, today);
+  felixActivity.view = { period, ranks };
+  const kinds = chat.usageKinds(page.felix_usage);
+  const tools = page.felix_tools || {};
+  const empty = !period.totals.calls && !period.models.length;
+  return `<header><h3>Felix activity</h3>${segmented({ label: 'Activity period', choices: [['7', '7 days'], ['30', '30 days'], ['90', '90 days']], current: String(span), field: 'id="fa-span"' })}</header>
+    <div class="fa-body" role="group" aria-label="Last ${span} days">${empty ? '<p class="set-note">No AI requests recorded yet.</p>' : faPeriod(period, ranks, span)}</div>
+    <div class="fa-block fa-run">${faRunning()}</div>
+    <div class="fa-block"><div class="fa-h">Since leo started</div>
+      ${kinds.length ? `<div class="fa-kinds">${faKindRows(kinds)}</div>` : ''}
+      <div class="fa-tools"><span class="fa-lab">Tools</span><span>${faCompact(Number(tools.calls) || 0)} calls · ${faCompact(Number(tools.reused) || 0)} unchanged reads reused · ${faCompact(Number(tools.failures) || 0)} failed</span></div>
+      <p class="fa-foot">Cache is part of input, not your subscription balance. Provider retries may be unreported. Timing is the latest 64 requests of each kind.</p></div>`;
+}
+
+function felixUsageCard(page) {
+  return `<section class="set-card fa-card" data-find="writing-activity">${felixUsageInner(page)}</section>`;
+}
+
+function faHighlight(card, kind, index) {
+  const panel = card.querySelector(`.fa-panel[data-fa-d="${kind}"]`);
+  if (!panel || !panel.querySelector('.fa-ring')) return;
+  const pin = felixActivity.pin && felixActivity.pin.d === kind ? felixActivity.pin.i : null;
+  const shown = index === null ? pin : index;
+  panel.querySelector('.fa-ring').classList.toggle('hl', shown !== null);
+  for (const slice of panel.querySelectorAll('.fa-slice')) slice.classList.toggle('on', Number(slice.dataset.faI) === shown);
+  for (const row of panel.querySelectorAll('.fa-lg')) {
+    row.classList.toggle('on', Number(row.dataset.faI) === shown);
+    row.setAttribute('aria-pressed', String(Number(row.dataset.faI) === pin));
+  }
+  const centre = panel.querySelector('.fa-centre');
+  const row = shown === null ? null : panel.querySelector(`.fa-lg[data-fa-i="${shown}"]`);
+  centre.querySelector('b').textContent = row ? row.dataset.big : centre.dataset.big;
+  centre.querySelector('span').textContent = row ? row.dataset.small : centre.dataset.small;
+}
+function faEscape(e) {
+  if (!felixActivity.pin) {
+    document.removeEventListener('keydown', faEscape, true);
+    return;
+  }
+  if (e.key !== 'Escape' || state.view !== 'settings' || state.section !== 'writing' || document.querySelector('.scrim') || !app.querySelector('[data-find="writing-activity"]')) return;
+  e.stopPropagation();
+  e.preventDefault();
+  faPin(null);
+}
+function faPin(next) {
+  const was = felixActivity.pin;
+  felixActivity.pin = next;
+  if (next && !was) document.addEventListener('keydown', faEscape, true);
+  if (!next) document.removeEventListener('keydown', faEscape, true);
+  const card = app.querySelector('[data-find="writing-activity"]');
+  if (!card) return;
+  for (const kind of ['m', 'k']) faHighlight(card, kind, null);
+}
+function faShowDay(card, index, keys) {
+  const days = [...card.querySelectorAll('.fa-day')];
+  if (!days[index]) return;
+  days.forEach((day, i) => day.classList.toggle('on', i === index));
+  const readout = card.querySelector('.fa-readout');
+  readout.innerHTML = faReadout(index);
+  if (keys) {
+    felixActivity.day = index;
+    card.querySelector('#fa-say').textContent = readout.textContent;
+  }
+}
+function faNearest(chart, x) {
+  const days = chart.querySelector('.fa-days').getBoundingClientRect();
+  const count = chart.querySelectorAll('.fa-day').length;
+  return Math.max(0, Math.min(count - 1, Math.floor((x - days.left) / Math.max(1, days.width) * count)));
+}
+function faSettledDay(card) {
+  const count = card.querySelectorAll('.fa-day').length;
+  return felixActivity.day !== null && felixActivity.day < count ? felixActivity.day : count - 1;
+}
+
+function bindActivity(card) {
+  if (!card || faBound.has(card)) return;
+  faBound.add(card);
+  const lens = (e) => e.target.closest && e.target.closest('[data-fa-i]');
+  card.addEventListener('pointerover', (e) => {
+    const hit = lens(e);
+    if (hit) faHighlight(card, hit.dataset.faD, Number(hit.dataset.faI));
+  });
+  card.addEventListener('pointerout', (e) => {
+    const hit = lens(e);
+    if (hit && !hit.contains(e.relatedTarget)) faHighlight(card, hit.dataset.faD, null);
+  });
+  card.addEventListener('focusin', (e) => {
+    const hit = lens(e);
+    if (hit && hit.matches('.fa-lg')) faHighlight(card, hit.dataset.faD, Number(hit.dataset.faI));
+  });
+  card.addEventListener('focusout', (e) => {
+    const hit = lens(e);
+    if (hit && hit.matches('.fa-lg')) faHighlight(card, hit.dataset.faD, null);
+  });
+  card.addEventListener('click', (e) => {
+    const row = e.target.closest('.fa-lg');
+    if (row) {
+      const same = felixActivity.pin && felixActivity.pin.d === row.dataset.faD && felixActivity.pin.i === Number(row.dataset.faI);
+      faPin(same ? null : { d: row.dataset.faD, i: Number(row.dataset.faI) });
+      return;
+    }
+    if (e.target.closest('[data-fa-refresh]')) loadProcesses(true);
+  });
+  card.addEventListener('pointermove', (e) => {
+    const chart = e.target.closest && e.target.closest('.fa-chart');
+    if (chart) faShowDay(card, faNearest(chart, e.clientX), false);
+  });
+  card.addEventListener('pointerleave', () => {
+    if (card.querySelector('.fa-chart')) faShowDay(card, faSettledDay(card), false);
+  });
+  card.addEventListener('keydown', (e) => {
+    const chart = e.target.closest && e.target.closest('.fa-chart');
+    if (!chart) return;
+    const last = card.querySelectorAll('.fa-day').length - 1;
+    const now = faSettledDay(card);
+    const next = { ArrowLeft: now - 1, ArrowRight: now + 1, Home: 0, End: last }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    faShowDay(card, Math.max(0, Math.min(last, next)), true);
+  });
+}
+
+function redrawRunning(roll) {
+  const box = app.querySelector('.fa-run');
+  if (!box || !felixActivity.view) return;
+  refreshPanel(box, faRunning());
+  if (roll && !stillMotion()) {
+    const total = box.querySelector('.fa-total');
+    if (total) total.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
+  }
+}
+async function loadProcesses(user) {
+  if (felixActivity.busy) return;
+  felixActivity.busy = true;
+  felixActivity.roll = user;
+  if (user) redrawRunning(false);
+  try {
+    felixActivity.processes = await api('/api/processes');
+  } catch (e) {
+    if (!felixActivity.processes) felixActivity.processes = { total: 0, groups: [], unavailable: true };
+  }
+  felixActivity.busy = false;
+  redrawRunning(user);
+  felixActivity.roll = false;
+}
+function stopActivity() {
+  if (felixActivity.pin) faPin(null);
+  felixActivity.watch?.disconnect();
+  felixActivity.watch = null;
+  if (!felixActivity.watching) return;
+  felixActivity.watching = false;
+  clearInterval(felixActivity.timer);
+  window.removeEventListener('leo-visibility', activityVisible);
+  document.removeEventListener('visibilitychange', activityVisible);
+}
+function activityVisible() {
+  if (felixActivity.watching && appVisible()) loadProcesses(false);
+}
+function tickProcesses() {
+  if (state.view !== 'settings' || state.section !== 'writing') stopActivity();
+  else if (appVisible()) loadProcesses(false);
+}
+function playActivity(card) {
+  if (felixActivity.drawn) return;
+  if (stillMotion() || !card.querySelector('.fa-days')) {
+    if (card.querySelector('.fa-days')) felixActivity.drawn = true;
+    return;
+  }
+  const run = () => {
+    if (felixActivity.drawn || !card.isConnected) return;
+    felixActivity.drawn = true;
+    for (const sweep of card.querySelectorAll('.fa-sweep')) sweep.animate([{ strokeDashoffset: FA_RING }, { strokeDashoffset: 0 }], { duration: OPEN_MS, easing: EASE_OUT });
+    card.querySelector('.fa-days').animate([{ opacity: 0 }, { opacity: 1 }], { duration: OPEN_MS, easing: EASE_OUT });
+  };
+  if (typeof IntersectionObserver !== 'function') return run();
+  felixActivity.watch?.disconnect();
+  const watch = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    watch.disconnect();
+    felixActivity.watch = null;
+    run();
+  });
+  felixActivity.watch = watch;
+  watch.observe(card);
+}
+function activityShown(section) {
+  if (section !== 'writing') return stopActivity();
+  const card = app.querySelector('[data-find="writing-activity"]');
+  if (!card) return;
+  bindActivity(card);
+  playActivity(card);
+  if (felixActivity.watching) return;
+  felixActivity.watching = true;
+  window.addEventListener('leo-visibility', activityVisible);
+  document.addEventListener('visibilitychange', activityVisible);
+  felixActivity.timer = setInterval(tickProcesses, 10000);
+  loadProcesses(false);
+}
+
+document.addEventListener('change', (e) => {
+  if (!e.target || e.target.id !== 'fa-span' || state.view !== 'settings' || !state.settings) return;
+  const span = Number(e.target.value);
+  if (![7, 30, 90].includes(span) || span === felixActivity.span) return;
+  felixActivity.span = span;
+  felixActivity.day = null;
+  if (felixActivity.pin) faPin(null);
+  const card = app.querySelector('[data-find="writing-activity"]');
+  if (!card) return;
+  refreshPanel(card, felixUsageInner(state.settings));
+  bindActivity(card);
+  const body = card.querySelector('.fa-body');
+  if (body && !stillMotion()) body.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: MOTION_MS, easing: EASE_OUT });
+});
 
 function drawSettings(page) {
   const fields = keepSettingsFields(), segments = keepSegmented();
@@ -385,6 +772,7 @@ function drawSettings(page) {
   else content = '';
   refreshPanel(app, settingsFrame(section, `<div class="settings">${content}</div>`));
   restoreSettingsFields(fields, segments);
+  activityShown(section);
 }
 
 async function changeSetting(change) {

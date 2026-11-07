@@ -77,10 +77,75 @@ function loadMermaid() {
 }
 
 const waitingDiagrams = () =>
-  [...document.querySelectorAll('figure.diagram:not([data-drawn])')].filter((fig) => !fig.closest('.msg.pending'));
+  [...document.querySelectorAll('figure.diagram:not([data-drawn])')].filter((fig) => !fig.closest('.msg.pending, .viewer-diagram'));
+
+function bigSvg(svg) {
+  const copy = svg.cloneNode(true);
+  const suffix = `-big${++diagrams.seq}`;
+  const ids = new Map([copy, ...copy.querySelectorAll('[id]')].filter((el) => el.id).map((el) => [el.id, el.id + suffix]));
+  const swap = (text) => text.replace(/#([\w-]+)/g, (all, id) => (ids.has(id) ? `#${ids.get(id)}` : all));
+  for (const el of [copy, ...copy.querySelectorAll('*')]) {
+    for (const { name, value } of [...el.attributes]) {
+      if (name === 'id') el.setAttribute('id', ids.get(value) || value);
+      else if (value.includes('#')) el.setAttribute(name, swap(value));
+    }
+    if (el.localName === 'style') el.textContent = swap(el.textContent);
+  }
+  copy.removeAttribute('style');
+  const box = copy.viewBox.baseVal;
+  if (box && box.width) {
+    copy.setAttribute('width', String(box.width));
+    copy.setAttribute('height', String(box.height));
+  }
+  return copy;
+}
+
+function expandDiagrams(button) {
+  const scope = button.closest('.margin-note, .msg.leo');
+  if (!scope) return;
+  const from = scope.matches('.margin-note') ? 'margin' : 'chat';
+  const zone = from === 'margin' ? '.margin-felix' : ':scope > .prose';
+  const figures = [...scope.querySelectorAll(`${zone} figure.diagram[data-drawn="yes"], ${zone} figure.drawing:not(.pending)`)];
+  if (!figures.length) return;
+  const items = figures.map((fig) => {
+    const live = fig.querySelector('svg, img');
+    const rect = live.getBoundingClientRect();
+    const row = fig.closest('.drawing-row');
+    const copy = (row || fig).cloneNode(true);
+    copy.querySelector('.diagram-src')?.remove();
+    const mine = copy.querySelector('svg, img');
+    let target = mine;
+    if (mine.localName === 'svg') {
+      target = bigSvg(live);
+      mine.replaceWith(target);
+    }
+    const box = target.viewBox?.baseVal;
+    const wrap = document.createElement('div');
+    wrap.className = `viewer-diagram from-${from}`;
+    wrap.append(copy);
+    return { wrap, target, row: Boolean(row), w: rect.width || box?.width || 300, h: rect.height || box?.height || 200 };
+  });
+  const scrim = viewPicture({ title: 'Diagram', nodes: items.map((item) => item.wrap) });
+  scrim.classList.add('scrim-wide');
+  const pan = scrim.querySelector('.viewer-pan');
+  const room = { w: pan.clientWidth - 16, h: pan.clientHeight - 32 };
+  for (const { target, row, w, h } of items) {
+    const fit = Math.min(2, room.w / w, room.h / h);
+    target.style.width = `calc(var(--zoom, 1) * ${row ? 180 : Math.max(40, Math.round(w * fit))}px)`;
+    target.style.height = 'auto';
+  }
+  const reply = button.closest('.margin-felix, .msg.leo');
+  const at = figures.findIndex((fig) => reply?.contains(fig));
+  if (at > 0) pan.scrollTop += items[at].wrap.getBoundingClientRect().top - pan.getBoundingClientRect().top - 16;
+}
+const FELIX_LOOK = '%%{init: {"themeVariables": {"fontFamily": "\\"Iowan Old Style\\", \\"New York\\", Georgia, serif"}, "flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 50, "padding": 12}}}%%';
 const diagramSource = (fig) => {
   const code = fig.querySelector('.diagram-src code');
-  return code ? code.textContent : '';
+  const source = code ? code.textContent : '';
+  if (!source || !fig.closest('.margin-note, .msg.leo > .prose')) return source;
+  const front = /^\s*---[ \t]*\n[\s\S]*?\n---[ \t]*(?:\n|$)/.exec(source);
+  const at = front ? front[0].length : 0;
+  return `${source.slice(0, at)}${at && !front[0].endsWith('\n') ? '\n' : ''}${FELIX_LOOK}\n${source.slice(at)}`;
 };
 
 function showDiagram(fig, svg) {
@@ -159,6 +224,7 @@ function watchDiagrams(records) {
 new MutationObserver(watchDiagrams).observe(document.body, { childList: true, subtree: true });
 window.leoTheme.onChange(() => {
   for (const fig of document.querySelectorAll('figure.diagram[data-drawn]')) {
+    if (fig.closest('.viewer-diagram')) continue;
     fig.removeAttribute('data-drawn');
     for (const old of fig.querySelectorAll('.diagram-art, .diagram-error')) old.remove();
   }

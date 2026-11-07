@@ -694,7 +694,7 @@ target. Check the page sequence after loading preferences.
   escaped Markdown renderer, strict Mermaid rendering and inert SVG images. Settings says text
   stays here only for a loopback address and a model without `cloud` in its name
   (`ai::reads_stay_here`).
-- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (30 s, 90 s, 3 min, 5 min; default 90 s, `Prefs.gap`) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
+- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (10 s, 15 s, 30 s, 90 s since 2026-11-07, the user's call; default 90 s, `Prefs.gap`; a saved gap no longer offered reads as 90 s; at 10 s, 40 reads can go in under 7 minutes) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
   most 8,000 characters in and 220 tokens out. At the defaults, 40 reads
   take an hour of writing at least, and a day's worst case is about 90k input
@@ -1167,7 +1167,7 @@ Study's next `quiz` or `end_session` call may carry the previous answer's struct
 `verdict`, used only on a marking turn. A missing text verdict can use that field
 without another call; conflicting verdicts retain the hidden check. Hidden grading
 accepts only the exact verdict words. Permission and interactive-card rules remain.
-`usage::Usage` keeps content-free counts in memory since server startup, and saves tokens by day, purpose and model in `usage_days` for 90 days (Settings shows seven), separated
+`usage::Usage` keeps content-free counts in memory since server startup, and saves tokens by day, purpose and model in `usage_days` for 90 days (Settings → Felix activity switches between 7, 30 and 90 days, default 30), separated
 by answer, continuation, recovery, grading, summary, other writing and quick review.
 Settings shows token/cache counts, unreported/estimated usage, tool failures/reused
 reads, and median/p95 timing from at most 64 samples per category. Native agents
@@ -1289,7 +1289,8 @@ list (the bar says it), no card title repeating the page title, labels on one
 line with controls hugging their content at the right edge; a card under 500 px
 stacks segmented rows (container query), and switch rows stay inline on phones.
 `.set-card` is a tinted group (`--tint`, no border, no shadow, no rule between
-rows: space separates them; inputs, selects and plain buttons inside it fill
+rows: space separates them, except the Felix activity "Since leo started" table, its
+Running now rows (`run-row`) and tools-line hairlines; inputs, selects and plain buttons inside it fill
 with `--raised`). Inputs keep their border; nothing else in Settings' own layout
 has a 1px rule (the Trash list, Calendar form and menus included).
 Selection is ink (segment and nav pills are `--raised`, switches `--text`);
@@ -1297,9 +1298,32 @@ indigo stays for focus, links and the search pulse. Writing AI uses a pen icon,
 never a sparkle.
 Settings is a centered navigation-and-content grid. The nav and section are
 centered together, without an asymmetric window background band or measured edge.
-Sticky navigation keeps its own scroll; cards have 20 px gaps. Below 760 px the
-nav becomes a sideways-scrolling chip strip with search above it. The current
-section stays visible, and search results replace the strip while searching.
+Settings `main` is the named container `settingsmain` (2026-11-07), so Felix and
+the explorer opening change the layout without a window resize. From 930 px of
+main the nav is the labelled, sticky 220 px column with the gliding pill (it keeps
+its own scroll); from 480 to 929 px the section links are wrapping chips above the
+content in one centred 760 px column (not sticky, no pill, active chip `--raised`
+with an inset `--line` ring); under 480 px they are one sticky sideways strip
+with a faded edge. Cards have 20 px gaps. The current section stays visible, and
+search results replace the chips while searching. Keeping rows share one 150 px
+select width and stack under 500 px of card content.
+
+Owner decisions, 2026-11-07 (small-display pass): Felix's starters are outlined
+pills (no fill; `--text` border at 20 %, 16 % dark); the Chats list becomes an
+overlay below a 490 px panel (560 px with an original open), and `.chat.slim`
+(chat column under 440 px) trims padding and keeps Felix's lane only beside the
+row directly above the composer. Writing AI providers are logo cards
+(`choiceCards` with an icon, scoped `.providers`); Codex and Claude Code models
+are listed newest release first, then most capable first (the Rust list stays
+cheapest-first: `models.first()` is the quick model); Ollama models largest
+first. Felix activity is a dashboard (period switch, stat tiles, tokens-per-day
+bars by model, model and purpose donuts, "Since leo started", and Running now:
+the processes leo owns from `GET /api/processes`, grouped by kind, polled every
+10 s without counting as use, never sending arguments to the page). Health is
+one card: a head sentence, problem rows with their fix and button, then ready
+checks as tiles. "See it larger" opens a reply's figures in the full-window
+viewer. Quit leo is gone from Settings on every platform; the tray/menu Quit
+stays.
 
 Settings search (2026-11-04, after T3 Code): `SETTINGS_INDEX` in
 `settings-navigation.js`, next to `SETTINGS_SECTIONS`, is plain data of

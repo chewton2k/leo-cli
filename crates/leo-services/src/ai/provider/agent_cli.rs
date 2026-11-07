@@ -32,6 +32,13 @@ impl Agent {
         }
     }
 
+    pub fn kind(self) -> &'static str {
+        match self {
+            Agent::ClaudeCode => "Claude Code",
+            Agent::Codex => "Codex",
+        }
+    }
+
     pub fn plan(self) -> &'static str {
         match self {
             Agent::ClaudeCode => "your Claude plan",
@@ -990,6 +997,7 @@ impl AgentCli {
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
         })?;
+        leo_core::children::mark(child.id(), self.agent.kind());
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let child = Process::new(child);
@@ -1190,6 +1198,7 @@ impl AgentCli {
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
         })?;
+        leo_core::children::mark(child.id(), self.agent.kind());
         let stdin = child.stdin.take();
         let stderr = child.stderr.take();
         let stdout = child.stdout.take();

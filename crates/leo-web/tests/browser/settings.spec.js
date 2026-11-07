@@ -198,7 +198,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)}, saving={drafts:()=>[]};
-    window.errors=[]; window.leoChat={usageRows:()=>[],usageWeek:()=>[]};
+    window.errors=[]; window.leoChat={usageKinds:()=>[],usagePeriod:()=>({length:30,totals:{calls:0,input:0,cached:0,output:0,share:0},bars:[],models:[],kinds:[]}),usageRank:()=>({models:[],kinds:[]}),usageFold:()=>[]};
     const page={tasks:[]};
     let appStatusReads=0;
     async function api(url,options={}) {
@@ -253,6 +253,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       expect(await page.evaluate(()=>audit.reads())).toBe(hiddenReads+1);
       await page.clock.resume();
       await expect(page.locator('.settings-nav a')).toHaveCount(10);
+      await page.setViewportSize({width:1280,height:850});
       for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
       await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
       await expect(page.getByRole('heading',{level:1,name:'General'})).toBeVisible();
@@ -270,10 +271,15 @@ test('Settings sections keep drafts and selections across redraws in both themes
         }
       }
       await page.evaluate(()=>{document.body.classList.remove('side-mini','chat-open');document.body.style.removeProperty('--explorer-w');});
-      await page.setViewportSize({width:900,height:850});
+      await page.setViewportSize({width:1280,height:850});
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});
       expect(await pinned()).toEqual([left,Math.round(bar+gap)]);
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
+      await page.setViewportSize({width:900,height:850});
+      const chips=await page.evaluate(()=>{const links=[...document.querySelectorAll('.settings-sections .settings-link')].map(a=>a.getBoundingClientRect());return {visible:links.every(r=>r.width>0&&r.height>0),rows:new Set(links.map(r=>Math.round(r.top))).size,position:getComputedStyle(document.querySelector('.settings-nav')).position,titles:getComputedStyle(document.querySelector('.settings-group-title')).display};});
+      expect(chips).toEqual({visible:true,rows:expect.any(Number),position:'static',titles:'none'});
+      expect(chips.rows).toBeGreaterThan(1);
+      await page.setViewportSize({width:1280,height:850});
       const search = page.locator('#settings-search');
       await search.fill('popup');
       await search.evaluate(el=>{el.focus();el.setSelectionRange(2,4);});

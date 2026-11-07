@@ -1687,7 +1687,7 @@ test.describe('settings', () => {
     const writing = page.locator('[data-task-card="writing"]');
     await expect(writing).toBeVisible();
     const provider = writing.getByRole('radiogroup', { name: 'Provider' });
-    expect(await provider.getByRole('radio').evaluateAll(options => options.map(option => option.dataset.value))).toEqual(['ollama', 'codex', 'claude_code']);
+    expect(await provider.getByRole('radio').evaluateAll(options => options.map(option => option.value))).toEqual(['ollama', 'codex', 'claude_code']);
     await provider.getByRole('radio', { name: 'Claude Code' }).click();
     await expect(page.locator('.toast')).toContainText('Writing now uses Claude Code');
     await expect(writing.locator('[data-key-input]')).toHaveCount(0);

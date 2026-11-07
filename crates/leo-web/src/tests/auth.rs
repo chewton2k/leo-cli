@@ -187,3 +187,67 @@ async fn retired_practice_routes_are_gone_while_shared_routes_stay_available() {
     }
     running.stop().await;
 }
+
+#[tokio::test]
+async fn processes_refuse_a_request_without_the_session_cookie() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let reply = ask(port, "/api/processes", &format!("127.0.0.1:{port}")).await;
+    assert!(reply.starts_with("HTTP/1.1 401"), "{reply}");
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn processes_answer_json_with_a_total_and_no_arguments() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let here = format!("127.0.0.1:{port}");
+    let signed_in = ask(port, "/?token=0123456789abcdef0123456789abcdef", &here).await;
+    let cookie = signed_in
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("set-cookie: ")
+                .or_else(|| line.strip_prefix("Set-Cookie: "))
+        })
+        .and_then(|value| value.split(';').next())
+        .unwrap()
+        .to_string();
+    #[cfg(unix)]
+    let mut helper = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let reply = ask_with(port, "/api/processes", &here, &cookie).await;
+    #[cfg(unix)]
+    {
+        let _ = helper.kill();
+        let _ = helper.wait();
+    }
+    assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+    let body: serde_json::Value =
+        serde_json::from_str(reply.split("\r\n\r\n").nth(1).unwrap().trim()).unwrap_or_default();
+    let keys = |v: &serde_json::Value| {
+        let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(keys(&body), ["groups", "total"], "{reply}");
+    let groups = body["groups"].as_array().unwrap();
+    #[cfg(unix)]
+    assert!(
+        groups.iter().any(|g| g["pids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "sleep")),
+        "{reply}"
+    );
+    for group in groups {
+        assert_eq!(keys(group), ["count", "name", "pids"], "{reply}");
+        for pid in group["pids"].as_array().unwrap() {
+            assert_eq!(keys(pid), ["name", "pid"], "{reply}");
+        }
+    }
+    assert!(!reply.contains("sleep 30"), "{reply}");
+    running.stop().await;
+}

@@ -708,7 +708,7 @@ test('Chats divider resizes independently, keeps drafts and restores its width',
     expect(Math.round((await history.boundingBox()).width)).toBe(kept);
     await grip.focus();
     await page.keyboard.press('End');
-    expect((await page.locator('.chat-main').boundingBox()).width).toBeGreaterThanOrEqual(220);
+    expect((await page.locator('.chat-main').boundingBox()).width).toBeGreaterThanOrEqual(300);
     await grip.dblclick();
     expect(Math.round((await history.boundingBox()).width)).toBe(start);
     await page.setViewportSize({width:390,height:844});
@@ -719,6 +719,28 @@ test('Chats divider resizes independently, keeps drafts and restores its width',
   });
 });
 
+
+test('a narrow Felix panel lays Chats over the chat without saving it, and slims the chat column', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.setViewportSize({width:1280,height:800});
+    await page.goto(url);
+    await openFixtureChat(page);
+    await page.evaluate(()=>document.documentElement.style.setProperty('--chat-w','470px'));
+    const history=page.locator('.chat-history'), panel=page.locator('.chat');
+    await expect(panel).toHaveClass(/source-narrow/);
+    await expect(panel).not.toHaveClass(/\bslim\b/);
+    await page.locator('.chat-history-toggle').click();
+    await expect(history).toBeVisible();
+    await expect(page.getByRole('separator',{name:'Chats list width',exact:true})).toBeHidden();
+    await page.getByRole('button',{name:'Back to the chat'}).click();
+    await expect(panel).not.toHaveClass(/with-history/);
+    expect(await page.evaluate(()=>localStorage.getItem('leo-chat-sidebar'))).toBeNull();
+    await page.evaluate(()=>document.documentElement.style.setProperty('--chat-w','420px'));
+    await expect(panel).toHaveClass(/\bslim\b/);
+    expect(await page.evaluate(()=>{const main=document.querySelector('.chat-main'),send=document.querySelector('.chat-send').getBoundingClientRect(),box=main.getBoundingClientRect();return send.right<=box.right+0.5&&main.scrollWidth<=main.clientWidth;})).toBe(true);
+  });
+});
 
 test('explorer resize handle stays reachable beside Felix in narrow desktop windows', async ({ browser }) => {
   await sidebarFixture(browser,async(context,url)=>{

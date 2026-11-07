@@ -86,6 +86,20 @@
     return `<figure class="drawing"><img src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(ready)}" alt="${escape(alt)}"></figure>`;
   }
 
+  function pairedRow(figure, source, lines, from) {
+    const box = /<svg[^>]*\sviewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)/i.exec(source);
+    if (figure.includes('drawing pending') || !box || Number(box[1]) > 200) return null;
+    let at = from;
+    if (lines[at] !== undefined && !lines[at].trim()) at++;
+    if (lines[at] === undefined || !lines[at].trim() || startsBlock(lines[at], lines[at + 1])) return null;
+    const para = [];
+    while (at < lines.length && lines[at].trim() && (!para.length || !startsBlock(lines[at], lines[at + 1]))) para.push(lines[at++].trim());
+    const [title, sub, ...rest] = para.map((text, n) => (n < 2 ? text.replace(/^\*{1,2}(.+?)\*{1,2}$/, '$1').replace(/^\*+$/, '').trim() : text));
+    const said = rest.length ? inline(rest.join(' ')) : '';
+    const html = `<div class="drawing-row">${figure}<p>${title ? `<span class="drawing-title">${inline(title)}</span>` : ''}${sub ? `<span class="drawing-sub">${inline(sub)}</span>` : ''}${said}</p></div>`;
+    return { html, next: at };
+  }
+
   function inline(text) {
     const slots = [];
     const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
@@ -282,6 +296,12 @@
         if (fence[2].toLowerCase() === 'svg') {
           const drawn = drawing(code.join('\n'));
           if (drawn) {
+            const row = state.rows ? pairedRow(drawn, code.join('\n'), lines, i) : null;
+            if (row) {
+              html += row.html;
+              i = row.next;
+              continue;
+            }
             html += drawn;
             continue;
           }
@@ -372,6 +392,7 @@
         depth: options.depth || 1,
         after: options.after,
         first: options.first,
+        rows: Boolean(options.rows),
       });
     } finally {
       pictureDir = '';

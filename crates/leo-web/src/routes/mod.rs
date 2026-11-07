@@ -11,6 +11,7 @@ pub(crate) mod margin;
 pub(crate) mod notes;
 pub(crate) mod organize;
 pub(crate) mod pictures;
+pub(crate) mod processes;
 pub(crate) mod related;
 pub(crate) mod settings;
 pub(crate) mod sources;
