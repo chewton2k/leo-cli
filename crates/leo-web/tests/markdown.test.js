@@ -93,7 +93,7 @@ test('a checkbox in a quote does not count, as leo does not tick it', () => {
 test('numbered and nested lists', () => {
   const html = render('1. one\n2. two\n   - inner\n3. three');
   assert.ok(html.includes('<ol>'), html);
-  assert.ok(html.includes('<li>two<ul><li>inner</li></ul></li>'), html);
+  assert.ok(html.includes('<li>two<ul class="list-2"><li>inner</li></ul></li>'), html);
 });
 
 test('tables', () => {
@@ -132,6 +132,19 @@ test('pictures in a note are shown from leo, and outside ones stay links', () =>
   assert.equal(md.plain('Sizes:\n\n| a | b |\n|---|:--:|\n| 1 | 2 |'), 'Sizes: a b 1 2');
 });
 
+
+test('nested lists take their look from their depth, repeating after three', () => {
+  const html = md.render(['- one', '  - two', '    - three', '      - four', '', '1. one', '  1. two', '    1. three', '      1. four'].join('\n'));
+  assert.deepEqual(html.match(/<[uo]l[^>]*>/g), ['<ul>', '<ul class="list-2">', '<ul class="list-3">', '<ul class="list-1">', '<ol>', '<ol class="list-2">', '<ol class="list-3">', '<ol class="list-1">']);
+  assert.ok(md.render('2. b', { depth: 2 }).startsWith('<ol class="list-2" start="2">'));
+  assert.ok(md.render('- c', { depth: 3 }).startsWith('<ul class="list-3">'));
+  assert.ok(md.render('# not a list', { depth: 2 }).startsWith('<h'));
+});
+
+test('a typed `1)` keeps its parenthesis at level one; nested lists follow the depth', () => {
+  assert.ok(md.render('3) c').startsWith('<ol class="list-paren" start="3">'));
+  assert.ok(md.render('1) a\n  1) b').startsWith('<ol class="list-paren"><li>a<ol class="list-2">'));
+});
 
 let failed = 0;
 test('a mermaid block becomes a diagram slot that keeps its source, escaped', () => {

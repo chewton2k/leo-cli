@@ -229,10 +229,24 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `version` (FNV-1a); 409 → "<title> (conflict from leo)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
+  Lists (2026-11-06, the user's call): `editing.js` `item` is the one reader of a
+  marker (`-`, `*`, `+`, `1.`, `1)`, `a.`, `a)`, `A.`, `A)`; after `z` comes `aa`, then
+  `bb`, so `ok.` and `Hi.` stay prose). Enter continues with `continueLine`; on an empty
+  item it steps out one level, then leaves the list; Backspace at the start of an item's
+  text does the same through `stepBack`, keeping the text. Tab and Shift+Tab move two
+  spaces. `renumber` then fixes numbers and letters through the item's run of list lines;
+  a new sub-list starts at its first number or letter, and `closeList` closes the numbers
+  over a line that left the list. Nesting looks like Google Docs (2026-11-06, the user's
+  call) and only the page changes, never the file: `markdown.js` `list` gives lists below
+  the top `list-1`/`-2`/`-3` by depth (`depth` is the option for a note's one-line blocks),
+  CSS draws disc, circle, square and `1.`, `a.`, `i.`, repeating; a typed top-level `1)` is
+  `list-paren`. Lettered lines work in the
+  keyboard but are not drawn as lists yet: `listPrefix` leaves them out until
+  `markdown.js` does. The source field in a list item is `inline-block`: as a block,
+  WKWebView (not Playwright's WebKit) leaves an empty item's marker on a line of its own.
   Typing a list or checklist marker plus its space (`- `, `1. `, `- [ ] `)
   re-renders that line at once with the caret kept (not during IME composition);
-  headings already restyle live, and Backspace at the start of the text gives the
-  plain Markdown back. A checked task strikes only its text (`text-decoration`,
+  headings already restyle live. A checked task strikes only its text (`text-decoration`,
   per wrapped line; an empty one shows none). A box toggles only from a click
   that starts and ends within `DRAG_CLICK_DISTANCE` of one point, so selecting
   text and releasing near the box never ticks it.

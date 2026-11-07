@@ -124,25 +124,92 @@ test('list prefixes keep every rendered marker out of the text field', () => {
     assert.equal(ed.listPrefix(prefix + '文字 😀'), prefix);
   }
   assert.equal(ed.listPrefix('- [ ]'), '- [ ]');
-  for (const plain of ['Plain text', '# Heading', '> Quote', '![alt](a.png)', '-word', '1.word']) assert.equal(ed.listPrefix(plain), '');
+  for (const plain of ['Plain text', '# Heading', '> Quote', '![alt](a.png)', '-word', '1.word', 'a) not drawn as a list yet']) assert.equal(ed.listPrefix(plain), '');
 });
 
-test('Enter continues a list, a checklist and a numbered list', () => {
+test('Enter continues every kind of list with the next marker', () => {
+  const next = (line) => ed.continueLine(line).prefix;
   assert.deepEqual(ed.continueLine('- milk'), { prefix: '- ', exit: false });
-  assert.deepEqual(ed.continueLine('  * nested'), { prefix: '  * ', exit: false });
-  assert.deepEqual(ed.continueLine('- [x] done'), { prefix: '- [ ] ', exit: false });
-  assert.deepEqual(ed.continueLine('2. [x] done'), { prefix: '3. [ ] ', exit: false });
-  assert.deepEqual(ed.continueLine('3) [ ] pending'), { prefix: '4) [ ] ', exit: false });
-  assert.deepEqual(ed.continueLine('9. nine'), { prefix: '10. ', exit: false });
-  assert.deepEqual(ed.continueLine('> quoted'), { prefix: '> ', exit: false });
+  assert.equal(next('  * nested'), '  * ');
+  assert.equal(next('+ plus'), '+ ');
+  assert.equal(next('- [x] done'), '- [ ] ');
+  assert.equal(next('2. [x] done'), '3. [ ] ');
+  assert.equal(next('3) [ ] pending'), '4) [ ] ');
+  assert.equal(next('9. nine'), '10. ');
+  assert.equal(next('a. one'), 'b. ');
+  assert.equal(next('b) two'), 'c) ');
+  assert.equal(next('C. three'), 'D. ');
+  assert.equal(next('  a) nested'), '  b) ');
+  assert.equal(next('z) last'), 'aa) ');
+  assert.equal(next('aa) doubled'), 'bb) ');
+  assert.equal(next('Z. last'), 'AA. ');
+  assert.equal(next('a. [ ] box'), 'b. [ ] ');
+  assert.equal(next('> quoted'), '> ');
   assert.deepEqual(ed.continueLine('plain'), { prefix: '', exit: false });
 });
 
-test('Enter on an empty list item leaves the list', () => {
-  assert.deepEqual(ed.continueLine('- '), { prefix: '', exit: true });
-  assert.deepEqual(ed.continueLine('2. [ ] '), { prefix: '', exit: true });
-  assert.deepEqual(ed.continueLine('- [ ] '), { prefix: '', exit: true });
-  assert.deepEqual(ed.continueLine('  2. '), { prefix: '', exit: true });
+test('words that only look like markers stay prose', () => {
+  for (const line of ['Hello. world', 'ok. sure', 'hi) there', 'a)b', 'e.g. this', '-word', '1.word', 'a dog']) {
+    assert.deepEqual(ed.continueLine(line), { prefix: '', exit: false }, line);
+    assert.equal(ed.itemHead(line), '', line);
+  }
+});
+
+test('Enter on an empty item steps out one level, then leaves the list', () => {
+  const back = (line) => ed.continueLine(line).back;
+  for (const line of ['- ', '2. [ ] ', '- [ ] ', 'a) ', '* ', '+ ', '-   [ ] ']) {
+    assert.equal(ed.continueLine(line).exit, true, line);
+    assert.equal(back(line), '', line);
+  }
+  assert.equal(back('  - '), '- ');
+  assert.equal(back('    - [ ] '), '  - [ ] ');
+  assert.equal(back('  2. '), '2. ');
+  assert.equal(back('\ta) '), 'a) ');
+});
+
+test('Backspace at the start of an item outdents, then keeps only the text', () => {
+  assert.equal(ed.stepBack('    - deep'), '  - deep');
+  assert.equal(ed.stepBack('  - sub'), '- sub');
+  assert.equal(ed.stepBack('- sub'), 'sub');
+  assert.equal(ed.stepBack('- [x] done 😀'), 'done 😀');
+  assert.equal(ed.stepBack('12. twelve'), 'twelve');
+  assert.equal(ed.stepBack('c) three'), 'three');
+  assert.equal(ed.stepBack('- '), '');
+});
+
+test('numbers and letters follow their place after a change', () => {
+  const after = (lines, at) => {
+    const out = [...lines];
+    ed.renumber(out, at);
+    return out;
+  };
+  assert.deepEqual(after(['1. a', '2. ', '2. b', '3. c'], 1), ['1. a', '2. ', '3. b', '4. c']);
+  assert.deepEqual(after(['a) a', 'b) ', 'b) b'], 1), ['a) a', 'b) ', 'c) b']);
+  assert.deepEqual(after(['1. a', '  2. b', '3. c'], 1), ['1. a', '  1. b', '2. c'], 'a new sub-list starts over and the outer one closes up');
+  assert.deepEqual(after(['1. a', '2. b', '  2. c'], 1), ['1. a', '2. b', '  1. c']);
+  assert.deepEqual(after(['1. a', '  c) b', '  a) c'], 1), ['1. a', '  a) b', '  b) c']);
+  assert.deepEqual(after(['5. a', '6. b', '  - x', '6. c'], 1), ['5. a', '6. b', '  - x', '7. c'], 'the first number stays and sub-items are skipped');
+  assert.deepEqual(after(['9. [ ] a', '9. [x] b'], 1), ['9. [ ] a', '10. [x] b']);
+  assert.deepEqual(after(['- a', '1. b', 'plain', '1. c'], 1), ['- a', '1. b', 'plain', '1. c'], 'a plain line ends the list');
+  assert.deepEqual(after(['```', '3. in code', '```', '1. a', '1. b'], 3), ['```', '3. in code', '```', '1. a', '2. b']);
+  assert.deepEqual(after(['- a', 'plain'], 1), ['- a', 'plain'], 'a plain line changes nothing');
+});
+
+test('a line leaving a list closes the numbers around it', () => {
+  const left = (lines, at) => {
+    const out = [...lines];
+    ed.closeList(out, at);
+    return out;
+  };
+  assert.deepEqual(left(['1. a', 'b', '3. c', '4. d'], 1), ['1. a', 'b', '2. c', '3. d']);
+  assert.deepEqual(left(['1. a', '', '3. c'], 1), ['1. a', '', '2. c']);
+  assert.deepEqual(left(['b', '3. c'], 0), ['b', '3. c'], 'nothing above, so the number stays');
+  assert.deepEqual(left(['1. a', '  1. b', '  3. c'], 1), ['1. a', '  1. b', '  2. c'], 'an item is renumbered in place');
+  assert.deepEqual(left(['1. a', 'b'], 1), ['1. a', 'b']);
+});
+
+test('a list item knows its level', () => {
+  assert.deepEqual(['- a', '  - b', '    1. c', '  a) d', '\t- e', 'plain', '  plain'].map(ed.listLevel), [0, 1, 2, 1, 2, 0, 0]);
 });
 
 test('ticking a box flips only that box', () => {
@@ -157,6 +224,8 @@ test('Tab indents a list item and Shift-Tab brings it back', () => {
   assert.equal(ed.outdent('  - item'), '- item');
   assert.equal(ed.outdent('- item'), '- item');
   assert.equal(ed.outdent(' - item'), '- item');
+  assert.equal(ed.outdent('\t- item'), '- item');
+  assert.equal(ed.outdent('   - item'), ' - item');
 });
 
 test('a tap lands on the same spot in the raw text', () => {

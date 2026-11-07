@@ -105,24 +105,78 @@
     return -1;
   }
 
+  const ITEM = /^([^\S\n]*)([-*+]|\d+[.)]|([a-zA-Z])\3*[.)])([^\S\n]+)(\[[ xX]\](?:[^\S\n]+|$))?/;
+
+  function item(line) {
+    const m = line.match(ITEM);
+    return m && { lead: m[1], marker: m[2], box: m[5] || '', head: m[0], text: line.slice(m[0].length) };
+  }
+
+  const itemHead = (line) => item(line)?.head || '';
+  const leadWidth = (lead) => lead.replace(/\t/g, '    ').length;
+
+  function listLevel(line) {
+    const found = item(line);
+    return found ? Math.floor(leadWidth(found.lead) / 2) : 0;
+  }
+
   function listPrefix(line) {
-    const found = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\](?:\s+|$))?/);
-    return found ? found[0] : '';
+    const found = item(line);
+    return found && !/[a-zA-Z]/.test(found.marker) ? found.head : '';
+  }
+
+  function nextMarker(marker) {
+    const number = marker.match(/^(\d+)(.)$/);
+    if (number) return `${Number(number[1]) + 1}${number[2]}`;
+    const letters = marker.match(/^([a-zA-Z]+)(.)$/);
+    if (!letters) return marker;
+    const [, run, end] = letters;
+    if (/[zZ]/.test(run)) return (run[0] === 'z' ? 'a' : 'A').repeat(run.length + 1) + end;
+    return String.fromCharCode(run.charCodeAt(0) + 1).repeat(run.length) + end;
+  }
+
+  const firstMarker = (marker) => marker.replace(/\d+/, '1').replace(/[a-z]+/, 'a').replace(/[A-Z]+/, 'A');
+
+  function renumber(lines, at) {
+    if (!item(lines[at] ?? '')) return;
+    let from = at;
+    while (from > 0 && item(lines[from - 1])) from--;
+    const open = [];
+    for (let i = from; i < lines.length; i++) {
+      const found = item(lines[i]);
+      if (!found) break;
+      const depth = leadWidth(found.lead);
+      while (open.length && open[open.length - 1].depth > depth) open.pop();
+      const level = open[open.length - 1]?.depth === depth ? open.pop() : null;
+      const kind = firstMarker(found.marker);
+      const marker = level ? (firstMarker(level.marker) === kind ? nextMarker(level.marker) : found.marker) : open.length ? kind : found.marker;
+      open.push({ depth, marker });
+      if (marker !== found.marker) lines[i] = found.lead + marker + lines[i].slice(found.lead.length + found.marker.length);
+    }
+  }
+
+  function closeList(lines, at) {
+    if (item(lines[at] ?? '')) return renumber(lines, at);
+    const rest = lines.slice();
+    rest.splice(at, 1);
+    renumber(rest, at);
+    rest.splice(at, 0, lines[at]);
+    lines.splice(0, lines.length, ...rest);
+  }
+
+  function stepBack(line) {
+    const found = item(line);
+    return found.lead ? outdent(line) : found.text;
   }
 
   function continueLine(line) {
-    let m = line.match(/^(\s*)([-*+]|\d+[.)])\s+\[[ xX]\]\s?(.*)$/);
-    if (m) {
-      const number = m[2].match(/^(\d+)([.)])$/);
-      const marker = number ? `${Number(number[1]) + 1}${number[2]}` : m[2];
-      return m[3].trim() ? { prefix: `${m[1]}${marker} [ ] `, exit: false } : { prefix: '', exit: true };
+    const found = item(line);
+    if (found) {
+      const prefix = `${found.lead}${nextMarker(found.marker)} ${found.box ? '[ ] ' : ''}`;
+      return found.text.trim() ? { prefix, exit: false } : { prefix, exit: true, back: stepBack(line) };
     }
-    m = line.match(/^(\s*)([-*+])\s(.*)$/);
-    if (m) return m[3].trim() ? { prefix: `${m[1]}${m[2]} `, exit: false } : { prefix: '', exit: true };
-    m = line.match(/^(\s*)(\d+)([.)])\s(.*)$/);
-    if (m) return m[4].trim() ? { prefix: `${m[1]}${Number(m[2]) + 1}${m[3]} `, exit: false } : { prefix: '', exit: true };
-    m = line.match(/^(\s*)>\s?(.*)$/);
-    if (m) return m[2].trim() ? { prefix: `${m[1]}> `, exit: false } : { prefix: '', exit: true };
+    const m = line.match(/^(\s*)>\s?(.*)$/);
+    if (m) return m[2].trim() ? { prefix: `${m[1]}> `, exit: false } : { prefix: '', exit: true, back: '' };
     return { prefix: '', exit: false };
   }
 
@@ -133,11 +187,12 @@
   }
 
   function indent(line) {
+    // shortcut: two spaces under `1.` nest in leo but read flat in strict CommonMark, widen to the parent's text column if notes must nest elsewhere.
     return '  ' + line;
   }
 
   function outdent(line) {
-    return line.replace(/^ {1,2}/, '');
+    return line.replace(/^(?: {1,2}|\t)/, '');
   }
 
   const PREFIX = /^(\s*)(#{1,6}\s+|>\s?|(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)?/;
@@ -224,7 +279,7 @@
     });
   }
 
-  const api = { listPrefix, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { listPrefix, itemHead, listLevel, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

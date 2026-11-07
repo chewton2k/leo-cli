@@ -89,11 +89,6 @@
       return false;
     }
 
-    function levelOf(text) {
-      const lead = text.match(/^\s*/)[0].replace(/\t/g, '    ').length;
-      return /^\s*([-*+]|\d+[.)])\s/.test(text) ? Math.floor(lead / 2) : 0;
-    }
-
     function renderBlock(block) {
       const text = lines.slice(block.start, block.end).join('\n');
       if (!text.trim()) {
@@ -103,6 +98,7 @@
       return md.render(text.replace(/^\s+/, ''), {
         boxOffset: ed.boxesBefore(lines, block.start),
         dir,
+        depth: block.kind === 'line' ? ed.listLevel(text) + 1 : 1,
       });
     }
 
@@ -120,7 +116,7 @@
         el.className = `blk blk-${block.kind}`;
         el.dataset.start = String(block.start);
         el.dataset.i = String(i);
-        const level = block.kind === 'line' ? levelOf(text) : 0;
+        const level = block.kind === 'line' ? ed.listLevel(text) : 0;
         if (level) el.style.marginLeft = `${level * 1.5}em`;
         el.innerHTML = renderBlock(block);
         if (old && old.el.parentNode === container) old.el.replaceWith(el);
@@ -818,9 +814,10 @@
       stop();
       const before = lines.join('\n');
       lines = (before.slice(0, span[0]) + text + before.slice(span[1])).split('\n');
+      const at = span[0] + text.length;
+      ed.renumber(lines, lineOf(at));
       changed();
       draw();
-      const at = span[0] + text.length;
       editSpan(at, at);
       return true;
     }
@@ -870,10 +867,12 @@
       fit(area);
       changed();
       const marker = ed.listPrefix(editing.prefix + area.value);
-      if (editing.kind === 'line' && !e.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker) && !marker.includes('\n')) {
-        const caret = editing.prefix.length + area.selectionStart;
+      if (editing.kind === 'line' && !e?.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker)) {
+        const caret = lineStart(start) + editing.prefix.length + area.selectionStart;
+        const line = lineOf(caret);
+        const inside = caret - lineStart(line);
         stop();
-        editLine(start, caret);
+        editLine(line, inside);
       }
     }
 
@@ -891,17 +890,19 @@
       const next = ed.continueLine(before[before.length - 1]);
       const span = editing.end - start;
       if (next.exit && !after.trim()) {
-        before[before.length - 1] = '';
+        before[before.length - 1] = next.back;
         lines.splice(start, span, ...before);
+        ed.closeList(lines, start + before.length - 1);
         changed();
         stop();
         editLine(start + before.length - 1, 'end');
         return;
       }
       lines.splice(start, span, ...before, ...(next.prefix + after).split('\n'));
+      ed.renumber(lines, start + before.length);
       changed();
       stop();
-      editLine(start + before.length, next.prefix.length);
+      editLine(start + before.length, ed.itemHead(lines[start + before.length]).length);
     }
 
     function onBeforeInput(e) {
@@ -935,12 +936,13 @@
         return;
       }
 
-      if (prefix && e.key === 'Backspace' && collapsed && area.selectionStart === 0) {
+      if (kind === 'line' && e.key === 'Backspace' && collapsed && pos && pos === ed.itemHead(value).length) {
         e.preventDefault();
-        lines.splice(start, editing.end - start, ...area.value.split('\n'));
+        lines.splice(start, editing.end - start, ...ed.stepBack(value).split('\n'));
+        ed.closeList(lines, start);
         changed();
         stop();
-        editLine(start, 'start');
+        editLine(start, ed.itemHead(lines[start]).length);
         return;
       }
 
@@ -950,6 +952,7 @@
           e.preventDefault();
           const above = lines[start - 1];
           lines.splice(start - 1, 1 + editing.end - start, ...(above + value).split('\n'));
+          ed.renumber(lines, start - 1);
           changed();
           stop();
           editLine(start - 1, above.length);
@@ -960,8 +963,9 @@
       if (kind === 'line' && e.key === 'Tab') {
         e.preventDefault();
         const next = e.shiftKey ? ed.outdent(value) : ed.indent(value);
-        const shift = next.length - value.length;
         lines.splice(start, editing.end - start, ...next.split('\n'));
+        ed.renumber(lines, start);
+        const shift = lines[start].length - value.split('\n')[0].length;
         changed();
         stop();
         editLine(start, Math.max(0, pos + shift));

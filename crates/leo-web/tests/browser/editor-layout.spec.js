@@ -718,6 +718,105 @@ test('typing a list or checklist marker renders it at once and keeps the caret i
   }, {body: 'Start'});
 });
 
+test('a list is written, nested and left with the keyboard alone', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    const source = () => page.evaluate(() => doc.source());
+    const area = page.locator('#doc textarea');
+    for (const [marker, second, third] of [['- ', '- ', '  - '], ['* ', '* ', '  * '], ['+ ', '+ ', '  + '], ['1. ', '2. ', '  1. '], ['1) ', '2) ', '  1) '], ['a. ', 'b. ', '  a. '], ['a) ', 'b) ', '  a) '], ['A) ', 'B) ', '  A) ']]) {
+      await page.goto(url + '/?body=');
+      await page.locator('#doc .blk').click();
+      await page.keyboard.type(marker + 'one');
+      await page.keyboard.press('Enter');
+      expect(await source()).toBe(`${marker}one\n${second}`);
+      await page.keyboard.press('Tab');
+      expect(await source(), marker).toBe(`${marker}one\n${third}`);
+      await page.keyboard.type('sub');
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
+      expect(await source(), marker).toBe(`${marker}one\n${third}sub\n${second}`);
+      await page.keyboard.press('Enter');
+      expect(await source(), marker).toBe(`${marker}one\n${third}sub\n`);
+      await page.keyboard.type('plain');
+      await expect(area).toHaveValue('plain');
+    }
+    await page.goto(url + '/?body=');
+    await page.locator('#doc .blk').click();
+    await page.keyboard.type('- ');
+    const marked = await page.evaluate(() => ({ item: document.querySelector('#doc li').getBoundingClientRect().height, area: document.querySelector('#doc textarea').getBoundingClientRect().height }));
+    expect(marked.item).toBeLessThan(marked.area + 1);
+    await page.keyboard.type('[ ] ');
+    await expect(page.locator('#doc input[data-box]')).toHaveCount(1);
+    await page.keyboard.type('box');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    expect(await source()).toBe('- [ ] box\n  - [ ] ');
+    await page.keyboard.press('Shift+Tab');
+    expect(await source()).toBe('- [ ] box\n- [ ] ');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('deep');
+    await area.evaluate(el => el.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('- [ ] box\n- [ ] deep');
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('- [ ] box\ndeep');
+    await expect(area).toHaveValue('deep');
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await source()).toBe('- [ ] box\n- [ ] deep');
+  });
+});
+
+test('nesting changes the marker like Google Docs, and only on the page', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    const source = () => page.evaluate(() => doc.source());
+    const looks = () => page.evaluate(() => [...document.querySelectorAll('#doc ul, #doc ol')].map(list => getComputedStyle(list).listStyleType));
+    for (const [marker, kinds, file] of [['1. ', ['decimal', 'lower-alpha', 'lower-roman', 'decimal'], '1. a\n  1. b\n    1. c\n      1. d'], ['- ', ['disc', 'circle', 'square', 'disc'], '- a\n  - b\n    - c\n      - d']]) {
+      await page.goto(url + '/?body=');
+      await page.locator('#doc .blk').click();
+      await page.keyboard.type(marker + 'a');
+      for (const text of ['b', 'c', 'd']) {
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('Tab');
+        await page.keyboard.type(text);
+      }
+      expect(await source()).toBe(file);
+      await page.locator('h1').click();
+      expect(await looks()).toEqual(kinds);
+      await page.locator('#doc .blk').last().click();
+      await page.keyboard.press('Shift+Tab');
+      expect((await looks())[3]).toBe(kinds[2]);
+      await page.keyboard.press('Tab');
+      expect((await looks())[3]).toBe(kinds[3]);
+    }
+    await page.goto(url + '/?body=' + encodeURIComponent('1) a\n2) b'));
+    expect(await looks()).toEqual(['paren', 'paren']);
+    await page.locator('#doc .blk').last().click();
+    await page.keyboard.press('Tab');
+    expect(await looks()).toEqual(['paren', 'lower-alpha']);
+    expect(await source()).toBe('1) a\n  1) b');
+    await page.goto(url + '/?body=' + encodeURIComponent('1. a\n2. \n3. c'));
+    await page.locator('#doc .blk').nth(1).click();
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    expect(await source()).toBe('1. a\n2. c');
+  });
+});
+
+test('a list pasted into an empty line leaves the caret at its end', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url + '/?body=');
+    await page.locator('#doc .blk').click();
+    await page.locator('#doc textarea').evaluate(el => {
+      el.setRangeText('- one\n- two', 0, 0, 'end');
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+    });
+    await page.keyboard.type('!');
+    expect(await page.evaluate(() => doc.source())).toBe('- one\n- two!');
+  });
+});
+
 test('a checked task strikes only its own text, line by line', async ({ browser }) => {
   const long = 'wrapped words '.repeat(40).trim();
   await editorFixture(browser, async (context, url) => {
@@ -782,7 +881,11 @@ test('list text supports caret clicks, removing formatting, undo and navigation 
     await area.evaluate(el => el.setSelectionRange(0, 0));
     await page.keyboard.press('Backspace');
     await expect(area).toHaveValue('New Task text');
+    expect(await page.evaluate(() => doc.source())).toContain('\n- [x] New Task text\n');
+    await page.keyboard.press('Backspace');
+    await expect(area).toHaveValue('New Task text');
     expect(await page.evaluate(() => doc.source())).toContain('\nNew Task text\n');
+    await page.keyboard.press('ControlOrMeta+z');
     await page.keyboard.press('ControlOrMeta+z');
     expect(await page.evaluate(() => doc.source())).toContain('  - [x] New Task text');
     await page.keyboard.press('Escape');
@@ -800,13 +903,13 @@ test('list text supports caret clicks, removing formatting, undo and navigation 
 test('empty lists exit and a whole single list item can be deleted, cut or replaced', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
-    for (const source of ['- [ ] ', '2. [ ] ', '-   [ ] ', '  - ', '3) ']) {
+    for (const [source, left] of [['- [ ] ', ''], ['2. [ ] ', ''], ['-   [ ] ', ''], ['  - ', '- '], ['3) ', '']]) {
       await page.goto(url + '/?body=' + encodeURIComponent(source));
       await page.locator('#doc .blk').click({position:{x:80,y:10}});
       await expect(page.locator('#doc textarea')).toBeFocused();
       expect((await page.locator('#doc textarea').boundingBox()).height).toBeGreaterThan(20);
       await page.keyboard.press('Enter');
-      expect(await page.evaluate(() => doc.source()), source).toBe('');
+      expect(await page.evaluate(() => doc.source()), source).toBe(left);
     }
     for (const source of ['- [ ] Task', '12. Item', '* Bullet']) {
       for (const action of ['delete', 'cut', 'replace']) {
@@ -1113,6 +1216,7 @@ test('Enter keeps every continued list item on its marker line and an empty item
       expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next + 'Second item');
       await area.press('Enter');
       await area.press('Enter');
+      if (source.startsWith(' ')) await area.press('Enter');
       expect(await page.evaluate(() => doc.source()), source).toBe(source + '\n' + next + 'Second item\n');
       await expect(area).toBeFocused();
       await expect(page.locator('#doc .blk').last().locator('li')).toHaveCount(0);
