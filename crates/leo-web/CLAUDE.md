@@ -1265,12 +1265,28 @@ Highlight, cleared after five seconds or navigation without changing editor DOM.
 Usage keeps a single provider column with compact Session/Weekly rows: remaining
 percentage at left, a muted provider-colored bar and reset time at right. The
 dialog has no nested settings card or setup prose; unknown readings stay explicit.
+Usage (2026-11-06, the owner: no small modal that grows): the sheet opens at its final
+size (`min-height`) with `.skeleton` shaped as two plans of two rows, then the saved
+readings come in with `cascade`, first draw only. Refresh and Close are icon buttons (labels
+kept; `.activity-spin` replaces the arrows while busy); "Plan limits" is a muted subtitle,
+and "Updated …" sits in each plan's header (`planUpdated`). A window past its reset says
+"Reset", one never read says "Not read yet", both with "Refresh to check". Opening POSTs
+`/api/settings/usage` with `{}`; the Refresh button POSTs `{ "claude": true }`; a `note` in the
+response shows as a quiet line. Usage and New task share the `sheetroom` container on both
+`.scrim` and `.scrim-gone`, so a closing ghost keeps its layout.
 
 Calendar tasks use 13 px two-line titles, taller all-day/month rows and a 60 px
 minimum timed block. Overlap layout includes that visual minimum; saved task
 times stay unchanged. Google export, .ics download and delete/stop-tracking
 actions use icon controls with accessible names and hover titles in both peeks
 and task sheets.
+A block that would hang past midnight (a deadline at 23:59 with its 60 px minimum) is placed
+higher (`calColumn` `placed`, 2026-11-06) so it never adds empty scroll under the grid; its
+label and drags still use the real start.
+New task (2026-11-06, the owner: change the dimensions freely) is two panes at 720 px when the
+scrim is 760 px or wider (a container query, since panes shrink the viewport): title (large),
+description (fills the left column), Type chips, Repeat; the date and time picker on the right.
+One column below that. The footer stays pinned.
 Minimum-height blocks resize from the original end plus pointer movement,
 including scroll movement; a sideways grip drag cannot lengthen a short task.
 Month rows grow to fit their previews and More action; the month grid scrolls

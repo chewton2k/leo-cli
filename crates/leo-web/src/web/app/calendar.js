@@ -308,15 +308,17 @@ function calColumn(key, plan, today) {
   const day = plan.byDay.get(key) || { timed: [] };
   const items = day.timed.filter(calShown);
   const spans = items.map((item) => S.spanOn(item, key, item.type === 'task' ? Math.ceil((CAL_TASK_PX + 2) / CAL_HOUR_PX * 60) : CAL_SNAP * 2));
-  const cols = S.dayColumns(spans);
+  const floor = (item) => 1440 - Math.ceil(((item.type === 'task' ? CAL_TASK_PX : 18) + 2) / CAL_HOUR_PX * 60);
+  const placed = spans.map((s, i) => ({ start: Math.min(s.start, floor(items[i])), end: s.end }));
+  const cols = S.dayColumns(placed);
   const blocks = items.map((item, i) => {
     const { start, end } = spans[i];
     const { col, cols: n } = cols[i];
     const step = Math.min(40, 70 / n);
     const left = col * step;
     const width = col === n - 1 ? 100 - left : Math.min(100 - left, step * 1.8);
-    const top = (start / 60) * CAL_HOUR_PX;
-    const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - start) / 60) * CAL_HOUR_PX - 2);
+    const top = (placed[i].start / 60) * CAL_HOUR_PX;
+    const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - placed[i].start) / 60) * CAL_HOUR_PX - 2);
     const short = end - start <= 30;
     const task = item.type === 'task' ? item.task : null;
     const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
@@ -1160,11 +1162,15 @@ async function saveDate(task, pick, confirm) {
 
 function newTaskSheet(day = null) {
   const box = sheet(`<h3>New task</h3>
-    <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing? Like Submit lab report" autocomplete="off">
-    <label class="set-row column"><span class="set-label">Description <span class="hint">optional</span></span><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…"></textarea></label>
-    <div class="picker-box" id="pick-box"></div>
-    <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
-    <details class="task-more source-more"><summary>${ICON.chevron}<span>Details</span></summary><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></details>
+    <div class="task-new">
+      <div class="task-left">
+        <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing? Like Submit lab report" autocomplete="off" aria-label="Title">
+        <label class="set-row column task-about"><span class="set-label">Description <span class="hint">optional</span></span><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…"></textarea></label>
+        <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
+        <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
+      </div>
+      <div class="picker-box" id="pick-box"></div>
+    </div>
     <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn primary" id="task-add">Add task</button></div>`);
   let kind = 'other';
   let repeat = [];

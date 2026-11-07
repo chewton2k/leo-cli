@@ -476,6 +476,20 @@ test('readable minimum task heights participate in calendar overlap layout', asy
   });
 });
 
+test('a task at the end of the day stays inside the grid and keeps its real time', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      const task = cal.data.tasks.find(task => task.id === 'task-lab');
+      cal.data.tasks.push({ ...task, id: 'task-late', title: 'Late deadline', time: '23:59:00', end: null });
+      drawCalendar();
+    });
+    const column = await page.locator('.cal-col[data-day="2026-11-05"]').boundingBox();
+    const late = await page.locator('.cal-item[data-id="task-late"]').boundingBox();
+    expect(late.y + late.height).toBeLessThanOrEqual(column.y + column.height);
+    expect(await page.locator('#cal-scroll').evaluate(el => el.scrollHeight)).toBeLessThanOrEqual(24 * 48 + 2);
+  });
+});
+
 test('enlarged task blocks do not change duration on a horizontal resize drag', async ({ browser }) => {
   await calendarFixture(browser, async page => {
     for (const end of [null, '11:01:00', '11:05:00', '11:15:00', '11:17:00', '12:00:00']) {

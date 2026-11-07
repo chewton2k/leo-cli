@@ -3591,11 +3591,8 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.emulateMedia({ forcedColors: 'none' });
   await page.goto('/#/calendar');
   await page.locator('#app [data-action="task-new"]').first().click();
-  const details = page.locator('.task-more');
-  await expect(details.locator('summary > svg')).toHaveCount(1);
-  await details.locator('summary').focus();
-  await page.keyboard.press('Enter');
-  await expect(details).toHaveAttribute('open', '');
+  await expect(page.locator('.sheet .task-kinds .pick-chip')).toHaveCount(6);
+  await expect(page.locator('.sheet .task-kinds .pick-chip.on')).toHaveText('Other');
   await page.locator('.sheet [data-action="close"]').click();
   await page.locator('#chat-toggle').click();
   await page.locator('[data-chat="attach"]').click();
