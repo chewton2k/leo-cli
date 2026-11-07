@@ -39,7 +39,7 @@ document.addEventListener('mousedown', (e) => {
   if (e.target.closest && e.target.closest('[data-keep-selection]')) e.preventDefault();
 });
 
-const KEEP_SELECTION = '[data-keep-selection], a, button, input, textarea, select, summary, [role="button"], [contenteditable="true"], .pane-resize, .chat-resize, .source-grip, .cal-grip';
+const KEEP_SELECTION = '[data-keep-selection], a, button, input, textarea, select, summary, [role="button"], [contenteditable], .pane-resize, .chat-resize, .source-grip, .cal-grip';
 
 document.addEventListener('pointerdown', (e) => {
   if (!(e.target instanceof Element) || e.target.closest(KEEP_SELECTION)) return;

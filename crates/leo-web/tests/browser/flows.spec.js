@@ -3784,7 +3784,7 @@ test.describe('passages', () => {
     await expect(toggle).toBeFocused();
     await page.locator('.margin-note').click();
     await expect(page.locator('.margin-note').getByRole('button', { name: 'Open in chat' })).toHaveCount(0);
-    await expect(page.locator('.margin-note').getByRole('button', { name: 'Ask in chat' })).toBeHidden();
+    await expect(page.locator('.margin-note').getByRole('button', { name: 'Ask in chat' })).toBeVisible();
     const reply = page.locator('.margin-reply textarea');
     await expect(reply).toBeFocused();
     expect(await reply.evaluate((el) => { const css = getComputedStyle(el); return css.boxShadow.includes('0px 1px 0px') && !css.boxShadow.includes('rgba(0, 0, 0, 0)'); })).toBe(true);
@@ -3924,10 +3924,10 @@ test.describe('passages', () => {
       a.dispatchEvent(new Event('select'));
     });
     await page.keyboard.press('ControlOrMeta+Shift+e');
-    await expect(page.locator('.margin-note[data-id="draft"] textarea')).toBeFocused();
+    await expect(page.locator('.margin-note[data-open] .margin-felix')).toBeVisible();
     expect(await box()).toEqual(first);
-    await page.locator('.margin-note[data-id="draft"]').evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((run) => run.finished)));
-    await page.locator('.margin-note[data-id="draft"]').getByRole('button', { name: 'Cancel' }).click();
+    await page.locator('.margin-note[data-open]').evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((run) => run.finished)));
+    await page.locator('.margin-note[data-open]').getByRole('button', { name: 'Dismiss' }).click();
     await expect(page.locator('.margin-note')).toHaveCount(0);
     expect(await box()).toEqual(first);
 
@@ -4033,7 +4033,7 @@ test.describe('passages', () => {
     let asked = null;
     await page.route('**/margin/threads', async (route) => {
       asked = route.request().postDataJSON();
-      await route.fulfill({ json: { id: 'stub-ask', note: note.id, quote: asked.quote, prefix: asked.prefix, suffix: asked.suffix, status: 'open', source: 'ask', messages: [{ from: 'you', text: asked.question, at: '2026-11-04T10:00:00Z' }, { from: 'felix', text: 'The heap property.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' } });
+      await route.fulfill({ json: { id: 'stub-ask', note: note.id, quote: asked.quote, prefix: asked.prefix, suffix: asked.suffix, status: 'open', source: 'ask', messages: [{ from: 'felix', text: 'The heap property.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' } });
     });
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#doc .blk').first().click();
@@ -4045,12 +4045,9 @@ test.describe('passages', () => {
       a.dispatchEvent(new Event('select'));
     });
     await page.keyboard.press('ControlOrMeta+Shift+e');
-    const input = page.locator('.margin-note[data-id="draft"] textarea');
-    await expect(input).toBeFocused();
-    await input.fill('Why?');
-    await input.press('Enter');
     await expect(page.locator('.margin-note .margin-felix')).toContainText('The heap property.');
     expect(asked.quote).toBe('keeps the minimum');
+    expect(asked.question).toBe('');
     await expect(page.locator('.ink-word, .margin-ink path.arriving')).toHaveCount(0);
     await page.locator('#chat-toggle').click();
     await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'marks');

@@ -142,7 +142,7 @@ button, label, summary, [role="button"], [role="tab"], [draggable="true"], .bar,
   -webkit-user-select: none; user-select: none;
 }
 body { -webkit-user-select: none; user-select: none; }
-input, textarea, [contenteditable="true"], .doc, .prose .task > span, .prose, pre, code, .chat-text, .bubble, .msg-error, .msg-passage-text, .margin-felix, .margin-you, .margin-pending, .margin-problem, .srcs, .set-note, .set-path, .hint, .sched-about, .choice-about, .rec-transcript, .rec-points, .rec-error-details, .upload-error, .diagram-error, .toast { -webkit-user-select: text; user-select: text; }
+input, textarea, [contenteditable], .doc, .prose .task > span, .prose, pre, code, .bubble, .msg-error, .msg-passage-text, .margin-felix, .margin-you, .margin-pending, .margin-problem, .proposal-old, .proposal-new, .msg-step, .set-note, .set-path, .hint, .sched-about, .choice-about, .rec-transcript, .rec-points, .rec-error-details, .upload-error, .diagram-error, .toast { -webkit-user-select: text; user-select: text; }
 .doc-tail, .blk:has(.blank) { -webkit-user-select: none; user-select: none; }
 a, img { -webkit-user-drag: none; }
 a { color: var(--accent); }
@@ -1292,7 +1292,7 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .msg.leo .prose > :last-child { margin-bottom: 0; }
 .msg.leo .prose h2 { font-size: 17px; }
 .msg.leo .prose h3 { font-size: 16px; }
-@media (prefers-reduced-motion: no-preference) { .msg.pending > .prose:not(:has(~ .prose)) { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), rgb(0 0 0 / .35)); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), rgb(0 0 0 / .35)); } }
+@media (prefers-reduced-motion: no-preference) { .msg.pending > .prose:not(:has(~ :not(.msg-clock))):not(:has(.typing)) { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), rgb(0 0 0 / .35)); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), rgb(0 0 0 / .35)); } }
 .chat-switch { align-self: center; font-size: 12px; color: var(--muted); padding: 2px 10px; background: var(--field); border-radius: 999px; margin: 4px 0; }
 .msg-note { font-size: 12px; color: var(--muted); text-align: right; margin-top: 4px; }
 .msg.user.queued .bubble { background: none; color: var(--muted); outline: 1px dashed color-mix(in srgb, var(--text) 30%, transparent); outline-offset: -1px; }

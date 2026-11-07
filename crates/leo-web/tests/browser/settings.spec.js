@@ -56,7 +56,6 @@ test('coding accounts show readable usage and sign-in states in both themes and 
       await expect(page.getByRole('meter', { name: 'Codex 7 day remaining' })).toHaveAttribute('aria-valuenow', '7');
       await expect(page.getByText('Signed in', { exact: true })).toBeVisible();
       await expect(page.getByText('Signed out', { exact: true })).toBeVisible();
-      await expect(page.getByText('Selected for writing')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       for (const card of await page.locator('.coding-plan').all()) {
         expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);

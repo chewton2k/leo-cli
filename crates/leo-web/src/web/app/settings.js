@@ -200,7 +200,7 @@ const PLAN_STALE_MS = 5 * 60 * 1000;
 function planLimits(plan) {
   const limits = plan.limits;
   const now = Date.now();
-  const windows = [['five_hour', 'Session', '5 hour'], ['seven_day', 'Weekly', '7 day']].map(([key, name, period]) => {
+  return [['five_hour', 'Session', '5 hour'], ['seven_day', 'Weekly', '7 day']].map(([key, name, period]) => {
     const window = limits?.[key];
     const used = window?.used;
     const valid = Number.isFinite(used);
@@ -213,7 +213,6 @@ function planLimits(plan) {
     const when = !available ? 'Refresh to check' : validReset ? `Resets in ${duration(reset.getTime() - now)}` : 'Reset time unavailable';
     return `<div class="plan-window"><div class="plan-metric"><span>${name}</span><strong${available ? '' : ' class="plan-none"'}>${available ? `${percent}% <small>left</small>` : missing}</strong></div><div class="plan-track"><div class="plan-meter${available ? '' : ' unavailable'}" role="meter" aria-label="${esc(plan.name)} ${period} remaining" aria-valuemin="0" aria-valuemax="100"${available ? ` aria-valuenow="${percent}"` : ` aria-valuetext="${missing}"`}>${available ? `<i style="width:${percent}%"></i>` : ''}</div><span class="hint">${esc(when)}</span></div></div>`;
   }).join('');
-  return windows;
 }
 
 function planUpdated(plan) {
@@ -231,13 +230,13 @@ function duration(ms) {
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${rest}m` : `${rest}m`;
 }
 
-function codingPlans(page, selectable = true) {
+function codingPlans(page) {
   if (!page.plans?.length) return '';
-  const selected = page.tasks.find(task => task.task === 'writing')?.provider;
   return `<div class="coding-plans">${page.plans.map(plan => {
     const connected = plan.installed && plan.signed_in === true;
     const status = !plan.installed ? 'Not available' : connected ? 'Signed in' : plan.signed_in === false ? 'Signed out' : 'Sign-in unknown';
-    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><div class="plan-title"><h4>${esc(plan.name)}</h4>${planUpdated(plan) ? `<span class="hint plan-updated">${esc(planUpdated(plan))}</span>` : ''}</div><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}${selectable && selected === plan.provider ? '<span class="chip">Selected for writing</span>' : connected && selectable ? `<button class="btn sm plain" data-action="use-plan" data-provider="${esc(plan.provider)}">Use ${esc(plan.name)}</button>` : ''}</section>`;
+    const updated = planUpdated(plan);
+    return `<section class="coding-plan" data-provider="${esc(plan.provider)}" aria-label="${esc(plan.name)} account"><header><div class="plan-title"><h4>${esc(plan.name)}</h4>${updated ? `<span class="hint plan-updated">${esc(updated)}</span>` : ''}</div><span class="set-status${connected ? ' ok' : ' missing'}">${status}</span></header>${planLimits(plan)}${!connected ? `<p class="hint">${plan.installed ? `Check sign-in with ${esc(plan.signin)}.` : 'Install or update this coding app, then refresh Usage.'}</p>` : ''}</section>`;
   }).join('')}</div>`;
 }
 
@@ -557,7 +556,7 @@ async function showUsage(trigger = null) {
   };
   const draw = (page) => {
     content.removeAttribute('aria-busy');
-    content.innerHTML = (codingPlans(page, false) || '<p class="hint" role="status">No coding accounts detected.</p>') + (page.note ? `<p class="hint usage-note">${esc(page.note)}</p>` : '');
+    content.innerHTML = (codingPlans(page) || '<p class="hint" role="status">No coding accounts detected.</p>') + (page.note ? `<p class="hint usage-note">${esc(page.note)}</p>` : '');
     if (!drawn) cascade(content.querySelector('.coding-plans'));
     drawn = true;
   };

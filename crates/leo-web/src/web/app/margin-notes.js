@@ -763,6 +763,9 @@ function marginRekey(from, to) {
   if (el) {
     el.dataset.id = to;
     marginPage.els.set(to, el);
+    const more = $('.margin-more', el);
+    more.id = `margin-more-${to}`;
+    $('.margin-toggle', el).setAttribute('aria-controls', more.id);
   }
   const mark = marginPage.marks.get(from);
   marginPage.marks.delete(from);
@@ -793,7 +796,7 @@ async function marginAskOn(s, t, question) {
     marginPage.thinking.delete('draft');
     if (error instanceof Locked) throw error;
     const el = marginPage.els.get('draft');
-    if (marginPage.draft === t && el) {
+    if (marginPage.draft === t && marginPage.open === 'draft' && el) {
       const area = $('textarea', el);
       area.value = question;
       marginSized(area);
@@ -801,6 +804,10 @@ async function marginAskOn(s, t, question) {
       marginDraw();
       area.focus({ preventScroll: true });
     } else {
+      if (marginPage.draft === t) {
+        marginDropThread('draft');
+        marginPage.draft = null;
+      }
       toast(error.message, { bad: true });
       marginDraw();
     }
@@ -808,12 +815,13 @@ async function marginAskOn(s, t, question) {
   }
   if (marginPage.s !== s) return;
   marginPage.thinking.delete('draft');
-  const open = marginPage.draft === t;
-  if (open) {
+  const open = marginPage.draft === t && marginPage.open === 'draft';
+  if (marginPage.draft === t) {
     marginRekey('draft', done.id);
     marginPage.draft = null;
-    marginPage.open = done.id;
-  } else marginPage.arriving.add(done.id);
+  }
+  if (open) marginPage.open = done.id;
+  else marginPage.arriving.add(done.id);
   marginPage.threads.push(done);
   marginDraw();
   if (!open) return;

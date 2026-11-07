@@ -158,7 +158,6 @@ const actions = {
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,
   'test-ai': testAi,
-  'use-plan': (el) => changeSetting({ set: 'provider', task: 'writing', value: el.dataset.provider }),
   'note-picture': () => choosePictures(),
   'view-original': (el) => {
     el.focus({ preventScroll: true });

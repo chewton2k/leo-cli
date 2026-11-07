@@ -18,13 +18,8 @@ test('coding accounts distinguish signed in, signed out, unknown and unavailable
     const page = { tasks: [{ task: 'writing', provider: 'ollama' }], plans: [{ provider: 'codex', name: 'Codex <img>', installed, signed_in, signin: 'codex login' }] };
     const html = value.codingPlans(page);
     assert.ok(html.includes(label));
-    assert.equal(html.includes('data-action="use-plan"'), installed && signed_in === true);
     assert.ok(!html.includes('<img>'));
-    assert.equal(page.tasks[0].provider, 'ollama');
-    assert.ok(!value.codingPlans(page, false).includes('data-action="use-plan"'));
-    page.tasks[0].provider = 'codex';
-    assert.ok(value.codingPlans(page).includes('Selected for writing'));
-    assert.ok(!value.codingPlans(page).includes('data-action="use-plan"'));
+    assert.ok(!html.includes('data-action="use-plan"'));
   }
   assert.equal(value.codingPlans({ tasks: [] }), '');
 });

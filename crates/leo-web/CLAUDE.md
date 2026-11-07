@@ -539,7 +539,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   starters are pills that appear together after it. `draw(stick, live)` no
   longer replaces the transcript on every streamed chunk: `settle(from, to)`
   keeps every node that already matches, appends only the new words of a
-  growing text run (animated while the message is pending) and replaces only
+  growing text run and replaces only
   what changed, so finished text, a selection in it and the greeting animation
   survive; the final redraw settles too. The panel slides on `--ease-drawer` /
   `--t-drawer` and leaves over `CHAT_LEAVE_MS` before `chat-open` is removed.
