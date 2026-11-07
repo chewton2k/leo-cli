@@ -531,9 +531,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
   “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
-  attribute says the connected notes are read too), while a note is attached a
-  `Stop reading this note` icon button (`data-chat="drop"`, focus moves to the
-  input) and New/Close. Felix's words (greeting, answers) use
+  attribute says the connected notes are read too), while a note is attached an
+  eye toggle (`data-chat="drop"`) and New/Close. Felix's words (greeting, answers) use
   `--voice`; the user's messages stay sans in a `--field` bubble. The greeting
   and starters arrive once per chat (`data-hello` key): words fade
   in (`.word`, `word-in` .5 s opacity and colour, no blur, nothing moves),
