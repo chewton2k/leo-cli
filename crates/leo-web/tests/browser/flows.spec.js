@@ -4055,6 +4055,36 @@ test.describe('passages', () => {
     await expect(page.locator('.margin-mark')).toHaveCount(1);
   });
 
+  test('a multi-paragraph answer arrives word by word in colour, never code, and never by opacity', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Prose margin', body: 'A binary heap keeps the minimum at the root.' } })).json();
+    await page.route('**/margin/threads', async (route) => {
+      const asked = route.request().postDataJSON();
+      await route.fulfill({ json: { id: 'stub-prose', note: note.id, quote: asked.quote, prefix: asked.prefix, suffix: asked.suffix, status: 'open', source: 'ask', messages: [{ from: 'felix', text: 'First paragraph of the answer.\n\nSecond has **bold** words and `code here`.\n\n```\nlet kept = 1;\n```\n\nLast paragraph.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' } });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#doc .blk').first().click();
+    await page.locator('#doc textarea.line-edit').evaluate((a) => {
+      const at = a.value.indexOf('keeps the minimum');
+      a.focus();
+      a.setSelectionRange(at, at + 'keeps the minimum'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+    await page.keyboard.press('ControlOrMeta+Shift+e');
+    const said = page.locator('.margin-note .margin-felix.prose');
+    await expect(said).toContainText('Last paragraph.');
+    const words = said.locator('.ink-word');
+    expect(await words.count()).toBeGreaterThan(10);
+    await expect(said.locator('p')).toHaveCount(3);
+    await expect(said.locator('pre .ink-word, code .ink-word')).toHaveCount(0);
+    const delays = await words.evaluateAll((all) => all.map((w) => parseFloat(w.style.animationDelay)));
+    expect(delays[0]).toBe(0);
+    expect(Math.max(...delays)).toBeGreaterThan(delays[1]);
+    expect(Math.max(...delays)).toBeLessThanOrEqual(651);
+    const names = await said.evaluate((el) => [el, ...el.querySelectorAll('.ink-word')].flatMap((n) => n.getAnimations().map((a) => a.animationName)));
+    expect(new Set(names)).toEqual(new Set(['ink-in']));
+  });
+
   test('the selection shortcut explains when nothing is selected without a bottom Ask button', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Toolbar ask', body: 'Only line here' } })).json();
     await page.goto(`/#/n/${note.id}`);

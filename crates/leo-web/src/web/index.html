@@ -274,7 +274,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-chat:hover { color: var(--text); }
 .margin-chat:focus-visible, .margin-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .margin-chat svg { width: 15px; height: 15px; }
-.margin-note.arriving .margin-felix.prose { animation: fade .3s var(--ease-arrive) both; }
+.margin-note.arriving .margin-felix figure { animation: fade .3s var(--ease-arrive) both; }
 .margin-note[data-open] { z-index: 2; }
 .margin-said { position: relative; display: grid; gap: 7px; }
 .margin-said p, .margin-said > div { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -357,7 +357,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .choice-diagram .d-mark { fill: var(--accent); }
 .choice-diagram .d-head { stroke: var(--muted); stroke-width: 4; stroke-linecap: round; }
 @media (prefers-reduced-motion: reduce) {
-  .margin-ink path.squiggle.arriving, .margin-note.arriving .margin-felix.prose, .ink-word, .margin-dots i { animation: none; }
+  .margin-ink path.squiggle.arriving, .margin-note.arriving .margin-felix figure, .ink-word, .margin-dots i { animation: none; }
   .margin-ink path, .margin-anchor, .margin-mode > svg:last-child { transition: none; }
 }
 @media (forced-colors: active) {
