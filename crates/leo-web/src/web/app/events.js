@@ -13,9 +13,18 @@ window.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+  const chord = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+  const letter = e.key.toLowerCase();
+  if (chord && (letter === 'k' || letter === 'f' && state.view !== 'note')) {
     e.preventDefault();
     toggleQuickLeo();
+    return;
+  }
+  if (chord && letter === 'n') {
+    if (e.isComposing || $('.scrim') || $('.inline-edit') || state.view === 'locked') return;
+    e.preventDefault();
+    const dir = creationDir();
+    go(dir ? `#/new/${enc(dir)}` : '#/new');
     return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'note') {
@@ -41,7 +50,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === 'n' && state.view === 'workspace') {
+  if (e.key === 'n' && state.view === 'workspace' && !e.target.closest('.side-tree')) {
     const dir = creationDir();
     go(dir ? `#/new/${enc(dir)}` : '#/new');
   }

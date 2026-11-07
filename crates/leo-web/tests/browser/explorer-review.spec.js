@@ -27,7 +27,7 @@ async function options(page, row, label) {
   await page.getByRole('menuitem', { name: label, exact: true }).click();
 }
 async function moveChoices(page, row) {
-  await options(page, row, 'Move');
+  await options(page, row, 'Move to…');
   await expect(page.getByRole('menu', { name: /^Move/ })).toBeVisible();
   return (await page.getByRole('menuitem').allTextContents()).map(text => (text === 'Top level' ? '' : text));
 }
@@ -101,12 +101,12 @@ for (const home of ['root', 'folder']) test(`folder then note: opening a note in
   await page.goto('/#/');
   if (other) await twist(page, other).click();
   await folderRow(page, picked).click();
-  await expect(page.locator('#side .side-group [data-action="new"]')).toHaveAttribute('data-dir', picked);
+  await expect(page.locator('#side .side-new')).toHaveAttribute('data-dir', picked);
   await noteRow(page, note.id).click();
   await expect(page.locator('#title')).toHaveText(note.title);
   await expect(page.locator('#side [data-action="record"]')).toHaveAttribute('data-dir', other);
   await expect(page.locator('#side [data-action="upload"]')).toHaveAttribute('data-dir', other);
-  await page.locator('#side .side-group [data-action="new"]').click();
+  await page.locator('#side .side-new').click();
   await expect.poll(() => new URL(page.url()).hash).toBe(newHash(other));
 });
 
@@ -119,7 +119,7 @@ for (const home of ['root', 'folder']) test(`note then folder: a folder click af
   await expect(page.locator('#title')).toHaveText(note.title);
   await expect(page.locator('#side [data-action="record"]')).toHaveAttribute('data-dir', picked);
   await expect(page.locator('#side [data-action="upload"]')).toHaveAttribute('data-dir', picked);
-  await page.locator('#side .side-group [data-action="new"]').click();
+  await page.locator('#side .side-new').click();
   await expect.poll(() => new URL(page.url()).hash).toBe(newHash(picked));
 });
 
@@ -165,7 +165,7 @@ test('opening a context menu never selects a folder or changes the open note', a
   await expect(page.locator('.popup-menu')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(folderRow(page, dir)).not.toHaveAttribute('aria-current', 'page');
-  await expect(page.locator('#side .side-group [data-action="new"]')).toHaveAttribute('data-dir', '');
+  await expect(page.locator('#side .side-new')).toHaveAttribute('data-dir', '');
   await expect(page.locator('#title')).toHaveText(current.title);
   expect(page.url()).toBe(before);
 });
@@ -356,4 +356,37 @@ test('the rail has no Felix or Collapse all control and loaded folders never fla
   await page.goto('/#/');
   await expect(status).toContainText('Empty folder');
   expect(await page.evaluate(() => window.flashes)).toEqual([]);
+});
+
+test('explorer keys move, open and filter', async ({ page }) => {
+  const dir = await createFolder(page);
+  await createNote(page, dir, 'Graph');
+  await createNote(page, dir, 'Heap');
+  await page.goto('/#/');
+  const folder = folderRow(page, dir);
+  await expect(folder).toBeVisible();
+  await folder.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(folder).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#side .side-note[data-title="Heap"]')).toBeVisible();
+  await folder.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#side .side-note[data-title="Graph"]')).toBeFocused();
+  await folder.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(folder).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#side .side-note[data-title="Heap"]')).toBeVisible();
+  await folder.focus();
+  await page.keyboard.press('h');
+  await expect(page.locator('#side .side-note[data-title="Heap"]')).toBeFocused();
+  for (const sub of await page.locator('#side .side-sub').all()) await expect(sub).toHaveAttribute('tabindex', '-1');
+  await expect(page.locator('#side .side-tree .side-row[tabindex="0"]')).toHaveCount(1);
+  await page.locator('#side-filter').fill('GRA');
+  await expect(page.locator('#side .side-note-wrap:has(.side-note[data-title="Heap"])')).toBeHidden();
+  await expect(page.locator('#side .side-note-wrap:has(.side-note[data-title="Graph"])')).toBeVisible();
+  await page.evaluate(() => drawSide());
+  await expect(page.locator('#side-filter')).toBeFocused();
+  await expect(page.locator('#side-filter')).toHaveValue('GRA');
+  await expect(page.locator('#side .side-note-wrap:has(.side-note[data-title="Heap"])')).toBeHidden();
 });

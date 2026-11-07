@@ -50,6 +50,7 @@ async function sidebarFixture(browser, run) {
     const overlapOut=()=>{};
     ${read('app/motion.js')}
     ${read('app/popup-menu.js')}
+    ${read('app/select-menu.js')}
     ${read('app/side.js')}
     ${drag}
     const folderClick=typeof openFolder==='function'?${open}:el=>twistFolder(el.dataset.dir,el);
@@ -229,7 +230,7 @@ test('clicking parent folder labels toggles descendants without navigating or di
     await row('Course').click();
     await expect(row('Course/Week 1')).toBeVisible();
     await expect(row('Course')).toHaveAttribute('aria-expanded','true');
-    await expect(page.locator('.side-group [data-action="new"]')).toHaveAttribute('data-dir','Course');
+    await expect(page.locator('.side-new')).toHaveAttribute('data-dir','Course');
     await expect(page.locator('.side-rail [data-action="record"]')).toHaveAttribute('data-dir','Course');
     await expect(page.locator('.side-rail [data-action="upload"]')).toHaveAttribute('data-dir','Course');
     expect(new URL(page.url()).hash).toBe('');

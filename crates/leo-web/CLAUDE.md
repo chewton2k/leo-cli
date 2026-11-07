@@ -74,8 +74,12 @@ lighter).
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
 
-- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+F
-  anywhere, the sidebar
+- Quick Leo (2026-10-19, the user's request; keys changed 2026-11-07): Cmd/Ctrl+K
+  anywhere, Cmd/Ctrl+F outside a note (inside a note it is left alone), and
+  Cmd/Ctrl+N makes a note in the current folder (never inside a sheet, an inline
+  edit, while composing or when locked). The explorer starts with a New note row,
+  has a Filter field (`#side-filter`, survives repaints) and arrow, Home/End and
+  type-ahead keys with one tab stop (`sideRoving`). The sidebar
   Search button, the header search button or the phone menu opens one line
   (`sheets.js` `quickLeo`, toggled by `toggleQuickLeo`). It is also the search
   bar (2026-11-03, the user's call): every query offers "Search every note",
@@ -1415,8 +1419,8 @@ Page toolbars share the same 760 px maximum width across notes, workspace, recor
 and Settings. Every Settings section uses the same Settings / section breadcrumb;
 Keeping and Trash keep their routes and controllers inside that frame.
 Usage opens from the rail above Settings and shows remaining subscription windows,
-with unknown and expired readings explicit. The combined Quick Leo uses only
-Cmd/Ctrl+F and retains task/search/question/navigation ranking. Explicit named
+with unknown and expired readings explicit. The combined Quick Leo uses
+Cmd/Ctrl+K (and Cmd/Ctrl+F outside a note) and retains task/search/question/navigation ranking. Explicit named
 month dates and ISO dates keep their deadline; omitted years use the next date.
 The calendar tray puts its mini calendar before tasks, and all-day/timed grids
 share the full width without scrollbar gutters shifting their day boundaries.
