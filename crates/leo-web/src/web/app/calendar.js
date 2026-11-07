@@ -11,7 +11,8 @@ try {
   cal.showDone = true;
 }
 const CAL_POLL_MS = 150000;
-const CAL_TILE_PX = 40;
+const CAL_TILE_PX = 64;
+const CAL_MORE_PX = 30;
 const CAL_HOUR_PX = 48;
 const CAL_TASK_PX = 60;
 const CAL_SNAP = 15;
@@ -56,6 +57,8 @@ async function showCalendar() {
   cal.peek = null;
   cal.scrolled = '';
   app.innerHTML = '<div class="cal-page" id="cal-page"><section class="cal-main" id="cal-main" aria-label="Calendar"></section><aside class="cal-side" id="cal-side"></aside></div>';
+  calSized.disconnect();
+  calSized.observe($('#cal-main'));
   drawCalendar();
   await loadSchedule(mine);
 }
@@ -318,6 +321,7 @@ function calColumn(key, plan, today, room = Infinity) {
     const under = items.findIndex((x, j) => cols[j].col === room - 1 && placed[j].start < placed[i].end && placed[i].start < placed[j].end);
     if (under >= 0) more.set(under, (more.get(under) || 0) + 1);
   });
+  const area = more.size ? `(100% - ${CAL_MORE_PX}px)` : '100%';
   const blocks = items.map((item, i) => {
     if (cols[i].col >= room) return '';
     const { start, end } = spans[i];
@@ -333,7 +337,7 @@ function calColumn(key, plan, today, room = Infinity) {
     const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
     const grip = task && task.source === 'leo' && calMovable(task) ? '<span class="cal-grip" data-drag="resize" aria-hidden="true"></span>' : '';
     const rest = more.get(i) ? `<button type="button" class="cal-stack-more" data-action="cal-pick" data-day="${key}" data-to="day" style="top: ${top + 2}px; z-index: ${room + 2};" aria-label="${more.get(i)} more at this time, open the day">+${more.get(i)}</button>` : '';
-    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 }) + rest;
+    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${area} * ${left / 100} + 2px); width: calc(${area} * ${width / 100} - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 }) + rest;
   }).join('');
   let now = '';
   if (key === today) {
@@ -344,9 +348,22 @@ function calColumn(key, plan, today, room = Infinity) {
   return `<div class="cal-col${wknd}" data-day="${key}">${blocks}${now}</div>`;
 }
 
+function calRoom(count) {
+  if (count < 2) return Infinity;
+  const width = document.querySelector('#cal-scroll .cal-cols')?.clientWidth || Math.max(0, ($('#cal-main')?.clientWidth || innerWidth - 700) - 52);
+  return Math.max(1, Math.floor((width / count - CAL_MORE_PX) / CAL_TILE_PX));
+}
+
+function calFit() {
+  if (state.view !== 'calendar' || cal.view === 'month' || cal.drag || cal.compose || !document.querySelector('#cal-scroll .cal-cols')) return;
+  if (calRoom(calDays().length) !== cal.drawnRoom) drawCalendar();
+}
+
+const calSized = new ResizeObserver(calFit);
+
 function calTimeGrid(days, plan, today) {
-  const wide = (document.querySelector('#cal-scroll .cal-cols')?.clientWidth || Math.max(0, innerWidth - 700)) / days.length;
-  const room = days.length > 1 ? Math.max(1, Math.floor(wide / CAL_TILE_PX)) : Infinity;
+  const room = calRoom(days.length);
+  cal.drawnRoom = room;
   const hours = Array.from({ length: 23 }, (_, i) => `<span style="top: ${(i + 1) * CAL_HOUR_PX}px">${esc(calHour((i + 1) * 60))}</span>`).join('');
   return `<div class="cal-week" style="--cols: ${days.length}; --hour: ${CAL_HOUR_PX}px;">
     <div class="cal-dayheads"><span></span>${calWeekHeads(days, today)}</div>
@@ -432,6 +449,7 @@ function drawCalendar() {
       side.innerHTML = calTray(plan, today);
     }
   }
+  requestAnimationFrame(calFit);
 }
 
 function calStep(step) {

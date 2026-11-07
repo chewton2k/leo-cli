@@ -146,7 +146,7 @@ test('the calendar fills the room beside the explorer and shows a week of events
     const explorer = await page.locator('#explorer').boundingBox();
     const cal = await page.locator('.cal-page').boundingBox();
     expect(cal.x).toBeGreaterThanOrEqual(explorer.x + explorer.width - 1);
-    expect(cal.x + cal.width).toBeLessThanOrEqual(1360 + 1);
+    expect(cal.x + cal.width).toBeLessThanOrEqual(1900 + 1);
     await expect(page.locator('.cal-dayhead')).toHaveCount(7);
     expect(await page.locator('.cal-hours').evaluate(el => getComputedStyle(el).backgroundImage)).not.toBe('none');
     const boundaries = await page.evaluate(() => {
@@ -169,6 +169,18 @@ test('the calendar fills the room beside the explorer and shows a week of events
     await expect(page.locator('.cal-item[data-id="task-note"] .cal-grip')).toHaveCount(0);
     await expect(page.locator('.cal-tray-list h2.late')).toContainText('Overdue');
     await expect(page.locator('.cal-tray-row', { hasText: 'Draft essay outline' })).toBeVisible();
+  }, { width: 1900 });
+});
+
+test('a narrow week column shows one whole tile and a count beside it for overlapping events', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    const col = page.locator('.cal-col[data-day="2026-11-04"]');
+    await expect(col.locator('.cal-item', { hasText: '1:1 Maya' })).toHaveCount(1);
+    await expect(col.locator('.cal-item', { hasText: 'TA hours' })).toHaveCount(0);
+    const more = col.locator('.cal-stack-more');
+    await expect(more).toHaveText('+1');
+    const maya = await col.locator('.cal-item', { hasText: '1:1 Maya' }).boundingBox();
+    expect(maya.x + maya.width).toBeLessThanOrEqual((await more.boundingBox()).x + 0.5);
   });
 });
 
@@ -473,10 +485,10 @@ test('readable minimum task heights participate in calendar overlap layout', asy
     const first = await page.locator('.cal-item[data-id="task-lab"]').boundingBox();
     const second = await page.locator('.cal-item[data-id="task-nearby"]').boundingBox();
     expect(second.x).toBeGreaterThan(first.x + 5);
-  });
+  }, { width: 1900 });
 });
 
-test('three tasks at the end of a week day show two readable tiles and a count, and the day shows all three', async ({ browser }) => {
+for (const [width, tiles] of [[1360, 1], [1900, 2]]) test(`three tasks at the end of a week day show ${tiles} readable tile${tiles > 1 ? 's' : ''} at ${width} px, a count beside them, and the day shows all three`, async ({ browser }) => {
   await calendarFixture(browser, async page => {
     await page.evaluate(() => {
       const task = cal.data.tasks.find(task => task.id === 'task-lab');
@@ -488,14 +500,18 @@ test('three tasks at the end of a week day show two readable tiles and a count, 
       drawCalendar();
     });
     const col = page.locator('.cal-col[data-day="2026-11-05"]');
-    await expect(col.locator('.cal-item[data-id^="task-"]').filter({ hasText: 'Late' })).toHaveCount(2);
+    await expect(col.locator('.cal-item[data-id^="task-"]').filter({ hasText: 'Late' })).toHaveCount(tiles);
     const more = col.locator('.cal-stack-more');
-    await expect(more).toHaveText('+1');
-    for (const box of await col.locator('.cal-item', { hasText: 'Late' }).evaluateAll(els => els.map(el => el.getBoundingClientRect().width))) expect(box).toBeGreaterThan(45);
+    await expect(more).toHaveText(`+${3 - tiles}`);
+    const edge = (await more.boundingBox()).x;
+    for (const box of await col.locator('.cal-item', { hasText: 'Late' }).evaluateAll(els => els.map(el => el.getBoundingClientRect().toJSON()))) {
+      expect(box.width).toBeGreaterThan(55);
+      expect(box.right, 'the count sits beside the tiles, not on them').toBeLessThanOrEqual(edge + 0.5);
+    }
     await more.click();
     await expect(page.locator('.cal-item', { hasText: 'Late' })).toHaveCount(3);
     await expect(page.locator('.cal-item', { hasText: 'Late task-c' })).toContainText('11:45');
-  });
+  }, { width });
 });
 
 test('a task at the end of the day stays inside the grid and keeps its real time', async ({ browser }) => {
