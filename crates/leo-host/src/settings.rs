@@ -27,8 +27,12 @@ impl leo_web::SettingsApi for WebSettings {
         page
     }
 
-    fn refresh_usage(&self) {
-        leo_services::usage::refresh_codex(&Config::load());
+    fn refresh_usage(&self, claude: bool) -> Option<String> {
+        let cfg = Config::load();
+        leo_services::usage::refresh_codex(&cfg);
+        claude
+            .then(|| leo_services::usage::refresh_claude(&cfg))
+            .flatten()
     }
 
     fn apply(&self, change: &Value) -> Result<String> {
@@ -88,7 +92,7 @@ mod usage_tests {
             std::fs::create_dir_all(&notes).unwrap();
             super::WebSettings.describe(&notes);
             assert!(!home.join("usage-called").exists());
-            super::WebSettings.refresh_usage();
+            super::WebSettings.refresh_usage(false);
             assert!(home.join("usage-called").exists());
             std::fs::remove_file(home.join("usage-called")).unwrap();
             let saved = super::WebSettings.describe(&notes)["plans"]
@@ -101,7 +105,7 @@ mod usage_tests {
             assert_eq!(saved["five_hour"]["used"], 0.12);
             assert!(!home.join("usage-called").exists());
             std::fs::write(home.join("codex"), "#!/bin/sh\nexit 1\n").unwrap();
-            super::WebSettings.refresh_usage();
+            super::WebSettings.refresh_usage(false);
             let after = super::WebSettings.describe(&notes);
             assert_eq!(
                 after["plans"]

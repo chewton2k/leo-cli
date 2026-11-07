@@ -1390,7 +1390,7 @@ impl ChatProvider for AgentCli {
     }
 }
 
-pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
+fn auth_probe(agent: Agent, bin: &str) -> Option<(bool, String)> {
     let mut command = leo_core::children::quiet_command(locate(bin)?);
     super::scoped_cli::plan_environment(&mut command);
     command.args(match agent {
@@ -1400,7 +1400,11 @@ pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
     command
         .current_dir(std::env::temp_dir())
         .env("NO_COLOR", "1");
-    probe_status(command).ok().and_then(|(success, text)| {
+    probe_status(command).ok()
+}
+
+pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
+    auth_probe(agent, bin).and_then(|(success, text)| {
         let evidence = sign_in_evidence(agent, &text);
         if evidence == Some(true) && !success {
             None
@@ -1409,6 +1413,18 @@ pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
         }
     })
 }
+
+fn claude_on_plan(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .is_some_and(|v| v["loggedIn"] == true && v["authMethod"] == "claude.ai")
+}
+
+pub fn claude_plan(bin: &str) -> bool {
+    auth_probe(Agent::ClaudeCode, bin)
+        .is_some_and(|(success, text)| success && claude_on_plan(&text))
+}
+
 fn sign_in_evidence(agent: Agent, text: &str) -> Option<bool> {
     if text.len() > 64 * 1024 {
         return None;
@@ -1671,6 +1687,20 @@ mod tests {
         assert!(scope_from_listing(r#"[{"name":"a.b","enabled":false}]"#).is_ok());
         assert!(scope_from_listing("Error: nope").is_err());
         assert!(scope_from_listing(r#"[{"enabled":true}]"#).is_err());
+    }
+
+    #[test]
+    fn only_a_claude_plan_login_counts_as_plan_auth() {
+        assert!(claude_on_plan(
+            r#"{"loggedIn":true,"authMethod":"claude.ai"}"#
+        ));
+        assert!(!claude_on_plan(
+            r#"{"loggedIn":true,"authMethod":"api_key"}"#
+        ));
+        assert!(!claude_on_plan(
+            r#"{"loggedIn":false,"authMethod":"claude.ai"}"#
+        ));
+        assert!(!claude_on_plan("not json"));
     }
 
     #[test]

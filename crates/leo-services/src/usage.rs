@@ -8,6 +8,8 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::provider::ProviderConfig;
+
 pub const STALE_AFTER: Duration = Duration::from_secs(5 * 60);
 pub const CODEX_WAIT: Duration = Duration::from_secs(10);
 
@@ -389,6 +391,52 @@ pub fn refresh_codex(cfg: &crate::config::Config) {
     }
 }
 
+fn claude_reader(base: ProviderConfig) -> ProviderConfig {
+    let mut reader = base;
+    let model = crate::config::choice::WRITING
+        .iter()
+        .find(|c| c.provider == "claude_code")
+        .and_then(|c| c.models.first());
+    reader.model = model.map(|m| m.id.to_string());
+    reader.effort = model.and_then(|m| {
+        crate::config::choice::efforts("claude_code", m.id)
+            .first()
+            .map(|e| e.to_string())
+    });
+    reader.no_tools = true;
+    reader
+}
+
+pub fn refresh_claude(cfg: &crate::config::Config) -> Option<String> {
+    use crate::ai::provider::agent_cli::{claude_plan, Agent, AgentCli};
+    use crate::ai::provider::{ChatProvider, ChatRequest};
+    let base = cfg
+        .provider("claude_code")
+        .cloned()
+        .or_else(|| crate::config::Config::built_in_provider("claude_code"))?;
+    let bin = base.bin.clone().filter(|b| !b.trim().is_empty());
+    let bin = bin.as_deref().unwrap_or(Agent::ClaudeCode.program());
+    if !claude_plan(bin) {
+        return Some("Claude limits need Claude Code signed in with your Claude plan.".into());
+    }
+    let before = load().get("claude_code").map(|u| u.seen_at);
+    let limit = Duration::from_secs(20);
+    let agent = AgentCli::new(
+        "claude_code".into(),
+        Agent::ClaudeCode,
+        &claude_reader(base),
+    )
+    .with_limits(limit, limit);
+    let _ = agent.complete(&ChatRequest {
+        system: None,
+        prompt: "Reply with the single word: ok".into(),
+        temperature: 0.0,
+        max_tokens: 16,
+    });
+    let after = load().get("claude_code").map(|u| u.seen_at);
+    (after.is_none() || after == before).then(|| "Claude Code reported no limits.".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,6 +600,25 @@ mod tests {
         assert_eq!(all["codex"].five_hour.unwrap().used, 0.2);
         std::fs::write(&path, "not json").unwrap();
         assert!(load_from(&path).is_empty());
+    }
+
+    #[test]
+    fn the_claude_read_uses_the_cheapest_writing_model_and_no_tools() {
+        let reader = claude_reader(ProviderConfig::default());
+        assert_eq!(reader.model.as_deref(), Some("claude-haiku-5-5"));
+        assert!(reader.no_tools);
+    }
+
+    #[test]
+    #[ignore = "asks the real Claude Code on this computer"]
+    fn real_claude_reports_its_limits_with_one_tiny_request() {
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("LEO_HOME", home.path());
+        let note = refresh_claude(&crate::config::Config::default());
+        let seen = load();
+        println!("note: {note:?}\nseen: {seen:?}");
+        assert!(note.is_none());
+        assert!(seen["claude_code"].five_hour.is_some());
     }
 
     #[cfg(unix)]
