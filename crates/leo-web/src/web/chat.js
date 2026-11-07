@@ -802,6 +802,7 @@
           <div class="chat-access-menu" id="chat-access-menu" role="menu" hidden>${ACCESS.map((a) => `<button type="button" role="menuitemradio" data-chat="access-pick" data-access="${a.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACCESS_GLYPHS[a.id]}</svg><span><b>${escape(a.label)}</b><small>${escape(a.hint)}</small></span></button>`).join('')}</div>
         </form>
       </footer>
+      <div class="chat-below" id="chat-below"></div>
       </section>`;
     document.body.appendChild(panel);
     const $ = (sel) => panel.querySelector(sel);
@@ -1822,9 +1823,15 @@
       return `<div class="chat-hello" data-hello="${escape(`${state.id}:${where}`)}">
         <div class="chat-hello-lead"><b>${greeting("Hi, I'm Felix.", escape)}</b><p class="chat-hello-text">${greeting(`${onNote() ? `I'm reading “${state.context.title || 'Untitled'}” and the notes connected to it.` : "I'm looking through your notes."} Ask anything, or tell me what you want to learn.`, escape)}</p></div>
         ${reviewCard()}
-        <div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
-        ${asking()}
       </div>`;
+    }
+
+    function drawBelow() {
+      const next = document.createElement('div');
+      if (!state.messages.length) {
+        next.innerHTML = `<div class="chat-starters">${STARTERS.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>${asking()}`;
+      }
+      settle($('#chat-below'), next);
     }
 
     function reviewCard() {
@@ -2382,6 +2389,7 @@
       if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next);
       else body.innerHTML = html;
       panel.classList.toggle('perched', perched);
+      drawBelow();
       if (land) land();
       drawTitle();
       drawProgress();
@@ -2669,6 +2677,7 @@
       const still = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (state.open) {
         panel.classList.remove('chat-leaving');
+        panel.classList.toggle('perched', !state.messages.length);
         panel.hidden = false;
         document.body.classList.add('chat-open');
         onToggle(true);
