@@ -157,3 +157,18 @@ test('lit passages join across the blank line between them without a seam', asyn
   expect(paint.map(p => p.fill)).toEqual([true, true, true, true, true]);
   expect(paint.map(p => p.top + p.bottom)).toEqual(Array(5).fill('0px0px'));
 });
+
+test('the New task title placeholder fits its field', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 760 });
+  await page.goto('/#/calendar');
+  await page.locator('[data-action="task-new"]').first().click();
+  const title = page.locator('#task-title');
+  await expect(title).toBeVisible();
+  const fit = await title.evaluate(el => {
+    const style = getComputedStyle(el);
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return { text: ctx.measureText(el.placeholder).width, room: el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) };
+  });
+  expect(fit.text).toBeLessThanOrEqual(fit.room);
+});
