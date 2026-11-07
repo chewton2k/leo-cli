@@ -242,5 +242,13 @@ bundle is removed, and unrelated application copies are never deleted.
 Foreground requests run on the main thread, move the main window to the active
 macOS Space and explicitly make it the main/key window. Initial activation runs
 at Ready, never after an arbitrary page reload; hidden login launches stay hidden.
-The macOS tray opens its menu through NSStatusItem directly for either mouse
-button, avoiding tray-icon's simulated click that fails in other full-screen Spaces.
+The macOS tray opens its menu through NSStatusItem directly for either mouse button
+(`popUpStatusItemMenu`, not tray-icon's simulated click). Spike on a Mac (2026-11-06): a
+Regular app shows no status menu over another app's full-screen Space by any path
+(popUp, performClick, permanent menu, activating first); an Accessory app shows it, with
+or without a window, and Regular flipped to Accessory for the life of the menu shows it
+too. So `popup()` (`tray.rs`) sets Accessory before the menu and Regular after only when
+Leo is not active, its main window is not on the active Space (`isOnActiveSpace`, false
+when hidden) and the last flip was over a second ago (`needs_flip`); Leo in front or beside
+you never flips. `setCanHide` was not needed in the spike. Only the gate is tested; the
+real behaviour needs a release and a full-screen Space.
