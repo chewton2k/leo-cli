@@ -1367,12 +1367,13 @@ async function noteTasksSheet() {
   }
   const body = s.doc ? s.doc.source() : '';
   const lines = body.split('\n');
+  const task = new RegExp(String.raw`^\s*(?:${md.MARKER})\s{1,4}\[(?<mark>[ xX])\]\s(?<text>.+)$`);
   const boxes = lines
-    .map((line, n) => ({ n, m: line.match(/^\s*(?:[-*+]|\d+[.)])\s{1,4}\[([ xX])\]\s(.+)$/) }))
-    .filter((b) => b.m && b.m[2].trim());
+    .map((line, n) => ({ n, m: line.match(task)?.groups }))
+    .filter((b) => b.m && b.m.text.trim());
   const rows = boxes.slice(0, 200).map((b) => {
     const tracked = listed.find((t) => t.line === b.n);
-    return `<div class="set-row"><span class="grow">${b.m[1] !== ' ' ? '<s>' : ''}${esc(b.m[2].trim())}${b.m[1] !== ' ' ? '</s>' : ''}</span>${tracked ? `<button type="button" class="btn plain sm" data-action="task-open-here" data-id="${esc(tracked.id)}">In your tasks</button>` : `<button type="button" class="btn sm" data-action="task-promote" data-line="${b.n}">Add to tasks</button>`}</div>`;
+    return `<div class="set-row"><span class="grow">${b.m.mark !== ' ' ? '<s>' : ''}${esc(b.m.text.trim())}${b.m.mark !== ' ' ? '</s>' : ''}</span>${tracked ? `<button type="button" class="btn plain sm" data-action="task-open-here" data-id="${esc(tracked.id)}">In your tasks</button>` : `<button type="button" class="btn sm" data-action="task-promote" data-line="${b.n}">Add to tasks</button>`}</div>`;
   }).join('');
   sheet(`<h3>Tasks in this note</h3>
     <p class="hint">Checkboxes under an Action items heading are tasks already. Add any other checkbox to show it on the Calendar.</p>
