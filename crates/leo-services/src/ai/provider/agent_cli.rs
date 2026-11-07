@@ -1674,6 +1674,10 @@ mod tests {
                 "mcp_servers.context7.enabled=false",
                 "mcp_servers.node_repl.enabled=false",
                 "notify=[]",
+                "otel.exporter=\"none\"",
+                "otel.trace_exporter=\"none\"",
+                "otel.metrics_exporter=\"none\"",
+                "otel.log_user_prompt=false",
                 "skills.include_instructions=false",
                 "model_provider=\"openai\"",
             ]

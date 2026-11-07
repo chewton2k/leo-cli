@@ -371,7 +371,7 @@ fn reopen_arguments(opener: &str, bundle: &std::path::Path, pid: u32, tenths: u3
 #[cfg(target_os = "macos")]
 fn reopen_after_exit(bundle: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
-    std::process::Command::new("/bin/sh")
+    leo_core::children::quiet_command("/bin/sh")
         .args(reopen_arguments(
             "/usr/bin/open",
             bundle,
