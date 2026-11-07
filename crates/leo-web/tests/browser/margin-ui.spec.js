@@ -192,3 +192,16 @@ test('a narrow Felix panel keeps the placeholder on one line, the note chip read
   expect(fit.chip).toBeGreaterThanOrEqual(76);
   expect(fit.inside).toBe(true);
 });
+
+test('the note toolbar moves clear of an overlaying Felix panel instead of hiding behind it', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 700 });
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Overlay toolbar', body: 'Hello.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('nav.actions')).toBeVisible();
+  await page.locator('#chat-toggle').click();
+  await expect(page.locator('#chat')).toBeVisible();
+  await page.waitForTimeout(500);
+  const gap = await page.evaluate(() => ({ pill: document.querySelector('nav.actions').getBoundingClientRect(), chat: document.querySelector('#chat').getBoundingClientRect() }));
+  expect(gap.pill.left).toBeGreaterThanOrEqual(0);
+  expect(gap.pill.right).toBeLessThanOrEqual(gap.chat.left + 1);
+});

@@ -1131,6 +1131,7 @@
     });
     if (typeof root.ResizeObserver === 'function') {
       const historySize = new root.ResizeObserver(() => {
+        document.body.style.setProperty('--chat-over', `${panel.hidden ? 0 : Math.round(panel.getBoundingClientRect().width)}px`);
         panel.classList.toggle('source-narrow', sourceNarrow());
         if (state.sidebar === null && !panel.hidden) {
           const on = sidebarOpen();

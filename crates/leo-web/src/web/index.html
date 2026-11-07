@@ -684,6 +684,8 @@ ol.list-upper-paren { list-style-type: upper-paren; }
 @media (prefers-reduced-motion: reduce) { .actions button::after { transition: none; } }
 @media (forced-colors: active) { .actions { border: 1px solid CanvasText; } .actions button::after { border: 1px solid CanvasText; background: Canvas; color: CanvasText; } }
 
+@media (max-width: 1199px) { body.chat-open .actions { left: calc(var(--side) + (100% - var(--side) - var(--chat-over, 0px)) / 2); } }
+@media (max-width: 599px) { body.chat-open .actions { display: none; } }
 .fab {
   position: fixed; right: calc(var(--right) + max(20px, (100% - var(--side) - var(--right)) / 2 - 360px)); bottom: calc(var(--bottom) + 22px); z-index: 25;
   height: 54px; padding: 0 20px 0 16px; border-radius: 27px; border: 0;
