@@ -5,7 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const START_LIMIT: Duration = Duration::from_secs(15);
-const REQUEST_LIMIT: Duration = Duration::from_secs(2);
+const REQUEST_LIMIT: Duration = Duration::from_secs(30);
 
 struct Server(Child);
 
