@@ -70,7 +70,8 @@ try {
         if (-not ($entries | Where-Object { $_.TrimEnd('\').Equals($BinDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) })) {
             [Environment]::SetEnvironmentVariable('Path', (($entries + $BinDir) -join ';'), 'User')
         }
+        if (-not (@($env:Path -split ';') | Where-Object { $_.TrimEnd('\').Equals($BinDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) })) { $env:Path = "$env:Path;$BinDir" }
     }
-    Write-Host "Leo is installed in $AppDir. Open Leo from Start, or type leo in a new terminal."
+    Write-Host "Leo is installed in $AppDir. Open Leo from Start, or type leo here or in any new terminal."
     Write-Host 'Your notes stay where they are. Thank you for using Leo!'
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
