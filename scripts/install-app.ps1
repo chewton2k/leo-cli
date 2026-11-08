@@ -19,7 +19,7 @@ if ($env:LEO_UPDATE_PARENT_PID) {
 $running = Get-Process -Name 'leo-app' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.Equals((Join-Path $AppDir 'leo-app.exe'), [StringComparison]::OrdinalIgnoreCase) }
 if ($running) { throw 'Quit Leo before installing. Finish any recording or dictation first.' }
 function Fetch([string]$Url, [string]$Destination) {
-    & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 900 --max-filesize 1073741824 --retry 4 --retry-delay 3 --output $Destination $Url
+    & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 900 --max-filesize 1073741824 --retry 2 --output $Destination $Url
     if ($LASTEXITCODE -ne 0) { throw 'The Leo download failed. Check your connection and try again.' }
 }
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('leo-install-' + [Guid]::NewGuid().ToString('N'))
@@ -28,10 +28,9 @@ try {
     $installer = Join-Path $tmp 'leo-setup.exe'
     if ($env:LEO_INSTALL_ARCHIVE) { Copy-Item -LiteralPath $env:LEO_INSTALL_ARCHIVE -Destination $installer }
     else {
-        $effective = & curl.exe --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 60 --retry 4 --retry-delay 3 --output NUL --write-out '%{url_effective}' "https://github.com/$Repo/releases/latest"
+        $effective = & curl.exe --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --output NUL --write-out '%{url_effective}' "https://github.com/$Repo/releases/latest"
         if ($LASTEXITCODE -ne 0 -or $effective -notmatch '/tag/(v\d+\.\d+\.\d+)$') { throw 'The latest Leo release could not be identified. Try again later.' }
         $tag = $Matches[1]
-        Write-Host "Downloading Leo $tag..."
         $url = "https://github.com/$Repo/releases/download/$tag/leo-$Target-setup.exe"
         Fetch $url $installer
         $checksum = Join-Path $tmp 'checksum'
@@ -43,7 +42,6 @@ try {
     foreach ($path in @($AppDir, $BinDir)) {
         if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'The installation folder is a link. Choose another folder.' }
     }
-    Write-Host 'Installing Leo. This can take a minute...'
     $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$AppDir") -PassThru
     if (-not $process.WaitForExit(900000)) { throw 'The installer is still running. Wait for it to finish before trying again.' }
     if ($process.ExitCode -ne 0) { throw 'The app could not be installed. Reopen the downloaded installer and try again.' }
@@ -56,11 +54,7 @@ try {
     [IO.File]::WriteAllText($linkTemp, $content, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $linkTemp -Destination $link -Force
     $old = Join-Path $BinDir 'leo.exe'
-    if (-not $old.Equals($cli, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $old)) {
-        try { Remove-Item -LiteralPath $old -Force }
-        catch { Move-Item -LiteralPath $old -Destination (Join-Path $BinDir (".leo-old-" + [Guid]::NewGuid().ToString('N') + '.exe')) -Force }
-    }
-    Get-ChildItem -LiteralPath $BinDir -Filter '.leo-old-*.exe' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    if (-not $old.Equals($cli, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $old)) { Remove-Item -LiteralPath $old -Force }
     $config = if ($env:LEO_HOME) { $env:LEO_HOME } else { Join-Path $env:APPDATA 'leo' }
     New-Item -ItemType Directory -Path $config -Force | Out-Null
     $record = Join-Path $config 'app-cli-dir'
@@ -74,8 +68,7 @@ try {
         if (-not ($entries | Where-Object { $_.TrimEnd('\').Equals($BinDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) })) {
             [Environment]::SetEnvironmentVariable('Path', (($entries + $BinDir) -join ';'), 'User')
         }
-        if (-not (@($env:Path -split ';') | Where-Object { $_.TrimEnd('\').Equals($BinDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) })) { $env:Path = "$env:Path;$BinDir" }
     }
-    Write-Host "Leo is installed in $AppDir. Open Leo from Start, or type leo here or in any new terminal."
+    Write-Host "Leo is installed in $AppDir. Open Leo from Start, or type leo in a new terminal."
     Write-Host 'Your notes stay where they are. Thank you for using Leo!'
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }

@@ -81,11 +81,12 @@ cannot be reused. Previous cloud speech choices fall back to local speech.
 Stored keys, writing AI sign-ins and calendar credentials stay in leo's
 credentials file.
 
-Two cases need a step of your own:
+Two cases are not automatic yet:
 
-- **Windows:** run `leo update` from the old version, then open a new terminal.
-  The old `leo.exe` is still running while it updates, so the installer moves
-  it aside and the next install deletes it.
+- **Windows:** the old `leo update` command keeps its executable running while
+  the installer tries to replace it. Quit old Leo, run the downloaded Windows
+  installer, then open the app from Start. An existing terminal command may
+  still point to the old version.
 - **Custom `LEO_HOME`:** a value set only in your shell is not remembered by an
   app opened from Finder or Start, so that launch may show a different notes
   folder. Keep your existing setup until custom-location migration is

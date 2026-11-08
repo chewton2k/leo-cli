@@ -32,21 +32,10 @@ pub fn available() -> Option<String> {
 
 pub fn install_command() -> String {
     if cfg!(windows) {
-        windows_install_command()
+        format!("$ErrorActionPreference='Stop'; $script=Join-Path ([IO.Path]::GetTempPath()) ('leo-update-'+[Guid]::NewGuid().ToString('N')+'.ps1'); try {{ & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --max-filesize 1048576 --output $script https://github.com/{REPO}/releases/latest/download/install.ps1; if($LASTEXITCODE -ne 0){{throw 'The installer download failed. Check your connection and try again.'}}; & $script }} finally {{ Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue }}")
     } else {
         format!("set -eu; script=$(mktemp); trap 'rm -f \"$script\"' EXIT; curl --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --max-filesize 1048576 --output \"$script\" https://github.com/{REPO}/releases/latest/download/install.sh; sh \"$script\"")
     }
-}
-
-fn windows_install_command() -> String {
-    format!("$ErrorActionPreference='Stop'; $script=Join-Path ([IO.Path]::GetTempPath()) ('leo-update-'+[Guid]::NewGuid().ToString('N')+'.ps1'); try {{ & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --max-filesize 1048576 --output $script https://github.com/{REPO}/releases/latest/download/install.ps1; if($LASTEXITCODE -ne 0){{throw 'The installer download failed. Check your connection and try again.'}}; & $script }} finally {{ Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue }}")
-}
-
-pub fn update_window_command() -> String {
-    use base64::Engine;
-    let script = format!("$host.UI.RawUI.WindowTitle='Leo update'; try {{ {} }} catch {{ Write-Host $_.Exception.Message -ForegroundColor Red }}; Read-Host 'Press Enter to close'", windows_install_command());
-    let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    base64::engine::general_purpose::STANDARD.encode(wide)
 }
 
 fn check(
@@ -123,22 +112,6 @@ pub fn is_newer(candidate: &str, current: &str) -> bool {
 mod tests {
     use super::*;
     use std::cell::Cell;
-
-    #[test]
-    fn the_windows_update_window_runs_the_installer_and_stays_open_to_show_the_result() {
-        use base64::Engine;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(update_window_command())
-            .unwrap();
-        let wide: Vec<u16> = bytes
-            .chunks(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
-        let script = String::from_utf16(&wide).unwrap();
-        assert!(script.contains(&windows_install_command()));
-        assert!(script.contains("catch"));
-        assert!(script.ends_with("Read-Host 'Press Enter to close'"));
-    }
 
     #[test]
     fn versions_compare_as_numbers() {
