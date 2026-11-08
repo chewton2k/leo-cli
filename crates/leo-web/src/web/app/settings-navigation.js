@@ -213,8 +213,8 @@ function settingsFrame(section, content) {
   const ids = settingsItems().map(([id]) => id);
   const from = ids.indexOf(settingsDrawn), to = ids.indexOf(section);
   const oldNav = shown && app.querySelector('.settings-sections'), oldPill = oldNav?.querySelector('.settings-nav-pill.placed');
-  const box = oldPill?.getBoundingClientRect();
-  if (box && box.height) {
+  const box = oldPill?.getBoundingClientRect(), oldOn = oldNav?.querySelector('.settings-link.on')?.getBoundingClientRect();
+  if (box && box.height && oldOn && Math.abs(box.top - oldOn.top) < 1) {
     const frame = oldNav.getBoundingClientRect();
     settingsPillFrom = { top: box.top - frame.top - oldNav.clientTop + oldNav.scrollTop, height: box.height };
   } else settingsPillFrom = null;

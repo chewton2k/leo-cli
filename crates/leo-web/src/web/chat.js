@@ -2425,6 +2425,13 @@
       state.pickWait = setTimeout(placeAddFloat, 120);
     });
     body.addEventListener('scroll', () => hideAddFloat(), { passive: true });
+    body.addEventListener('click', (e) => {
+      const trace = e.target.closest?.('.msg-trace > summary')?.parentElement;
+      const m = trace && state.messages[Number(trace.dataset.i)];
+      if (!m) return;
+      if (trace.open) openTraces.delete(m);
+      else openTraces.add(m);
+    }, true);
     body.addEventListener('toggle', (e) => {
       if (!e.target.matches?.('.msg-trace')) return;
       const m = state.messages[Number(e.target.dataset.i)];
