@@ -749,7 +749,7 @@ target. Check the page sequence after loading preferences.
   44 px on touch) opens the note inline, with
   `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
   in the panel.
-- The reading-mode menu and status sit above the title. Saving a mode keeps the
+- The reading-mode menu and status sit on the line under the title, beside the save state, so a status never moves the note. Saving a mode keeps the
   last confirmed value on failure. Its own menu class keeps generic select-menu
   click and close handlers from dismissing it. Each note remains a labelled article with an
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
@@ -1487,7 +1487,7 @@ disk, untouched.
 
 Read-along completion distinguishes valid silence from malformed/provider failure,
 keeps failed changes eligible, and guards request cleanup by note and request
-identity. Reading status and the explicit per-note menu sit above the title;
+identity. Reading status and the explicit per-note menu sit under the title;
 compact anchors stay in a separate gutter, never a mascot over the passage.
 
 The explorer is the only folder listing: `#/` is an empty note workspace and

@@ -365,7 +365,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 @container note (min-width: 900px) { .note-columns[data-margin="marks"] { padding-left: max(48px, var(--anchor-gutter, 0px)); } }
 .blk.margin-room { margin-bottom: var(--margin-room, 0px); }
 .note-context { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 12px; min-height: 24px; }
-@media (min-width: 1000px) { .note-context > .chip { display: none; } .note-context:not(:has(#margin-status:not(:empty))) { display: none; } }
+@media (min-width: 1000px) { .note-context { display: none; } }
 .note-meta .margin-mode { font-size: 13.5px; padding: 2px 6px; margin-left: -2px; }
 #margin-status { margin-left: auto; }
 .margin-mode-wrap { position: relative; flex: none; }
