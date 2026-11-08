@@ -26,13 +26,14 @@ const ICON = {
   search: svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
   grid: svg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'),
   list: svg('<path d="M9 6h11M9 12h11M9 18h11M4 6h.1M4 12h.1M4 18h.1"/>'),
+  readThrough: svg('<path d="M4 7h9M4 12h9M4 17h6"/><circle class="dot" cx="18.5" cy="12" r="2.6"/>'),
   sort: svg('<path d="M4 6h16M4 12h11M4 18h6"/>'),
   bolt: svg('<path d="M13.5 2.5L5 13.5h6l-1.5 8 8.5-11h-6z"/>'),
   filter: svg('<path d="M4 5h16l-6.2 7.6V18l-3.6 2v-7.4z"/>'),
   close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
   more: svg('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>'),
   folder: svg(FOLDER),
-  folderPlus: svg(FOLDER + '<path d="M12 10.5v6M9 13.5h6"/>'),
+  folderPlus: svg('<path d="M11 19.5H6.5A3.5 3.5 0 0 1 3 16V8a3 3 0 0 1 3-3h2.9a2 2 0 0 1 1.5.7l1.2 1.4a2 2 0 0 0 1.5.7H18a3 3 0 0 1 3 3v1"/><circle cx="17.5" cy="17.5" r="4.6"/><path d="M17.5 15.2v4.6M15.2 17.5h4.6"/>'),
   move: svg(FOLDER + '<path d="M9.5 13.5h6M13 11l2.5 2.5L13 16"/>'),
   pin: svg('<path d="M12 16v6"/><path d="M8 3h8l-1.2 6.2L18 12.5V15H6v-2.5l3.2-3.3z"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
@@ -51,7 +52,7 @@ const ICON = {
   fit: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
   expand: svg('<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>'),
   restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
-  filePlus: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M12 10v7M8.5 13.5h7"/>'),
+  filePlus: svg('<path d="M11.5 21H8a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h5.8a3 3 0 0 1 2.1.9l1.9 1.9a3 3 0 0 1 .9 2.1v3.6"/><path d="M8 9h5M8 13h3"/><circle cx="17.5" cy="17.5" r="4.6"/><path d="M17.5 15.2v4.6M15.2 17.5h4.6"/>'),
   note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
   refresh: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6L20 8.5"/><path d="M20 4v4.5h-4.5"/>'),
   check: svg('<path d="M5 12l4.5 4.5L19 7"/>'),
@@ -797,7 +798,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   await marginLoadPrefs();
   if (mine !== seq) return;
   let s;
-  swap(`n:${note.id || 'new'}`, () => {
+  const opened = swap(`n:${note.id || 'new'}`, () => {
     scrollToTop();
     document.body.classList.toggle('on-note', true);
     if (source.note && source.note !== note.id) closeSource();
@@ -814,7 +815,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
     <header class="note-head"><div class="note-context">${where}</div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
-    <div class="note-meta"><span id="save-state">${when}</span><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">Felix: when you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div></header>
+    <div class="note-meta"><span id="save-state">${when}</span><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">Felix: when you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span aria-hidden="true">·</span><button type="button" id="margin-through" class="margin-mode margin-through" aria-disabled="true" title="Felix reads the whole note and leaves margin notes. The text goes to your writing AI."><span id="margin-through-icon" class="margin-mode-icon" aria-hidden="true">${ICON.readThrough}</span><span id="margin-through-label">Read through</span></button><span id="margin-status" role="status" class="hint"></span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article></div></div>`;
@@ -829,11 +830,9 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
       reading.id = note.id;
       reading.user = false;
     } else restoreReading(note.id, mine);
-  }, {
-    from: () => morphTitle(note.id),
-    to: () => ($('#title')?.textContent.trim() ? $('#title') : null),
   });
   arriveOnPage(app.querySelector('article.note'));
+  if (opened && !stillMotion()) s.title.animate({ clipPath: ['inset(0 100% 0 0)', 'inset(0 0 0 0)'] }, { duration: OPEN_MS, easing: EASE_OUT });
   drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
@@ -851,7 +850,8 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     changed(s);
   });
   s.title.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.isComposing) return;
+    if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
       e.preventDefault();
       s.doc.editStart();
     }

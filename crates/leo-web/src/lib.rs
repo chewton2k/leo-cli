@@ -798,13 +798,18 @@ fn router(state: AppState) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
         )
         .route(
+            "/api/notes/{id}/margin/analyze",
+            post(routes::margin::analyze)
+                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
+        )
+        .route(
             "/api/notes/{id}/margin/threads",
             post(routes::margin::ask)
                 .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
         )
         .route(
             "/api/notes/{id}/margin/threads/{thread}",
-            post(routes::margin::set_status),
+            post(routes::margin::set_status).delete(routes::margin::forget),
         )
         .route(
             "/api/notes/{id}/margin/threads/{thread}/reply",

@@ -2,7 +2,9 @@
 
 The service wiring between leo-web and leo-services. `powers()` supplies AI,
 speech, settings, imports and the recording `Housekeeper`; web keeps its core-only dependency.
-`leo-test-server` runs the same engine for targeted browser checks. Every worker
+`leo-test-server` runs the same engine for targeted browser checks. It stores "When you ask" as its
+disposable home's default reading mode at startup, so browser suites don't depend on when the
+Read along default's `since` was first set (2026-11-08); the product default is covered by leo-web's unit tests. Every worker
 entry point dispatches `--leo-speech-worker` before normal startup.
 
 `health::scan` converts doctor checks with external probes disabled to the native

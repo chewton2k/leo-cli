@@ -3431,7 +3431,8 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
   await card.locator('#calendar-link').fill('https://calendar.google.com/calendar/ical/me/private-abc/basic.ics');
   await card.locator('[data-action="calendar-add"]').click();
   await expect(page.locator('.cal-card')).toContainText('Classes');
-  await expect(page.locator('.cal-card .cal-next')).toContainText('Algorithms lecture');
+  await expect(page.locator('.cal-card .cal-icon')).toHaveCount(1);
+  await expect(page.locator('.cal-card')).not.toContainText('Next up');
   await expect(page.locator('#calendar-link')).toHaveCount(0);
   await page.locator('.cal-card [data-action="calendar-more"]').click();
   await expect(page.locator('#calendar-link')).toBeFocused();
@@ -3889,6 +3890,23 @@ test.describe('passages', () => {
     await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
     await expect.poll(body).not.toContain('Argon2id');
     await expect.poll(left).toBe(1);
+  });
+
+  test('Read through leaves margin notes on an old note in When you ask mode, and Undo takes them out', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Old note', body: 'Then login just checks if it matches, I think' } })).json();
+    let analyzed = 0;
+    page.on('request', (r) => { if (r.url().includes('/margin/analyze')) analyzed++; });
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    expect(analyzed).toBe(0);
+    await page.getByRole('button', { name: 'Read through' }).click();
+    await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?', { timeout: 12000 });
+    await expect(page.locator('.toast')).toContainText('Felix added 1 margin note');
+    await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
+    const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
+    await expect.poll(left).toBe(0);
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
   });
 
   for (const [title, later, says] of [

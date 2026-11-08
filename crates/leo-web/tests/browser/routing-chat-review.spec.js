@@ -192,6 +192,22 @@ for (const layout of ['desktop', 'compact', 'source']) test(`Chats history ${lay
   expect(await history.evaluate(el => el.getAnimations().filter(run => run.effect.getTiming().duration > 0).length)).toBe(0);
 });
 
+test('narrowing Felix below the overlay width closes Chats without animating over the chat', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.route('**/api/chats', route => route.fulfill({ json: [{ id: 'narrow-history', title: 'Saved conversation', count: 2, updated_at: new Date().toISOString() }] }));
+  await page.locator('#chat-toggle').click();
+  const panel = page.locator('#chat');
+  const history = page.locator('#chat-history');
+  await panel.evaluate(el => { el.style.width = '640px'; });
+  await page.locator('.chat-head .chat-history-toggle').click();
+  await expect(history).toBeVisible();
+  await expect(panel).not.toHaveClass(/source-narrow/);
+  await panel.evaluate(el => { el.style.width = '440px'; });
+  await expect(panel).toHaveClass(/source-narrow/);
+  expect(await history.evaluate(el => el.getAnimations().length)).toBe(0);
+  await expect(history).toBeHidden();
+});
+
 test('Escape on a pending history deletion leaves the streaming answer running', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.request.put('/api/chats/escape-history', { data: { title: 'Keep this saved conversation', mode: 'chat', messages: [{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Answer' }] } });

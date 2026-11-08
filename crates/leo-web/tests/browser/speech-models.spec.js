@@ -7,6 +7,8 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
   const web = path.resolve(__dirname, '../../src/web');
   const source = fs.readFileSync(path.join(web, 'app/settings.js'), 'utf8');
   const helpers = source.slice(source.indexOf('function speechCards('));
+  const nav = fs.readFileSync(path.join(web, 'app/settings-navigation.js'), 'utf8');
+  const segments = nav.slice(nav.indexOf('function segmented('), nav.indexOf('function pickSegment('));
   const option = source.slice(source.indexOf('function settingsOption('), source.indexOf('const effortName'));
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
   const initial = () => ({ selected: { id: 'local', language: 'en' }, ready: true, disk_bytes: 5,
@@ -23,6 +25,8 @@ const plural = (n, word, many = word + 's') => n + ' ' + (n === 1 ? word : many)
     async function api(url, options={}) { const response=await fetch(url,{method:options.method || 'GET',headers:{'Content-Type':'application/json'},body:options.body ? JSON.stringify(options.body) : undefined}); const data=await response.json(); if(!response.ok) throw new Error(data.error); return data; }
     window.errors=[];
     ${fs.readFileSync(path.join(web, 'app/refresh.js'), 'utf8')}
+    const knobStretch=()=>{};
+    ${segments}
     ${option}
     ${helpers}
     $('#speech-library').innerHTML=speechCards(state.speech);
@@ -46,7 +50,7 @@ const plural = (n, word, many = word + 's') => n + ' ' + (n === 1 ? word : many)
     if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fixture); }
     if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css; charset=utf-8'); return response.end(css); }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body><main id="app"><div class="settings"><label>Draft<input id="draft" class="set-input"></label><div id="speech-library"></div></div></main><script src="/fixture.js"></script></body></html>');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body><main id="app"><div class="settings settings-section"><label>Draft<input id="draft" class="set-input"></label><div id="speech-library"></div></div></main><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -57,8 +61,15 @@ const plural = (n, word, many = word + 's') => n + ' ' + (n === 1 ? word : many)
       const page = await browser.newPage({ colorScheme: theme });
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await expect(page.getByText('Local <b>speech</b>', { exact: true }).first()).toBeVisible();
-      const filters = await page.locator('.model-filters').evaluate(box => { const outer = box.getBoundingClientRect(), last = box.lastElementChild.getBoundingClientRect(); return outer.right - last.right; });
-      expect(filters).toBeLessThan(8);
+      const clipped = () => page.locator('.model-filters .segment').evaluateAll(items => items.filter(item => item.querySelector('span').scrollWidth > item.querySelector('span').clientWidth).length);
+      expect(await clipped()).toBe(0);
+      await page.setViewportSize({ width: 480, height: 700 });
+      expect(await clipped()).toBe(0);
+      await page.locator('.model-filters [data-filter="english"]').click();
+      await expect(page.locator('.model-filters [data-filter="english"]')).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.locator('.model-filters [data-filter="recommended"]')).toHaveAttribute('aria-pressed', 'false');
+      expect(await page.locator('.model-filters .segmented').evaluate(box => box.style.getPropertyValue('--at'))).toBe('1');
+      await page.locator('.model-filters [data-filter="recommended"]').click();
       await page.setViewportSize({ width: 900, height: 420 });
       await page.evaluate(() => { for (let i = 0; i < 20; i++) state.speech.models.push({ id: 'extra' + i, name: 'Extra ' + i, languages: ['en'], size: 100, bytes: 0, downloaded: false, verified: false, in_use: false, live: false, progress: null }); });
       await page.locator('.model-filters [data-filter="all"]').click();

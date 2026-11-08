@@ -37,11 +37,13 @@ test('compact note selection honors the latest click in either response order', 
 
 test('reopening the open note from the Folders sheet waits for its save instead of drawing an earlier copy', async () => {
   const fetched = [], went = [];
+  let drawn = 0;
   const context = {
     seq: 1, state: { session: { note: { id: 'open' } } },
     api: async url => { fetched.push(url); return { id: 'open' }; },
     enc: encodeURIComponent, sideWide: () => false, noteHash: id => `#/n/${id}`,
     go: async (hash, options) => { went.push([hash, options]); }, fail: e => { throw e; },
+    side: { target: 'Folder' }, drawSide() { drawn++; },
   };
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/side.js'), 'utf8');
   vm.createContext(context);
@@ -49,4 +51,6 @@ test('reopening the open note from the Folders sheet waits for its save instead 
   await context.openExplorerNote({ dataset: { id: 'open' }, closest: () => ({ isConnected: true }) });
   assert.deepEqual(fetched, []);
   assert.deepEqual(went, [['#/n/open', undefined]]);
+  assert.equal(context.side.target, null);
+  assert.equal(drawn, 1);
 });

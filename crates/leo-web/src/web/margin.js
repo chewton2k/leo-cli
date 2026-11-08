@@ -12,6 +12,7 @@
   const READ_BLOCK_CHARS = 4000;
   const READ_CHARS = 8000;
   const LEAST_BLOCK_CHARS = 20;
+  const MOST_PASSES = 8;
   const NEAR = 120;
   const AROUND = 48;
   const WORD_MS = 62;
@@ -154,6 +155,41 @@
     return out;
   }
 
+  function passes(source, taken = []) {
+    const pieces = [];
+    let at = 0;
+    for (const seg of source.split(/(\n\s*\n)/)) {
+      const block = seg.trim();
+      const start = at + (block ? seg.indexOf(block) : 0);
+      at += seg.length;
+      if (!block || taken.some((quote) => quote && block.includes(quote))) continue;
+      const cps = [...block];
+      let used = 0;
+      for (let i = 0; i < cps.length; i += READ_BLOCK_CHARS) {
+        const raw = cps.slice(i, i + READ_BLOCK_CHARS).join('');
+        const text = raw.trim();
+        const from = start + used + raw.indexOf(text);
+        used += raw.length;
+        if ([...text].length >= LEAST_BLOCK_CHARS) pieces.push({ text, from, to: from + text.length, size: [...text].length });
+      }
+    }
+    const all = [];
+    let part = null;
+    for (const piece of pieces) {
+      if (!part || part.blocks.length >= READ_BLOCKS || part.size + piece.size > READ_CHARS) {
+        part = { blocks: [], size: 0, start: piece.from, end: piece.to };
+        all.push(part);
+      }
+      part.blocks.push(piece.text);
+      part.size += piece.size;
+      part.end = piece.to;
+    }
+    const spread = all.length > MOST_PASSES;
+    const chosen = spread ? [...new Set(Array.from({ length: MOST_PASSES }, (_, i) => Math.round((i * (all.length - 1)) / (MOST_PASSES - 1))))] : all.map((_, i) => i);
+    const parts = chosen.map((i) => ({ blocks: all[i].blocks, from: lineAfter(source, all[i].start), to: lineAfter(source, all[i].end) }));
+    return { parts, spread };
+  }
+
   function wave(left, right, y) {
     const count = Math.max(1, Math.round((right - left) / 8));
     const step = (right - left) / count;
@@ -168,7 +204,7 @@
     return `M${from.x.toFixed(1)} ${from.y.toFixed(1)}${lead} C${middle.toFixed(1)} ${(from.y + 2).toFixed(1)} ${(middle - 4).toFixed(1)} ${to.y.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
   }
 
-  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, arrangement, wordDelay, blocksOf, changedBlocks, wave, tether };
+  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, arrangement, wordDelay, blocksOf, changedBlocks, passes, wave, tether };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMargin = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -589,3 +589,22 @@ test('page toolbars share geometry', async ({ page }) => {
     }
   }
 });
+
+test('Felix activity draws gridlines and colours bars by maker', async ({ page }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const read = name => fs.readFileSync(path.join(web, name), 'utf8');
+  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  await page.setContent(`<style>${css}</style><main id="app"></main>`);
+  await page.addScriptTag({ content: `var app=document.querySelector('#app'), esc=t=>String(t), ICON=new Proxy({}, {get:()=>'<svg></svg>'}), svg=p=>'<svg>'+p+'</svg>', segmented=()=>'', stillMotion=()=>true;` });
+  await page.addScriptTag({ content: read('chat.js') });
+  await page.addScriptTag({ content: read('app/settings.js').replace(/^(const|let) /gm, 'var ') });
+  await page.evaluate(() => {
+    const today = faToday();
+    const row = (name, input) => ({ day: today, name, calls: 1, input, cached: 0, output: 10 });
+    app.innerHTML = felixUsageInner({ felix_days: { models: [row('gpt-6.1-sol', 400), row('claude-sonnet-5-5', 300)], kinds: [] }, felix_usage: [], felix_tools: {} });
+  });
+  await expect(page.locator('.fa-grid')).toHaveCount(3);
+  const colours = await page.locator('.fa-day:last-child .fa-stack i').evaluateAll(els => els.map(el => getComputedStyle(el).backgroundColor));
+  expect(colours).toHaveLength(2);
+  expect(colours[0]).not.toBe(colours[1]);
+});

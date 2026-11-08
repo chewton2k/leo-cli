@@ -30,7 +30,7 @@ const motionSource = fs.readFileSync(path.resolve(__dirname, '../src/web/app/mot
 function motion(extra = {}) {
   const context = { overlapOut() {}, unfold() {}, fold() {}, cascade() {}, pulse() {}, rubber() {}, iconSwap() {}, stillMotion: () => false, EASE_OUT: 'ease-out', EASE_MOVE: 'ease-in-out', EASE_EXIT: 'ease-in', MOTION_MS: 180, OPEN_MS: 200, DRAWER_MS: 240, EXIT_SHARE: .8, document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { add() {}, remove() {} } } }, window: { scrollTo() {} }, innerHeight: 800, innerWidth: 1200, performance: { now: () => 0 }, Date, ...extra };
   vm.createContext(context);
-  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, transitionSkip, swap, glideOffset, glideTitle, textRect, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
+  vm.runInContext(`${motionSource}\nglobalThis.api = { flipOffset, flipMoves, flipSkip, flipList, transitionSkip, swap, settleNow, settleLater, settleOffset, pillGlide, drawn, handoff, FLIP_TRAVEL, FLIP_ROWS, SETTLE_MS };`, context);
   return context.api;
 }
 
@@ -96,24 +96,6 @@ test('a page change never starts a view transition, which would put the root ele
   assert.equal(draws, 2);
   assert.equal(m.swap('f:b', () => draws++), false);
   assert.equal(started, 0);
-});
-
-test('the title glides from where its text was, only when the page changed and the text moved', () => {
-  const m = motion();
-  assert.deepEqual({ ...m.glideOffset({ left: 100, top: 300, width: 120, height: 18 }, { left: 360, top: 120, width: 240, height: 34 }) }, { dx: -260, dy: 180, scale: 0.5 });
-  assert.equal(m.glideOffset({ left: 5, top: 5, width: 100, height: 20 }, { left: 5.2, top: 5.1, width: 100, height: 20 }), null);
-  assert.equal(m.glideOffset(null, { left: 0, top: 0, width: 10, height: 10 }), null);
-  const played = [];
-  const range = { selectNodeContents() {}, getBoundingClientRect: () => ({ left: 360, top: 120, width: 240, height: 34 }) };
-  const el = { isConnected: true, style: {}, getBoundingClientRect: () => ({ left: 340, top: 110 }), animate: (frames, options) => { const run = {}; played.push({ frames, options, run }); return run; } };
-  const g = motion({ document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], createRange: () => range } });
-  const run = g.glideTitle({ left: 100, top: 300, width: 120, height: 18 }, el);
-  assert.equal(played.length, 1);
-  assert.equal(played[0].frames[0].transform, 'translate(-260px, 180px) scale(0.5)');
-  assert.equal(played[0].options.duration, 180);
-  assert.equal(el.style.transformOrigin, '20px 10px');
-  run.onfinish();
-  assert.equal(el.style.transformOrigin, '');
 });
 
 test('a drop settles the element wherever the redraw puts it, with the time already spent, and stops after 180 ms', () => {

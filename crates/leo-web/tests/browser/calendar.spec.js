@@ -542,6 +542,22 @@ test('a task at the end of the day stays inside the grid and keeps its real time
   });
 });
 
+test('the hour grid reaches the bottom of the calendar in a tall window', async ({ browser }) => {
+  await calendarFixture(browser, async page => {
+    await page.evaluate(() => {
+      const task = cal.data.tasks.find(task => task.id === 'task-lab');
+      cal.data.tasks.push({ ...task, id: 'task-late', title: 'Late deadline', time: '23:59:00', end: null });
+      drawCalendar();
+    });
+    const gap = await page.evaluate(() => {
+      const scroll = document.querySelector('#cal-scroll');
+      const col = document.querySelector('.cal-col');
+      return { band: scroll.getBoundingClientRect().bottom - col.getBoundingClientRect().bottom };
+    });
+    expect(gap.band).toBeLessThanOrEqual(1);
+  }, { height: 1500 });
+});
+
 test('enlarged task blocks do not change duration on a horizontal resize drag', async ({ browser }) => {
   await calendarFixture(browser, async page => {
     for (const end of [null, '11:01:00', '11:05:00', '11:15:00', '11:17:00', '12:00:00']) {

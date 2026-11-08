@@ -143,6 +143,32 @@ impl Engine {
         .await
     }
 
+    async fn analyze(
+        &self,
+        id: &str,
+        version: &str,
+        blocks: &[&str],
+        most: Option<usize>,
+    ) -> (u16, serde_json::Value) {
+        self.post(
+            &format!("/api/notes/{id}/margin/analyze"),
+            serde_json::json!({ "version": version, "blocks": blocks, "most": most }),
+        )
+        .await
+    }
+
+    async fn plain(&self, body: &str) -> (String, String) {
+        let (_, made) = self
+            .post(
+                "/api/notes",
+                serde_json::json!({ "title": "Plain", "body": body }),
+            )
+            .await;
+        let id = made["id"].as_str().unwrap().to_string();
+        margin::set_mode(&self.chats(), &id, "ask");
+        (id, made["version"].as_str().unwrap().to_string())
+    }
+
     async fn stop(self) {
         self.running.stop().await;
     }
@@ -172,10 +198,10 @@ const PASSAGE: &str = "then login just checks if it matches";
 const SAYS: &str = r#"{"quote":"just checks if it matches","text":"In plain text?"}"#;
 
 #[tokio::test]
-async fn read_along_is_off_on_a_fresh_install() {
+async fn read_along_is_the_default_for_new_notes_on_a_fresh_install() {
     let (engine, calls) = reading(SAYS).await;
     let (_, settings) = engine.get("/api/margin").await;
-    assert_eq!(settings["default_mode"], "ask");
+    assert_eq!(settings["default_mode"], "along");
     assert_eq!(settings["cap"], margin::DAILY_CAP);
     assert_eq!(settings["gap"], margin::READ_GAP);
     assert_eq!(settings["today"], 0);
@@ -187,10 +213,7 @@ async fn read_along_is_off_on_a_fresh_install() {
         .await;
     let id = made["id"].as_str().unwrap();
     let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
-    assert_eq!(view["mode"], "ask");
-    let version = engine.edit(id, PASSAGE).await;
-    let (status, why) = engine.read(id, &version, &[PASSAGE]).await;
-    assert_eq!((status, why["why"].as_str()), (403, Some("mode")));
+    assert_eq!(view["mode"], "along");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     engine.stop().await;
 }
@@ -204,6 +227,10 @@ async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
             serde_json::json!({ "title": "Old", "body": "" }),
         )
         .await;
+    let (status, _) = engine
+        .post("/api/margin", serde_json::json!({ "default_mode": "ask" }))
+        .await;
+    assert_eq!(status, 200);
     let (status, _) = engine
         .post(
             "/api/margin",
@@ -246,11 +273,17 @@ async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
         )
         .await;
     assert_eq!(status, 400);
+    for good in [
+        serde_json::json!({ "pace": "fast" }),
+        serde_json::json!({ "gap": 180 }),
+    ] {
+        assert_eq!(engine.post("/api/margin", good).await.0, 200);
+    }
     for bad in [
         serde_json::json!({ "cap": 7 }),
         serde_json::json!({ "gap": 7 }),
         serde_json::json!({ "layout": "left" }),
-        serde_json::json!({ "pace": "fast" }),
+        serde_json::json!({ "pace": "turbo" }),
         serde_json::json!({ "default_mode": "x" }),
     ] {
         assert_eq!(engine.post("/api/margin", bad).await.0, 400);
@@ -593,7 +626,9 @@ async fn the_margin_needs_a_session_and_the_right_host() {
         ("POST", "/api/margin"),
         ("GET", "/api/notes/abc/margin"),
         ("POST", "/api/notes/abc/margin/threads"),
+        ("POST", "/api/notes/abc/margin/analyze"),
         ("POST", "/api/notes/abc/margin/threads/t"),
+        ("DELETE", "/api/notes/abc/margin/threads/t"),
         ("POST", "/api/notes/abc/margin/threads/t/reply"),
     ] {
         assert_eq!(
@@ -811,8 +846,18 @@ async fn asking_about_selected_words_needs_no_read_along_and_the_words_must_be_t
     assert_eq!(engine.post(&path, ask("same words", "", "0")).await.0, 409);
     let (status, why) = engine.post(&path, ask("not there", "", &version)).await;
     assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
-    let long = "x".repeat(margin::MOST_QUOTE + 1);
+    let long = "x".repeat(margin::MOST_ASKED + 1);
     assert_eq!(engine.post(&path, ask(&long, "", &version)).await.0, 413);
+    let wide = "word ".repeat(200);
+    let (wide_id, wide_version) = engine.note("Wide", &wide).await;
+    margin::set_mode(&engine.chats(), &wide_id, "ask");
+    let (status, thread) = engine
+        .post(
+            &format!("/api/notes/{wide_id}/margin/threads"),
+            ask(wide.trim(), "", &wide_version),
+        )
+        .await;
+    assert_eq!(status, 200, "{thread}");
     let (status, why) = engine
         .post(&path, ask("same words", "not beside it ", &version))
         .await;
@@ -1220,4 +1265,347 @@ fn exports_cover_margin_threads() {
     zip.set_position(0);
     let mut archive = zip::ZipArchive::new(zip).unwrap();
     assert!(archive.by_name("leo/margin.json").is_ok());
+}
+
+const FIVE: &str = r#"{"notes":[
+{"quote":"just checks if it matches","text":"A"},
+{"quote":"Save the password","text":"D"},
+{"quote":"just checks if it matches","text":"B"},
+{"quote":"not anywhere in the note","text":"C"},
+{"quote":"in the users table","text":"E"}]}"#;
+const FOUR: &str = r#"{"notes":[
+{"quote":"Save the password","text":"A"},
+{"quote":"in the users table","text":"B"},
+{"quote":"just checks if it matches","text":"C"},
+{"quote":"Then login","text":"D"}]}"#;
+const TWO_BLOCKS: &str =
+    "Save the password in the users table.\n\nThen login just checks if it matches, I think.";
+
+#[tokio::test]
+async fn reading_through_works_in_ask_mode_on_a_note_never_edited() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    let before = std::fs::read_dir(engine.dir.path().join("notes"))
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap_or_default())
+        .collect::<Vec<_>>();
+    let (status, reply) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    assert_eq!(status, 200);
+    let notes = reply["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["source"], "read");
+    assert_eq!(notes[0]["quote"], "just checks if it matches");
+    assert_eq!(notes[0]["prefix"], "then login ");
+    assert_eq!(notes[0]["suffix"], "");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(engine.get("/api/margin").await.1["today"], 0);
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(
+        (
+            view["mode"].as_str(),
+            view["threads"].as_array().unwrap().len()
+        ),
+        (Some("ask"), 1)
+    );
+    let after = std::fs::read_dir(engine.dir.path().join("notes"))
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(before, after);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_part_saves_at_most_its_share_and_drops_what_it_cannot_place() {
+    let (engine, _) = reading(FIVE).await;
+    let (id, version) = engine.plain(TWO_BLOCKS).await;
+    let seed = margin::new_thread(
+        &id,
+        "ask",
+        margin::placed(TWO_BLOCKS, "in the users table", &[]).unwrap(),
+        "in the users table",
+        vec![margin::felix_says("Seeded.")],
+    );
+    assert!(margin::put(&engine.chats(), &seed));
+    let (status, reply) = engine.analyze(&id, &version, &[TWO_BLOCKS], Some(3)).await;
+    assert_eq!(status, 200);
+    let quotes: Vec<&str> = reply["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["quote"].as_str().unwrap())
+        .collect();
+    assert_eq!(quotes, ["just checks if it matches", "Save the password"]);
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert_eq!(view["threads"].as_array().unwrap().len(), 3);
+    engine.stop().await;
+
+    let (engine, _) = reading(FOUR).await;
+    let (id, version) = engine.plain(TWO_BLOCKS).await;
+    let (_, reply) = engine.analyze(&id, &version, &[TWO_BLOCKS], Some(9)).await;
+    assert_eq!(reply["notes"].as_array().unwrap().len(), 3);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn silence_a_single_object_and_bad_output() {
+    for silent in [r#"{"notes":[]}"#, "{}", ""] {
+        let (engine, _) = reading(silent).await;
+        let (id, version) = engine.plain(PASSAGE).await;
+        let (status, reply) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+        assert_eq!(status, 200);
+        assert_eq!(reply["notes"], serde_json::json!([]));
+        assert!(reply.get("failed").is_none());
+        engine.stop().await;
+    }
+    let (engine, _) = reading(SAYS).await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    let (_, reply) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    assert_eq!(reply["notes"].as_array().unwrap().len(), 1);
+    engine.stop().await;
+    let (engine, _) = reading("I think this note is fine.").await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    let (_, reply) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    assert_eq!(
+        (&reply["notes"], &reply["failed"]),
+        (&serde_json::json!([]), &serde_json::json!(true))
+    );
+    assert_eq!(
+        engine.get("/api/margin").await.1["problem"].as_str(),
+        Some(margin::PROBLEM)
+    );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn parts_skip_the_gap_but_not_overlap_or_a_streaming_reply() {
+    let (engine, calls) = reading("{}").await;
+    let (id, version) = engine.note("Parts", PASSAGE).await;
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let (status, why) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("soon")));
+    engine.stop().await;
+
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (started, was_started) = tokio::sync::oneshot::channel::<()>();
+    let started = Mutex::new(Some(started));
+    let writer: Writer = Arc::new(move |_, _, _| {
+        if let Some(started) = started.lock().unwrap().take() {
+            let _ = started.send(());
+        }
+        let _ = released.lock().unwrap().recv();
+        Ok("{}".to_string())
+    });
+    let engine = Arc::new(
+        Engine::with(Powers {
+            toolless: Some(writer),
+            ..Default::default()
+        })
+        .await,
+    );
+    let (first, first_version) = engine.plain(PASSAGE).await;
+    let (second, second_version) = engine.plain(PASSAGE).await;
+    let running = Arc::clone(&engine);
+    let slow = tokio::spawn(async move {
+        running
+            .analyze(&first, &first_version, &[PASSAGE], None)
+            .await
+            .0
+    });
+    was_started.await.unwrap();
+    let (status, why) = engine
+        .analyze(&second, &second_version, &[PASSAGE], None)
+        .await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("busy")));
+    release.send(()).unwrap();
+    assert_eq!(slow.await.unwrap(), 200);
+
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (started, was_started) = tokio::sync::oneshot::channel::<()>();
+    let started = Mutex::new(Some(started));
+    let streamer: crate::chat::Streamer = Arc::new(move |_, _, _, _, _, _| {
+        if let Some(started) = started.lock().unwrap().take() {
+            let _ = started.send(());
+        }
+        let _ = released.lock().unwrap().recv();
+        Ok(crate::chat::Reply::from("Done.".to_string()))
+    });
+    let (writer, calls) = answering(SAYS);
+    let engine = Arc::new(
+        Engine::with(Powers {
+            toolless: Some(writer),
+            chat: Some(streamer),
+            ..Default::default()
+        })
+        .await,
+    );
+    let (id, version) = engine.plain(PASSAGE).await;
+    let chatting = Arc::clone(&engine);
+    let answer = tokio::spawn(async move {
+        chatting
+            .post(
+                "/api/chat",
+                serde_json::json!({ "messages": [{ "role": "user", "text": "hello" }] }),
+            )
+            .await
+            .0
+    });
+    was_started.await.unwrap();
+    let (status, why) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    assert_eq!((status, why["why"].as_str()), (429, Some("felix")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    release.send(()).unwrap();
+    assert_eq!(answer.await.unwrap(), 200);
+}
+
+#[tokio::test]
+async fn parts_never_change_today_and_still_run_at_the_cap() {
+    let (engine, calls) = reading("{}").await;
+    margin::set_prefs(
+        &engine.chats(),
+        &margin::Prefs {
+            cap: 1,
+            ..Default::default()
+        },
+    );
+    assert!(margin::spend_read(&engine.chats(), 1));
+    let (id, version) = engine.plain(PASSAGE).await;
+    for _ in 0..2 {
+        assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(engine.get("/api/margin").await.1["today"], 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn stale_bad_and_oversized_parts_are_refused() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    assert_eq!(engine.analyze(&id, "0", &[PASSAGE], None).await.0, 409);
+    assert_eq!(engine.analyze(&id, "../x", &[PASSAGE], None).await.0, 400);
+    assert_eq!(
+        engine
+            .analyze(&id, &version, &["not in the note"], None)
+            .await
+            .0,
+        400
+    );
+    assert_eq!(engine.analyze(&id, &version, &[], None).await.0, 400);
+    assert_eq!(
+        engine
+            .analyze("00000000-dead", &version, &[PASSAGE], None)
+            .await
+            .0,
+        404
+    );
+    let long = "x".repeat(margin::MOST_BLOCK_CHARS + 1);
+    assert_eq!(engine.analyze(&id, &version, &[&long], None).await.0, 413);
+    let many = vec![PASSAGE; margin::MOST_BLOCKS + 1];
+    assert_eq!(engine.analyze(&id, &version, &many, None).await.0, 413);
+    let huge = "z".repeat(margin::BODY_BYTES + 1);
+    assert_eq!(engine.analyze(&id, &version, &[&huge], None).await.0, 413);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_full_note_and_a_missing_ai_say_why() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    for n in 0..margin::MOST_OPEN {
+        let thread = margin::new_thread(
+            &id,
+            "ask",
+            margin::Place {
+                prefix: String::new(),
+                suffix: String::new(),
+            },
+            &format!("quote {n}"),
+            vec![margin::felix_says("Hm.")],
+        );
+        assert!(margin::put(&engine.chats(), &thread));
+    }
+    let (status, why) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("full")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+
+    let engine = Engine::with(Powers::default()).await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    let (status, why) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    assert_eq!((status, why["why"].as_str()), (503, Some("no-ai")));
+    assert_eq!(
+        engine.get("/api/margin").await.1["problem"].as_str(),
+        Some(margin::PROBLEM)
+    );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn forgetting_a_thread_deletes_it_unless_you_replied() {
+    let (engine, _) = reading(SAYS).await;
+    let (id, version) = engine.plain(PASSAGE).await;
+    let (_, reply) = engine.analyze(&id, &version, &[PASSAGE], None).await;
+    let thread = reply["notes"][0]["id"].as_str().unwrap().to_string();
+    let path = format!("/api/notes/{id}/margin/threads/{thread}");
+    let (other, _) = engine.plain(PASSAGE).await;
+    let wrong = format!("/api/notes/{other}/margin/threads/{thread}");
+    assert_eq!(
+        engine
+            .send_as(&engine.cookie, "DELETE", &wrong, None)
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        engine
+            .send_as(&engine.cookie, "DELETE", &path, None)
+            .await
+            .0,
+        204
+    );
+    let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
+    assert!(view["threads"].as_array().unwrap().is_empty());
+    assert_eq!(
+        engine
+            .send_as(&engine.cookie, "DELETE", &path, None)
+            .await
+            .0,
+        404
+    );
+
+    let mut kept = margin::new_thread(
+        &id,
+        "ask",
+        margin::Place {
+            prefix: String::new(),
+            suffix: String::new(),
+        },
+        "words",
+        vec![margin::felix_says("Hm."), margin::you_say("Why?")],
+    );
+    kept.id = "kept-thread".into();
+    assert!(margin::put(&engine.chats(), &kept));
+    let kept_path = format!("/api/notes/{id}/margin/threads/kept-thread");
+    let (status, why) = engine
+        .send_as(&engine.cookie, "DELETE", &kept_path, None)
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("replied")));
+    let held = engine.running.state.margin.replying("kept-thread");
+    assert!(held.is_some());
+    let (status, why) = engine
+        .send_as(&engine.cookie, "DELETE", &kept_path, None)
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("replying")));
+    let bad = format!("/api/notes/{id}/margin/threads/a%20b");
+    assert_eq!(
+        engine.send_as(&engine.cookie, "DELETE", &bad, None).await.0,
+        400
+    );
+    engine.stop().await;
 }

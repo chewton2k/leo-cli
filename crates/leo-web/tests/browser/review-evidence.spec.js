@@ -662,6 +662,8 @@ test('Settings chooses how often Felix reads and says so in one sentence', async
   await page.goto('/#/settings/felix');
   const rhythm = page.locator('#felix-rhythm');
   await expect(rhythm).toContainText('at most once every 90 sec, up to 40 times a day');
+  const clipped = await page.locator('.felix-rhythm .segment span').evaluateAll(spans => spans.filter(span => span.scrollWidth > span.clientWidth).length);
+  expect(clipped).toBe(0);
   await page.locator('.segmented[aria-label="Time between reads"]').getByRole('radio', { name: '15 sec' }).click();
   await expect(rhythm).toContainText('at most once every 15 sec');
   await page.locator('.segmented[aria-label="Reads a day"]').getByRole('radio', { name: 'No limit' }).click();

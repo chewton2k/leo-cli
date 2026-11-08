@@ -5,8 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 function helpers() {
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8');
-  const context = { state: { speechFilter: 'recommended' }, esc: require('../src/web/markdown.js').escape, ICON: { chevron: '' }, settingsOption: () => '', plural: (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`, app: { addEventListener() {} } };
+  const context = { state: { speechFilter: 'recommended' }, esc: require('../src/web/markdown.js').escape, ICON: { chevron: '' }, settingsOption: () => '', knobStretch() {}, plural: (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`, app: { addEventListener() {} } };
   vm.createContext(context);
+  const nav = fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8');
+  vm.runInContext(nav.slice(nav.indexOf('function segmented('), nav.indexOf('function pickSegment(')), context);
   vm.runInContext(source.slice(source.indexOf('function speechCards(')), context);
   return context;
 }
@@ -18,7 +20,7 @@ test('Downloaded lists every disk model even when filtered or damaged', () => {
   assert.ok(html.includes('Damaged'));
   assert.ok(html.includes('older.gguf'));
   assert.ok(html.includes('Check failed'));
-  assert.ok(html.includes('Many languages'));
+  assert.ok(html.includes('Multilingual'));
   assert.ok(html.includes('Accuracy'));
   assert.ok(html.includes('Speed'));
   assert.equal((html.match(/data-model-row="one"/g) || []).length, 1);

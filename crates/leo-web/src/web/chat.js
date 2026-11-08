@@ -1206,6 +1206,8 @@
         document.body.style.setProperty('--chat-over', `${panel.hidden ? 0 : Math.round(panel.getBoundingClientRect().width)}px`);
         const narrow = sourceNarrow();
         const crossed = narrow && !panel.classList.contains('source-narrow') && panel.classList.contains('with-history');
+        const swap = !panel.hidden && narrow !== panel.classList.contains('source-narrow');
+        if (swap) panel.classList.add('mode-switch');
         if (!panel.hidden) panel.classList.toggle('source-narrow', narrow);
         if (crossed) {
           state.sidebar = null;
@@ -1218,6 +1220,10 @@
           if (on && !before && !state.chats) loadChats();
         }
         syncSidebar(panel.classList.contains('with-history'));
+        if (swap) {
+          void panel.offsetWidth;
+          panel.classList.remove('mode-switch');
+        }
         historyResize.fit();
       });
       historySize.observe(panel);

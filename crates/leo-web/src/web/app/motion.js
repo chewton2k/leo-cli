@@ -5,7 +5,7 @@ const QUICK_FLIP_MS = 120;
 const SETTLE_MS = 180;
 const SETTLE_SCALE = 1.02;
 
-const drawn = { key: '', source: null, at: 0, top: false };
+const drawn = { key: '', top: false };
 
 function scrollToTop() {
   if (!drawn.top) return;
@@ -92,59 +92,7 @@ function transitionSkip({ reduced, sheet, same, first }) {
   return '';
 }
 
-function inView(el) {
-  if (!el || !el.isConnected) return false;
-  const r = el.getBoundingClientRect();
-  return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
-}
-
-function morphSources(id) {
-  if (!id) return [];
-  const pick = drawn.source && drawn.source.isConnected && Date.now() - drawn.at < 1500 ? drawn.source : null;
-  const own = pick && pick.dataset.id === id ? [pick] : [];
-  const all = [...document.querySelectorAll('.card[data-id], .side-note[data-id]')].filter((el) => el.dataset.id === id);
-  return [...own, ...all];
-}
-
-function morphTitle(id) {
-  for (const row of morphSources(id)) {
-    const title = row.matches('.card') ? row.querySelector('.card-title > span') : row.querySelector('.side-label');
-    if (inView(title)) return title;
-  }
-  return null;
-}
-
-function textRect(el) {
-  if (!el || !el.isConnected) return null;
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const { left, top, width, height } = range.getBoundingClientRect();
-  return width > 0 && height > 0 ? { left, top, width, height } : null;
-}
-
-function glideOffset(from, to) {
-  if (!from || !to || !from.width || !to.width) return null;
-  const scale = from.width / to.width;
-  const dx = from.left - to.left;
-  const dy = from.top - to.top;
-  if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(scale - 1) < .01) return null;
-  return { dx, dy, scale };
-}
-
-function glideTitle(from, el, ms = MOTION_MS) {
-  const to = textRect(el);
-  const move = glideOffset(from, to);
-  if (!move || typeof el.animate !== 'function') return null;
-  const box = el.getBoundingClientRect();
-  el.style.transformOrigin = `${to.left - box.left}px ${to.top - box.top}px`;
-  const run = el.animate([{ transform: `translate(${move.dx}px, ${move.dy}px) scale(${move.scale})` }, { transform: 'none' }], { duration: ms, easing: EASE_OUT });
-  const done = () => { el.style.transformOrigin = ''; };
-  run.onfinish = done;
-  run.oncancel = done;
-  return run;
-}
-
-function swap(key, draw, { from = null, to = null } = {}) {
+function swap(key, draw) {
   const skip = transitionSkip({
     reduced: stillMotion(),
     sheet: Boolean(document.querySelector('.scrim')),
@@ -152,18 +100,9 @@ function swap(key, draw, { from = null, to = null } = {}) {
     first: !drawn.key,
   });
   drawn.key = key;
-  const was = skip || !from ? null : textRect(from());
   draw();
-  if (skip) return false;
-  if (was && to) glideTitle(was, to());
-  return true;
+  return !skip;
 }
-
-document.addEventListener('click', (e) => {
-  const row = e.target.closest ? e.target.closest('[data-action="open-note"]') : null;
-  drawn.source = row;
-  drawn.at = Date.now();
-}, true);
 
 const ARC_STEPS = 12;
 

@@ -174,7 +174,7 @@ test('When you ask says how to ask, with the real shortcut and no promise of aut
   for (const [mac, keys] of [[true, 'Cmd+Shift+E'], [false, 'Ctrl+Shift+E']]) {
     const h = harness();
     h.context.ON_MAC = mac;
-    const html = h.context.felixSettingsCards({ gap: 90, gaps: [10, 15, 30, 90], cap: 40, caps: [20, 40, 80, 0], today: 0, default_mode: 'ask', layout: 'right', pace: 'regular' }, { tasks: [] });
+    const html = h.context.felixSettingsCards({ gap: 90, gaps: [10, 15, 30, 90, 180], cap: 40, caps: [20, 40, 80, 0], today: 0, default_mode: 'ask', layout: 'right', pace: 'regular' }, { tasks: [] });
     assert.ok(html.includes(`Select text, then Ask Felix or ${keys}.`));
     assert.ok(html.includes('Reads along sends the note’s title and the text you change to your writing AI.'));
     assert.ok(!/automatic/i.test(html));
@@ -262,4 +262,80 @@ test('a mode picked before the first save is kept, then sent once the note exist
   assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['POST', '/api/notes/n1/margin', { mode: 'along' }]));
   assert.equal(h.state.mode, 'along');
   assert.equal(h.state.loaded, true);
+});
+
+function through(mode = 'ask') {
+  const h = harness();
+  const source = Array.from({ length: 14 }, (_, i) => `Paragraph number ${i + 1} has enough words to read.`).join('\n\n');
+  const doc = { source: () => source, glow() {} };
+  Object.assign(h.state, { mode, s: { note: { id: 'a', version: 'v' }, doc } });
+  const toasts = [];
+  const calls = [];
+  const waiting = [];
+  Object.assign(h.context, {
+    toast: (text, options) => toasts.push([text, options]), stillMotion: () => false, ICON: {}, iconSwap: (host, change) => change(),
+    api: (url, options = {}) => { calls.push([url, options.body]); return new Promise((resolve, reject) => waiting.push({ resolve, reject })); },
+  });
+  const thread = (id, n) => ({ id, quote: `Paragraph number ${n} has`, prefix: '', suffix: '', messages: [] });
+  const answer = async (value) => { await new Promise(setImmediate); waiting.shift().resolve(value); await new Promise(setImmediate); };
+  return { ...h, source, toasts, calls, thread, answer, waiting };
+}
+
+test('a read-through whose note is left draws nothing', async () => {
+  const h = through();
+  const run = h.context.marginThroughClick();
+  await h.answer({ notes: [h.thread('t1', 1)] });
+  h.state.s = h.session();
+  await h.answer({ notes: [h.thread('t2', 5)] });
+  await run;
+  assert.equal(h.state.threads.length, 0);
+  assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.through, null);
+});
+
+test('Stop ends after the in-flight part and keeps and reveals what it saved', async () => {
+  const h = through();
+  const run = h.context.marginThroughClick();
+  await new Promise(setImmediate);
+  h.state.through.started = 0;
+  await h.context.marginThroughClick();
+  await h.answer({ notes: [h.thread('t1', 1)] });
+  await run;
+  assert.equal(h.calls.length, 1);
+  assert.equal(JSON.stringify(h.state.threads.map((t) => t.id)), JSON.stringify(['t1']));
+  assert.equal(h.toasts[0][0], 'Stopped. Felix added 1 margin note');
+  assert.equal(h.state.through, null);
+});
+
+test('threads are revealed top to bottom after the run, not per part', async () => {
+  const h = through();
+  const run = h.context.marginThroughClick();
+  await h.answer({ notes: [h.thread('late', 12)] });
+  await h.answer({ notes: [h.thread('mid', 7)] });
+  assert.equal(h.state.threads.length, 0);
+  await h.answer({ notes: [h.thread('early', 2)] });
+  await run;
+  assert.equal(JSON.stringify(h.state.threads.map((t) => t.id)), JSON.stringify(['early']));
+  assert.equal(JSON.stringify([...h.timers.values()].map((fn) => fn.delay)), '[80,160]');
+  for (const fn of [...h.timers.values()]) fn();
+  assert.equal(JSON.stringify(h.state.threads.map((t) => t.id)), JSON.stringify(['early', 'mid', 'late']));
+  assert.equal(h.toasts[0][0], 'Felix added 3 margin notes');
+});
+
+test('marginRead waits while a read-through is going', async () => {
+  const h = through('along');
+  h.state.through = {};
+  await h.context.marginRead(h.state.s);
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.state.again, true);
+});
+
+test('a read-through in When you ask mode never changes the mode', async () => {
+  const h = through('ask');
+  const run = h.context.marginThroughClick();
+  for (let i = 0; i < 3; i++) await h.answer({ notes: [] });
+  await run;
+  assert.equal(h.state.mode, 'ask');
+  assert.equal(h.state.status, 'Nothing to add this time');
+  assert.equal(h.timers.size, 1);
 });
