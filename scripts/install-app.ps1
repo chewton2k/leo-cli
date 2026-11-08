@@ -19,7 +19,7 @@ if ($env:LEO_UPDATE_PARENT_PID) {
 $running = Get-Process -Name 'leo-app' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.Equals((Join-Path $AppDir 'leo-app.exe'), [StringComparison]::OrdinalIgnoreCase) }
 if ($running) { throw 'Quit Leo before installing. Finish any recording or dictation first.' }
 function Fetch([string]$Url, [string]$Destination) {
-    & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 900 --max-filesize 1073741824 --retry 2 --output $Destination $Url
+    & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 900 --max-filesize 1073741824 --retry 4 --retry-delay 3 --output $Destination $Url
     if ($LASTEXITCODE -ne 0) { throw 'The Leo download failed. Check your connection and try again.' }
 }
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('leo-install-' + [Guid]::NewGuid().ToString('N'))
@@ -28,7 +28,7 @@ try {
     $installer = Join-Path $tmp 'leo-setup.exe'
     if ($env:LEO_INSTALL_ARCHIVE) { Copy-Item -LiteralPath $env:LEO_INSTALL_ARCHIVE -Destination $installer }
     else {
-        $effective = & curl.exe --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --output NUL --write-out '%{url_effective}' "https://github.com/$Repo/releases/latest"
+        $effective = & curl.exe --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 60 --retry 4 --retry-delay 3 --output NUL --write-out '%{url_effective}' "https://github.com/$Repo/releases/latest"
         if ($LASTEXITCODE -ne 0 -or $effective -notmatch '/tag/(v\d+\.\d+\.\d+)$') { throw 'The latest Leo release could not be identified. Try again later.' }
         $tag = $Matches[1]
         Write-Host "Downloading Leo $tag..."
