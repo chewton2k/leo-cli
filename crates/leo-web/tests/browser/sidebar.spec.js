@@ -50,6 +50,7 @@ async function sidebarFixture(browser, run) {
     const overlapOut=()=>{};
     ${read('app/motion.js')}
     ${read('app/popup-menu.js')}
+    ${read('app/select-menu.js')}
     ${read('app/side.js')}
     ${drag}
     const folderClick=typeof openFolder==='function'?${open}:el=>twistFolder(el.dataset.dir,el);
@@ -229,7 +230,7 @@ test('clicking parent folder labels toggles descendants without navigating or di
     await row('Course').click();
     await expect(row('Course/Week 1')).toBeVisible();
     await expect(row('Course')).toHaveAttribute('aria-expanded','true');
-    await expect(page.locator('.side-group [data-action="new"]')).toHaveAttribute('data-dir','Course');
+    await expect(page.locator('.side-new')).toHaveAttribute('data-dir','Course');
     await expect(page.locator('.side-rail [data-action="record"]')).toHaveAttribute('data-dir','Course');
     await expect(page.locator('.side-rail [data-action="upload"]')).toHaveAttribute('data-dir','Course');
     expect(new URL(page.url()).hash).toBe('');
@@ -374,6 +375,23 @@ test('explorer refresh keeps file rows and a click in progress intact', async ({
     await page.evaluate(()=>{audit.rename('Renamed 文字');return audit.refresh();});
     await expect(note).toHaveText('Renamed 文字');
     expect(await kept.evaluate(el=>el.isConnected)).toBe(true);
+    expect(await page.evaluate(()=>window.errors)).toEqual([]);
+  });
+});
+
+test('the explorer filter keeps its text, focus and matches through a redraw', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.goto(url);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    await expect(page.locator('.side-note[data-id="course-note"]')).toBeVisible();
+    await page.locator('#side-filter').fill('OVERVIEW');
+    await expect(page.locator('.side-note-wrap:has(.side-note[data-id="escaped-note"])')).toBeHidden();
+    await expect(page.locator('.side-note-wrap:has(.side-note[data-id="course-note"])')).toBeVisible();
+    await page.evaluate(()=>{seq++;drawSide();});
+    await expect(page.locator('#side-filter')).toBeFocused();
+    await expect(page.locator('#side-filter')).toHaveValue('OVERVIEW');
+    await expect(page.locator('.side-note-wrap:has(.side-note[data-id="escaped-note"])')).toBeHidden();
     expect(await page.evaluate(()=>window.errors)).toEqual([]);
   });
 });

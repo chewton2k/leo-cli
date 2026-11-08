@@ -6,18 +6,21 @@ function dictationCards(view) {
   const toggle = (name, label, find) => `<label class="set-row" data-find="${find}"><span class="grow">${label}</span>${settingsSwitch(`data-dictation="${name}"`, s[name])}</label>`;
   const choice = (name, label, choices, find) => `<div class="set-row" data-find="${find}"><span class="set-label">${label}</span>${segmented({ label, choices, current: String(s[name] == null ? choices[0][0] : s[name]), field: `data-dictation="${name}"` })}</div>`;
   const microphones = [['', 'System default']].concat((view.microphones || []).map((name) => [name, name]));
-  return `<section class="set-card" id="dictation-preferences"><header><h3>Preferences</h3><span class="set-value"><span class="hint" id="dictation-result" role="status"></span><span class="set-status" id="dictation-badge">${dictationBadge(s)}</span></span></header>
+  return `<section class="set-card" id="dictation-preferences"><header><h3>Shortcut and microphone</h3><span class="set-value"><span class="hint" id="dictation-result" role="status"></span></span></header>
     ${view.problem ? `<p class="set-note warn">${esc(view.problem)}</p>` : ''}
     <p class="hint">Custom words and filler rules run on this computer, without writing AI unless you turn on AI writing below.</p>
-    <div class="set-row column" data-find="dictation-shortcut"><div class="set-line"><span class="set-label">Shortcut</span><span class="set-shortcut"><input class="set-input" data-dictation="shortcut" value="${esc(s.shortcut || '')}" readonly aria-label="Dictation shortcut"><button class="btn plain sm" data-action="dictation-record">Record shortcut</button><button class="btn plain sm" data-action="dictation-use-shortcut" hidden>Use shortcut</button><button class="btn plain sm" data-action="dictation-resume" hidden>Cancel</button></span></div><span id="dictation-shortcut-status" class="hint">${esc(keys.problem || '')}</span></div>
+    <div class="set-row column" data-find="dictation-shortcut"><div class="set-line"><span class="set-label">Shortcut</span><span class="set-shortcut"><input class="set-input" data-dictation="shortcut" value="${esc(s.shortcut || '')}" readonly aria-label="Dictation shortcut"><button class="btn plain sm" data-action="dictation-record">Change shortcut</button><button class="btn plain sm" data-action="dictation-use-shortcut" hidden>Use shortcut</button><button class="btn plain sm" data-action="dictation-resume" hidden>Cancel</button></span></div><span id="dictation-shortcut-status" class="hint">${esc(keys.problem || '')}</span></div>
     ${choice('mode', 'Activation', [['both', 'Hold or tap'], ['hold', 'Hold'], ['tap', 'Tap']], 'dictation-activation')}
     ${row('Microphone', select('microphone', microphones), 'dictation-microphone')}
-    <label class="set-row column" data-find="dictation-words"><span class="set-label">Custom words</span><textarea class="set-input" data-dictation="custom_words" rows="3" placeholder="Names and terms, one per line">${esc((s.custom_words || []).join('\n'))}</textarea><span class="hint">Names and terms Leo should spell your way, up to 200.</span></label>
-    ${toggle('fillers', 'Remove filler words', 'dictation-fillers')}${toggle('sounds', 'Start and stop sounds', 'dictation-sounds')}
-    <div class="set-row column" data-find="dictation-ai"><label class="set-line"><span class="grow">AI writing</span>${settingsSwitch(`data-dictation="writing" data-on="${s.writing && s.writing !== 'off' ? esc(s.writing) : 'quick'}"`, s.writing && s.writing !== 'off')}</label><span class="hint">Removes filler words, fixes grammar, writes times like 2:30 and reformats lists and paragraphs with your <a href="#/settings/writing">Writing AI</a>. Adds a few seconds and sends the text to it; Escape cancels.</span>${view.writing_ready === false ? '<span class="set-note warn">No writing AI is set up yet, so dictations are pasted as spoken. Choose one in <a href="#/settings/writing">Writing AI</a>.</span>' : ''}</div>
+    ${toggle('sounds', 'Start and stop sounds', 'dictation-sounds')}
+  </section><section class="set-card"><header><h3>Text</h3></header>
+    <label class="set-row column" data-find="dictation-words"><span class="set-label">Custom words</span><textarea class="set-input" data-dictation="custom_words" rows="3" placeholder="Names and terms, one per line">${esc((s.custom_words || []).join('\n'))}</textarea><span class="hint">Names and terms leo should spell your way, up to 200.</span></label>
+    ${toggle('fillers', 'Remove filler words', 'dictation-fillers')}
+    <div class="set-row column" data-find="dictation-ai"><label class="set-line"><span class="grow">AI writing</span>${settingsSwitch(`data-dictation="writing" data-on="${s.writing && s.writing !== 'off' ? esc(s.writing) : 'quick'}"`, s.writing && s.writing !== 'off')}</label><span class="hint">Fixes grammar, writes times like 2:30 and formats lists with your <a href="#/settings/writing">Writing AI</a>. Adds a few seconds; Escape cancels.</span>${view.writing_ready === false ? '<span class="set-note warn">No writing AI is set up yet, so dictations are pasted as spoken. Choose one in <a href="#/settings/writing">Writing AI</a>.</span>' : ''}</div>
+  </section><section class="set-card"><header><h3>Popup</h3></header>
     ${choice('popup', 'Popup', [['live', 'Live'], ['minimal', 'Minimal'], ['off', 'Off']], 'dictation-popup')}
-    ${choice('top', 'Popup position', [['false', 'Bottom'], ['true', 'Top']], 'dictation-position')}
-  </section><section class="set-card" data-find="dictation-recent"><header><h3>Recent dictations</h3><button class="btn plain sm" data-action="dictation-clear">Clear</button></header><p class="hint">Last 20, on this computer only.</p><div id="dictation-recent">${dictationRecent(view.recent || [])}</div></section>`;
+    <div class="set-row" id="dictation-position-row"${s.popup === 'off' ? ' hidden' : ''}><span class="set-label">Position</span>${segmented({ label: 'Popup position', choices: [['false', 'Bottom'], ['true', 'Top']], current: String(s.top == null ? 'false' : s.top), field: 'data-dictation="top"' })}</div>
+  </section><section class="set-card" data-find="dictation-recent"><header><h3>Recent dictations</h3><button class="btn plain sm" data-action="dictation-clear">Clear history</button></header><p class="hint">Last 20, on this computer only.</p><div id="dictation-recent">${dictationRecent(view.recent || [])}</div></section>`;
 }
 function dictationRecent(items) {
   return items.length ? items.map((item) => `<div class="set-row" data-refresh-key="${esc(String(item.id))}"><span class="grow">${esc(item.text)}</span><button class="btn plain sm" data-action="dictation-copy" data-id="${esc(String(item.id))}">Copy</button></div>`).join('') : '<p class="set-note">Your dictations will appear here.</p>';
@@ -51,12 +54,14 @@ async function dictationChange(change, mine = seq) {
   }
   pollDictation(mine, generation);
 }
-function dictationBadge(settings) {
-  return settings && settings.writing && settings.writing !== 'off' ? 'Uses writing AI' : 'Local';
+function clearDictationsAsk() {
+  return confirmSheet({ title: 'Clear recent dictations?', text: 'The last 20 dictations are removed from this computer. This cannot be undone.', yes: 'Clear history', action: 'dictation-clear-now' });
+}
+function clearDictationsNow() {
+  closeSheet();
+  return dictationChange({ action: 'clear' });
 }
 function updateDictationStatus(view) {
-  const badge = $('#dictation-badge');
-  if (badge && view.settings) badge.textContent = dictationBadge(view.settings);
   const shortcut = view.shortcut || {};
   const status = $('#dictation-shortcut-status');
   if (status) status.textContent = shortcut.recording ? shortcut.candidate || 'Press your shortcut. Modifier-only and Fn work too.' : shortcut.problem || '';
@@ -86,7 +91,10 @@ function saveDictation(settings = state.dictation && dictationDraft(), mine = se
   return dictationSaving;
 }
 app.addEventListener('change', (e) => {
-  if (e.target.closest?.('[data-dictation]') && e.target.dataset.dictation !== 'shortcut') saveDictation().catch(fail);
+  if (e.target.closest?.('[data-dictation]') && e.target.dataset.dictation !== 'shortcut') {
+    if (e.target.dataset.dictation === 'popup') $('#dictation-position-row').hidden = e.target.value === 'off';
+    saveDictation().catch(fail);
+  }
 });
 app.addEventListener('input', (e) => {
   if (e.target.dataset?.dictation !== 'custom_words') return;

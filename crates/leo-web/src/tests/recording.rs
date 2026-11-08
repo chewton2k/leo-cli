@@ -456,6 +456,10 @@ fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_mo
         Path("waiting-native".into()),
     ));
     let id = json_of(recovered)["id"].as_str().unwrap().to_owned();
+    let held = recording_until(&state, |_| true);
+    assert_eq!(held.session, "waiting-native");
+    assert_eq!(held.id, id);
+    assert_ne!(held.id, held.session);
     let response = run(record::finish_available(State(state.clone()), Path(id)));
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     assert_eq!(

@@ -1,7 +1,7 @@
 // Settings sections, grouped as the sidebar shows them: [id, label, icon, description].
 const SETTINGS_SECTIONS = [
-  { group: 'Leo', items: [
-    ['general', 'General', 'sliders', 'Appearance, and how Leo starts with your computer.'],
+  { group: 'leo', items: [
+    ['general', 'General', 'sliders', 'Appearance, and how leo starts with your computer.'],
     ['dictation', 'Dictation', 'keyboard', 'Speak into any app with a shortcut. Speech stays on this computer.'],
     ['models', 'Speech models', 'wave', 'The local model that turns speech into text.'],
     ['writing', 'Writing AI', 'pen', 'The AI that writes your notes and powers Felix.'],
@@ -16,7 +16,7 @@ const SETTINGS_SECTIONS = [
   ] },
   { group: 'This app', items: [
     ['health', 'Health', 'pulse', 'Check that recording, dictation and AI are ready.'],
-    ['updates', 'Updates & about', 'update', 'Keep Leo up to date.'],
+    ['updates', 'Updates & about', 'update', 'Keep leo up to date.'],
   ] },
 ];
 const SETTINGS_INDEX = [
@@ -34,8 +34,7 @@ const SETTINGS_INDEX = [
   { section: 'dictation', id: 'dictation-fillers', label: 'Remove filler words', keywords: 'um uh like dictation clean up' },
   { section: 'dictation', id: 'dictation-sounds', label: 'Start and stop sounds', keywords: 'chime beep audio dictation' },
   { section: 'dictation', id: 'dictation-ai', label: 'AI writing for dictation', keywords: 'grammar tidy rewrite lists dictation writing ai' },
-  { section: 'dictation', id: 'dictation-popup', label: 'Popup', keywords: 'live minimal off overlay window' },
-  { section: 'dictation', id: 'dictation-position', label: 'Popup position', keywords: 'top bottom dictation overlay' },
+  { section: 'dictation', id: 'dictation-popup', label: 'Popup', keywords: 'live minimal off overlay window position top bottom' },
   { section: 'dictation', id: 'dictation-recent', label: 'Recent dictations', keywords: 'history clear copy last' },
   { section: 'models', id: 'speech-in-use', label: 'Speech model in use', keywords: 'whisper transcription recording dictation ready choose' },
   { section: 'models', id: 'speech-language', label: 'Speech language', keywords: 'detect language transcription' },
@@ -66,7 +65,7 @@ const SETTINGS_INDEX = [
   { section: 'updates', id: 'updates-check', label: 'Check for updates', keywords: 'new version download install restart' },
   { section: 'updates', id: 'updates-automatic', label: 'Check for updates automatically', keywords: 'hourly startup' },
   { section: 'updates', id: 'updates-on-quit', label: 'Install updates when I quit', keywords: 'automatic restart' },
-  { section: 'updates', id: 'updates-about', label: 'About Leo', keywords: 'version folder notes location models path terminal commands uninstall' },
+  { section: 'updates', id: 'updates-about', label: 'About leo', keywords: 'version folder notes location models path terminal commands uninstall' },
 ];
 const SETTINGS_ICON_PATHS = {
   sliders: '<path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16.5" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/>',
@@ -214,8 +213,8 @@ function settingsFrame(section, content) {
   const ids = settingsItems().map(([id]) => id);
   const from = ids.indexOf(settingsDrawn), to = ids.indexOf(section);
   const oldNav = shown && app.querySelector('.settings-sections'), oldPill = oldNav?.querySelector('.settings-nav-pill.placed');
-  const box = oldPill?.getBoundingClientRect();
-  if (box && box.height) {
+  const box = oldPill?.getBoundingClientRect(), oldOn = oldNav?.querySelector('.settings-link.on')?.getBoundingClientRect();
+  if (box && box.height && oldOn && Math.abs(box.top - oldOn.top) < 1) {
     const frame = oldNav.getBoundingClientRect();
     settingsPillFrom = { top: box.top - frame.top - oldNav.clientTop + oldNav.scrollTop, height: box.height };
   } else settingsPillFrom = null;

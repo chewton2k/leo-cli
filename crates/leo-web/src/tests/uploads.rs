@@ -462,6 +462,7 @@ fn background_work_is_listed_until_it_is_done() {
     imports.insert("c".to_string(), job("failed", ""));
     let writing = record::RecordView {
         id: "r".into(),
+        session: "r".into(),
         source: record::Source::Microphone,
         state: "writing",
         secs: 60,

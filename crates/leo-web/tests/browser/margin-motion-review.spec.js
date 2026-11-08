@@ -15,7 +15,7 @@ const THREADS = {
   long: { id: 't2', quote: WORDS, prefix: 'begins here and ', suffix: ' and then it ends.', status: 'open', messages: [{ from: 'felix', text: 'This runs long. Split it.' }] },
 };
 
-const MODE_MARKUP = `<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">{{pen}}</span><span id="margin-mode-label">When you ask</span>{{chevron}}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div>`;
+const MODE_MARKUP = `<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">{{pen}}</span><span id="margin-mode-label">Felix: when you ask</span>{{chevron}}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div>`;
 
 async function fixture(browser, run, { width = 1280, height = 800, layout = 'right', mode = 'ask', threads = [THREADS.short, THREADS.long], context = {}, source = SOURCE } = {}) {
   const core = read('app/core.js');
@@ -51,7 +51,7 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     }
     ${read('app/margin-notes.js')}
     window.start=async()=>{
-      app.innerHTML='<div class="note-layout"><div class="note-columns"><article class="note"><header class="note-head"><div class="note-context">${MODE_MARKUP}<span id="margin-status" role="status" class="hint"></span></div><h1 id="title">Test</h1></header><div class="prose doc" id="doc"></div></article></div></div>'.replace(/\\{\\{(\\w+)\\}\\}/g,(m,k)=>ICON[k]);
+      app.innerHTML='<div class="note-layout"><div class="note-columns"><article class="note"><header class="note-head"><div class="note-context"><span id="margin-status" role="status" class="hint"></span></div><h1 id="title">Test</h1><div class="note-meta">${MODE_MARKUP}</div></header><div class="prose doc" id="doc"></div></article></div></div>'.replace(/\\{\\{(\\w+)\\}\\}/g,(m,k)=>ICON[k]);
       const s={note:{id:'n1',version:'v1',title:'Test'},title:$('#title'),edit:{}};
       s.doc=leoDoc.mount($('#doc'),{source:${JSON.stringify(source)},onChange(){},placeholder:''});
       state.session=s;window.session=s;
@@ -406,7 +406,7 @@ test.describe('reading-mode menu', () => {
       await expect(menu).toBeVisible();
       await page.keyboard.press('End');
       await page.keyboard.press('Enter');
-      await expect(button).toHaveText(/When you ask/);
+      await expect(button).toHaveText(/when you ask/);
       await expect(button).toBeFocused();
       await expect(menu).toBeHidden();
     });
@@ -418,7 +418,7 @@ test.describe('reading-mode menu', () => {
       await page.locator('#margin-mode').click();
       await page.getByRole('menuitemradio', { name: /Reads along/ }).click();
       await expect(page.locator('#margin-status')).toHaveText('Could not save this mode. Try again.');
-      await expect(page.locator('#margin-mode')).toHaveText(/When you ask/);
+      await expect(page.locator('#margin-mode')).toHaveText(/when you ask/);
       await expect(page.locator('#margin-mode')).toHaveAttribute('data-mode', 'ask');
       await expect(page.getByRole('menu', { name: 'Note reading mode' })).toBeHidden();
     });

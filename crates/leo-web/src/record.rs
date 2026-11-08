@@ -113,6 +113,7 @@ pub type Listener = Arc<dyn Fn(Listening, &mut dyn FnMut(Heard)) -> Result<Recor
 #[derive(Debug, Clone, Serialize)]
 pub struct RecordView {
     pub id: String,
+    pub session: String,
     pub source: Source,
     pub state: &'static str,
     pub secs: u64,
@@ -151,7 +152,6 @@ impl RecordView {
 
 pub(crate) struct RecordJob {
     view: RecordView,
-    recovering: Option<String>,
     writing: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     finish_now: Arc<AtomicBool>,
@@ -181,9 +181,7 @@ impl RecordJob {
     }
 
     pub(crate) fn session_id(&self) -> String {
-        self.recovering
-            .clone()
-            .unwrap_or_else(|| self.view.id.clone())
+        self.view.session.clone()
     }
 
     #[cfg(test)]
@@ -344,10 +342,10 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
             );
         }
         *held = Some(RecordJob {
-            recovering: body.recover.clone(),
             writing: Default::default(),
             view: RecordView {
                 id: id.clone(),
+                session: body.recover.clone().unwrap_or_else(|| id.clone()),
                 source: body.source,
                 state: if body.recover.is_some() {
                     "writing"
@@ -763,6 +761,7 @@ mod tests {
     fn view() -> RecordView {
         RecordView {
             id: "r".into(),
+            session: "r".into(),
             source: Source::Microphone,
             state: "recording",
             secs: 0,

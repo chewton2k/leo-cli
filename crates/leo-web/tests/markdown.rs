@@ -11,6 +11,7 @@ fn the_editor_helpers_pass_their_tests() {
     run_node_tests("margin.test.js");
     run_node_tests("margin-lifecycle.test.js");
     run_node_tests("explorer-open.test.js");
+    run_node_tests("list-keys.test.js");
     run_node_tests("routing-review.test.js");
     run_node_tests("drag.test.js");
     run_node_tests("pane-resize.test.js");

@@ -8,13 +8,13 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('#app')).not.toBeEmpty();
 });
 
-test('note reading modes sit above the title, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
+test('note reading modes sit beside the save state, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: 'Reading modes', body: 'Words about a passage.' } })).json();
   await page.goto(`/#/n/${note.id}`);
   const button = page.locator('#margin-mode');
   await expect(button).toBeEnabled();
-  expect((await button.boundingBox()).y).toBeLessThan((await page.locator('#title').boundingBox()).y);
-  for (const [key, label] of [['Home', 'Reads along'], ['End', 'When you ask'], ['Home', 'Reads along'], ['End', 'When you ask']]) {
+  expect((await button.boundingBox()).y).toBeGreaterThan((await page.locator('#title').boundingBox()).y);
+  for (const [key, label] of [['Home', 'Felix: reads along'], ['End', 'Felix: when you ask'], ['Home', 'Felix: reads along'], ['End', 'Felix: when you ask']]) {
     await button.click();
     await page.waitForTimeout(300);
     await expect(page.getByRole('menu', { name: 'Note reading mode' })).toBeVisible();
@@ -24,12 +24,12 @@ test('note reading modes sit above the title, work in both orders and retain the
     await expect(button).toBeEnabled();
   }
   await page.reload();
-  await expect(button).toHaveText('When you ask');
+  await expect(button).toHaveText('Felix: when you ask');
   await page.route(`**/api/notes/${note.id}/margin`, route => route.request().method() === 'POST'
     ? route.fulfill({ status: 503, json: { error: 'Try again.' } }) : route.continue());
   await button.click();
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-  await expect(button).toHaveText('When you ask');
+  await expect(button).toHaveText('Felix: when you ask');
   await expect(page.locator('#margin-status')).toHaveText('Could not save this mode. Try again.');
   await button.click();
   await page.keyboard.press('Escape');
@@ -76,13 +76,13 @@ test('a reading mode picked on a new note is saved with the note', async ({ page
   await button.click();
   await page.waitForTimeout(300);
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-  await expect(button).toHaveText('Reads along');
+  await expect(button).toHaveText('Felix: reads along');
   await page.locator('#title').click();
   await page.keyboard.type('Picked early');
   await expect(page).toHaveURL(/#\/n\//);
   const id = page.url().match(/#\/n\/([^/?]+)/)[1];
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).mode).toBe('along');
-  await expect(button).toHaveText('Reads along');
+  await expect(button).toHaveText('Felix: reads along');
 });
 
 test('a drag across page chrome paints nothing, fields stay selectable once focused, and the mode menu clears a selection', async ({ page }) => {

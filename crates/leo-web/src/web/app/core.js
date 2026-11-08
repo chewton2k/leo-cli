@@ -483,8 +483,8 @@ function card(note, { words = [], showFolder = false, why = null } = {}) {
   </div>`;
 }
 
-function empty(icon, title, text) {
-  return `<div class="empty">${icon}<h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;
+function empty(icon, title, text, actions = '') {
+  return `<div class="empty">${icon}<h3>${esc(title)}</h3><p>${esc(text)}</p>${actions}</div>`;
 }
 
 const skeleton = (n) => Array.from({ length: n }, () => '<div class="skeleton"></div>').join('');
@@ -696,7 +696,7 @@ async function showWorkspace(dir = null) {
   document.body.classList.remove('on-note');
   chrome({});
   swap('workspace', () => {
-    app.innerHTML = `<section class="workspace-empty">${empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    app.innerHTML = `<section class="workspace-empty">${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
     scrollToTop();
   });
 }
@@ -779,12 +779,12 @@ async function showPassage(note, name, at) {
 
 function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
-      ${id && recorded ? `<button type="button" data-action="note-sources" aria-label="Transcript">${ICON.mic}</button>` : ''}
-      ${id ? `<button type="button" data-action="note-tasks" aria-label="Tasks">${ICON.calendar}</button>` : ''}
-      <button type="button" data-action="note-picture" aria-label="Picture">${ICON.image}</button>
-      <button type="button" data-action="move" aria-label="Move">${ICON.move}</button>
-      <button type="button" data-action="share" aria-label="PDF">${ICON.share}</button>
-      <button type="button" data-action="delete" class="danger" aria-label="Delete">${ICON.trash}</button>
+      ${id && recorded ? `<button type="button" data-action="note-sources" aria-label="Show transcript">${ICON.mic}</button>` : ''}
+      ${id ? `<button type="button" data-action="note-tasks" aria-label="Show tasks">${ICON.calendar}</button>` : ''}
+      <button type="button" data-action="note-picture" aria-label="Add picture">${ICON.image}</button>
+      <button type="button" data-action="move" aria-label="Move to folder">${ICON.move}</button>
+      <button type="button" data-action="share" aria-label="Export as PDF">${ICON.share}</button>
+      <button type="button" data-action="delete" class="danger" aria-label="Move to trash">${ICON.trash}</button>
     </nav>`;
 }
 
@@ -810,18 +810,18 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id, Boolean(note.recorded)) });
     document.title = `${note.title || 'New note'} · leo`;
     chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
-    const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
+    const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
-    <header class="note-head"><div class="note-context">${where}<div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
-    <div class="note-meta"><span id="save-state">${when}</span></div></header>
+    <header class="note-head"><div class="note-context">${where}</div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
+    <div class="note-meta"><span id="save-state">${when}</span><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">Felix: when you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span id="margin-status" role="status" class="hint"></span></div></header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article></div></div>`;
     s.title = $('#title');
     drawOriginals(note);
     hideAskFloat();
-    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => { changed(s); marginEdited(s); }, placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
+    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, outline: $('.note-outline'), onChange: () => { changed(s); marginEdited(s); }, placeholder: 'Start writing, or type # for a heading and - for a list', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
     marginMount(s, mine).catch(fail);
     if (citedLines && citedLines.id === note.id) showCitedLines();
     else if (passage && highlightSearch(app.querySelector('article.note'), passage.query)) {
@@ -888,14 +888,21 @@ async function showSearch(query) {
     app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas. Abbreviations like BFS work too.');
     return;
   }
-  const results = await api(`/api/search?q=${enc(query)}&brief=true`);
+  app.innerHTML = `<div class="section-title">Searching…</div><div class="cards">${skeleton(3)}</div>`;
+  let results;
+  try {
+    results = await api(`/api/search?q=${enc(query)}&brief=true`);
+  } catch (e) {
+    if (mine === seq) app.innerHTML = empty(ICON.search, 'Search did not finish', e.message || 'Something went wrong.', `<button class="btn primary" data-action="search-retry" data-query="${esc(query)}">Try again</button>`);
+    return;
+  }
   if (mine !== seq) return;
   const words = query.split(/\s+/).map((w) => w.replace(/^#/, '')).filter(Boolean);
   const draw = (list) => list.map((n) => card(n, { words, showFolder: true, why: n.why })).join('');
   const count = results.length >= SEARCH_MOST ? `The first ${SEARCH_MOST} notes` : plural(results.length, 'note');
   app.innerHTML = results.length
     ? `<div class="section-title">${count}</div><div class="cards">${draw(results.slice(0, SEARCH_STEP))}</div>${results.length > SEARCH_STEP ? '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>' : ''}`
-    : empty(ICON.search, 'Nothing found', `No note mentions “${query}”.`);
+    : empty(ICON.search, `No notes match “${query}”`, 'Try fewer words, or ask Felix to look for the idea.', `<button class="btn primary" data-action="search-ask" data-query="${esc(query)}">${ICON.chat}Ask Felix</button><button class="btn plain" data-action="search-new" data-query="${esc(query)}">${ICON.filePlus}New note “${esc(query)}”</button>`);
   cascade($('.cards'));
   let shown = SEARCH_STEP;
   if (moreWatch) moreWatch.disconnect();

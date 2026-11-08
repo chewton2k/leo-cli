@@ -16,7 +16,7 @@ function diagramTheme(dark) {
   const surface = token('--surface', '#ffffff');
   const surface2 = token('--surface-2', '#f0efec');
   const line = token('--line', '#e6e5e1');
-  const tones = ['--accent', '--tone-doc', '--tone-sheet', '--tone-slides', '--tone-image', '--tone-pdf', '--tone-text'].map((t) => token(t, accent));
+  const tones = ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--hue-6', '--hue-7'].map((t) => token(t, accent));
   const pies = Object.fromEntries(tones.map((tone, i) => [`pie${i + 1}`, tone]));
   return {
     darkMode: dark,

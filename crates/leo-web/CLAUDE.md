@@ -74,8 +74,12 @@ lighter).
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
 
-- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+F
-  anywhere, the sidebar
+- Quick Leo (2026-10-19, the user's request; keys changed 2026-11-07): Cmd/Ctrl+K
+  anywhere, Cmd/Ctrl+F outside a note (inside a note it is left alone), and
+  Cmd/Ctrl+N makes a note in the current folder (never inside a sheet, an inline
+  edit, while composing or when locked). The explorer starts with a New note row,
+  has a Filter field (`#side-filter`, survives repaints) and arrow, Home/End and
+  type-ahead keys with one tab stop (`sideRoving`). The sidebar
   Search button, the header search button or the phone menu opens one line
   (`sheets.js` `quickLeo`, toggled by `toggleQuickLeo`). It is also the search
   bar (2026-11-03, the user's call): every query offers "Search every note",
@@ -587,7 +591,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   the composer, user bubbles, pills, popups and the Chats column) with no
   left border, header rule, footer rule or column rule; a soft shadow shows
   only where it overlays the note (under 1200 px). The Chats column is closed
-  until opened (`leo-chat-sidebar` still remembers an explicit choice;
+  until opened (`leo-chat-sidebar` still remembers an explicit choice, and closing the list as an overlay keeps it closed until it is opened again, so a resize near the overlay width cannot reopen it;
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
   “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title
@@ -745,7 +749,7 @@ target. Check the page sequence after loading preferences.
   44 px on touch) opens the note inline, with
   `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
   in the panel.
-- The reading-mode menu and status sit above the title. Saving a mode keeps the
+- The reading-mode menu and status sit on the line under the title, beside the save state, so a status never moves the note. Saving a mode keeps the
   last confirmed value on failure. Its own menu class keeps generic select-menu
   click and close handlers from dismissing it. Each note remains a labelled article with an
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
@@ -982,8 +986,8 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   and cards are solid (`--raised`, a step lighter in dark). `kanbanTone`: to do blue, in
   progress amber, done green, blocked red, others by place; a column that would match or
   look like a neighbour (`KANBAN_NEAR`) takes the next place hue. The head is the name
-  (edits in place) and count; ⋯ and a lane's Add card appear on hover and keyboard focus,
-  always on touch, and Add card always shows in an empty or full lane (`.kanban-full`).
+  (edits in place) and count; ⋯ appears on hover and keyboard focus, Add card always shows, softened at rest
+  (2026-11-07, the user's call), both always on touch.
   Cards show the title (three lines at most), the muted subheading, two lines of the
   description when there is one (`.kanban-has-text`) and the priority arrow top right. Add
   card sits directly under the last card; its composer stays open for the next card (adds
@@ -1415,8 +1419,8 @@ Page toolbars share the same 760 px maximum width across notes, workspace, recor
 and Settings. Every Settings section uses the same Settings / section breadcrumb;
 Keeping and Trash keep their routes and controllers inside that frame.
 Usage opens from the rail above Settings and shows remaining subscription windows,
-with unknown and expired readings explicit. The combined Quick Leo uses only
-Cmd/Ctrl+F and retains task/search/question/navigation ranking. Explicit named
+with unknown and expired readings explicit. The combined Quick Leo uses
+Cmd/Ctrl+K (and Cmd/Ctrl+F outside a note) and retains task/search/question/navigation ranking. Explicit named
 month dates and ISO dates keep their deadline; omitted years use the next date.
 The calendar tray puts its mini calendar before tasks, and all-day/timed grids
 share the full width without scrollbar gutters shifting their day boundaries.
@@ -1483,7 +1487,7 @@ disk, untouched.
 
 Read-along completion distinguishes valid silence from malformed/provider failure,
 keeps failed changes eligible, and guards request cleanup by note and request
-identity. Reading status and the explicit per-note menu sit above the title;
+identity. Reading status and the explicit per-note menu sit under the title;
 compact anchors stay in a separate gutter, never a mascot over the passage.
 
 The explorer is the only folder listing: `#/` is an empty note workspace and

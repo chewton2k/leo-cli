@@ -245,7 +245,7 @@ function marginControl() {
     if (icon.dataset.along) iconSwap(icon, paint);
     else paint();
   }
-  $('#margin-mode-label').textContent = along ? 'Reads along' : 'When you ask';
+  $('#margin-mode-label').textContent = along ? 'Felix: reads along' : 'Felix: when you ask';
   button.title = along ? 'Reads changes after a pause. The text goes to your writing AI.' : `Select a passage, then choose Ask Felix or press ${marginAskKeys()}.`;
   for (const option of menu.querySelectorAll('[data-margin-mode]')) {
     option.setAttribute('aria-checked', String(option.dataset.marginMode === marginPage.mode));
@@ -352,7 +352,7 @@ function marginElement(t) {
   el.className = 'margin-note';
   el.dataset.id = t.id;
   el.setAttribute('aria-label', `Felix, about “${t.quote.slice(0, 80)}”`);
-  el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}"></button><button type="button" class="margin-chat" data-margin-act="chat" aria-label="Ask in chat" title="Ask in chat">${ICON.chat}</button><div class="margin-said"></div><div class="margin-pending" hidden></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
+  el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}">${ICON.close}</button><button type="button" class="margin-chat" data-margin-act="chat" aria-label="Ask in chat" title="Ask in chat">${ICON.chat}</button><div class="margin-said"></div><div class="margin-pending" hidden></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
     <form class="margin-reply"><textarea rows="1" maxlength="1000" aria-label="Reply to Felix" placeholder="Reply"></textarea><button type="submit" class="margin-send" aria-label="Send" disabled>${ICON.send}</button></form>
     <p class="margin-problem" role="status" hidden></p>
     <div class="margin-acts"><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button><button type="button" class="msg-act icon-act" data-action="diagram-expand" data-reply="all" aria-label="See it larger" title="See it larger">${ICON.expand}</button><button type="button" class="margin-add" data-margin-act="add">Add to note</button></div></div></div>`;

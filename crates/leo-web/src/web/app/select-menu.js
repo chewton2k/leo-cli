@@ -134,24 +134,35 @@ function pickSelectOption(list, option) {
   select.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-let selectMenuTyped = '', selectMenuTypedAt = 0;
+let listTyped = '', listTypedAt = 0;
+function listKeyTarget(items, current, e, label = (el) => el.textContent) {
+  if (!items.length) return null;
+  const at = items.indexOf(current);
+  const clamp = (i) => items[Math.max(0, Math.min(items.length - 1, i))];
+  if (e.key === 'ArrowDown') return at < 0 ? items[0] : clamp(at + 1);
+  if (e.key === 'ArrowUp') return at < 0 ? items[0] : clamp(at - 1);
+  if (e.key === 'Home') return items[0];
+  if (e.key === 'End') return items[items.length - 1];
+  if (e.key.length !== 1 || e.key === ' ' || e.metaKey || e.ctrlKey || e.altKey) return null;
+  listTyped = (Date.now() - listTypedAt < 700 ? listTyped : '') + e.key.toLowerCase();
+  listTypedAt = Date.now();
+  const repeat = listTyped.split('').every((c) => c === listTyped[0]);
+  const needle = repeat ? listTyped[0] : listTyped;
+  const start = repeat ? at + 1 : Math.max(at, 0);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[(start + i) % items.length];
+    if (label(item).trim().toLowerCase().startsWith(needle)) return item;
+  }
+  return null;
+}
 function selectMenuKey(list, e) {
   const options = selectMenuOptions(list);
-  const at = options.indexOf(list.querySelector('.select-menu-option.active'));
-  const move = (to) => { e.preventDefault(); activateSelectOption(list, options[Math.max(0, Math.min(options.length - 1, to))]); };
-  if (e.key === 'ArrowDown') move(at + 1);
-  else if (e.key === 'ArrowUp') move(at - 1);
-  else if (e.key === 'Home') move(0);
-  else if (e.key === 'End') move(options.length - 1);
-  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickSelectOption(list, options[at]); }
-  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSelectMenu(list, true); }
+  const current = options[options.indexOf(list.querySelector('.select-menu-option.active'))];
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickSelectOption(list, current); return; }
+  const to = listKeyTarget(options, current, e);
+  if (to) { e.preventDefault(); activateSelectOption(list, to); return; }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSelectMenu(list, true); }
   else if (e.key === 'Tab') closeSelectMenu(list, false);
-  else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    selectMenuTyped = (Date.now() - selectMenuTypedAt < 700 ? selectMenuTyped : '') + e.key.toLowerCase();
-    selectMenuTypedAt = Date.now();
-    const found = options.find((option) => option.textContent.trim().toLowerCase().startsWith(selectMenuTyped));
-    if (found) { e.preventDefault(); activateSelectOption(list, found); }
-  }
 }
 
 document.addEventListener('click', (e) => {

@@ -371,7 +371,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.getByRole('link',{name:'Health',exact:true}).click();
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();
       await page.getByRole('link',{name:'Updates & about',exact:true}).click();
-      await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
+      await expect(page.getByRole('heading',{name:'About leo'})).toBeVisible();
       await expect(page.locator('[data-find="updates-check"] h3 .set-version')).toHaveText('1.2.3');
       await expect(page.locator('[data-find="updates-about"] .set-path')).toHaveCount(2);
       const updateCard = await page.locator('#app-updates .set-card').first().elementHandle();
@@ -467,7 +467,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
     await page.goto('http://127.0.0.1:'+server.address().port);
     for(const [theme,order] of [['light',['microphone','accessibility']],['dark',['accessibility','microphone']]]) {
       await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;audit.start();},theme);
-      await expect(page.getByRole('list',{name:'Setup steps'})).toBeVisible();
+      await expect(page.getByRole('list',{name:/^Setup, step \d of 2$/})).toBeVisible();
       await expect(page.locator('[aria-current="step"]')).toContainText('Access');
       await expect(page.getByRole('button',{name:'Allow microphone',exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();

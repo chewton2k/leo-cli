@@ -111,7 +111,7 @@
       const text = lines.slice(block.start, block.end).join('\n');
       if (!text.trim()) {
         const lone = lines.length === 1;
-        return lone ? `<p class="placeholder">${md.escape(placeholder || 'Tap to start writing')}</p>` : '<p class="blank">&#8203;</p>';
+        return lone ? `<p class="placeholder">${md.escape(placeholder || 'Start writing, or type # for a heading and - for a list')}</p>` : '<p class="blank">&#8203;</p>';
       }
       return md.render(text.replace(/^\s+/, ''), {
         boxOffset: boxes,

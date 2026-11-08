@@ -90,13 +90,24 @@
     return `${day} ${time(start)}–${time(end)}`;
   }
 
+  const PENDING_KINDS = { microphone: 'Microphone', screen: 'Screen', nativecall: 'Call' };
+
+  function pendingLine(p, now = new Date()) {
+    const at = p.started ? new Date(p.started) : null;
+    const when = at && !Number.isNaN(at.getTime())
+      ? `${at.toDateString() === now.toDateString() ? 'Today' : at.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+      : '';
+    return [when, PENDING_KINDS[p.source], p.directory || 'Top level'].filter(Boolean).join(' · ');
+  }
+
   function failureOf(view) {
     const error = typeof view.error === 'string' ? view.error.slice(0, 12000) : '';
     const silent = Boolean(error) && error.split('; ').every((part) => /^(?:You: |Others: )?No sound was recorded\./.test(part));
     const details = [...new Set([error, ...(view.warnings || []).slice(0, 20)].filter(Boolean))];
     return {
+      silent,
       title: silent ? 'No audio was captured' : 'Your note could not be saved',
-      message: silent ? 'The recording may have stopped before any sound reached Leo. Check your microphone and shared audio, then try again.' : 'Your recording is kept so you can try recovering it. You can also delete it and start again.',
+      message: silent ? 'The recording may have stopped before any sound reached leo. Check your microphone and shared audio, then try again.' : 'Your recording is kept so you can try recovering it. You can also delete it and start again.',
       details,
     };
   }
@@ -137,9 +148,9 @@
       heard: '',
       showHeard: (() => {
         try {
-          return root.localStorage.getItem('leo-rec-heard') === 'open';
+          return root.localStorage.getItem('leo-rec-heard') !== 'shut';
         } catch (e) {
-          return false;
+          return true;
         }
       })(),
       wantsDraft: null,
@@ -189,6 +200,7 @@
       const before = s.view;
       const warnings = before && before.id === view.id ? before.warnings.filter((w) => !view.warnings.includes(w)) : [];
       s.view = { ...view, warnings: [...view.warnings, ...warnings] };
+      if (view.state === 'failed' && !(before && before.state === 'failed')) api('/api/record').then((ov) => { s.overview = ov; draw(); }).catch(() => {});
       feedFromServer(view);
       if (view.state === 'done' && before && before.state !== 'done') {
         if (s.container && s.container.isConnected) go(noteHash(view.note), { replace: true });
@@ -343,20 +355,19 @@
         : '';
       const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes.</p>' : '';
       const recover = pending.length
-        ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
+        ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><div class="rec-recover-row">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">${esc(pendingLine(p))}</span></span></div><button type="button" class="btn plain sm" data-action="rec-recover" data-id="${esc(p.id)}">Recover</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
         : '';
       return `<div class="rec rec-idle">
         <div class="section-title">Record</div>
         ${recover ? `<section class="set-card"><header><h3>Not saved yet</h3></header>${recover}</section>` : ''}
         <section class="set-card rec-card">
-          <header><h3>New recording</h3></header>
           ${kindChoices()}
           ${noteFields({ id: 'rec', folders, here, most: 4000, before: event })}
           ${connect}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
             <span class="rec-start-label">Start recording</span>
-            <p class="hint rec-tip">Keeps recording if you close the window. Open Leo from the menu bar to return.</p>
+            <p class="hint rec-tip">Keeps recording if you close the window. Open leo from the menu bar to return.</p>
           </div>
         </section>
       </div>`;
@@ -374,7 +385,6 @@
             <button class="rec-round stop rec-stop" data-action="rec-stop" aria-label="Stop and save"><span class="rec-square"></span><span>Stop and save</span></button>
           </div>`;
       return `<div class="rec rec-live${paused ? ' paused' : ''}">
-        <div class="section-title">Recording</div>
         <section class="set-card rec-live-card">
           <div class="rec-live-top"><span class="rec-state"><span class="rec-dot"></span><span id="rec-word">${esc(stateWord(v))}</span></span><span class="rec-meta">${kind}</span></div>
           <div class="rec-clock"><span id="rec-time">${clock(v.secs)}</span></div>
@@ -382,21 +392,20 @@
           ${controls}
           ${warnings}
         </section>
+        <details class="set-card rec-heard" id="rec-heard"${s.showHeard ? ' open' : ''}>
+          <summary><span class="grow"><b>What’s being heard</b><span class="cal-sub">The live transcript</span></span>${icons.chevron}</summary>
+          <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
+        </details>
         <section class="set-card rec-notepad">
-          <header><h3>Your notes</h3></header><p class="hint">Take a screenshot and paste it here to keep it with this recording.</p>
-          <p class="hint">Your words go into the note exactly as you type them; leo fills in the rest from the recording.</p>
+          <header><h3>Your notes</h3></header><p class="hint">Type points or paste screenshots; they go into the note as written and leo fills in the rest.</p>
           ${points}
-          <div class="rec-point rec-compose"><textarea id="rec-point-text" class="set-input" rows="3" placeholder="Type a point and press Enter"></textarea><div class="rec-compose-foot"><span class="cal-sub">Shift + Enter starts a new line</span><button class="btn primary sm" data-action="rec-point">Add</button></div></div>
+          <div class="rec-point rec-compose"><textarea id="rec-point-text" class="set-input" rows="3" placeholder="Type a point and press Enter"></textarea><div class="rec-compose-foot"><span class="cal-sub">Shift + Enter starts a new line</span><button class="btn plain sm" data-action="rec-point">Add point</button></div></div>
         </section>
         <section class="set-card rec-wants-card">
           <header><h3>What you want from the notes</h3><span class="rec-wants-state" id="rec-wants-state">${esc(s.wantsState)}</span></header>
           <p class="hint">The AI follows this when it writes the note. You can change it until you stop.</p>
           <textarea id="rec-wants-live" class="set-input rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short">${esc(s.wantsDraft !== null ? s.wantsDraft : v.wants || '')}</textarea>
         </section>
-        <details class="set-card rec-heard" id="rec-heard"${s.showHeard ? ' open' : ''}>
-          <summary><span class="grow"><b>What’s being heard</b><span class="cal-sub">The live transcript</span></span>${icons.chevron}</summary>
-          <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
-        </details>
       </div>`;
     }
 
@@ -417,7 +426,7 @@
       const bar = Math.min(99, total ? ((done + (done < total ? 0.9 * creep : 0)) / total) * 100 : 60 * creep);
       const waited = Math.round((now - at.since) / 1000);
       return `<div class="rec rec-writing">
-        <div class="section-title">Recording</div>
+        <div class="section-title">Record</div>
         <section class="set-card rec-done-card">${felix.felix(72, 'idle think')}<h3>${esc(stateWord(v) || 'Writing the notes')}</h3>
           <div class="upload-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(6, bar))}"><i style="width:${Math.max(6, bar)}%"></i></div>
           <p class="hint">Writing for ${clock(waited)} · ${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p>
@@ -430,14 +439,14 @@
     function drawFailed() {
       const v = s.view;
       const failure = failureOf(v);
+      const recoverable = !failure.silent && (s.overview?.pending || []).some((p) => p.id === v.session);
       return `<div class="rec rec-writing">
-        <div class="section-title">Recording</div>
+        <div class="section-title">Record</div>
         <section class="set-card rec-done-card rec-failed-card">${felix.felix(64, 'droop')}<h3>${esc(failure.title)}</h3>
           <p class="hint">${esc(failure.message)}</p>
           <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${v.source === 'nativecall' ? 'Call' : 'Recording'}</span></div>
           ${failure.details.length ? `<details class="rec-error-details source-more"><summary>${icons.chevron}<span>Error details</span></summary>${failure.details.map((w) => `<p>${esc(w)}</p>`).join('')}</details>` : ''}
-          <div class="buttons"><button class="btn primary sm" data-action="rec-again">Record again</button><button class="btn sm plain danger" data-action="rec-discard" data-id="${esc(v.id)}">Delete recording</button></div>
-          <button class="btn plain sm" data-action="rec-dismiss">Dismiss warning</button>
+          <div class="buttons">${recoverable ? `<button class="btn primary sm" data-action="rec-recover" data-id="${esc(v.session)}">Recover recording</button><button class="btn plain sm" data-action="rec-again">Record again</button>` : '<button class="btn primary sm" data-action="rec-again">Record again</button>'}<button class="btn sm plain danger-text" data-action="rec-discard" data-id="${esc(v.id)}">Delete recording</button><button class="btn plain sm" data-action="rec-dismiss">Close</button></div>
         </section>
       </div>`;
     }
@@ -588,6 +597,14 @@
         if (s.wantsDraft === text) s.wantsDraft = null;
         s.wantsState = 'Saved';
         accept(view);
+        const el = s.container && s.container.querySelector('#rec-wants-state');
+        if (el) { el.textContent = 'Saved'; root.leoMotion?.pulse?.(el); }
+        clearTimeout(s.wantsSavedTimer);
+        s.wantsSavedTimer = setTimeout(() => {
+          s.wantsState = '';
+          const stale = s.container && s.container.querySelector('#rec-wants-state');
+          if (stale) stale.textContent = '';
+        }, 2000);
       } catch (e) {
         s.wantsState = '';
         toast(e.message, { bad: true });
@@ -734,5 +751,5 @@
     };
   }
 
-  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, stateWord, failureOf, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, stateWord, failureOf, pendingLine, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

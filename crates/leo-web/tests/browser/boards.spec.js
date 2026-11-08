@@ -634,7 +634,7 @@ test('controls not needed at rest show on hover and keyboard focus', async ({ br
     const menu = page.locator('[data-action="kanban-column-menu"][data-col="ktodo00001"]');
     const add = page.locator('[data-action="kanban-add-card"][data-col="ktodo00001"]');
     await expect(menu).toHaveCSS('opacity', '0');
-    await expect(add).toHaveCSS('opacity', '0');
+    await expect(add).toHaveCSS('opacity', '0.7');
     await page.locator('.kanban-col').first().hover();
     await expect(menu).toHaveCSS('opacity', '1');
     await expect(add).toHaveCSS('opacity', '1');

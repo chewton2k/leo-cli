@@ -99,14 +99,25 @@ test('failed recordings offer deletion and dismissal on their own page', () => {
   const source = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
   const start = source.indexOf('    function drawFailed()');
   const end = source.indexOf('    let folders', start);
-  const draw = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return drawFailed;})()`, {
-    s: { view: { id: 'failed-01', source: 'nativecall', secs: 0, error: '<unsafe>', warnings: [] } },
+  const render = (overview, error) => require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return drawFailed;})()`, {
+    s: { overview, view: { id: 'failed-01', session: 'sess-1', source: 'nativecall', secs: 0, error, warnings: [] } },
     failureOf: L.failureOf, clock: L.clock, esc: (s) => String(s).replaceAll('<', '&lt;'),
     felix: { felix: () => '' }, icons: { mic: '', trash: '' },
-  });
-  const html = draw();
+  })();
+  const html = render({ pending: [{ id: 'sess-1' }] }, '<unsafe>');
   assert.match(html, /data-action="rec-discard" data-id="failed-01"/);
   assert.match(html, /data-action="rec-dismiss"/);
   assert.match(html, /<details[^>]*.*Error details/);
   assert.ok(!html.includes('<unsafe>'));
+  assert.match(render({ pending: [{ id: 'sess-1' }] }, 'Provider failed'), /data-action="rec-recover" data-id="sess-1"[^>]*>Recover recording<.*>Close</s);
+  assert.doesNotMatch(render({ pending: [] }, 'Provider failed'), /rec-recover/);
+  assert.doesNotMatch(render({ pending: [{ id: 'sess-1' }] }, 'No sound was recorded.'), /rec-recover/);
+});
+
+test('an interrupted recording says when it started, what it was and where it goes', () => {
+  const started = new Date();
+  started.setHours(9, 2, 0, 0);
+  assert.match(L.pendingLine({ started: started.toISOString(), source: 'microphone', directory: 'cs162' }), /^Today .+ · Microphone · cs162$/);
+  assert.equal(L.pendingLine({ source: 'microphone', directory: 'cs162' }), 'Microphone · cs162');
+  assert.equal(L.pendingLine({ source: 'nativecall', directory: '' }), 'Call · Top level');
 });

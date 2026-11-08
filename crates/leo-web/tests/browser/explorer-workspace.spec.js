@@ -42,26 +42,26 @@ test('workspace and legacy folder links reveal folders without a library or a cr
   const note = await createNote(page, nested);
   const before = await (await page.request.get('/api/notes?limit=1')).headers();
   await page.goto('/#/');
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
   await expect(page.locator('.library-tools, .library-cards, #app .cards')).toHaveCount(0);
   for (const target of [dir, nested]) {
     await page.goto(`/#/f/${encodeURIComponent(target)}`);
     await expect(page).toHaveURL(/\/#\/$/);
     await expect(folderRow(page, target)).toHaveAttribute('aria-current', 'page');
-    await expect(page.getByText('Choose a note or create one')).toBeVisible();
+    await expect(page.getByText('Pick a note on the left')).toBeVisible();
   }
   await expect(noteRow(page, note.id)).toBeVisible();
   await noteRow(page, note.id).click();
   await expect(page.locator('#title')).toHaveText(note.title);
   await page.goBack();
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
   await page.goForward();
   await expect(page.locator('#title')).toHaveText(note.title);
   const after = await (await page.request.get('/api/notes?limit=1')).headers();
   expect(after['x-total']).toBe(before['x-total']);
   await page.goto('/#/f/no-such-explorer-folder');
   await expect(page.locator('.toast')).toContainText('That folder is not there');
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
 });
 
 test('context note rename, move and trash keep an unrelated open note and support Undo', async ({ page }) => {
@@ -79,7 +79,7 @@ test('context note rename, move and trash keep an unrelated open note and suppor
   await page.getByRole('textbox', { name: 'Note name' }).press('Enter');
   await expect(row).toHaveText(renamed);
   await expect(page.locator('#title')).toHaveText(current.title);
-  await options(page, row, 'Move');
+  await options(page, row, 'Move to…');
   await page.getByRole('menuitem', { name: destination, exact: true }).click();
   await expect(page.locator('.toast')).toContainText('Moved');
   await expect(page.locator('#title')).toHaveText(current.title);
@@ -218,7 +218,7 @@ test('selected folder creation wins over the open note folder', async ({ page })
   const current = await createNote(page);
   await openNote(page, current);
   await folderRow(page, dir).click();
-  await page.locator('#side .side-group [data-action="new"]').click();
+  await page.locator('#side .side-new').click();
   await expect(page.locator('#title')).toHaveText('');
   await page.locator('#title').fill(name());
   await page.keyboard.press('ControlOrMeta+s');
@@ -240,7 +240,7 @@ test('startup restores one remembered note or legacy folder and missing notes re
   await page.reload();
   await expect(page.locator('#title')).toHaveText(note.title);
   await page.goto('/#/');
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
   await page.addInitScript(dir => {
     if (sessionStorage.getItem('explorer-folder-seeded')) return;
     localStorage.setItem('leo-last-place', `#/f/${encodeURIComponent(dir)}`);
@@ -251,7 +251,7 @@ test('startup restores one remembered note or legacy folder and missing notes re
   await expect(folderRow(page, dir)).toHaveAttribute('aria-current', 'page');
   await expect(page).toHaveURL(/\/#\/$/);
   await page.goto('/#/n/no-such-explorer-note');
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
   await expect(page.locator('.toast')).toContainText('not there any more');
 });
 
@@ -260,7 +260,7 @@ test('folder move and Undo retain the current note, and trashing its ancestor sa
   const destination = await createFolder(page);
   const note = await createNote(page, dir);
   await openNote(page, note);
-  await options(page, folderRow(page, dir), 'Move');
+  await options(page, folderRow(page, dir), 'Move to…');
   await page.getByRole('menuitem', { name: destination, exact: true }).click();
   await expect(page.locator('#title')).toHaveText(note.title);
   await expect(page.locator('.toast')).toContainText('Moved');
@@ -268,7 +268,7 @@ test('folder move and Undo retain the current note, and trashing its ancestor sa
   await expect(folderRow(page, dir)).toBeVisible();
   await page.locator('#title').fill('The latest unsaved title');
   await options(page, folderRow(page, dir), 'Move to trash');
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
   await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
   await expect(folderRow(page, dir)).toBeVisible();
   expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).title).toBe('The latest unsaved title');
@@ -402,7 +402,7 @@ for (const failure of ['server', 'offline']) test(`legacy folder ${failure} erro
   expect(new URL(page.url()).hash).toBe(hash);
   await page.unroute('**/api/folders');
   await page.reload();
-  await expect(page.getByText('Choose a note or create one')).toBeVisible();
+  await expect(page.getByText('Pick a note on the left')).toBeVisible();
   await expect(folderRow(page, dir)).toHaveAttribute('aria-current', 'page');
   await expect(page).toHaveURL(/\/#\/$/);
 });

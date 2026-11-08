@@ -339,7 +339,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await expect(page.locator('#chat')).toBeVisible();
   await page.locator('[data-chat="close"]').click();
 
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await expect(page.locator('.scrim:not(.scrim-gone) #quick-input')).toBeFocused();
   await page.evaluate(() => window.addEventListener('keydown', (e) => { window.escaped = e.defaultPrevented; }, { once: true }));
   await page.keyboard.press('Escape');
@@ -347,7 +347,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
   await side.locator('.side-group [data-action="new-folder"]').click();
   await page.locator('#folder-name').fill('draft folder');
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await expect(page.locator('.quick-leo'), 'an open sheet keeps what was typed in it').toHaveCount(0);
   await expect(page.locator('#folder-name')).toHaveValue('draft folder');
   await page.keyboard.press('Escape');
@@ -783,6 +783,33 @@ test('search finds a note named after a command', async ({ page }) => {
   await openSearchBox(page);
   await page.locator('#search-input').fill('backup');
   await expect(page.locator('.card').filter({ hasText: 'backup checklist' })).toBeVisible();
+});
+
+test('search shows placeholder cards while it waits', async ({ page }) => {
+  await page.route('**/api/search*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
+  await page.goto('/#/search/queue');
+  await expect(page.locator('#app .section-title')).toHaveText('Searching…');
+  await expect(page.locator('#app .cards .skeleton')).toHaveCount(3);
+  await expect(page.locator('#app .cards .skeleton')).toHaveCount(0);
+});
+
+test('nothing found offers Felix and a new note', async ({ page }) => {
+  const tag = Date.now().toString(36);
+  const ask = `zzqq-ask-${tag}`;
+  const fresh = `zzqq-new-${tag}`;
+  await page.goto(`/#/search/${ask}`);
+  await expect(page.getByRole('heading', { name: `No notes match “${ask}”` })).toBeVisible();
+  await page.locator('#app').getByRole('button', { name: 'Ask Felix' }).click();
+  await expect(page.locator('#chat')).toBeVisible();
+  await expect(page.locator('#chat-body')).toContainText(ask);
+  await page.locator('#chat [data-chat="close"]').click();
+  await page.goto(`/#/search/${fresh}`);
+  await page.getByRole('button', { name: `New note “${fresh}”` }).click();
+  await expect(page).toHaveURL(/#\/n\//);
+  await expect(page.locator('#title')).toHaveText(fresh);
 });
 
 
@@ -1694,6 +1721,24 @@ test.describe('settings', () => {
     await writing.locator('.picker-button').click();
     await writing.locator('.pick-model[data-model="claude-opus-5-5"]').click();
     await expect(page.locator('.toast')).toContainText('Model set to claude-opus-5-5');
+    const modelRows = writing.locator('.pick-model');
+    const ids = await modelRows.evaluateAll(rows => rows.map(row => row.dataset.model));
+    await writing.locator('.picker-button').focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(writing.locator('.pick-model.on')).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(modelRows.last()).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(modelRows.first()).toBeFocused();
+    let common = 0;
+    while (common < ids[0].length && ids[0][common] === ids[1][common]) common++;
+    await page.keyboard.type(ids[1].slice(0, common + 1));
+    await expect(modelRows.nth(1)).toBeFocused();
+    await writing.locator('.pick-chip').first().focus();
+    await page.keyboard.press('c');
+    await expect(writing.locator('.pick-chip').first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(writing.locator('.picker-menu')).toBeHidden();
     const settings = await (await page.request.get('/api/settings')).text();
     expect(settings).not.toMatch(/gemini_speech|openai_audio|xai_stt/);
     await page.locator('.settings-nav a[href="#/settings/models"]').click();
@@ -2420,13 +2465,14 @@ test.describe('recording', () => {
     expect(await page.evaluate(() => {
       const pad = document.querySelector('.rec-notepad');
       const heard = document.querySelector('#rec-heard');
-      return Boolean(pad.compareDocumentPosition(heard) & Node.DOCUMENT_POSITION_FOLLOWING) && !heard.open;
+      return Boolean(pad.compareDocumentPosition(heard) & Node.DOCUMENT_POSITION_PRECEDING) && heard.open;
     })).toBe(true);
-    await expect(page.locator('#rec-transcript')).toBeHidden();
-    await page.locator('#rec-heard > summary').click();
     await expect(page.locator('#rec-transcript')).toBeVisible();
+    await page.locator('#rec-heard > summary').click();
+    await expect(page.locator('#rec-transcript')).toBeHidden();
+    expect(await page.evaluate(() => localStorage.getItem('leo-rec-heard'))).toBe('shut');
     await page.waitForTimeout(1500);
-    await expect(page.locator('#rec-heard')).toHaveAttribute('open', '');
+    await expect(page.locator('#rec-heard')).not.toHaveAttribute('open', '');
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound', { timeout: 8000 });
     const drawn = await page.locator('#rec-wave').evaluate((canvas) => {
@@ -3683,6 +3729,20 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.reload();
   await expect(page.locator('.rec-idle')).toBeVisible();
+  await page.unroute('**/api/record');
+  await page.unroute('**/api/record/failed-call-fixture');
+  const base = { id: 'rec-2', session: 'sess-1', source: 'microphone', secs: 5, step: '', steps: null, transcript: '', warnings: [], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: null };
+  let polled = false;
+  const recovered = [];
+  await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job: polled ? { ...base, state: 'failed', error: 'Provider failed' } : { ...base, state: 'writing' }, pending: polled ? [{ id: 'sess-1', title: null, directory: '', source: 'microphone' }] : [] } }));
+  await page.route('**/api/record/rec-2', route => { polled = true; return route.fulfill({ json: { ...base, state: 'failed', error: 'Provider failed' } }); });
+  await page.route('**/api/record/sess-1/recover', route => { recovered.push(route.request().method()); return route.fulfill({ status: 202, json: { id: 'rec-3' } }); });
+  await page.evaluate(() => sessionStorage.removeItem('leo-record-dismissed'));
+  await page.reload();
+  const recover = page.getByRole('button', { name: 'Recover recording' });
+  await expect(recover).toBeVisible({ timeout: 8000 });
+  await recover.click();
+  await expect.poll(() => recovered).toEqual(['POST']);
 });
 
 
@@ -3744,13 +3804,13 @@ test.describe('passages', () => {
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
     await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
     await page.goto(`/#/n/${note.id}`);
-    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
     await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'both');
     await page.reload();
-    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
     await page.waitForTimeout(4500);
     expect(reads, 'opening a note must not read it').toEqual([]);
 
@@ -3806,7 +3866,7 @@ test.describe('passages', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
     await page.locator('#doc .blk').first().click();
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
@@ -4238,6 +4298,29 @@ test.describe('calendar', () => {
     await page.locator('.cal-name').click();
     await page.keyboard.press('Escape');
     await expect(page.locator('#cal-side.peek')).toHaveCount(0);
+  });
+
+  test('a task sheet description saves itself, even when closed mid-typing', async ({ page }) => {
+    const title = `Autosave ${test.info().project.name} ${Date.now().toString(36)}`;
+    const made = await (await page.request.post('/api/tasks', { data: { title, description: '', date: null, time: null, kind: 'other', repeat: [] } })).json();
+    const saved = async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === made.id);
+    await page.goto('/#/calendar');
+    await page.evaluate((id) => {
+      const open = document.createElement('button');
+      open.dataset.action = 'task-open';
+      open.dataset.id = id;
+      document.body.append(open);
+      open.click();
+      open.remove();
+    }, made.id);
+    const description = page.locator('#task-description');
+    await description.fill('First draft');
+    await expect.poll(async () => (await saved()).description).toBe('First draft');
+    await expect(page.locator('#task-description-state')).toHaveText('Saved');
+    await expect(page.locator('#task-description-save')).toHaveCount(0);
+    await description.fill('Typed then closed');
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await saved()).description).toBe('Typed then closed');
   });
 
   test('tasks are added, dated, ticked off and sent to Google Calendar from the Calendar page', async ({ page }) => {
@@ -4847,6 +4930,15 @@ test("Text size and Felix's lettering change reading text at once, survive a rel
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('On a Mac only Command opens Quick Leo, so Control+K stays a text-editing key', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
+  await page.goto('/');
+  await page.keyboard.press('Control+k');
+  await expect(page.locator('.quick-leo')).toHaveCount(0);
+  await page.keyboard.press('Meta+k');
+  await expect(page.locator('.scrim:not(.scrim-gone) .quick-leo')).toBeVisible();
+});
+
 test('Quick Leo is one Spotlight-style line that works out what you want: a reminder, a question, a note to open or a new one', async ({ page }) => {
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
   const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
@@ -4854,11 +4946,11 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   const asked = [];
   await page.route('**/api/chat', (route) => { asked.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"A heap keeps the smallest on top."}\n{"done":true}\n' }); });
   await page.goto('/');
-  for (const key of ['j', 'k']) {
+  for (const key of ['j', 'y']) {
     await page.keyboard.press(`ControlOrMeta+${key}`);
     await expect(page.locator('.quick-leo')).toHaveCount(0);
   }
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
   await expect(box).toBeVisible();
   const input = box.locator('#quick-input');
@@ -4879,7 +4971,7 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   const tomorrow = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
   expect([made.date, String(made.time).slice(0, 5)]).toEqual([tomorrow, '15:00']);
 
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await input.fill(`Pay rent ${tag}`);
   await expect(box.locator('.quick-row')).toHaveCount(4);
   await expect(top).toContainText('Add to tasks');
@@ -4890,26 +4982,26 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await input.press('Enter');
   await expect(page.locator('.toast')).toContainText(`Added “Pay rent ${tag}”`);
 
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await input.fill(`note: Idea ${tag}`);
   await expect(top).toContainText('New note');
   await input.press('Enter');
   await expect(page.locator('.toast')).toContainText(`Saved “Idea ${tag}”`);
 
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await input.fill(`Idea ${tag}`);
   await input.press('Enter');
   await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
   await expect(page.locator('main h1', { hasText: `Idea ${tag}` })).toBeVisible();
 
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await input.fill(`Idea ${tag}`);
   await box.locator('.quick-row', { hasText: 'Search every note' }).click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/search/Idea ${tag}`);
   await expect(page.locator('.side-note').filter({ hasText: `Idea ${tag}` })).toBeVisible();
   await expect(page.locator('#search-input')).toBeVisible();
 
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await input.fill('What is a heap?');
   await expect(top).toContainText('Ask Felix');
   await input.press('Enter');
@@ -4917,6 +5009,27 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');
   expect(asked.at(-1).messages.at(-1).text).toContain('What is a heap?');
   expect(asked.at(-1).messages).toHaveLength(1);
+
+  const dir = `Shortcuts ${tag}`;
+  const kept = await (await page.request.post('/api/notes', { data: { title: `Chord ${tag}`, body: 'A note.', directory: dir } })).json();
+  await page.goto(`/#/n/${kept.id}`);
+  await expect(page.locator('#title')).toHaveText(`Chord ${tag}`);
+  await page.keyboard.press('ControlOrMeta+f');
+  await expect(page.locator('.quick-leo')).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/new/${dir}`);
+  await page.goto('/#/calendar');
+  await page.keyboard.press('ControlOrMeta+f');
+  await expect(page.locator('.quick-leo')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.quick-leo')).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/new');
+  await page.goto('/#/calendar');
+  await page.locator('#side .side-group [data-action="new-folder"]').click();
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect(page.locator('#folder-name')).toBeVisible();
+  expect(await page.evaluate(() => location.hash)).toBe('#/calendar');
 });
 
 test('Quick Leo finds folders and past chats and opens them', async ({ page }) => {
@@ -4925,7 +5038,7 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   await page.request.post('/api/dirs', { data: { path: `Classes/${folder}` } });
   await page.request.put(`/api/chats/quick-${tag}`, { data: { title: `Heap talk ${tag}`, messages: [{ role: 'user', text: `Heap talk ${tag}` }, { role: 'assistant', text: 'A heap keeps the smallest on top.' }] } });
   await page.goto('/');
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
   const input = box.locator('#quick-input');
   await input.fill(folder);
@@ -4935,7 +5048,7 @@ test('Quick Leo finds folders and past chats and opens them', async ({ page }) =
   await expect(page).toHaveURL(/\/(?:#\/)?$/);
   await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="Classes/' + folder + '"]')).toBeVisible();
   await expect(page.locator('#side .side-row[data-action="open-folder"][data-dir="Classes/' + folder + '"]')).toHaveAttribute('aria-current', 'page');
-  await page.keyboard.press('ControlOrMeta+f');
+  await page.keyboard.press('ControlOrMeta+k');
   await input.fill(`Heap talk ${tag}`);
   const talk = box.locator('.quick-row', { hasText: 'Past chat' });
   await expect(talk).toContainText(`Heap talk ${tag}`);
@@ -5193,7 +5306,7 @@ test('Usage shows saved limits during refresh and keeps them after a refresh fai
     await expect(dialog.getByRole('meter').first()).toHaveAttribute('aria-valuenow', '75');
     if (outcome === 'closed') {
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-      await page.keyboard.press('ControlOrMeta+f');
+      await page.keyboard.press('ControlOrMeta+k');
       await page.locator('#quick-input').fill('Keep this query');
     }
     const response = page.waitForResponse('**/api/settings/usage');

@@ -10,7 +10,7 @@ const actions = {
   'dictation-record': () => dictationChange({action:'record_shortcut'}),
   'dictation-resume': () => dictationChange({action:'resume_shortcut'}),
   'dictation-use-shortcut': useDictationShortcut,
-  'dictation-clear': () => dictationChange({action:'clear'}),
+  'dictation-clear': clearDictationsAsk, 'dictation-clear-now': clearDictationsNow,
   'dictation-copy': (el) => dictationChange({action:'copy',id:Number(el.dataset.id)}).then(() => pulse(el)),
   'speech-filter': filterSpeech,
   'speech-model': changeSpeechModel,
@@ -138,6 +138,19 @@ const actions = {
     closeSheet(true);
     go(dir ? `#/new/${enc(dir)}` : '#/new');
   },
+  'search-ask': (el) => {
+    if (!chat.askNew(el.dataset.query)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });
+  },
+  'search-new': async (el) => {
+    el.disabled = true;
+    try {
+      const note = await api('/api/notes', { method: 'POST', body: { title: Array.from(el.dataset.query).slice(0, 120).join(''), body: '', directory: creationDir() } });
+      go(noteHash(note.id));
+    } finally {
+      el.disabled = false;
+    }
+  },
+  'search-retry': (el) => showSearch(el.dataset.query),
   'new-folder': newFolder,
   'create-folder': createFolder,
   settings: () => {

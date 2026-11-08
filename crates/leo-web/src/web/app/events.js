@@ -13,9 +13,19 @@ window.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+  const chord = (ON_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey;
+  const letter = e.key.toLowerCase();
+  if (chord && (letter === 'k' || letter === 'f' && state.view !== 'note')) {
     e.preventDefault();
     toggleQuickLeo();
+    return;
+  }
+  if (chord && letter === 'n') {
+    if (e.isComposing || $('.scrim') || $('.inline-edit') || state.view === 'locked') return;
+    if (typing && !typing.matches('.line-edit, #title, #chat-input') || $('#rec-point-text')?.value.trim()) return;
+    e.preventDefault();
+    const dir = creationDir();
+    go(dir ? `#/new/${enc(dir)}` : '#/new');
     return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'note') {
@@ -41,16 +51,17 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === 'n' && state.view === 'workspace') {
+  if (e.key === 'n' && state.view === 'workspace' && !e.target.closest('.side-tree')) {
     const dir = creationDir();
     go(dir ? `#/new/${enc(dir)}` : '#/new');
   }
 });
 
-const unsaved = () => saving.unsaved() || Boolean(kanban.panel?.dirty());
+const unsaved = () => saving.unsaved() || Boolean(kanban.panel?.dirty()) || pendingAutosaves().length > 0;
 
 function saveWebsiteWork() {
   kanban.panel?.flush().catch(() => {});
+  for (const f of pendingAutosaves()) f.flush().catch(() => {});
   saving.retry().catch(() => {});
 }
 

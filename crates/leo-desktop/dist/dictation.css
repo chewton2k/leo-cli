@@ -8,9 +8,9 @@ body[data-top="true"] { justify-content: flex-start; }
 #dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
 #timer { color: var(--muted); font-variant-numeric: tabular-nums; }
 #wave { height: 18px; display: flex; align-items: center; justify-content: center; gap: 3px; }
-#wave i { width: 4px; min-height: 3px; max-height: 18px; border-radius: 2px; background: var(--accent); transition: height 80ms linear; }
-#cancel { background: none; color: var(--muted); border: 0; font-size: 20px; padding: 0 2px; cursor: pointer; }
-#cancel:hover { color: var(--text); }
+#wave i { width: 4px; min-height: 3px; max-height: 18px; border-radius: 2px; background: var(--danger); transition: height 80ms linear; }
+#cancel { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+#cancel:hover { background: var(--surface-2); color: var(--text); }
 #text { display: none; margin-top: 8px; max-height: 60px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; overflow-wrap: anywhere; }
 #text::-webkit-scrollbar { display: none; }
 #text.overflowing { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px); mask-image: linear-gradient(to bottom, transparent 0, #000 18px); }
@@ -19,4 +19,6 @@ body[data-open="true"] #text { display: block; }
 #caret[hidden] { display: none; }
 @keyframes caret { 50% { opacity: 0; } }
 body[data-state="error"] #text, body[data-state="notice"] #text { color: var(--muted); }
-body[data-state="starting"] #dot, body[data-state="loading"] #dot, body[data-state="transcribing"] #dot, body[data-state="writing"] #dot { background: var(--accent); }
+body[data-state="starting"] #dot, body[data-state="loading"] #dot, body[data-state="transcribing"] #dot, body[data-state="writing"] #dot { background: var(--accent); animation: busy 1s ease-in-out infinite alternate; }
+@keyframes busy { to { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { #caret, #dot { animation: none; } }

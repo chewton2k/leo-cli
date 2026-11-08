@@ -160,8 +160,10 @@ function togglePicker(el) {
   const menu = el.parentElement.querySelector('.picker-menu');
   closePickers(menu);
   const opening = menu.hidden || Boolean(menu.dataset.folding);
-  if (opening) unfold(menu, el);
-  else fold(menu);
+  if (opening) {
+    unfold(menu, el);
+    (menu.querySelector('.pick-model.on') || menu.querySelector('.pick-model'))?.focus();
+  } else fold(menu);
   el.setAttribute('aria-expanded', String(opening));
 }
 
@@ -171,7 +173,24 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.view === 'settings' && app.querySelector('.picker-menu:not([hidden])')) {
     e.stopPropagation();
+    const open = app.querySelector('.picker-menu:not([hidden])');
+    const owner = open.parentElement.querySelector('.picker-button');
     closePickers();
+    owner?.focus();
+    return;
+  }
+  if (state.view !== 'settings') return;
+  const row = e.target.closest?.('.picker-menu:not([hidden]) .pick-model');
+  if (row) {
+    const menu = row.closest('.picker-menu');
+    const to = listKeyTarget([...menu.querySelectorAll('.pick-model')], row, e, (el) => el.querySelector('.pick-name').textContent);
+    if (to) { e.preventDefault(); to.focus(); }
+    return;
+  }
+  const button = e.target.closest?.('.picker-button');
+  if (button && button.getAttribute('aria-expanded') !== 'true' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault();
+    togglePicker(button);
   }
 }, true);
 
@@ -200,7 +219,7 @@ function taskCard(t) {
   let key = '';
   if (t.key) {
     const has = t.key.stored;
-    const form = `<div class="set-key-form"><input type="password" autocomplete="off" spellcheck="false"${has ? ` class="has-key" placeholder="${esc(t.key.hint || '••••••••')}" aria-label="${esc(t.key.name)} key is stored; type a new one to replace it"` : ` placeholder="Paste your ${esc(t.key.name)} API key"`} data-key-input="${esc(t.key.account)}"><button class="btn primary sm" data-action="set-key" data-account="${esc(t.key.account)}">${has ? 'Save' : 'Save key'}</button></div>`;
+    const form = `<div class="set-key-form"><input type="password" autocomplete="off" spellcheck="false"${has ? ` class="has-key" placeholder="${esc(t.key.hint || '••••••••')}" aria-label="${esc(t.key.name)} key is stored; type a new one to replace it"` : ` placeholder="Paste your ${esc(t.key.name)} API key"`} data-key-input="${esc(t.key.account)}"><button class="btn primary sm" data-action="set-key" data-account="${esc(t.key.account)}">${has ? 'Replace key' : 'Save key'}</button></div>`;
     key = `<div class="set-row column" data-find="writing-key"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
   }
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '';
@@ -213,7 +232,7 @@ function taskCard(t) {
       ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
       : `<div class="set-row column"><span class="set-label">Provider</span>${choiceCards({ label: 'Provider', choices: t.choices.map((c) => providerCard(c)), current: t.provider, field: `data-set="provider" data-task="${t.task}"`, className: 'providers' })}</div>`}
     ${model}${key}${signin}${usage}${note}
-    <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test</button><span class="set-result" id="test-${t.task}"></span></div>
+    <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test connection</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
 }
 
@@ -762,7 +781,7 @@ function drawSettings(page) {
   const section = state.section || 'general';
   let content = '';
   if (section === 'general') content = themeCard() + `<div id="app-general">${nativeGeneralCard(desktopApp)}</div>`;
-  else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the Leo app to set up dictation.</section>'}</div>`;
+  else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the leo app to set up dictation.</section>'}</div>`;
   else if (section === 'models') content = `<div id="speech-library">${speechCards(state.speech)}</div>`;
   else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
   else if (section === 'felix') content = felixSettingsCards(state.margin, page);
@@ -841,17 +860,19 @@ async function testAi(el) {
 }
 
 function speechCards(view) {
-  if (!view) return '<section class="set-card"><p class="hint">Speech models could not be opened. Reopen Leo and try again.</p></section>';
+  if (!view) return '<section class="set-card"><p class="hint">Speech models could not be opened. Reopen leo and try again.</p></section>';
   const selected = view.selected || {};
   const current = view.models.find((model) => model.id === selected.id);
   const language = current && view.ready && current.languages.length > 1 ? `<label class="set-row" data-find="speech-language"><span class="set-label">Language</span><span class="select-control"><select id="speech-language" data-speech-language="${esc(current.id)}">${settingsOption('auto', 'Detect language', selected.language)}${current.languages.map((code) => settingsOption(code, speechLanguage(code), selected.language)).join('')}</select>${ICON.chevron}</span></label>` : '';
   const downloaded = view.models.filter((model) => model.downloaded);
   const extras = view.extra_files || [];
-  const filter = state.speechFilter || 'recommended';
-  const filters = [['recommended', 'Recommended'], ['english', 'English'], ['many', 'Many languages'], ['downloaded', 'Downloaded'], ['all', `All ${view.models.length}`]];
-  const rows = speechFiltered(view.models, filter).map(speechModelRow).join('');
-  return `<section class="set-card" data-find="speech-in-use"><header><h3>In use</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header><p class="hint">${view.ready && current ? esc(current.name) : 'Download a model below, then choose Use.'}</p><p class="set-note">Dictation and recording share this model. Audio stays on this computer.</p>${language}</section>
-    <section class="set-card" data-models-downloaded data-find="speech-downloaded"><header><h3>Downloaded</h3><span class="hint">${downloaded.length + extras.length} models · ${speechBytes(view.disk_bytes)} on this computer</span></header>
+  const available = view.models.filter((model) => !model.downloaded);
+  if (!state.speechFilter || state.speechFilter === 'downloaded') state.speechFilter = 'recommended';
+  const filter = state.speechFilter;
+  const filters = [['recommended', 'Recommended'], ['english', 'English'], ['many', 'Many languages'], ['all', `All ${available.length}`]];
+  const rows = speechFiltered(available, filter).map(speechModelRow).join('');
+  return `<section class="set-card" data-find="speech-in-use"><header><h3>In use</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header><div class="set-row"><span class="grow set-value-text">${view.ready && current ? esc(current.name) : 'Download a model below, then choose Use.'}</span></div><p class="set-note">Dictation and recording share this model. Audio stays on this computer.</p>${language}</section>
+    <section class="set-card" data-models-downloaded data-find="speech-downloaded"><header><h3>Downloaded</h3><span class="hint">${plural(downloaded.length + extras.length, 'model')} · ${speechBytes(view.disk_bytes)} on this computer</span></header>
       ${downloaded.map(speechModelRow).join('')}${extras.map((file) => `<div class="set-row"><span class="grow"><span>${esc(file.name)}</span><span class="set-note">${speechBytes(file.bytes)} · Not in the current catalog</span></span><button class="btn plain sm" data-action="speech-model" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`).join('')}${!downloaded.length && !extras.length ? '<p class="set-note">No models downloaded yet.</p>' : ''}</section>
     <section class="set-card" data-models-all data-find="speech-all"><header><h3>All models</h3></header><p class="hint">Choose a local model. Larger models use more memory.</p><div class="library-views model-filters" role="group" aria-label="Filter models">${filters.map(([id, label]) => `<button class="btn plain sm${filter === id ? ' on' : ''}" data-action="speech-filter" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div>${rows || '<p class="set-note">No models match this filter.</p>'}<p class="set-note">Accuracy uses the chosen language, or combines measured languages with Detect language. Benchmark speed may differ on your computer.</p></section>`;
 }
@@ -863,7 +884,7 @@ function speechLanguage(code) {
   try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch (e) { return code; }
 }
 function speechFiltered(models, filter) {
-  return models.filter((model) => filter === 'all' || filter === 'recommended' && model.recommended || filter === 'english' && model.languages.includes('en') || filter === 'many' && model.languages.length > 1 || filter === 'downloaded' && model.downloaded);
+  return models.filter((model) => filter === 'all' || filter === 'recommended' && model.recommended || filter === 'english' && model.languages.includes('en') || filter === 'many' && model.languages.length > 1);
 }
 function speechRatings(model) {
   const speed = Math.max(0, Number(model.speed) || 0);
