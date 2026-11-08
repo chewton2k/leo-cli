@@ -6,14 +6,35 @@ const MARGIN_SETTLE_MS = 1400;
 const MARGIN_LAYOUT_KEY = 'leo-margin-layout';
 const GLOW_MS = 2200;
 const NO_COMMENT_MS = 4000;
+const READING_FADE_MS = 120;
 const WIPE_MS = 500;
 const MENU_MS = MOTION_MS;
 const MENU_SLIDE = [{ clipPath: 'inset(0 0 100% 0)', opacity: 0, transform: `scale(${POP_FROM})` }, { clipPath: 'inset(0 0 0 0)', opacity: 1, transform: 'none' }];
 const MOST_ASKED = 1000;
 const marginKit = window.leoMargin;
+const PERSONA_ICON = {
+  book: svg('<path d="M3 5.5A1.5 1.5 0 0 1 4.5 4H9a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5h-5A1.5 1.5 0 0 1 3 16z"/><path d="M21 5.5A1.5 1.5 0 0 0 19.5 4H15a3 3 0 0 0-3 3v13a2.5 2.5 0 0 1 2.5-2.5h5A1.5 1.5 0 0 0 21 16z"/>'),
+  target: svg('<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>'),
+  thumb: svg('<path d="M7 10.5V20H4.5v-9.5z"/><path d="M7 10.5l3.6-6.3a1.9 1.9 0 0 1 3.4 1.6L13 9.5h5.3a2 2 0 0 1 2 2.3l-1.1 6.5a2 2 0 0 1-2 1.7H7"/>'),
+  flask: svg('<path d="M9.5 3.5h5M10.5 3.5v5.2L5 18.2A1.6 1.6 0 0 0 6.4 20.5h11.2a1.6 1.6 0 0 0 1.4-2.3l-5.5-9.5V3.5"/><path d="M7.6 14h8.8"/>'),
+  globe: svg('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.5 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.5-3.5-8.5s1-5.9 3.5-8.5"/>'),
+  bulb: svg('<path d="M9 17.5h6M10 20.5h4"/><path d="M8.2 14.2A6 6 0 1 1 15.8 14.2c-.8.7-1.3 1.6-1.3 2.6v.7h-5v-.7c0-1-.5-1.9-1.3-2.6"/>'),
+  cap: svg('<path d="M2.5 9.5L12 5l9.5 4.5L12 14z"/><path d="M6.5 11.5v4.3c1.5 1.4 3.4 2.2 5.5 2.2s4-.8 5.5-2.2v-4.3M21.5 9.5v5"/>'),
+  leaf: svg('<path d="M5 19c0-8 5-13.5 14.5-14.5C19 14 13.5 19 5.5 19"/><path d="M5 19l7.5-7.5"/>'),
+  compass: svg('<circle cx="12" cy="12" r="8.5"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
+  code: svg('<path d="M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5"/>'),
+  heart: svg('<path d="M12 19.5s-7.5-4.4-7.5-9.7A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6c0 5.3-7.5 9.7-7.5 9.7z"/>'),
+  star: svg('<path d="M12 3.8l2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/>'),
+  pen: svg('<path d="M4 20l1.2-4.6L16.6 4a2 2 0 012.8 2.8L8 18.4z"/><path d="M14.5 6.1l3.4 3.4"/>'),
+  plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
+};
+let personaStartNew = false;
+let personaEditing = null;
+let personaDetails = false;
+const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -53,6 +74,7 @@ function marginLeave() {
   cancelAnimationFrame(marginPage.pointer);
   if (marginPage.through) marginPage.through.stop = true;
   marginPage.slide?.cancel();
+  marginPage.personaSlide?.cancel();
   marginPage.observer?.disconnect();
   marginPage.observer = null;
   const columns = marginPage.layer?.parentElement;
@@ -60,7 +82,7 @@ function marginLeave() {
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
   chat.setLost([]);
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -97,6 +119,7 @@ async function marginMount(s, mine) {
   const prefs = await marginLoadPrefs();
   if (mine !== seq || marginPage.s !== s) return;
   marginPage.mode = prefs.default_mode || 'ask';
+  marginPage.persona = prefs.default_persona || 'reader';
   marginControl();
   marginRedraw();
 }
@@ -111,6 +134,7 @@ async function marginLoad(s, current = () => true, id = s.note.id) {
   }
   if (!current() || marginPage.s !== s || !view) return;
   marginPage.mode = view.mode;
+  marginPage.persona = view.persona || 'reader';
   marginPage.threads = view.threads || [];
   marginPage.loaded = true;
   cancelAnimationFrame(marginPage.frame);
@@ -121,8 +145,11 @@ async function marginLoad(s, current = () => true, id = s.note.id) {
 async function marginCreated(s, note) {
   if (marginPage.s !== s) return;
   const wanted = marginPage.wanted;
+  const persona = marginPage.wantedPersona;
   marginPage.wanted = null;
+  marginPage.wantedPersona = null;
   await marginLoad(s, undefined, note.id);
+  if (persona && marginPage.s === s && marginPage.persona !== persona) await marginChangePersona(persona, false);
   if (!wanted || marginPage.s !== s || marginPage.mode === wanted) return;
   try {
     await api(`/api/notes/${enc(note.id)}/margin`, { method: 'POST', body: { mode: wanted } });
@@ -154,28 +181,28 @@ function marginAskKeys() {
   return ON_MAC ? 'Cmd+Shift+E' : 'Ctrl+Shift+E';
 }
 
-function marginMenuSlide(menu, open) {
-  let run = marginPage.slide;
+function marginMenuSlide(menu, open, button, key) {
+  let run = marginPage[key];
   menu.inert = !open;
   if (stillMotion() || typeof menu.animate !== 'function') {
     run?.cancel();
-    marginPage.slide = null;
+    marginPage[key] = null;
     menu.hidden = !open;
     return;
   }
   if (!run) {
     if (open === !menu.hidden) return;
     menu.hidden = false;
-    menu.style.transformOrigin = popEdge(menu, $('#margin-mode')).origin;
+    menu.style.transformOrigin = popEdge(menu, button).origin;
     run = menu.animate(MENU_SLIDE, { duration: MENU_MS, easing: EASE_OUT, fill: 'both' });
     run.pause();
     run.currentTime = open ? 0 : MENU_MS;
-    marginPage.slide = run;
+    marginPage[key] = run;
     run.onfinish = () => {
       const shown = run.playbackRate > 0;
       run.onfinish = null;
       run.cancel();
-      if (marginPage.slide === run) marginPage.slide = null;
+      if (marginPage[key] === run) marginPage[key] = null;
       menu.hidden = !shown;
     };
   }
@@ -184,16 +211,56 @@ function marginMenuSlide(menu, open) {
   run.play();
 }
 
-function marginModeMenu(open, focus = false) {
-  const menu = $('#margin-mode-menu');
-  const button = $('#margin-mode');
+function marginMenu(which, open, focus = false) {
+  const menu = $(`#margin-${which}-menu`);
+  const button = $(`#margin-${which}`);
   if (!menu || !button) return;
   button.setAttribute('aria-expanded', String(open));
-  marginMenuSlide(menu, open);
+  marginMenuSlide(menu, open, button, which === 'mode' ? 'slide' : 'personaSlide');
   if (focus) {
     if (open) menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
     else button.focus({ preventScroll: true });
   }
+}
+
+function marginModeMenu(open, focus = false) {
+  marginMenu('mode', open, focus);
+}
+
+function marginPersonaMenu(open, focus = false) {
+  marginMenu('persona', open, focus);
+}
+
+function marginWireMenu(button, menu, item, toggle) {
+  const wrap = button.parentElement;
+  button.addEventListener('click', () => toggle(button.getAttribute('aria-expanded') !== 'true', true));
+  wrap.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && !menu.hidden) {
+      const controls = [...document.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable], [tabindex]:not([tabindex="-1"])')].filter(el => el.getClientRects().length && (el === button || !wrap.contains(el)) && !el.closest('[inert]'));
+      const next = controls[controls.indexOf(button) + (e.shiftKey ? -1 : 1)];
+      toggle(false);
+      if (next) { e.preventDefault(); next.focus({ preventScroll: true }); }
+    } else if (e.key === 'Escape' && !menu.hidden) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggle(false, true);
+    } else if ((e.key === 'Enter' || e.key === ' ') && e.target.closest(item)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.target.closest(item).click();
+    } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const items = [...menu.querySelectorAll(item)];
+      const at = items.indexOf(document.activeElement);
+      toggle(true);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowUp' ? items.length - 1 : 1)) % items.length;
+      items[next]?.focus({ preventScroll: true });
+    }
+  });
+  wrap.addEventListener('focusout', (e) => {
+    if (!menu.hidden && e.relatedTarget && !wrap.contains(e.relatedTarget)) toggle(false);
+  });
 }
 
 function marginControl() {
@@ -203,38 +270,10 @@ function marginControl() {
   if (!s || !button || !menu) return;
   if (!button.dataset.ready) {
     button.dataset.ready = '1';
-    button.addEventListener('click', () => marginModeMenu(button.getAttribute('aria-expanded') !== 'true', true));
+    marginWireMenu(button, menu, '[data-margin-mode]', marginModeMenu);
     menu.addEventListener('click', (e) => {
       const option = e.target.closest('[data-margin-mode]');
       if (option) marginChangeMode(option.dataset.marginMode).catch(fail);
-    });
-    button.parentElement.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab' && !menu.hidden) {
-        const wrap = button.parentElement;
-        const controls = [...document.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable], [tabindex]:not([tabindex="-1"])')].filter(el => el.getClientRects().length && (el === button || !wrap.contains(el)) && !el.closest('[inert]'));
-        const next = controls[controls.indexOf(button) + (e.shiftKey ? -1 : 1)];
-        marginModeMenu(false);
-        if (next) { e.preventDefault(); next.focus({ preventScroll: true }); }
-      } else if (e.key === 'Escape' && !menu.hidden) {
-        e.preventDefault();
-        e.stopPropagation();
-        marginModeMenu(false, true);
-      } else if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-margin-mode]')) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.target.closest('[data-margin-mode]').click();
-      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
-        e.preventDefault();
-        e.stopPropagation();
-        const items = [...menu.querySelectorAll('[data-margin-mode]')];
-        const at = items.indexOf(document.activeElement);
-        marginModeMenu(true);
-        const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowUp' ? items.length - 1 : 1)) % items.length;
-        items[next]?.focus({ preventScroll: true });
-      }
-    });
-    button.parentElement.addEventListener('focusout', (e) => {
-      if (!menu.hidden && e.relatedTarget && !button.parentElement.contains(e.relatedTarget)) marginModeMenu(false);
     });
   }
   const along = marginPage.mode === 'along';
@@ -252,6 +291,59 @@ function marginControl() {
   for (const option of menu.querySelectorAll('[data-margin-mode]')) {
     option.setAttribute('aria-checked', String(option.dataset.marginMode === marginPage.mode));
     option.disabled = marginPage.changing;
+  }
+  marginPersonaControl();
+}
+
+function marginPersonaControl() {
+  const button = $('#margin-persona');
+  const menu = $('#margin-persona-menu');
+  if (!marginPage.s || !button || !menu) return;
+  if (!button.dataset.ready) {
+    button.dataset.ready = '1';
+    marginWireMenu(button, menu, '[data-margin-persona]', marginPersonaMenu);
+    menu.addEventListener('click', (e) => {
+      const option = e.target.closest('[data-margin-persona]');
+      if (!option) return;
+      if (option.dataset.marginPersona !== 'new') return marginChangePersona(option.dataset.marginPersona).catch(fail);
+      marginPersonaMenu(false);
+      personaStartNew = true;
+      location.hash = '#/settings/felix';
+    });
+  }
+  const list = marginPrefs?.personas || [];
+  const now = list.find((p) => p.id === marginPage.persona) || list[0];
+  button.disabled = !now;
+  if (!now) return;
+  $('#margin-persona-icon').innerHTML = PERSONA_ICON[now.icon] || PERSONA_ICON.book;
+  $('#margin-persona-label').textContent = now.name;
+  button.title = `${now.name} reads this note. Shapes margin notes and replies.`;
+  const key = JSON.stringify([list, now.id]);
+  if (menu.dataset.key === key) return;
+  menu.dataset.key = key;
+  menu.innerHTML = list.map((p) => `<button type="button" role="menuitemradio" aria-checked="${p.id === now.id}" data-margin-persona="${esc(p.id)}"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span class="persona-words"><b>${esc(p.name)}</b><small>${esc(p.line || p.details)}</small></span></button>`).join('')
+    + `<hr><button type="button" role="menuitem" data-margin-persona="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span class="persona-words"><b>New persona</b></span></button>`;
+}
+
+async function marginChangePersona(id, picked = true) {
+  const s = marginPage.s;
+  if (picked) marginPersonaMenu(false, true);
+  if (!s || id === marginPage.persona) return;
+  const before = marginPage.persona;
+  marginPage.persona = id;
+  marginPersonaControl();
+  if (!s.note.id) {
+    marginPage.wantedPersona = id;
+    return;
+  }
+  try {
+    await api(`/api/notes/${enc(s.note.id)}/margin`, { method: 'POST', body: { persona: id } });
+  } catch (e) {
+    if (marginPage.s !== s) return;
+    if (e instanceof Locked) throw e;
+    marginPage.persona = before;
+    marginPersonaControl();
+    marginSetStatus('Could not save this persona. Try again.');
   }
 }
 
@@ -475,6 +567,11 @@ function marginMark(t) {
     mark.dataset.id = t.id;
     mark.setAttribute('aria-label', `Felix’s note on “${t.quote.slice(0, 80)}”`);
     mark.innerHTML = '<span class="margin-anchor" aria-hidden="true"></span>';
+    if (t.id === 'reading') {
+      mark.classList.add('reading');
+      mark.tabIndex = -1;
+      mark.setAttribute('aria-hidden', 'true');
+    }
     marginPage.layer.appendChild(mark);
     marginPage.marks.set(t.id, mark);
   }
@@ -546,7 +643,7 @@ function marginDraw() {
   if (columns.dataset.margin !== layout) columns.dataset.margin = layout;
   const margins = layout === 'right' || layout === 'both';
   marginGutter(columns, margins ? 0 : 1);
-  const keep = new Set(placed.map(({ t }) => t.id));
+  const keep = new Set([...placed.map(({ t }) => t.id), 'reading']);
   for (const id of [...marginPage.els.keys(), ...marginPage.marks.keys()]) if (!keep.has(id)) marginDropThread(id);
   const origin = columns.getBoundingClientRect();
   const page = $('article.note', columns).getBoundingClientRect();
@@ -556,11 +653,17 @@ function marginDraw() {
     if (el) marginFill(el, t, marginPage.arriving.has(t.id));
     return { t, at, rects, el };
   }).filter(({ rects }) => rects.length);
+  const reading = marginReadingBox(origin);
+  if (reading) boxes.push(reading);
   marginPage.roomy?.classList.remove('margin-room');
   marginPage.roomy = null;
   if (margins) marginPlaceInMargin(boxes, layout, page, origin);
-  else marginPlaceAsMarks(boxes, page, origin);
+  else {
+    marginPage.sides = {};
+    marginPlaceAsMarks(boxes, page, origin);
+  }
   for (const { t, rects } of boxes) {
+    if (t.id === 'reading') continue;
     marginPage.rects.set(t.id, rects);
     marginInk(t, rects);
   }
@@ -581,7 +684,8 @@ function marginPlaceInMargin(boxes, layout, page, origin) {
   const left = page.left - origin.left;
   const right = page.right - origin.left;
   const items = boxes.map(({ t, rects, el }) => ({ id: t.id, want: rects[0].top - 2, height: el.offsetHeight }));
-  const side = layout === 'both' ? marginKit.sides(items) : Object.fromEntries(items.map((item) => [item.id, 'right']));
+  const side = layout === 'both' ? marginKit.sides(items, 16, marginPage.sides) : Object.fromEntries(items.map((item) => [item.id, 'right']));
+  marginPage.sides = layout === 'both' ? side : {};
   const pinned = marginPage.open;
   const tops = { ...marginKit.stack(items.filter((i) => side[i.id] === 'right'), { pinned }), ...marginKit.stack(items.filter((i) => side[i.id] === 'left'), { pinned }) };
   for (const { t, el } of boxes) {
@@ -966,10 +1070,47 @@ function marginEdited(s) {
   marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(pause, marginPage.nextRead - Date.now()));
 }
 
-function marginShowReading(s) {
+function marginShowReading(s, source, blocks) {
+  const at = source.lastIndexOf(blocks[blocks.length - 1]);
+  if (at < 0) return;
   marginPage.faceTimer = setTimeout(() => {
-    if (marginPage.reading && marginPage.s === s) marginSetStatus('Reading…');
+    if (!marginPage.reading || marginPage.s !== s) return;
+    marginPage.readingAt = at;
+    const voice = $('.margin-said-aloud', marginPage.layer);
+    if (voice) voice.textContent = 'Felix is reading.';
+    marginRedraw();
   }, READ_FACE_AFTER_MS);
+}
+
+function marginReadingDone(fade = false) {
+  const el = marginPage.readingEl;
+  marginPage.readingAt = null;
+  marginPage.readingEl = null;
+  marginPage.marks.get('reading')?.remove();
+  marginPage.marks.delete('reading');
+  if (el && fade && !stillMotion()) {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), READING_FADE_MS);
+  } else el?.remove();
+  marginRedraw();
+}
+
+function marginReadingBox(origin) {
+  const block = marginPage.readingAt === null ? null : marginPage.s.doc.blockAt(marginPage.readingAt);
+  if (!block) return null;
+  let el = marginPage.readingEl;
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'margin-waiting';
+    el.dataset.id = 'reading';
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = '<div class="margin-dots"><i></i><i></i><i></i></div>';
+    marginPage.layer.appendChild(el);
+    marginPage.readingEl = el;
+  }
+  const r = block.getBoundingClientRect();
+  const top = r.top - origin.top;
+  return { t: { id: 'reading', quote: '', messages: [] }, rects: [{ left: r.left - origin.left, right: r.left - origin.left, top, bottom: top + 20 }], el };
 }
 
 async function marginRead(s) {
@@ -988,15 +1129,15 @@ async function marginRead(s) {
     const blocks = marginKit.changedBlocks(marginPage.baseline, source);
     if (!blocks.length) return;
     marginPage.nextRead = Date.now() + (marginPrefs?.gap ?? READ_GAP_SECONDS) * 1000;
-    marginShowReading(s, blocks);
+    marginShowReading(s, source, blocks);
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;
     const along = marginPage.mode === 'along';
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
     if (!along) marginSetStatus('');
     else if (got?.failed) marginSetStatus('Could not read this change. Check Writing AI and try again.');
-    else if (got?.note) marginSetStatus('');
-    else marginSetStatus('No comment this time', true);
+    else marginSetStatus('');
+    if (!got?.failed) marginReadingDone(!got?.note);
     if (got?.note) {
       marginPage.threads.push(got.note);
       marginPage.arriving.add(got.note.id);
@@ -1017,6 +1158,7 @@ async function marginRead(s) {
     if (s === marginPage.s && marginPage.reading === reading) {
       marginPage.reading = false;
       clearTimeout(marginPage.faceTimer);
+      if (marginPage.readingAt !== null || marginPage.readingEl) marginReadingDone();
       const again = marginPage.again;
       marginPage.again = false;
       if (again && marginPage.mode === 'along') {
@@ -1223,12 +1365,96 @@ function felixRhythm(view) {
   return `After ${pause} sec of quiet, at most once every ${marginWait(view.gap)}, ${limit}. ${view.today} so far today.`;
 }
 
+function felixPersonaForm(view, p) {
+  const icons = (view.persona_icons || []).map((icon) => `<label class="persona-tile" title="${esc(PERSONA_ICON_NAMES[icon] || icon)}"><input type="radio" name="persona-icon" value="${esc(icon)}" aria-label="${esc(PERSONA_ICON_NAMES[icon] || icon)}"${icon === p.icon ? ' checked' : ''}><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[icon] || ''}</span></label>`).join('');
+  return `<form class="persona-form" data-persona-form="${esc(p.id)}"><div class="persona-tiles" role="radiogroup" aria-label="Icon">${icons}</div><input class="set-input" name="name" maxlength="32" required placeholder="Name" aria-label="Name" value="${esc(p.name)}"><textarea class="set-input" name="says" maxlength="500" rows="3" required placeholder="What should he look for? For example: check each claim against its evidence." aria-label="What should he look for?">${esc(p.details)}</textarea><div class="persona-form-acts"><button type="submit" class="btn primary sm">Save</button><button type="button" class="btn plain sm" data-persona-act="cancel">Cancel</button>${p.id ? '<button type="button" class="btn plain sm danger-text" data-persona-act="delete">Delete</button>' : ''}</div></form>`;
+}
+
+function felixPersonaCard(view) {
+  const list = view.personas || [];
+  const now = list.find((p) => p.id === view.default_persona) || list[0];
+  if (!now) return '';
+  if (personaStartNew) {
+    personaStartNew = false;
+    personaEditing = 'new';
+  }
+  const editing = personaEditing === 'new' ? { id: '', name: '', icon: (view.persona_icons || ['flask'])[0], details: '' } : list.find((p) => p.custom && p.id === personaEditing);
+  if (editing) return `<section class="set-card" data-find="felix-persona" id="felix-persona-card"><header><h3>${editing.id ? 'Edit persona' : 'New persona'}</h3></header>${felixPersonaForm(view, editing)}</section>`;
+  personaEditing = null;
+  const tiles = list.map((p) => `<label class="persona-tile"><input type="radio" name="felix-persona" value="${esc(p.id)}" data-margin-pref="default_persona"${p.id === now.id ? ' checked' : ''}><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span>${esc(p.name)}</span></label>`).join('');
+  const add = list.filter((p) => p.custom).length < (view.most_personas || 8) ? `<button type="button" class="persona-tile add" data-persona-act="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span>New</span></button>` : '';
+  return `<section class="set-card" data-find="felix-persona" id="felix-persona-card"><header><h3>Who reads your notes</h3></header><p class="hint">New notes start with this one. Each note can switch. Felix chat stays the same.</p><div class="persona-tiles" role="radiogroup" aria-label="Who reads your notes">${tiles}${add}</div>
+    <div class="persona-line"><span>${esc(now.line || 'Your own persona.')}</span><button type="button" class="link-btn" data-persona-act="details" aria-expanded="${personaDetails}">${personaDetails ? 'Hide details' : 'See details'}</button>${now.custom ? '<button type="button" class="link-btn" data-persona-act="edit">Edit</button>' : ''}</div>${personaDetails ? `<p class="persona-details">${esc(now.details)}</p>` : ''}</section>`;
+}
+
+function felixPersonaRedraw(view, focus = '') {
+  const card = $('#felix-persona-card');
+  if (!card) return;
+  card.outerHTML = felixPersonaCard(view);
+  if (focus) $(focus, $('#felix-persona-card'))?.focus({ preventScroll: true });
+}
+
+async function felixSavePersonas(list) {
+  const view = await api('/api/margin', { method: 'POST', body: { personas: list } });
+  marginRemember(view);
+  state.margin = view;
+  return view;
+}
+
+function felixCustoms(view) {
+  return (view.personas || []).filter((p) => p.custom).map((p) => ({ id: p.id, name: p.name, icon: p.icon, says: p.details }));
+}
+
+document.addEventListener('click', async (e) => {
+  const button = e.target.closest?.('[data-persona-act]');
+  const view = state.margin;
+  if (!button || !view) return;
+  const act = button.dataset.personaAct;
+  if (act === 'delete' && !button.dataset.armed) {
+    button.dataset.armed = '1';
+    button.textContent = 'Delete for good';
+    return;
+  }
+  try {
+    if (act === 'delete') {
+      await felixSavePersonas(felixCustoms(view).filter((p) => p.id !== personaEditing));
+      personaEditing = null;
+    } else if (act === 'new') personaEditing = 'new';
+    else if (act === 'edit') personaEditing = view.default_persona;
+    else if (act === 'cancel') personaEditing = null;
+    else if (act === 'details') personaDetails = !personaDetails;
+  } catch (error) {
+    return fail(error);
+  }
+  felixPersonaRedraw(state.margin, act === 'new' || act === 'edit' ? '[name="name"]' : act === 'details' ? '[data-persona-act="details"]' : '[name="felix-persona"]:checked');
+});
+
+document.addEventListener('submit', async (e) => {
+  const form = e.target.closest?.('[data-persona-form]');
+  if (!form || !state.margin) return;
+  e.preventDefault();
+  const id = form.dataset.personaForm;
+  const entry = { id: id || null, name: $('[name="name"]', form).value, icon: $('[name="persona-icon"]:checked', form)?.value || 'flask', says: $('[name="says"]', form).value };
+  const customs = felixCustoms(state.margin);
+  const save = $('[type="submit"]', form);
+  save.disabled = true;
+  try {
+    await felixSavePersonas(id ? customs.map((p) => (p.id === id ? entry : p)) : [...customs, entry]);
+    personaEditing = null;
+    felixPersonaRedraw(state.margin, '[name="felix-persona"]:checked');
+  } catch (error) {
+    save.disabled = false;
+    toast('Could not save this persona. Check the name and what he should look for.');
+  }
+});
+
 function felixSettingsCards(view, page) {
   if (!view) return '<section class="set-card"><p class="hint">Felix’s settings are not available right now.</p></section>';
   const provider = page.tasks.find((task) => task.task === 'writing')?.provider || '';
   const name = page.tasks.find((task) => task.task === 'writing')?.choices?.find((choice) => choice.id === provider)?.label || 'your writing AI';
   const where = `Reads along sends the note’s title and the text you change to ${esc(name)}${page.reads_stay_here ? ', which runs on this computer' : ''}. Read through sends the whole note, a part at a time.`;
   return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['along', 'Reads along', 'Comments after a pause, only when it matters.'], ['ask', 'When you ask', `Select text, then Ask Felix or ${marginAskKeys()}.`]] })}</section>
+    ${felixPersonaCard(view)}
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card" data-find="felix-auto-model"><header><h3>Which model answers</h3></header><div class="set-row"><span class="set-label">Cheaper model for lookups</span>${settingsSwitch('data-margin-pref="auto_model"', view.auto_model !== false, 'Cheaper model for lookups')}</div><p class="hint">Short lookups use the cheapest model of your writing AI. Everything else uses the model you chose, and a chat never moves down while it is open.</p></section>
     <section class="set-card felix-rhythm"><header><h3>How often he reads</h3></header><p class="hint" id="felix-rhythm" aria-live="polite">${esc(felixRhythm(view))}</p><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['fast', 'Fast'], ['regular', 'Regular'], ['slow', 'Slow']] })}</div>
@@ -1246,6 +1472,7 @@ document.addEventListener('change', async (e) => {
     const view = await api('/api/margin', { method: 'POST', body: { [key]: value } });
     marginRemember(view);
     if (state.view === 'settings') state.margin = view;
+    if (key === 'default_persona') felixPersonaRedraw(view, '[name="felix-persona"]:checked');
     const rhythm = $('#felix-rhythm');
     if (rhythm) rhythm.textContent = felixRhythm(view);
   } catch (error) {
@@ -1256,7 +1483,8 @@ document.addEventListener('change', async (e) => {
 
 
 document.addEventListener('pointerdown', (e) => {
-  if (!e.target.closest?.('.margin-mode-wrap')) marginModeMenu(false);
+  if (!e.target.closest?.('#margin-mode, #margin-mode-menu')) marginModeMenu(false);
+  if (!e.target.closest?.('#margin-persona, #margin-persona-menu')) marginPersonaMenu(false);
 });
 
 function marginShown() {

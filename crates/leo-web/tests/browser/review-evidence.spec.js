@@ -273,6 +273,7 @@ async function installSampler(page) {
         notes: document.querySelectorAll('.margin-note').length,
         words: document.querySelectorAll('.margin-note .ink-word').length,
         status: (document.querySelector('#margin-status') || {}).textContent || '',
+        waiting: Boolean(document.querySelector('.margin-waiting')),
         animations: animations.map((a) => {
           const target = a.effect.target;
           const klass = target.className && target.className.baseVal !== undefined ? target.className.baseVal : String(target.className);
@@ -310,7 +311,7 @@ test('R2/R14 a real edit in Reads along pauses, shows Reading, then reveals the 
   expect(pauseMs, `the read waited out a real pause (${pauseMs} ms), not an immediate Ask`).toBeGreaterThan(2500);
   expect(pauseMs).toBeLessThan(10500);
   expect(read.requested().blocks.join(' ')).toContain(QUOTE);
-  await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 5000 });
+  await expect(page.locator('.margin-waiting')).toBeVisible({ timeout: 5000 });
   read.mark('reading');
   await still(page, 'r2-reading');
   await installSampler(page);
@@ -347,9 +348,9 @@ test('R2/R14 a real edit in Reads along pauses, shows Reading, then reveals the 
   const length = Math.max(...inkAnimations.map((a) => a.duration + (a.delay || 0)));
   expect(length, `reveal lasts about 500 ms (${length})`).toBeGreaterThanOrEqual(400);
   expect(length).toBeLessThanOrEqual(700);
-  const readingAt = samples.find((s) => s.status === 'Reading…');
+  const readingAt = samples.find((s) => s.waiting);
   const inkAt = withInk[0].at;
-  expect(readingAt, 'Reading… was sampled before release').toBeTruthy();
+  expect(readingAt, 'the reading dots were sampled before release').toBeTruthy();
   expect(inkAt, 'the underline starts only after the read is released').toBeGreaterThan(read.timeline.marks.released - 50);
 
   await page.setViewportSize({ width: 1480, height: 900 });
@@ -388,7 +389,7 @@ test('R2 slowed arrival: the dotted underline reveals left to right in place', a
   const note = await prepareAlong(page, `Evidence slow ${unique()}`);
   const read = await startRead(page, note);
   await expect.poll(() => read.requested(), { timeout: 12000 }).not.toBeNull();
-  await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 5000 });
+  await expect(page.locator('.margin-waiting')).toBeVisible({ timeout: 5000 });
   await page.addStyleTag({ content: '.line-edit { caret-color: transparent !important; }' });
   const block = await page.locator('#doc .blk').last().boundingBox();
   const clip = { x: Math.max(0, block.x - 4), y: Math.max(0, block.y - 4), width: Math.min(1600 - Math.max(0, block.x - 4), block.width + 8), height: Math.min(890 - block.y, block.height + 14) };
@@ -462,17 +463,17 @@ test('R2 an interrupted read never draws on another note and returns to its own'
   const b = await createNote(page, `Evidence interrupt B ${unique()}`, 'Another note that nobody reads along.');
   const read = await startRead(page, a);
   await expect.poll(() => read.requested(), { timeout: 12000 }).not.toBeNull();
-  await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 5000 });
+  await expect(page.locator('.margin-waiting')).toBeVisible({ timeout: 5000 });
   await page.evaluate((id) => { location.hash = `#/n/${id}`; }, b.id);
   await expect(page.locator('#title')).toHaveText(b.title);
-  await expect(page.locator('#margin-status')).not.toHaveText('Reading…');
+  await expect(page.locator('.margin-waiting')).toHaveCount(0);
   await still(page, 'r2-interrupt-other-note');
   read.release();
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${a.id}/margin`)).json()).threads.length, { timeout: 15000 }).toBe(1);
   await page.waitForTimeout(1200);
   expect(await page.locator('.margin-note').count(), 'the late answer is not drawn on the note that is open now').toBe(0);
   expect(await page.locator('.margin-ink .squiggle').count()).toBe(0);
-  await expect(page.locator('#margin-status')).not.toHaveText('Reading…');
+  await expect(page.locator('.margin-waiting')).toHaveCount(0);
   await page.evaluate((id) => { location.hash = `#/n/${id}`; }, a.id);
   await expect(page.locator('.margin-note .margin-felix')).toContainText(ANSWER, { timeout: 10000 });
   await still(page, 'r2-interrupt-back');
@@ -488,7 +489,7 @@ for (const interaction of ['edit', 'chat']) test(`R2 a pending read survives ${i
     const note = await prepareAlong(page, `Evidence ${interaction} ${unique()}`);
     const read = await startRead(page, note);
     await expect.poll(() => read.requested(), { timeout: 12000 }).not.toBeNull();
-    await expect(page.locator('#margin-status')).toHaveText('Reading…');
+    await expect(page.locator('.margin-waiting')).toBeVisible();
     if (interaction === 'edit') {
       await read.area.pressSequentially(' Revised again.');
       await expect(page.locator('#save-state')).toHaveText('Saved');
@@ -522,7 +523,7 @@ test('R2/R14 Reduced Motion and forced colors keep the underline and answer comp
   const note = await prepareAlong(page, `Evidence reduced ${unique()}`);
   const read = await startRead(page, note);
   await expect.poll(() => read.requested(), { timeout: 12000 }).not.toBeNull();
-  await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 5000 });
+  await expect(page.locator('.margin-waiting')).toBeVisible({ timeout: 5000 });
   await installSampler(page);
   read.release();
   await expect(page.locator('.margin-note .margin-felix')).toContainText(ANSWER, { timeout: 12000 });

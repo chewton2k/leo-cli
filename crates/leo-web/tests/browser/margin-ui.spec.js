@@ -37,6 +37,65 @@ test('note reading modes sit beside the save state, work in both orders and reta
   await expect(page.getByRole('menu', { name: 'Note reading mode' })).toBeHidden();
 });
 
+test('hovering an underlined passage lights its margin note', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const quote = 'The password is stored as plain text.';
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Hover link', body: `Opening words.\n\n${quote} More words after it.` } })).json();
+  expect((await page.request.post(`/api/notes/${note.id}/margin/threads`, { data: { version: note.version, quote, question: 'Why?' } })).ok()).toBe(true);
+  await page.goto(`/#/n/${note.id}`);
+  const card = page.locator('.margin-note');
+  await expect(card).toBeVisible();
+  await expect(card).not.toHaveAttribute('data-active', '');
+  const line = await page.locator('.margin-ink .squiggle').first().boundingBox();
+  await page.mouse.move(line.x + line.width / 2, line.y - 6);
+  await expect(card).toHaveAttribute('data-active', '');
+  await expect.poll(() => card.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+  await page.mouse.move(5, 5);
+  await expect(card).not.toHaveAttribute('data-active', '');
+});
+
+test('a note keeps its own persona, and a persona made in Settings joins the note menu', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Persona pick', body: 'Words about a passage.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  const button = page.locator('#margin-persona');
+  await expect(button).toHaveText('Reader');
+  await button.click();
+  const menu = page.getByRole('menu', { name: 'Who reads this note' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitemradio')).toHaveText([/Reader/, /Critic/, /Encourager/]);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(button).toHaveText('Critic');
+  await expect(menu).toBeHidden();
+  await page.reload();
+  await expect(button).toHaveText('Critic');
+  expect((await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).persona).toBe('critic');
+  await button.click();
+  await page.getByRole('menuitem', { name: 'New persona' }).click();
+  await expect(page).toHaveURL(/#\/settings\/felix/);
+  const form = page.locator('#felix-persona-card form');
+  await form.getByLabel('Name').fill('Lab review');
+  await form.getByLabel('What should he look for?').fill('Check each claim against its evidence.');
+  await form.getByRole('button', { name: 'Save' }).click();
+  const tiles = page.getByRole('radiogroup', { name: 'Who reads your notes' });
+  await expect(tiles.locator('.persona-tile')).toHaveText([/Reader/, /Critic/, /Encourager/, /Lab review/, /New/]);
+  await tiles.getByRole('radio', { name: 'Lab review' }).check();
+  await expect(page.locator('#felix-persona-card .persona-line')).toContainText('Edit');
+  await page.getByRole('button', { name: 'See details' }).click();
+  await expect(page.locator('.persona-details')).toHaveText('Check each claim against its evidence.');
+  await page.goto(`/#/n/${note.id}`);
+  await button.click();
+  await expect(menu.getByRole('menuitemradio')).toHaveText([/Reader/, /Critic/, /Encourager/, /Lab review/]);
+  await page.keyboard.press('Escape');
+  await page.goto('/#/settings/felix');
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await page.getByRole('button', { name: 'Delete' }).click();
+  await page.getByRole('button', { name: 'Delete for good' }).click();
+  await expect(tiles.locator('.persona-tile')).toHaveText([/Reader/, /Critic/, /Encourager/, /New/]);
+  await expect(tiles.getByRole('radio', { name: 'Reader' })).toBeChecked();
+  await page.request.post('/api/margin', { data: { default_persona: 'reader' } });
+});
+
 test('compact margin anchors stay outside the passage and open real persisted replies without a mascot', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const quote = 'The password is stored as plain text.';
@@ -77,12 +136,18 @@ test('a reading mode picked on a new note is saved with the note', async ({ page
   await page.waitForTimeout(300);
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
   await expect(button).toHaveText('Felix: reads along');
+  const persona = page.locator('#margin-persona');
+  await persona.click();
+  await page.getByRole('menuitemradio', { name: /Encourager/ }).click();
+  await expect(persona).toHaveText('Encourager');
   await page.locator('#title').click();
   await page.keyboard.type('Picked early');
   await expect(page).toHaveURL(/#\/n\//);
   const id = page.url().match(/#\/n\/([^/?]+)/)[1];
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).mode).toBe('along');
+  await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).persona).toBe('encourager');
   await expect(button).toHaveText('Felix: reads along');
+  await expect(page.locator('#title')).toBeFocused();
 });
 
 test('a drag across page chrome paints nothing, fields stay selectable once focused, and the mode menu clears a selection', async ({ page }) => {

@@ -674,6 +674,17 @@ target. Check the page sequence after loading preferences.
   so they keep reading along. An unsaved note shows the default and keeps a picked mode
   in `marginPage.wanted`; the created hook (`marginCreated`) loads the note's margin and
   POSTs it (2026-11-06, the user's call).
+- Personas (2026-11-07, the user's call): margin writing (read-along, Read through, Ask Felix on a
+  selection, margin replies) takes a reading style; Felix chat never does. Built-ins Reader (adds
+  nothing), Critic, Encourager (`margin::BUILTIN_PERSONAS`); up to `MOST_PERSONAS` (8) of the user's own in
+  `Prefs.personas` (name ≤32, instructions ≤500, an icon from `PERSONA_ICONS`, ids `c` + 8 hex made by the
+  engine). Per note in `margin_personas` (forgotten and swept with the note, not exported), else
+  `Prefs.default_persona`, else Reader; a deleted persona falls back the same way. `margin::voiced` puts the
+  style after the prompt's first paragraph, so the note-is-not-instructions and format rules come last; asks
+  and replies are told to answer directly first. Page: `#margin-persona` beside the mode menu (rows of icon,
+  name, short line; New persona opens Settings → Felix with the form started), Settings → Felix → Who reads
+  your notes (icon tiles, one line for the chosen one, See details shows the real instruction text, New/Edit/
+  Delete in place).
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
   sends changed blocks after a pause (fast 2 s, regular 4 s, slow 8 s). Silence is the normal answer:
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
@@ -688,8 +699,11 @@ target. Check the page sequence after loading preferences.
   read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
   A refused read waits for the next edit; a stale-version refusal resets the page's
   retry delay to the normal typing pause, while provider cooldowns stay bounded.
-  No comment this time clears after four seconds or the next edit. The model's quote must be in the note now,
-  or the note is dropped.
+  The model's quote must be in the note now, or the note is dropped. There is no Reading… status
+  (2026-11-07, the user's call): 200 ms into a read, dots (`.margin-waiting`, never a `.margin-note`, never in
+  `threads`) sit in the margin beside the last changed block (`doc.blockAt`), or its gutter mark pulses in Marks only;
+  a comment replaces them (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
+  failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path.
 - Read through (2026-11-08, the user's call): `#margin-through` beside the mode button reads the whole saved note once, in either mode and on any note. It is free: it never checks or spends Reads a day. `margin.js` `passes` cuts the note into parts of at most 6 blocks and 8,000 characters (blocks of 20+ characters without an open thread; blocks over 4,000 are cut); a note with more than 8 parts keeps 8 spread evenly through it (`spread: true`, status "This note is long, so Felix read parts from all through it."). The page POSTs each part to `.../margin/analyze` (`{version, blocks, most}`) and glows the part being read. The engine keeps the version, streaming-reply, overlap and `MOST_OPEN` guards and skips the along, `edited`, gap and daily checks. A part saves up to `MOST_PER_PASS` (3) `source: "read"` threads through `placed` (`THROUGH_SYSTEM`, `parsed_many`, which checks `notes` first and still takes a single object). A run ends at `MOST_THROUGH` (12) notes, on Stop, or on a refusal or failure; read-along waits while it runs. Threads are held until the run ends, then revealed together top to bottom over the note: 80 ms apart, the whole stagger capped at 640 ms; Reduced Motion shows them at once, still. Leaving mid-run draws nothing. Undo DELETEs the run's threads (`DELETE .../threads/{id}`): 409 `replying` while Felix is answering that thread, 409 `replied` once you have replied.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
@@ -740,7 +754,9 @@ target. Check the page sequence after loading preferences.
   so prefix caches still work, and warm sessions get it only when it changes
   (`Warm.margin`).
 - Layout (`margin.js`, pure): `find` (exact, then between prefix and suffix of at
-  least 6 characters, or an edge of the note, then lost), `stack`, `sides`,
+  least 6 characters, or an edge of the note, then lost), `stack`, `sides` (Both margins alternates: a
+  free note takes the side whose last note ends higher, ties right; `marginPage.sides` keeps each note's
+  side across redraws so a new note never moves placed ones; reset on leave and outside Both),
   `arrangement`. Both margins is the default; saved choices still win. Right margin needs 928 px of column, Both 1,192 px. The margin is
   reserved up front on every note, in both modes, whatever its threads
   (2026-11-04, the orchestrator's decision): `.note-columns[data-margin]` pads the
@@ -758,7 +774,7 @@ target. Check the page sequence after loading preferences.
   click and close handlers from dismissing it. Each note remains a labelled article with an
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
   mascot on the text. Straight dotted underlines reveal in about 500 ms; there is
-  no default tether. Reduced Motion stills the reveal and word arrivals.
+  no default tether. Hovering a passage washes its margin note with the passage's accent (`.margin-note[data-active]`). Reduced Motion stills the reveal and word arrivals.
 - Open replies have no card surface or boxed textarea outline. Their retained
   controls expand/collapse over 240 ms, become inert/aria-hidden on close and snap
   under Reduced Motion. Diagram size changes relayout the bounded thread stack.

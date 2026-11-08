@@ -107,7 +107,20 @@ test('stacking: nothing goes above the floor, even with an open note', () => {
 
 test('both margins: a crowded right side spills left', () => {
   const on = M.sides([{ id: 'a', want: 0, height: 100 }, { id: 'b', want: 10, height: 100 }, { id: 'c', want: 20, height: 100 }, { id: 'd', want: 400, height: 10 }]);
-  assert.deepEqual(on, { a: 'right', b: 'left', c: 'right', d: 'right' });
+  assert.deepEqual(on, { a: 'right', b: 'left', c: 'right', d: 'left' });
+});
+
+test('both margins: spaced notes alternate right, left, right', () => {
+  const on = M.sides([{ id: 'a', want: 0, height: 80 }, { id: 'b', want: 300, height: 80 }, { id: 'c', want: 600, height: 80 }, { id: 'd', want: 900, height: 80 }]);
+  assert.deepEqual(on, { a: 'right', b: 'left', c: 'right', d: 'left' });
+});
+
+test('both margins: a new note never moves notes already placed', () => {
+  const items = [{ id: 'a', want: 0, height: 80 }, { id: 'b', want: 300, height: 80 }, { id: 'c', want: 600, height: 80 }];
+  const before = M.sides(items);
+  const after = M.sides([...items, { id: 'new', want: 150, height: 80 }], 16, before);
+  for (const id of ['a', 'b', 'c']) assert.equal(after[id], before[id], id);
+  assert.equal(M.sides([{ id: 'a', want: 0, height: 80 }], 16, { a: 'left', gone: 'right' }).a, 'left');
 });
 
 test('layout: the margin is reserved up front, with or without threads', () => {

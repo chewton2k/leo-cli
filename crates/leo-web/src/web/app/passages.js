@@ -42,7 +42,7 @@ document.addEventListener('mousedown', (e) => {
 const KEEP_SELECTION = '[data-keep-selection], a, button, input, textarea, select, summary, [role="button"], [contenteditable], .pane-resize, .chat-resize, .source-grip, .cal-grip';
 
 document.addEventListener('pointerdown', (e) => {
-  if (!(e.target instanceof Element) || (e.target.closest(KEEP_SELECTION) && !e.target.closest('#margin-mode, #margin-mode-menu'))) return;
+  if (!(e.target instanceof Element) || (e.target.closest(KEEP_SELECTION) && !e.target.closest('#margin-mode, #margin-mode-menu, #margin-persona, #margin-persona-menu'))) return;
   for (let node = e.target; node; node = node.parentElement) {
     const pick = getComputedStyle(node).webkitUserSelect;
     if (pick && pick !== 'auto') {

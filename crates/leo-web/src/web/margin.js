@@ -107,11 +107,14 @@
     return Object.fromEntries(sorted.map((item, i) => [item.id, tops[i]]));
   }
 
-  function sides(items, gap = 16) {
+  function sides(items, gap = 16, before = {}) {
     const ends = { left: -Infinity, right: -Infinity };
     const out = {};
     for (const item of [...items].sort((a, b) => a.want - b.want)) {
-      const side = ends.right <= item.want ? 'right' : ends.left <= item.want ? 'left' : ends.right <= ends.left ? 'right' : 'left';
+      const kept = before[item.id];
+      const free = (side) => ends[side] <= item.want;
+      const sooner = ends.right <= ends.left ? 'right' : 'left';
+      const side = kept && free(kept) ? kept : free('right') && free('left') ? sooner : free('right') ? 'right' : free('left') ? 'left' : sooner;
       out[item.id] = side;
       ends[side] = Math.max(ends[side], item.want) + item.height + gap;
     }

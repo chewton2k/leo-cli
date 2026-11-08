@@ -3819,9 +3819,10 @@ test.describe('passages', () => {
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
     await area.pressSequentially('\n\nThen login just checks if it matches, I think');
-    await expect(page.locator('#margin-status')).toHaveText('Reading…', { timeout: 9000 });
+    await expect(page.locator('.margin-waiting')).toBeVisible({ timeout: 9000 });
     await expect(page.locator('.margin-note')).toBeVisible({ timeout: 9000 });
-    await expect(page.locator('.margin-reading')).toHaveCount(0);
+    await expect(page.locator('.margin-waiting')).toHaveCount(0);
+    await expect(page.locator('#margin-status')).toHaveText('');
     expect(reads).toHaveLength(1);
     expect(reads[0].blocks).toEqual(['Then login just checks if it matches, I think']);
     await expect(area).toBeFocused();

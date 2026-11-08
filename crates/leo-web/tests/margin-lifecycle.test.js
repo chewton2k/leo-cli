@@ -16,7 +16,7 @@ function harness() {
     enc: encodeURIComponent, Locked: class extends Error {},
     setTimeout: (fn, delay) => { const id = ++next; fn.delay = delay; timers.set(id, fn); return id; },
     clearTimeout: (id) => timers.delete(id), cancelAnimationFrame() {},
-    $: () => null, fail: (e) => { throw e; }, ON_MAC: true, MOTION_MS: 180, POP_FROM: .95,
+    $: () => null, svg: (paths) => paths, stillMotion: () => false, fail: (e) => { throw e; }, ON_MAC: true, MOTION_MS: 180, POP_FROM: .95,
     esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '', settingsSwitch: () => '',
   };
   vm.createContext(context);
@@ -55,7 +55,7 @@ test('read completion distinguishes silence from failure without losing failed b
     await pending;
     assert.equal(h.state.reading, false);
     assert.equal(h.state.baseline.length, failed ? 0 : 1);
-    assert.equal(h.state.status, failed ? 'Could not read this change. Check Writing AI and try again.' : 'No comment this time');
+    assert.equal(h.state.status, failed ? 'Could not read this change. Check Writing AI and try again.' : '');
   }
 });
 
@@ -123,51 +123,94 @@ test('a refusal with a reason is never mistaken for a stale version', async () =
   }
 });
 
-async function silent() {
-  const h = harness();
-  const pending = h.context.marginRead(h.state.s);
-  await new Promise(setImmediate);
-  h.settle().resolve({ note: null });
-  await pending;
-  return h;
+function placeholder(h) {
+  const el = { removed: false, leaving: false, classList: { add: (name) => { el.leaving = name === 'leaving'; } }, remove() { el.removed = true; } };
+  h.state.readingAt = 0;
+  h.state.readingEl = el;
+  return el;
 }
 
-test('No comment this time clears after its bounded timer', async () => {
-  const h = await silent();
-  assert.equal(h.state.status, 'No comment this time');
-  assert.ok(h.timers.has(h.state.statusTimer));
-  h.timers.get(h.state.statusTimer)();
+async function finish(h, answer) {
+  const pending = h.context.marginRead(h.state.s);
+  await new Promise(setImmediate);
+  const el = placeholder(h);
+  if (answer instanceof Error) h.settle().reject(answer);
+  else h.settle().resolve(answer);
+  await pending;
+  return el;
+}
+
+test('silence fades the reading dots and leaves no status', async () => {
+  const h = harness();
+  const el = await finish(h, { note: null });
   assert.equal(h.state.status, '');
+  assert.equal(h.state.readingAt, null);
+  assert.equal(h.state.readingEl, null);
+  assert.equal(el.leaving, true);
+  assert.equal(el.removed, false);
+  const fade = [...h.timers.values()].find((fn) => fn.delay === 120);
+  fade();
+  assert.equal(el.removed, true);
 });
 
-test('the bounded timer leaves a newer status, another note and a departed page alone', async () => {
-  for (const change of ['newer', 'other note', 'left']) {
-    const h = await silent();
+test('a failed or refused read drops the dots at once and keeps its status', async () => {
+  for (const answer of [{ note: null, failed: true }, Object.assign(new Error('refused'), { data: { why: 'daily' } })]) {
+    const h = harness();
+    const el = await finish(h, answer);
+    assert.equal(el.removed, true);
+    assert.equal(el.leaving, false);
+    assert.equal(h.state.readingEl, null);
+    assert.notEqual(h.state.status, '');
+  }
+});
+
+test('a comment replaces the dots without a fade', async () => {
+  const h = harness();
+  const el = await finish(h, { note: { id: 'n1', quote: 'changed paragraph', messages: [{ from: 'felix', text: 'Hi' }] } });
+  assert.equal(el.removed, true);
+  assert.equal(el.leaving, false);
+  assert.equal(h.state.threads.length, 1);
+  assert.ok(h.state.arriving.has('n1'));
+});
+
+test('leaving the note forgets the reading dots and remembered sides', () => {
+  const h = harness();
+  placeholder(h);
+  h.state.sides = { a: 'left' };
+  h.context.marginLeave();
+  assert.equal(h.state.readingAt, null);
+  assert.equal(h.state.readingEl, null);
+  assert.equal(Object.keys(h.state.sides).length, 0);
+});
+
+test('a brief status clears after its bounded timer, but never a newer status, another note or a departed page', () => {
+  for (const change of ['none', 'newer', 'other note', 'left']) {
+    const h = harness();
+    h.context.marginSetStatus('Nothing to add this time', true);
     const timer = h.timers.get(h.state.statusTimer);
     if (change === 'newer') h.context.marginSetStatus('Paused for today');
     else if (change === 'other note') h.state.s = h.session();
-    else h.context.marginLeave();
-    const status = h.state.status;
+    else if (change === 'left') h.context.marginLeave();
+    const status = change === 'none' ? '' : h.state.status;
     timer();
     assert.equal(h.state.status, status, change);
   }
 });
 
-test('a new edit clears No comment this time but not a failure', async () => {
-  const h = await silent();
+test('a new edit clears a brief status but not a failure', () => {
+  const h = harness();
   h.state.loaded = true;
+  h.context.marginSetStatus('Nothing to add this time', true);
   h.context.marginEdited(h.state.s);
   assert.equal(h.state.status, '');
+});
+
+test('a new edit leaves a failure status alone', () => {
+  const h = harness();
+  h.state.loaded = true;
   h.context.marginSetStatus('Could not read this change. Check Writing AI and try again.');
   h.context.marginEdited(h.state.s);
   assert.equal(h.state.status, 'Could not read this change. Check Writing AI and try again.');
-});
-
-test('leaving the note drops the pending status timer', async () => {
-  const h = await silent();
-  const timer = h.state.statusTimer;
-  h.context.marginLeave();
-  assert.equal(h.timers.has(timer), false);
 });
 
 test('When you ask says how to ask, with the real shortcut and no promise of automatic reading', () => {
