@@ -73,6 +73,13 @@ test('a note keeps its own persona, and a persona made in Settings joins the not
   await button.click();
   await page.getByRole('menuitem', { name: 'New persona' }).click();
   await expect(page).toHaveURL(/#\/settings\/felix/);
+  await page.locator('#felix-persona-card form').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page).toHaveURL(/#\/settings\/felix/);
+  await expect(page.getByRole('radiogroup', { name: 'Who reads your notes' })).toBeVisible();
+  await page.goto(`/#/n/${note.id}`);
+  await button.click();
+  await page.getByRole('menuitem', { name: 'New persona' }).click();
+  await expect(page).toHaveURL(/#\/settings\/felix/);
   const form = page.locator('#felix-persona-card form');
   await form.getByLabel('Name').fill('Lab review');
   await form.getByLabel('What should he look for?').fill('Check each claim against its evidence.');
