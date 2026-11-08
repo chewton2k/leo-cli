@@ -354,6 +354,11 @@ function openFolder(el) {
   const path = el.dataset.dir;
   if (el.closest('.side-tree')) {
     side.target = path;
+    const open = $('#side .side-note.on');
+    if (open) {
+      open.classList.replace('on', 'open');
+      open.querySelector('.side-pill')?.remove();
+    }
     twistFolder(path, el);
     return;
   }

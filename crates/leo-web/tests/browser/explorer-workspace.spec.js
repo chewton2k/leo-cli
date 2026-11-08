@@ -66,10 +66,11 @@ test('workspace and legacy folder links reveal folders without a library or a cr
 
 test('a note and a folder never both look selected', async ({ page }) => {
   const dir = await createFolder(page);
+  const other = await createFolder(page);
   const note = await createNote(page, dir);
   await openNote(page, note);
   await expect(noteRow(page, note.id)).toHaveClass(/\bon\b/);
-  await folderRow(page, dir).click();
+  await folderRow(page, other).click();
   await expect(noteRow(page, note.id)).toHaveClass(/\bopen\b/);
   await expect(noteRow(page, note.id)).not.toHaveClass(/\bon\b/);
   await expect(page.locator('#side .side-tree .on')).toHaveCount(1);
