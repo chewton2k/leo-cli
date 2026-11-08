@@ -1609,3 +1609,123 @@ async fn forgetting_a_thread_deletes_it_unless_you_replied() {
     );
     engine.stop().await;
 }
+
+#[tokio::test]
+async fn a_persona_shapes_the_system_prompt_and_reader_leaves_it_alone() {
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::clone(&seen);
+    let writer: Writer = Arc::new(move |system, _, _| {
+        kept.lock().unwrap().push(system.to_string());
+        Ok("{}".to_string())
+    });
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Styled", PASSAGE).await;
+    let path = format!("/api/notes/{id}/margin");
+    assert_eq!(engine.get(&path).await.1["persona"], "reader");
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    assert_eq!(seen.lock().unwrap()[0], margin::READ_SYSTEM);
+    let (status, set) = engine
+        .post(&path, serde_json::json!({ "persona": "critic" }))
+        .await;
+    assert_eq!(
+        (status, &set),
+        (200, &serde_json::json!({ "persona": "critic" }))
+    );
+    assert_eq!(engine.get(&path).await.1["persona"], "critic");
+    assert_eq!(engine.get(&path).await.1["mode"], "along");
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    let system = seen.lock().unwrap()[1].clone();
+    assert!(system.contains("demanding critic"));
+    assert!(system.find("demanding critic") < system.find("Reply with JSON only"));
+    let (status, set) = engine
+        .post(&path, serde_json::json!({ "persona": "reader" }))
+        .await;
+    assert_eq!(
+        (status, &set),
+        (200, &serde_json::json!({ "persona": "reader" }))
+    );
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    assert_eq!(seen.lock().unwrap()[2], margin::THROUGH_SYSTEM);
+    assert_eq!(engine.post(&path, serde_json::json!({})).await.0, 400);
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "mode": "bogus" }))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "persona": "nobody" }))
+            .await
+            .0,
+        400
+    );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn custom_personas_are_listed_and_the_default_follows_the_list() {
+    let (engine, _) = reading("{}").await;
+    let (_, view) = engine.get("/api/margin").await;
+    assert_eq!(view["default_persona"], "reader");
+    assert_eq!(view["most_personas"], margin::MOST_PERSONAS);
+    assert_eq!(view["personas"].as_array().unwrap().len(), 3);
+    assert_eq!(view["personas"][0]["details"], margin::READER_DETAILS);
+    assert_eq!(view["personas"][0]["custom"], false);
+    let (status, view) = engine
+        .post(
+            "/api/margin",
+            serde_json::json!({ "personas": [{ "name": " Chemist ", "icon": "flask", "says": "Check the chemistry." }] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let mine = &view["personas"][3];
+    assert_eq!(
+        (mine["name"].as_str(), mine["custom"].as_bool()),
+        (Some("Chemist"), Some(true))
+    );
+    assert_eq!(mine["details"], "Check the chemistry.");
+    assert_eq!(mine["line"], "");
+    let id = mine["id"].as_str().unwrap().to_string();
+    let (status, view) = engine
+        .post("/api/margin", serde_json::json!({ "default_persona": id }))
+        .await;
+    assert_eq!(
+        (status, &view["default_persona"]),
+        (200, &serde_json::json!(id))
+    );
+    let (_, made) = engine
+        .post(
+            "/api/notes",
+            serde_json::json!({ "title": "N", "body": "" }),
+        )
+        .await;
+    let note = made["id"].as_str().unwrap();
+    assert_eq!(
+        engine.get(&format!("/api/notes/{note}/margin")).await.1["persona"],
+        serde_json::json!(id)
+    );
+    for bad in [
+        serde_json::json!({ "default_persona": "nobody" }),
+        serde_json::json!({ "personas": [{ "name": "", "icon": "flask", "says": "x" }] }),
+    ] {
+        assert_eq!(engine.post("/api/margin", bad).await.0, 400);
+    }
+    let (status, view) = engine
+        .post("/api/margin", serde_json::json!({ "personas": [] }))
+        .await;
+    assert_eq!(
+        (status, &view["default_persona"]),
+        (200, &serde_json::json!("reader"))
+    );
+    assert_eq!(
+        engine.get(&format!("/api/notes/{note}/margin")).await.1["persona"],
+        "reader"
+    );
+    engine.stop().await;
+}

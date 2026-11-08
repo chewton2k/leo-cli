@@ -134,6 +134,10 @@ CREATE TABLE IF NOT EXISTS margin_modes (
     note TEXT PRIMARY KEY,
     mode TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS margin_personas (
+    note TEXT PRIMARY KEY,
+    persona TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS margin_state (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL
