@@ -56,7 +56,11 @@ try {
     [IO.File]::WriteAllText($linkTemp, $content, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $linkTemp -Destination $link -Force
     $old = Join-Path $BinDir 'leo.exe'
-    if (-not $old.Equals($cli, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $old)) { Remove-Item -LiteralPath $old -Force }
+    if (-not $old.Equals($cli, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $old)) {
+        try { Remove-Item -LiteralPath $old -Force }
+        catch { Move-Item -LiteralPath $old -Destination (Join-Path $BinDir (".leo-old-" + [Guid]::NewGuid().ToString('N') + '.exe')) -Force }
+    }
+    Get-ChildItem -LiteralPath $BinDir -Filter '.leo-old-*.exe' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     $config = if ($env:LEO_HOME) { $env:LEO_HOME } else { Join-Path $env:APPDATA 'leo' }
     New-Item -ItemType Directory -Path $config -Force | Out-Null
     $record = Join-Path $config 'app-cli-dir'
