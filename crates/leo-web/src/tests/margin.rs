@@ -1609,3 +1609,169 @@ async fn forgetting_a_thread_deletes_it_unless_you_replied() {
     );
     engine.stop().await;
 }
+
+#[tokio::test]
+async fn a_persona_shapes_the_system_prompt_and_reader_leaves_it_alone() {
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::clone(&seen);
+    let writer: Writer = Arc::new(move |system, _, _| {
+        kept.lock().unwrap().push(system.to_string());
+        Ok("{}".to_string())
+    });
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Styled", PASSAGE).await;
+    let path = format!("/api/notes/{id}/margin");
+    assert_eq!(engine.get(&path).await.1["persona"], "reader");
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    assert_eq!(seen.lock().unwrap()[0], margin::READ_SYSTEM);
+    let (status, set) = engine
+        .post(&path, serde_json::json!({ "persona": "critic" }))
+        .await;
+    assert_eq!(
+        (status, &set),
+        (200, &serde_json::json!({ "persona": "critic" }))
+    );
+    assert_eq!(engine.get(&path).await.1["persona"], "critic");
+    assert_eq!(engine.get(&path).await.1["mode"], "along");
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    let system = seen.lock().unwrap()[1].clone();
+    assert!(system.contains("demanding critic"));
+    assert!(system.find("demanding critic") < system.find("Reply with JSON only"));
+    let (status, set) = engine
+        .post(&path, serde_json::json!({ "persona": "reader" }))
+        .await;
+    assert_eq!(
+        (status, &set),
+        (200, &serde_json::json!({ "persona": "reader" }))
+    );
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    assert_eq!(seen.lock().unwrap()[2], margin::THROUGH_SYSTEM);
+    assert_eq!(engine.post(&path, serde_json::json!({})).await.0, 400);
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "mode": "bogus" }))
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "persona": "nobody" }))
+            .await
+            .0,
+        400
+    );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn asks_and_replies_take_the_note_persona_and_only_a_real_question_is_told_to_answer_first() {
+    let systems = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::clone(&systems);
+    let streamer: crate::chat::Streamer = Arc::new(move |system, _, _, _, _, _| {
+        kept.lock().unwrap().push(system.to_string());
+        Ok(crate::chat::Reply::from("Nice work.".to_string()))
+    });
+    let engine = Engine::with(Powers {
+        toolless_chat: Some(streamer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Styled asks", PASSAGE).await;
+    let margin_path = format!("/api/notes/{id}/margin");
+    assert_eq!(
+        engine
+            .post(&margin_path, serde_json::json!({ "persona": "encourager" }))
+            .await
+            .0,
+        200
+    );
+    let (status, asked) = engine
+        .post(
+            &format!("{margin_path}/threads"),
+            serde_json::json!({ "version": version, "quote": PASSAGE, "question": "" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let thread = asked["id"].as_str().unwrap().to_string();
+    let reply = format!("{margin_path}/threads/{thread}/reply");
+    assert_eq!(
+        engine
+            .post(&reply, serde_json::json!({ "text": "Why?" }))
+            .await
+            .0,
+        200
+    );
+    let systems = systems.lock().unwrap().clone();
+    assert_eq!(systems.len(), 2);
+    assert!(systems.iter().all(|s| s.contains("encouraging mentor")));
+    assert!(!systems[0].contains("answer it directly first"));
+    assert!(systems[1].contains("answer it directly first"));
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn custom_personas_are_listed_and_the_default_follows_the_list() {
+    let (engine, _) = reading("{}").await;
+    let (_, view) = engine.get("/api/margin").await;
+    assert_eq!(view["default_persona"], "reader");
+    assert_eq!(view["most_personas"], margin::MOST_PERSONAS);
+    assert_eq!(view["personas"].as_array().unwrap().len(), 3);
+    assert_eq!(view["personas"][0]["details"], margin::READER_DETAILS);
+    assert_eq!(view["personas"][0]["custom"], false);
+    let (status, view) = engine
+        .post(
+            "/api/margin",
+            serde_json::json!({ "personas": [{ "name": " Chemist ", "icon": "flask", "says": "Check the chemistry." }] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let mine = &view["personas"][3];
+    assert_eq!(
+        (mine["name"].as_str(), mine["custom"].as_bool()),
+        (Some("Chemist"), Some(true))
+    );
+    assert_eq!(mine["details"], "Check the chemistry.");
+    assert_eq!(mine["line"], "");
+    let id = mine["id"].as_str().unwrap().to_string();
+    let (status, view) = engine
+        .post("/api/margin", serde_json::json!({ "default_persona": id }))
+        .await;
+    assert_eq!(
+        (status, &view["default_persona"]),
+        (200, &serde_json::json!(id))
+    );
+    let (_, made) = engine
+        .post(
+            "/api/notes",
+            serde_json::json!({ "title": "N", "body": "" }),
+        )
+        .await;
+    let note = made["id"].as_str().unwrap();
+    assert_eq!(
+        engine.get(&format!("/api/notes/{note}/margin")).await.1["persona"],
+        serde_json::json!(id)
+    );
+    for bad in [
+        serde_json::json!({ "default_persona": "nobody" }),
+        serde_json::json!({ "personas": [{ "name": "", "icon": "flask", "says": "x" }] }),
+    ] {
+        assert_eq!(engine.post("/api/margin", bad).await.0, 400);
+    }
+    let (status, view) = engine
+        .post("/api/margin", serde_json::json!({ "personas": [] }))
+        .await;
+    assert_eq!(
+        (status, &view["default_persona"]),
+        (200, &serde_json::json!("reader"))
+    );
+    assert_eq!(
+        engine.get(&format!("/api/notes/{note}/margin")).await.1["persona"],
+        "reader"
+    );
+    engine.stop().await;
+}

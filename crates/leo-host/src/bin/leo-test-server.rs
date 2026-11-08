@@ -25,7 +25,15 @@ fn main() -> Result<()> {
     );
     let mut powers = leo_host::powers();
     if let Ok(reply) = std::env::var("LEO_TEST_FAKE_AI") {
-        powers.toolless = Some(std::sync::Arc::new(move |_, _, _| Ok(reply.clone())));
+        let pause = std::env::var("LEO_TEST_FAKE_AI_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or_default();
+        powers.toolless = Some(std::sync::Arc::new(move |_, _, _| {
+            std::thread::sleep(pause);
+            Ok(reply.clone())
+        }));
         powers.toolless_chat = Some(std::sync::Arc::new(|_, _, _, _, _, _| {
             Ok(leo_web::Reply::from(FAKE_ANSWER.to_string()))
         }));

@@ -43,7 +43,8 @@ pub(crate) struct StatusBody {
 
 #[derive(Deserialize)]
 pub(crate) struct ModeBody {
-    mode: String,
+    mode: Option<String>,
+    persona: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -54,10 +55,13 @@ pub(crate) struct PrefsBody {
     cap: Option<u32>,
     gap: Option<u32>,
     auto_model: Option<bool>,
+    default_persona: Option<String>,
+    personas: Option<Vec<margin::PersonaBody>>,
 }
 
 struct ReadFacts {
     along: bool,
+    voice: String,
     cap: u32,
     gap: u32,
     quotes: Vec<String>,
@@ -134,6 +138,7 @@ pub(crate) async fn note_margin(State(state): State<AppState>, Path(id): Path<St
     let view = blocking(move || {
         serde_json::json!({
             "mode": margin::mode_of(&chats, &id, note.created),
+            "persona": margin::persona_of(&chats, &id),
             "threads": margin::open_on(&chats, &id),
         })
     })
@@ -152,21 +157,68 @@ pub(crate) async fn set_note_mode(
     if let Err(refused) = open_note(&state, &id).await {
         return *refused;
     }
-    if !margin::valid_mode(&body.mode) {
+    if (body.mode.is_none() && body.persona.is_none())
+        || body.mode.as_deref().is_some_and(|m| !margin::valid_mode(m))
+    {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let chats = state.chats.clone();
-    let mode = body.mode.clone();
-    match blocking(move || margin::set_mode(&chats, &id, &mode)).await {
-        Ok(true) => Json(serde_json::json!({ "mode": body.mode })).into_response(),
-        Ok(false) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let (mode, persona) = (body.mode.clone(), body.persona.clone());
+    let done = blocking(move || {
+        if persona
+            .as_deref()
+            .is_some_and(|p| !margin::persona_known(&margin::prefs(&chats), p))
+        {
+            return StatusCode::BAD_REQUEST;
+        }
+        let saved = mode
+            .as_deref()
+            .is_none_or(|m| margin::set_mode(&chats, &id, m))
+            && persona
+                .as_deref()
+                .is_none_or(|p| margin::set_persona(&chats, &id, p));
+        if saved {
+            StatusCode::OK
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    })
+    .await;
+    match done {
+        Ok(StatusCode::OK) => {
+            let mut view = serde_json::Map::new();
+            if let Some(mode) = body.mode {
+                view.insert("mode".into(), mode.into());
+            }
+            if let Some(persona) = body.persona {
+                view.insert("persona".into(), persona.into());
+            }
+            Json(view).into_response()
+        }
+        Ok(code) => code.into_response(),
         Err(refused) => *refused,
     }
 }
 
 fn settings_view(state: &AppState) -> serde_json::Value {
     let prefs = margin::prefs(&state.chats);
+    let builtin = margin::BUILTIN_PERSONAS.iter().map(|(id, name, icon, line, says)| {
+        let details = if *id == "reader" {
+            margin::READER_DETAILS
+        } else {
+            says
+        };
+        serde_json::json!({ "id": id, "name": name, "icon": icon, "line": line, "details": details, "custom": false })
+    });
+    let custom = prefs.personas.iter().map(|p| {
+        serde_json::json!({ "id": p.id, "name": p.name, "icon": p.icon, "line": "", "details": p.says, "custom": true })
+    });
+    let personas: Vec<serde_json::Value> = builtin.chain(custom).collect();
     serde_json::json!({
+        "default_persona": prefs.default_persona,
+        "personas": personas,
+        "persona_icons": margin::PERSONA_ICONS,
+        "most_personas": margin::MOST_PERSONAS,
         "default_mode": prefs.default_mode,
         "layout": prefs.layout,
         "pace": prefs.pace,
@@ -224,6 +276,18 @@ fn changed(mut prefs: Prefs, body: PrefsBody) -> Option<Prefs> {
     }
     if let Some(auto_model) = body.auto_model {
         prefs.auto_model = auto_model;
+    }
+    if let Some(list) = body.personas {
+        prefs.personas = margin::valid_personas(list)?;
+        if !margin::persona_known(&prefs, &prefs.default_persona) {
+            prefs.default_persona = margin::reader_id();
+        }
+    }
+    if let Some(persona) = body.default_persona {
+        if !margin::persona_known(&prefs, &persona) {
+            return None;
+        }
+        prefs.default_persona = persona;
     }
     Some(prefs)
 }
@@ -328,6 +392,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
             let prefs = margin::prefs(&held);
             ReadFacts {
                 along: margin::mode_of(&held, &id, created) == "along",
+                voice: margin::voice_of(&prefs, &margin::persona_of(&held, &id)),
                 cap: prefs.cap,
                 gap: prefs.gap,
                 quotes: margin::open_on(&held, &id)
@@ -436,12 +501,13 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     } else {
         (margin::READ_SYSTEM, "changed_text", margin::READ_TOKENS)
     };
+    let system = margin::voiced(system, &facts.voice, false);
     let user = margin::read_prompt(&note.title, &blocks, tag);
     let answer = tokio::time::timeout(
         margin::READ_LIMIT,
         tokio::task::spawn_blocking(move || {
             let _reading = reading;
-            writer(system, &user, tokens)
+            writer(&system, &user, tokens)
         }),
     )
     .await;
@@ -603,12 +669,16 @@ async fn answered(
         )));
     };
     let user = margin::reply_prompt(&note.title, &note.body, thread, question);
+    let (chats, held) = (state.chats.clone(), thread.note.clone());
+    let asked = question != margin::UNSPOKEN;
     let started = Instant::now();
     let usage = std::sync::Arc::clone(&state.usage);
     let reply = blocking(move || {
         let _foreground = foreground;
+        let prefs = margin::prefs(&chats);
+        let voice = margin::voice_of(&prefs, &margin::persona_of(&chats, &held));
         let reply = streamer(
-            margin::REPLY_SYSTEM,
+            &margin::voiced(margin::REPLY_SYSTEM, &voice, asked),
             &user,
             margin::REPLY_TOKENS,
             &mut |_| {},

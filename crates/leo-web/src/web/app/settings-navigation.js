@@ -46,6 +46,7 @@ const SETTINGS_INDEX = [
   { section: 'writing', id: 'writing-test', label: 'Test the AI', keywords: 'check connection working try' },
   { section: 'writing', id: 'writing-activity', label: 'Felix activity', keywords: 'usage tokens cache requests tools calls timing processes running codex claude' },
   { section: 'felix', id: 'felix-new-notes', label: 'New notes start', keywords: 'felix reads along read along when you ask margin mode privacy' },
+  { section: 'felix', id: 'felix-persona', label: 'Who reads your notes', keywords: 'felix persona personas reader critic encourager style tone custom your own margin' },
   { section: 'felix', id: 'felix-where', label: 'Where notes appear', keywords: 'felix margin both right marks only layout' },
   { section: 'felix', id: 'felix-auto-model', label: 'Cheaper model for lookups', keywords: 'felix model routing auto cheap cheaper cost tokens lookup' },
   { section: 'felix', id: 'felix-pace', label: 'Reading pace', keywords: 'felix margin fast regular slow pause wait' },
