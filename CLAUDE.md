@@ -187,7 +187,7 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   chips on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian).
 - Felix in the margin (2026-11-04, the user's call): threads in `leo.db`, never
-  note files or git; read-along is the default for notes made after install (2026-11-08). Reads use `Powers.toolless`
+  note files or git; read-along is the default for notes made after install (2026-11-08); Read through reads a whole note on request (2026-11-08). Reads use `Powers.toolless`
   (no tools at all). See crates/leo-web/CLAUDE.md.
 - Boards (2026-11-02, the user's call): Jira-style task boards on their own
   rail page (`#/boards`), several boards, untimed cards (title, subheading,

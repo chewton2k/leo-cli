@@ -16,6 +16,8 @@ use crate::AppState;
 pub(crate) struct ReadBody {
     version: String,
     blocks: Vec<String>,
+    #[serde(default)]
+    most: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -58,7 +60,14 @@ struct ReadFacts {
     along: bool,
     cap: u32,
     gap: u32,
-    full: bool,
+    quotes: Vec<String>,
+}
+
+enum Pass {
+    Saved(Vec<Thread>),
+    Silent,
+    Failed,
+    Refused(Response),
 }
 
 struct Open {
@@ -289,30 +298,26 @@ fn wanted_blocks(body: &ReadBody) -> Result<Vec<String>, Box<Response>> {
     Ok(blocks)
 }
 
-pub(crate) async fn read(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<ReadBody>,
-) -> Response {
+async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pass {
     if !margin::valid_version(&body.version) {
-        return StatusCode::BAD_REQUEST.into_response();
+        return Pass::Refused(StatusCode::BAD_REQUEST.into_response());
     }
     let blocks = match wanted_blocks(&body) {
         Ok(blocks) => blocks,
-        Err(refused) => return *refused,
+        Err(refused) => return Pass::Refused(*refused),
     };
-    let note = match open_note(&state, &id).await {
+    let note = match open_note(state, &id).await {
         Ok(note) => note,
-        Err(refused) => return *refused,
+        Err(refused) => return Pass::Refused(*refused),
     };
     if note.version != body.version {
-        return StatusCode::CONFLICT.into_response();
+        return Pass::Refused(StatusCode::CONFLICT.into_response());
     }
     if !blocks
         .iter()
         .all(|block| note.body.contains(block.as_str()))
     {
-        return StatusCode::BAD_REQUEST.into_response();
+        return Pass::Refused(StatusCode::BAD_REQUEST.into_response());
     }
     let chats = state.chats.clone();
     let (facts, chats) = {
@@ -325,125 +330,255 @@ pub(crate) async fn read(
                 along: margin::mode_of(&held, &id, created) == "along",
                 cap: prefs.cap,
                 gap: prefs.gap,
-                full: margin::open_on(&held, &id).len() >= margin::MOST_OPEN,
+                quotes: margin::open_on(&held, &id)
+                    .into_iter()
+                    .map(|thread| thread.quote)
+                    .collect(),
             }
         })
         .await;
         match facts {
             Ok(facts) => (facts, chats),
-            Err(refused) => return *refused,
+            Err(refused) => return Pass::Refused(*refused),
         }
     };
-    if !facts.along {
-        return said(
-            StatusCode::FORBIDDEN,
-            "mode",
-            "Felix is not reading along in this note.",
-        );
-    }
-    if !state.margin.was_edited(&id, &note.version) {
-        return said(
-            StatusCode::FORBIDDEN,
-            "unedited",
-            "Felix reads only what you changed.",
-        );
+    let full = facts.quotes.len() >= margin::MOST_OPEN;
+    if !through {
+        if !facts.along {
+            return Pass::Refused(said(
+                StatusCode::FORBIDDEN,
+                "mode",
+                "Felix is not reading along in this note.",
+            ));
+        }
+        if !state.margin.was_edited(&id, &note.version) {
+            return Pass::Refused(said(
+                StatusCode::FORBIDDEN,
+                "unedited",
+                "Felix reads only what you changed.",
+            ));
+        }
     }
     if state.steering.any_open() {
-        return said(
+        return Pass::Refused(said(
             StatusCode::TOO_MANY_REQUESTS,
             "felix",
             "Felix is answering you.",
-        );
+        ));
     }
-    if facts.full {
-        return silent();
+    if full {
+        if !through {
+            return Pass::Silent;
+        }
+        return Pass::Refused(said(
+            StatusCode::CONFLICT,
+            "full",
+            "This note has many open margin notes. Resolve some, then read through again.",
+        ));
     }
     let Some(writer) = state.toolless.clone() else {
-        return failed(&state);
+        if through {
+            state.margin.set_problem(Some(margin::PROBLEM.into()));
+            return Pass::Refused(said(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no-ai",
+                "Choose a writing AI in Settings, then read through again.",
+            ));
+        }
+        return Pass::Failed;
     };
-    let reading = match state
-        .margin
-        .begin(&id, Duration::from_secs(facts.gap.into()))
-    {
+    let gap = if through {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(facts.gap.into())
+    };
+    let reading = match state.margin.begin(&id, gap) {
         Ok(reading) => reading,
         Err(Refused::Busy) => {
-            return said(
+            return Pass::Refused(said(
                 StatusCode::TOO_MANY_REQUESTS,
                 "busy",
                 "Felix is already reading.",
-            )
+            ))
         }
         Err(Refused::Soon) => {
-            return said(
+            return Pass::Refused(said(
                 StatusCode::TOO_MANY_REQUESTS,
                 "soon",
                 "Felix just read this note.",
-            )
+            ))
         }
     };
-    let blocks = state.margin.unseen(&id, blocks);
-    if blocks.is_empty() {
-        return silent();
-    }
-    let counted = chats.clone();
-    let cap = facts.cap;
-    if !matches!(
-        blocking(move || margin::spend_read(&counted, cap)).await,
-        Ok(true)
-    ) {
-        state.margin.forget_blocks(&id, &blocks);
-        return said(
-            StatusCode::TOO_MANY_REQUESTS,
-            "daily",
-            "Felix has read enough for today.",
-        );
-    }
-    let user = margin::read_prompt(&note.title, &blocks);
+    let blocks = if through {
+        blocks
+    } else {
+        let blocks = state.margin.unseen(&id, blocks);
+        if blocks.is_empty() {
+            return Pass::Silent;
+        }
+        let counted = chats.clone();
+        let cap = facts.cap;
+        if !matches!(
+            blocking(move || margin::spend_read(&counted, cap)).await,
+            Ok(true)
+        ) {
+            state.margin.forget_blocks(&id, &blocks);
+            return Pass::Refused(said(
+                StatusCode::TOO_MANY_REQUESTS,
+                "daily",
+                "Felix has read enough for today.",
+            ));
+        }
+        blocks
+    };
+    let (system, tag, tokens) = if through {
+        (margin::THROUGH_SYSTEM, "note_part", margin::THROUGH_TOKENS)
+    } else {
+        (margin::READ_SYSTEM, "changed_text", margin::READ_TOKENS)
+    };
+    let user = margin::read_prompt(&note.title, &blocks, tag);
     let answer = tokio::time::timeout(
         margin::READ_LIMIT,
         tokio::task::spawn_blocking(move || {
             let _reading = reading;
-            writer(margin::READ_SYSTEM, &user, margin::READ_TOKENS)
+            writer(system, &user, tokens)
         }),
     )
     .await;
+    let forget = |state: &AppState| {
+        if !through {
+            state.margin.forget_blocks(&id, &blocks);
+        }
+    };
     let reply = match answer {
         Ok(Ok(Ok(reply))) => reply,
         _ => {
-            state.margin.forget_blocks(&id, &blocks);
-            return failed(&state);
+            forget(state);
+            return Pass::Failed;
         }
     };
-    let found = match margin::parsed(&reply) {
-        margin::ReadAnswer::Silent => {
-            state.margin.set_problem(None);
-            return silent();
+    let most = body
+        .most
+        .unwrap_or(margin::MOST_PER_PASS)
+        .clamp(1, margin::MOST_PER_PASS)
+        .min(margin::MOST_OPEN - facts.quotes.len());
+    let founds = if through {
+        margin::parsed_many(&reply, most)
+    } else {
+        match margin::parsed(&reply) {
+            margin::ReadAnswer::Silent => Some(Vec::new()),
+            margin::ReadAnswer::Note(found) => Some(vec![found]),
+            margin::ReadAnswer::Invalid => None,
         }
-        margin::ReadAnswer::Note(found) => found,
-        margin::ReadAnswer::Invalid => {
-            state.margin.forget_blocks(&id, &blocks);
-            return failed(&state);
-        }
+    };
+    let Some(founds) = founds else {
+        forget(state);
+        return Pass::Failed;
     };
     state.margin.set_problem(None);
-    let now = match open_note(&state, &id).await {
+    let now = match open_note(state, &id).await {
         Ok(now) => now,
-        Err(_) => return silent(),
+        Err(_) => return Pass::Silent,
     };
-    let Some(place) = margin::placed(&now.body, &found.quote, &blocks) else {
-        return silent();
+    let mut quotes = facts.quotes;
+    let mut saved = Vec::new();
+    for found in founds {
+        if through
+            && quotes
+                .iter()
+                .any(|q| q.contains(&found.quote) || found.quote.contains(q.as_str()))
+        {
+            continue;
+        }
+        let Some(place) = margin::placed(&now.body, &found.quote, &blocks) else {
+            continue;
+        };
+        let thread = margin::new_thread(
+            &id,
+            "read",
+            place,
+            &found.quote,
+            vec![margin::felix_says(&found.text)],
+        );
+        let held = chats.clone();
+        let stored = thread.clone();
+        if !matches!(
+            blocking(move || margin::put(&held, &stored)).await,
+            Ok(true)
+        ) {
+            break;
+        }
+        quotes.push(found.quote);
+        saved.push(thread);
+    }
+    if saved.is_empty() {
+        Pass::Silent
+    } else {
+        Pass::Saved(saved)
+    }
+}
+
+pub(crate) async fn read(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ReadBody>,
+) -> Response {
+    match pass(&state, id, body, false).await {
+        Pass::Saved(mut saved) => {
+            Json(serde_json::json!({ "note": saved.remove(0) })).into_response()
+        }
+        Pass::Silent => silent(),
+        Pass::Failed => failed(&state),
+        Pass::Refused(refused) => refused,
+    }
+}
+
+pub(crate) async fn analyze(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ReadBody>,
+) -> Response {
+    match pass(&state, id, body, true).await {
+        Pass::Saved(saved) => Json(serde_json::json!({ "notes": saved })).into_response(),
+        Pass::Silent => Json(serde_json::json!({ "notes": [] })).into_response(),
+        Pass::Failed => {
+            state.margin.set_problem(Some(margin::PROBLEM.into()));
+            Json(serde_json::json!({ "notes": [], "failed": true })).into_response()
+        }
+        Pass::Refused(refused) => refused,
+    }
+}
+
+pub(crate) async fn forget(
+    State(state): State<AppState>,
+    Path((id, thread)): Path<(String, String)>,
+) -> Response {
+    if !margin::valid_note(&id) || !margin::valid_note(&thread) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let chats = state.chats.clone();
+    let (held, wanted) = (id, thread.clone());
+    let found = blocking(move || margin::one(&chats, &held, &wanted)).await;
+    let found = match found {
+        Ok(Some(found)) => found,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(refused) => return *refused,
     };
-    let thread = margin::new_thread(
-        &id,
-        "read",
-        place,
-        &found.quote,
-        vec![margin::felix_says(&found.text)],
-    );
-    let saved = thread.clone();
-    match blocking(move || margin::put(&chats, &saved)).await {
-        Ok(true) => Json(serde_json::json!({ "note": thread })).into_response(),
-        _ => silent(),
+    let Some(_replying) = state.margin.replying(&thread) else {
+        return said(StatusCode::CONFLICT, "replying", "Felix is answering this.");
+    };
+    if found.messages.iter().any(|m| m.from != "felix") {
+        return said(
+            StatusCode::CONFLICT,
+            "replied",
+            "You replied to this, so it stays.",
+        );
+    }
+    let chats = state.chats.clone();
+    match blocking(move || margin::remove(&chats, &thread)).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(refused) => *refused,
     }
 }
 

@@ -391,6 +391,12 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-mode-icon { display: inline-grid; place-items: center; flex: none; }
 .margin-mode-icon svg { width: 13px; height: 13px; }
 .margin-mode:hover { background: var(--tint); }
+.margin-through { background: var(--tint); color: var(--text); }
+.margin-through:hover { background: color-mix(in srgb, var(--text) 10%, var(--tint)); }
+.margin-through .margin-mode-icon svg { opacity: 1; }
+.margin-through .dot { fill: var(--accent); stroke: none; }
+.margin-through[aria-disabled="true"] { color: var(--faint); cursor: default; }
+@media (pointer: coarse) { .note-meta .margin-mode { min-height: 32px; } }
 .chat-lost { padding: 2px 16px 8px; font-size: var(--fs-sm); color: var(--muted); }
 .chat-lost[hidden] { display: none; }
 .chat-lost > summary { cursor: pointer; padding: 6px 0; }

@@ -3892,6 +3892,23 @@ test.describe('passages', () => {
     await expect.poll(left).toBe(1);
   });
 
+  test('Read through leaves margin notes on an old note in When you ask mode, and Undo takes them out', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Old note', body: 'Then login just checks if it matches, I think' } })).json();
+    let analyzed = 0;
+    page.on('request', (r) => { if (r.url().includes('/margin/analyze')) analyzed++; });
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    expect(analyzed).toBe(0);
+    await page.getByRole('button', { name: 'Read through' }).click();
+    await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?', { timeout: 12000 });
+    await expect(page.locator('.toast')).toContainText('Felix added 1 margin note');
+    await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
+    const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
+    await expect.poll(left).toBe(0);
+    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+  });
+
   for (const [title, later, says] of [
     ['re-finds its passage when the note changed underneath it', 'A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nLast.', 'Added to note'],
     ['says so when its passage is gone', 'Everything was rewritten.', 'went at the end of the note'],

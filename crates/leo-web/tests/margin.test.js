@@ -172,6 +172,59 @@ test('drawing: a wave spans its width and a tether joins its ends', () => {
   assert.equal(M.arrangement({ width: 800 }), 'marks');
 });
 
+const para = (n) => `Paragraph number ${n} has enough words.`;
+
+test('passes: empty and short notes give nothing', () => {
+  assert.deepEqual(M.passes(''), { parts: [], spread: false });
+  assert.deepEqual(M.passes('too short\n\nalso short').parts, []);
+});
+
+test('passes: blocks with a taken quote are skipped', () => {
+  const text = `${para(1)}\n\n${para(2)}`;
+  assert.deepEqual(M.passes(text, ['number 2']).parts[0].blocks, [para(1)]);
+});
+
+test('passes: a 9,000 character block is cut into substrings', () => {
+  const big = 'abcdefghi '.repeat(900).trim();
+  const { parts } = M.passes(`${big}\n\n${para(1)}`);
+  const blocks = parts.flatMap((p) => p.blocks);
+  assert.ok(blocks.length >= 3);
+  for (const b of blocks) {
+    assert.ok([...b].length <= 4000);
+    assert.ok(`${big}\n\n${para(1)}`.includes(b));
+  }
+});
+
+test('passes: parts hold at most 6 blocks and 8,000 characters', () => {
+  const six = Array.from({ length: 7 }, (_, i) => para(i)).join('\n\n');
+  assert.deepEqual(M.passes(six).parts.map((p) => p.blocks.length), [6, 1]);
+  const wide = [1, 2, 3].map((n) => `${n}${'x'.repeat(3499)}`).join('\n\n');
+  assert.deepEqual(M.passes(wide).parts.map((p) => p.blocks.length), [2, 1]);
+});
+
+test('passes: from and to are 1-based lines', () => {
+  const text = `${para(1)}\nsecond line of the first block\n\n\n${para(2)}`;
+  assert.deepEqual(M.passes(text).parts.map(({ from, to }) => [from, to]), [[1, 5]]);
+  const split = `${para(1)}\n\n${'y'.repeat(3990)}\n\n${'z'.repeat(3990)}\n\n${para(3)}`;
+  assert.deepEqual(M.passes(split).parts.map(({ from, to }) => [from, to]), [[1, 3], [5, 7]]);
+});
+
+test('passes: more than 8 parts keep 8 spread across the note', () => {
+  const text = Array.from({ length: 120 }, (_, i) => para(i)).join('\n\n');
+  const r = M.passes(text);
+  assert.equal(r.spread, true);
+  assert.deepEqual(r.parts.map((p) => p.blocks[0]), [0, 3, 5, 8, 11, 14, 16, 19].map((i) => para(i * 6)));
+  assert.equal(M.passes(Array.from({ length: 48 }, (_, i) => para(i)).join('\n\n')).spread, false);
+});
+
+test('passes: surrogate pairs are kept whole', () => {
+  const emoji = '\u{1F600}'.repeat(4001);
+  const { parts } = M.passes(emoji);
+  assert.deepEqual(parts[0].blocks.map((b) => [...b].length), [4000]);
+  assert.equal(parts[0].blocks.length, 1);
+  assert.ok(parts.every((p) => p.blocks.every((b) => !/[\ud800-\udbff]$|^[\udc00-\udfff]/.test(b))));
+});
+
 for (const [name, fn] of cases) {
   try {
     fn();

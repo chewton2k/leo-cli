@@ -203,7 +203,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   "n more" when that tab went back into the overflow; it pulses on landing.
 - Opening a note (2026-11-08, the user's pick): the title wipes in left to right (`clip-path`, `OPEN_MS`, `EASE_OUT`)
   only when `swap` reports a new page; nothing glides over from the explorer. Enter or Tab in the title goes to the body
-  (Shift+Tab stays; Escape then Shift+Tab reaches the Felix mode button).
+  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, one more Shift+Tab the Felix mode button).
 - Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
 - Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
   and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
@@ -690,6 +690,7 @@ target. Check the page sequence after loading preferences.
   retry delay to the normal typing pause, while provider cooldowns stay bounded.
   No comment this time clears after four seconds or the next edit. The model's quote must be in the note now,
   or the note is dropped.
+- Read through (2026-11-08, the user's call): `#margin-through` beside the mode button reads the whole saved note once, in either mode and on any note. It is free: it never checks or spends Reads a day. `margin.js` `passes` cuts the note into parts of at most 6 blocks and 8,000 characters (blocks of 20+ characters without an open thread; blocks over 4,000 are cut); a note with more than 8 parts keeps 8 spread evenly through it (`spread: true`, status "This note is long, so Felix read parts from all through it."). The page POSTs each part to `.../margin/analyze` (`{version, blocks, most}`) and glows the part being read. The engine keeps the version, streaming-reply, overlap and `MOST_OPEN` guards and skips the along, `edited`, gap and daily checks. A part saves up to `MOST_PER_PASS` (3) `source: "read"` threads through `placed` (`THROUGH_SYSTEM`, `parsed_many`, which checks `notes` first and still takes a single object). A run ends at `MOST_THROUGH` (12) notes, on Stop, or on a refusal or failure; read-along waits while it runs. Threads are held until the run ends, then revealed together top to bottom over the note: 80 ms apart, the whole stagger capped at 640 ms; Reduced Motion shows them at once, still. Leaving mid-run draws nothing. Undo DELETEs the run's threads (`DELETE .../threads/{id}`): 409 `replying` while Felix is answering that thread, 409 `replied` once you have replied.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
   `web_search="disabled"`, and the chain is cut to its first provider, so a read fails
@@ -752,7 +753,7 @@ target. Check the page sequence after loading preferences.
   44 px on touch) opens the note inline, with
   `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
   in the panel.
-- The reading-mode menu and status sit on the line under the title, beside the save state, so a status never moves the note. Saving a mode keeps the
+- The reading-mode menu, the Read through button and status sit on the line under the title, beside the save state, so a status never moves the note. Saving a mode keeps the
   last confirmed value on failure. Its own menu class keeps generic select-menu
   click and close handlers from dismissing it. Each note remains a labelled article with an
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
@@ -769,7 +770,7 @@ target. Check the page sequence after loading preferences.
   Tab or focus leaving it, and snaps under Reduced Motion. Settings → Felix → New
   notes start is one privacy sentence (Reads along sends the note's title and the
   text you change to the named writing AI, and says so when it runs on this
-  computer) and two cards with one line each; When you ask names the selection and
+  computer; Read through sends the whole note, a part at a time) and two cards with one line each; When you ask names the selection and
   the real shortcut (2026-11-06, the owner: too many words).
 - Overlay: `.margin-layer` sits outside `#doc`. Rendered block measurements and
   keyed thread elements preserve the caret and reply field. Read completion

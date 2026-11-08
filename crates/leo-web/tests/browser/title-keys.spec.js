@@ -28,5 +28,7 @@ test('Shift+Enter never adds a line to the title, and Escape then Shift+Tab reac
   await expect(page.locator('#doc .line-edit')).toHaveCount(0);
   await expect(page.locator('#margin-mode')).toBeEnabled();
   await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#margin-through')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
   await expect(page.locator('#margin-mode')).toBeFocused();
 });

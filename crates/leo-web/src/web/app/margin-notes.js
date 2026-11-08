@@ -13,7 +13,7 @@ const MOST_ASKED = 1000;
 const marginKit = window.leoMargin;
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -51,6 +51,7 @@ function marginLeave() {
   clearTimeout(marginPage.statusTimer);
   cancelAnimationFrame(marginPage.frame);
   cancelAnimationFrame(marginPage.pointer);
+  if (marginPage.through) marginPage.through.stop = true;
   marginPage.slide?.cancel();
   marginPage.observer?.disconnect();
   marginPage.observer = null;
@@ -59,7 +60,7 @@ function marginLeave() {
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
   chat.setLost([]);
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, status: '', brief: false, statusToken: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -245,6 +246,7 @@ function marginControl() {
     if (icon.dataset.along) iconSwap(icon, paint);
     else paint();
   }
+  marginThroughControl();
   $('#margin-mode-label').textContent = along ? 'Felix: reads along' : 'Felix: when you ask';
   button.title = along ? 'Reads changes after a pause. The text goes to your writing AI.' : `Select a passage, then choose Ask Felix or press ${marginAskKeys()}.`;
   for (const option of menu.querySelectorAll('[data-margin-mode]')) {
@@ -971,7 +973,7 @@ function marginShowReading(s) {
 }
 
 async function marginRead(s) {
-  if (marginPage.reading) {
+  if (marginPage.reading || marginPage.through) {
     marginPage.again = true;
     return;
   }
@@ -1024,6 +1026,177 @@ async function marginRead(s) {
   }
 }
 
+const THROUGH_TIP = 'Felix reads the whole note and leaves margin notes. The text goes to your writing AI.';
+const THROUGH_MOST = 12;
+const THROUGH_STOP_GRACE_MS = 400;
+const THROUGH_STAGGER_MS = 80;
+const THROUGH_STAGGER_MAX_MS = 640;
+const THROUGH_FAILED = 'Could not read through this note. Check your writing AI in Settings.';
+const THROUGH_SAYS = {
+  full: 'This note has many open margin notes. Resolve some, then read through again.',
+  'no-ai': 'Choose a writing AI in Settings, then read through again.',
+  felix: 'Felix is answering in chat. Try again when he’s done.',
+  busy: 'Felix is already reading. Try again in a moment.',
+  changed: 'This note changed while Felix was reading. Read through again.',
+};
+
+function marginThroughControl() {
+  const button = $('#margin-through');
+  const s = marginPage.s;
+  if (!button || !s) return;
+  if (!button.dataset.ready) {
+    button.dataset.ready = '1';
+    button.addEventListener('click', () => marginThroughClick().catch(fail));
+  }
+  const running = Boolean(marginPage.through);
+  const icon = $('#margin-through-icon');
+  if (icon && icon.dataset.running !== String(running)) {
+    const paint = () => { icon.innerHTML = running ? ICON.close : ICON.readThrough; icon.dataset.running = String(running); };
+    if (icon.dataset.running) iconSwap(icon, paint);
+    else paint();
+  }
+  const label = $('#margin-through-label');
+  if (label) label.textContent = running ? 'Stop' : 'Read through';
+  const off = !s.note.id || marginPage.changing;
+  if (running) button.setAttribute('aria-busy', 'true');
+  else button.removeAttribute('aria-busy');
+  button.setAttribute('aria-disabled', String(off));
+  button.title = off ? 'Felix can read this note once it is saved.' : THROUGH_TIP;
+}
+
+async function marginThroughClick() {
+  const s = marginPage.s;
+  const button = $('#margin-through');
+  if (!s || button?.getAttribute('aria-disabled') === 'true') return;
+  const run = marginPage.through;
+  if (run) {
+    if (Date.now() - run.started >= THROUGH_STOP_GRACE_MS) run.stop = true;
+    return;
+  }
+  if (chat.isBusy()) return marginSetStatus(THROUGH_SAYS.felix);
+  const { parts, spread } = marginKit.passes(s.doc.source(), marginPage.threads.map((t) => t.quote));
+  if (!parts.length) return marginSetStatus('Write a few lines first, then read through.');
+  await marginThrough(s, parts, spread);
+}
+
+async function marginThroughPart(s, run, part, label) {
+  let stale = 0;
+  let busy = 0;
+  marginSetStatus(label);
+  for (;;) {
+    try {
+      await flush(s);
+      if (marginPage.s !== s) return { gone: true };
+      const source = s.doc.source();
+      const blocks = part.blocks.filter((block) => source.includes(block));
+      if (!blocks.length) return { notes: [] };
+      s.doc.glow(part.from, part.to);
+      let got;
+      try {
+        got = await api(`/api/notes/${enc(s.note.id)}/margin/analyze`, { method: 'POST', body: { version: s.note.version, blocks, most: Math.min(3, THROUGH_MOST - run.added.length) } });
+      } finally {
+        s.doc.glow();
+      }
+      return got?.failed ? { say: THROUGH_FAILED } : { notes: got?.notes || [] };
+    } catch (e) {
+      if (e instanceof Locked) throw e;
+      if (marginPage.s !== s) return { gone: true };
+      const why = e.data?.why;
+      if (e.status === 409 && !why && !stale++) continue;
+      if (why === 'busy' && busy++ < 3) {
+        await new Promise((resolve) => setTimeout(resolve, READ_PAUSE.regular));
+        continue;
+      }
+      return { say: THROUGH_SAYS[why] || (e.status === 409 && !why ? THROUGH_SAYS.changed : THROUGH_FAILED) };
+    }
+  }
+}
+
+function marginReveal(s, found) {
+  const source = s.doc.source();
+  const order = (t) => marginKit.find(source, t)?.from ?? Number.MAX_SAFE_INTEGER;
+  const sorted = [...found].sort((a, b) => order(a) - order(b));
+  if (stillMotion()) {
+    marginPage.threads.push(...sorted);
+    marginRedraw();
+    return;
+  }
+  const step = sorted.length > 1 ? Math.min(THROUGH_STAGGER_MS, THROUGH_STAGGER_MAX_MS / (sorted.length - 1)) : 0;
+  sorted.forEach((t, i) => {
+    const show = () => {
+      if (marginPage.s !== s || t.gone) return;
+      marginPage.arriving.add(t.id);
+      marginPage.threads.push(t);
+      marginRedraw();
+    };
+    if (i) setTimeout(show, i * step);
+    else show();
+  });
+}
+
+function marginNotes(n) {
+  return `${n} margin note${n === 1 ? '' : 's'}`;
+}
+
+function marginThroughUndo(s, added) {
+  return async () => {
+    let gone = 0;
+    let kept = 0;
+    let failed = false;
+    for (const t of added) {
+      try {
+        await api(`/api/notes/${enc(s.note.id)}/margin/threads/${enc(t.id)}`, { method: 'DELETE' });
+      } catch (e) {
+        if (e instanceof Locked) throw e;
+        if (e.status === 409 && ['replying', 'replied'].includes(e.data?.why)) kept++;
+        else if (e.status !== 404) failed = true;
+        if (e.status !== 404) continue;
+      }
+      gone++;
+      t.gone = true;
+      if (marginPage.s === s) {
+        marginPage.threads = marginPage.threads.filter((old) => old.id !== t.id);
+        marginDropThread(t.id);
+      }
+    }
+    if (marginPage.s === s) marginDraw();
+    if (failed) toast('Could not take them out. Try again.', { bad: true });
+    else toast(`Took out ${marginNotes(gone)}.${kept ? ` You replied to ${kept}, so ${kept === 1 ? 'it stays' : 'they stay'}.` : ''}`);
+  };
+}
+
+async function marginThrough(s, parts, spread) {
+  const run = { started: Date.now(), stop: false, added: [] };
+  marginPage.through = run;
+  marginThroughControl();
+  let say = '';
+  try {
+    for (let i = 0; i < parts.length && !run.stop && run.added.length < THROUGH_MOST; i++) {
+      const got = await marginThroughPart(s, run, parts[i], parts.length > 1 ? `Reading through… ${i + 1} of ${parts.length}` : 'Reading through…');
+      if (got.gone) return;
+      run.added.push(...(got.notes || []));
+      if (got.say) {
+        say = got.say;
+        break;
+      }
+    }
+  } finally {
+    if (marginPage.through === run) marginPage.through = null;
+    if (marginPage.s === s) {
+      s.doc.glow();
+      marginThroughControl();
+    }
+  }
+  if (marginPage.s !== s) return;
+  const count = run.added.length;
+  if (count) marginReveal(s, run.added);
+  if (say) marginSetStatus(say);
+  else if (!count && !run.stop) marginSetStatus('Nothing to add this time', true);
+  else marginSetStatus(spread ? 'This note is long, so Felix read parts from all through it.' : '');
+  if (count) toast(`${run.stop ? 'Stopped. ' : ''}Felix added ${marginNotes(count)}`, { action: 'Undo', run: marginThroughUndo(s, run.added) });
+  if (marginPage.mode === 'along') marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE.regular, marginPage.nextRead - Date.now()));
+}
+
 function marginLostOpen(el) {
   const t = marginPage.threads.find((old) => old.id === el.dataset.id);
   if (t) chat.attachSelection({ note: marginPage.s.note.id, title: marginPage.s.note.title || 'Untitled', from: 0, to: 0, text: t.quote });
@@ -1054,7 +1227,7 @@ function felixSettingsCards(view, page) {
   if (!view) return '<section class="set-card"><p class="hint">Felix’s settings are not available right now.</p></section>';
   const provider = page.tasks.find((task) => task.task === 'writing')?.provider || '';
   const name = page.tasks.find((task) => task.task === 'writing')?.choices?.find((choice) => choice.id === provider)?.label || 'your writing AI';
-  const where = `Reads along sends the note’s title and the text you change to ${esc(name)}${page.reads_stay_here ? ', which runs on this computer' : ''}.`;
+  const where = `Reads along sends the note’s title and the text you change to ${esc(name)}${page.reads_stay_here ? ', which runs on this computer' : ''}. Read through sends the whole note, a part at a time.`;
   return `<section class="set-card" data-find="felix-new-notes"><header><h3>New notes start</h3></header><p class="hint">${where}</p>${choiceCards({ label: 'New notes start', field: 'data-margin-pref="default_mode"', current: view.default_mode, choices: [['along', 'Reads along', 'Comments after a pause, only when it matters.'], ['ask', 'When you ask', `Select text, then Ask Felix or ${marginAskKeys()}.`]] })}</section>
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card" data-find="felix-auto-model"><header><h3>Which model answers</h3></header><div class="set-row"><span class="set-label">Cheaper model for lookups</span>${settingsSwitch('data-margin-pref="auto_model"', view.auto_model !== false, 'Cheaper model for lookups')}</div><p class="hint">Short lookups use the cheapest model of your writing AI. Everything else uses the model you chose, and a chat never moves down while it is open.</p></section>
