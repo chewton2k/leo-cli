@@ -50,7 +50,7 @@ const plural = (n, word, many = word + 's') => n + ' ' + (n === 1 ? word : many)
     if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fixture); }
     if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css; charset=utf-8'); return response.end(css); }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body><main id="app"><div class="settings"><label>Draft<input id="draft" class="set-input"></label><div id="speech-library"></div></div></main><script src="/fixture.js"></script></body></html>');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body><main id="app"><div class="settings settings-section"><label>Draft<input id="draft" class="set-input"></label><div id="speech-library"></div></div></main><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
