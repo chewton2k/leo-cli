@@ -30,16 +30,18 @@ test('Shift+Enter never adds a line to the title, and Escape then Shift+Tab reac
   if (browserName === 'webkit') {
     const order = await page.evaluate(() => {
       const doc = document.querySelector('#doc');
-      return ['#margin-through', '#margin-mode'].map((id) => {
+      return ['#margin-through', '#margin-persona', '#margin-mode'].map((id) => {
         const el = document.querySelector(id);
         return el.tabIndex >= 0 && !el.disabled && Boolean(el.compareDocumentPosition(doc) & Node.DOCUMENT_POSITION_FOLLOWING);
       });
     });
-    expect(order).toEqual([true, true]);
+    expect(order).toEqual([true, true, true]);
     return;
   }
   await page.keyboard.press('Shift+Tab');
   await expect(page.locator('#margin-through')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#margin-persona')).toBeFocused();
   await page.keyboard.press('Shift+Tab');
   await expect(page.locator('#margin-mode')).toBeFocused();
 });

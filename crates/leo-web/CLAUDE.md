@@ -203,7 +203,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   "n more" when that tab went back into the overflow; it pulses on landing.
 - Opening a note (2026-11-08, the user's pick): the title wipes in left to right (`clip-path`, `OPEN_MS`, `EASE_OUT`)
   only when `swap` reports a new page; nothing glides over from the explorer. Enter or Tab in the title goes to the body
-  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, one more Shift+Tab the Felix mode button).
+  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, then the persona button, then the Felix mode button).
 - Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
 - Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
   and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
