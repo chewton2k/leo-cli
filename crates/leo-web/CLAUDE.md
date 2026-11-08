@@ -591,7 +591,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   the composer, user bubbles, pills, popups and the Chats column) with no
   left border, header rule, footer rule or column rule; a soft shadow shows
   only where it overlays the note (under 1200 px). The Chats column is closed
-  until opened (`leo-chat-sidebar` still remembers an explicit choice;
+  until opened (`leo-chat-sidebar` still remembers an explicit choice, and closing the list as an overlay keeps it closed until it is opened again, so a resize near the overlay width cannot reopen it;
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
   “Title”`, `Problem n · title · tab`, or `Looks through your notes`; its title

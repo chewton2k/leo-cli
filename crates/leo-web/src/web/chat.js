@@ -1286,8 +1286,10 @@
     }
 
     function closeHistory() {
-      if (!wide() || sourceNarrow()) leaveOverlay();
-      else showSidebar(false);
+      if (!wide() || sourceNarrow()) {
+        leaveOverlay();
+        state.sidebar = false;
+      } else showSidebar(false);
     }
 
     syncSidebar(false);
