@@ -22,7 +22,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (chord && letter === 'n') {
     if (e.isComposing || $('.scrim') || $('.inline-edit') || state.view === 'locked') return;
-    if (typing && !typing.matches('.line-edit') || $('#rec-point-text')?.value.trim()) return;
+    if (typing && !typing.matches('.line-edit, #title, #chat-input') || $('#rec-point-text')?.value.trim()) return;
     e.preventDefault();
     const dir = creationDir();
     go(dir ? `#/new/${enc(dir)}` : '#/new');
