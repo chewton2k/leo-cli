@@ -31,6 +31,7 @@ try {
         $effective = & curl.exe --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --output NUL --write-out '%{url_effective}' "https://github.com/$Repo/releases/latest"
         if ($LASTEXITCODE -ne 0 -or $effective -notmatch '/tag/(v\d+\.\d+\.\d+)$') { throw 'The latest Leo release could not be identified. Try again later.' }
         $tag = $Matches[1]
+        Write-Host "Downloading Leo $tag..."
         $url = "https://github.com/$Repo/releases/download/$tag/leo-$Target-setup.exe"
         Fetch $url $installer
         $checksum = Join-Path $tmp 'checksum'
@@ -42,6 +43,7 @@ try {
     foreach ($path in @($AppDir, $BinDir)) {
         if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'The installation folder is a link. Choose another folder.' }
     }
+    Write-Host 'Installing Leo. This can take a minute...'
     $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$AppDir") -PassThru
     if (-not $process.WaitForExit(900000)) { throw 'The installer is still running. Wait for it to finish before trying again.' }
     if ($process.ExitCode -ne 0) { throw 'The app could not be installed. Reopen the downloaded installer and try again.' }

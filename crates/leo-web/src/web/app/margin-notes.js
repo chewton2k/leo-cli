@@ -1405,8 +1405,14 @@ function felixPersonaCard(view) {
 function felixPersonaRedraw(view, focus = '') {
   const card = $('#felix-persona-card');
   if (!card) return;
+  const from = card.getBoundingClientRect().height;
+  const wasForm = !!$('form', card);
   card.outerHTML = felixPersonaCard(view);
-  if (focus) $(focus, $('#felix-persona-card'))?.focus({ preventScroll: true });
+  const drawn = $('#felix-persona-card');
+  if (focus) $(focus, drawn)?.focus({ preventScroll: true });
+  slideHeight(drawn, from, drawn.getBoundingClientRect().height);
+  if (!!$('form', drawn) === wasForm || stillMotion()) return;
+  for (const part of drawn.children) part.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
 }
 
 async function felixSavePersonas(list) {
@@ -1445,9 +1451,13 @@ document.addEventListener('click', async (e) => {
     else if (act === 'edit') personaEditing = button.dataset.id;
     else if (act === 'cancel') {
       personaEditing = null;
-      if (personaReturn) return felixPersonaBack(null);
+      personaReturn = null;
     }
-    else if (act === 'details') personaDetails = !personaDetails;
+    else if (act === 'details') {
+      const shown = personaDetails && $('#felix-persona-card .persona-details');
+      personaDetails = !personaDetails;
+      if (shown) return slideHeight(shown, shown.getBoundingClientRect().height, 0, () => felixPersonaRedraw(state.margin, '[data-persona-act="details"]'));
+    }
   } catch (error) {
     return fail(error);
   }

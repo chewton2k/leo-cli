@@ -117,9 +117,19 @@ pub fn run(force: bool) -> Result<()> {
             cmd
         }
         (None, true) => {
-            let mut cmd = leo_core::children::quiet_command("powershell");
-            cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
-                .arg(leo_services::update::install_command());
+            let mut cmd = leo_core::children::quiet_command("cmd");
+            cmd.args([
+                "/d",
+                "/c",
+                "start",
+                "Leo update",
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-EncodedCommand",
+            ])
+            .arg(leo_services::update::update_window_command());
             cmd
         }
     };
@@ -130,7 +140,7 @@ pub fn run(force: bool) -> Result<()> {
         cmd.env("LEO_UPDATE_PARENT_PID", std::process::id().to_string())
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()
             .context("The updater could not start. Download the Windows installer from Leo’s releases page.")?;
-        println!("  The Leo installer will run after this command exits. Quit the Leo app first if it is open.");
+        println!("  The Leo installer opens in its own window after this command exits. Quit the Leo app first if it is open.");
         return Ok(());
     }
     let status = cmd.status().context(if cfg!(windows) {
