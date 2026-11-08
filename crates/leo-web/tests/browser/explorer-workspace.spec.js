@@ -64,6 +64,22 @@ test('workspace and legacy folder links reveal folders without a library or a cr
   await expect(page.getByText('Pick a note on the left')).toBeVisible();
 });
 
+test('a note and a folder never both look selected', async ({ page }) => {
+  const dir = await createFolder(page);
+  const note = await createNote(page, dir);
+  await openNote(page, note);
+  await expect(noteRow(page, note.id)).toHaveClass(/\bon\b/);
+  await folderRow(page, dir).click();
+  await expect(noteRow(page, note.id)).toHaveClass(/\bopen\b/);
+  await expect(noteRow(page, note.id)).not.toHaveClass(/\bon\b/);
+  await expect(page.locator('#side .side-tree .on')).toHaveCount(1);
+  await expect(page.locator('#side .side-tree .side-pill')).toHaveCount(1);
+  await expect(page.locator('#side .side-tree [aria-current="page"]')).toHaveCount(1);
+  await noteRow(page, note.id).click();
+  await expect(noteRow(page, note.id)).toHaveClass(/\bon\b/);
+  await expect(page.locator('#side .side-tree .on')).toHaveCount(1);
+});
+
 test('context note rename, move and trash keep an unrelated open note and support Undo', async ({ page }) => {
   const dir = await createFolder(page);
   const destination = await createFolder(page);

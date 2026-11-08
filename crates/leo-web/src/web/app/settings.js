@@ -43,11 +43,6 @@ function calendarCard(cal) {
       <button class="btn plain sm" data-action="calendar-remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Remove</button>
     </div>`)
     .join('');
-  const next = (cal.events || [])[0];
-  const when = (e) => new Date(e.start).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-  const upcoming = count
-    ? `<div class="set-row" data-find="calendar-next"><span class="set-label">Next up</span><span class="grow cal-next">${next ? `${esc(next.title)}<span class="feed-sub">&nbsp;· <span class="nowrap">${esc(when(next))}</span></span>` : '<span class="feed-sub">Nothing in the next week</span>'}</span><button class="btn plain sm" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Checking…' : 'Check now'}</button></div>`
-    : '';
   const open = !count || state.calendarAdding;
   const form = `<ol class="cal-steps">
         <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a>.</li>
@@ -63,7 +58,6 @@ function calendarCard(cal) {
     <header><h3>Calendar</h3>${chip}</header>
     <p class="hint">Recordings are named after the class or meeting you are in, and the AI gets its description and who was invited. leo only reads your calendar.</p>
     ${rows}
-    ${upcoming}
     ${adder}
   </section>`;
 }
@@ -101,14 +95,6 @@ async function removeCalendar(el) {
   state.calendar = calendar;
   drawSettings(state.settings);
   toast(`Removed “${el.dataset.name}”.`);
-}
-
-async function refreshCalendar() {
-  const mine = seq;
-  const calendar = await api('/api/calendar/refresh', { method: 'POST' });
-  if (mine !== seq || state.view !== 'settings') return;
-  state.calendar = calendar;
-  drawSettings(state.settings);
 }
 
 function settingsOption(value, label, current) {
@@ -422,7 +408,32 @@ function faShare(value, total) {
   const part = total ? value / total * 100 : 0;
   return part > 0 && part < 0.5 ? '<1%' : `${Math.round(part)}%`;
 }
-function faColour(rank, base) { return rank < 0 ? 'var(--faint)' : `var(--chart-${rank + base})`; }
+function faColour(rank, base) { return rank < 0 ? null : `var(--chart-${rank + base})`; }
+function faBg(colour) { return colour ? `background:${colour}` : ''; }
+function faCls(colour) { return colour ? '' : ' class="fa-other"'; }
+function faNiceMax(v) {
+  if (!(v > 0)) return 1;
+  const unit = 10 ** Math.floor(Math.log10(v));
+  return [1, 2, 2.5, 5, 10].map((m) => m * unit).find((n) => n >= v);
+}
+function faFamily(name) {
+  if (String(name).includes(':')) return 'local';
+  if (/^(gpt|o\d|codex|chatgpt)/i.test(name)) return 'openai';
+  return /claude|opus|sonnet|haiku|fable/i.test(name) ? 'claude' : 'local';
+}
+function faShades(ranks) {
+  const used = { openai: 0, claude: 0, local: 0 };
+  const shades = {};
+  for (const name of ranks.models) {
+    const family = faFamily(name);
+    if (used[family] < 3) shades[name] = `var(--fam-${family}-${++used[family]})`;
+  }
+  return shades;
+}
+function faFold(items, ranks) {
+  const shades = faShades(ranks);
+  return window.leoChat.usageFold(items, Object.keys(shades)).map((item) => ({ ...item, colour: item.other ? null : shades[item.name] }));
+}
 function faRanks(page, today) {
   const held = felixActivity.ranks;
   if (held && (held.models.length || held.kinds.length)) return held;
@@ -435,7 +446,7 @@ function faKindLabel(purpose) {
 }
 function faParts(bar, ranks) {
   const items = bar.by.map(([name, value]) => ({ name, value }));
-  return window.leoChat.usageFold(items, ranks.models.slice(0, 3)).sort((a, b) => (a.rank < 0) - (b.rank < 0) || a.rank - b.rank);
+  return faFold(items, ranks).sort((a, b) => (a.rank < 0) - (b.rank < 0) || a.rank - b.rank);
 }
 
 function faReadout(i) {
@@ -444,34 +455,36 @@ function faReadout(i) {
   if (!bar) return '';
   const total = bar.input + bar.output;
   const head = bar.calls ? `${bar.calls === 1 ? '1 request' : `${faExact(bar.calls)} requests`} · ${faCompact(bar.input)} in · ${faCompact(bar.output)} out` : 'No requests';
-  const parts = faParts(bar, ranks).map((part) => `<span title="${esc(faModelName(part.name))}"><i style="background:${faColour(part.rank, 1)}"></i><em class="fa-rn">${esc(part.other ? 'Other' : faModelName(part.name))}</em><b>${faShare(part.value, total)}</b></span>`).join('');
+  const parts = faParts(bar, ranks).map((part) => `<span title="${esc(faModelName(part.name))}"><i${faCls(part.colour)} style="${faBg(part.colour)}"></i><em class="fa-rn">${esc(part.other ? 'Other' : faModelName(part.name))}</em><b>${faShare(part.value, total)}</b></span>`).join('');
   return `<div class="fa-rh"><b>${esc(faBarName(bar, period.length === 90))}</b> · ${head}</div><div class="fa-rm">${parts}</div>`;
 }
 
 function faDonut(kind, slices, total, label) {
   let at = 0;
+  const colourOf = (item) => (kind === 'm' ? item.colour : faColour(item.rank, 4));
   const arcs = slices.map((slice, i) => {
     const arc = slice.value / total * FA_RING;
     const length = Math.max(0, arc - (arc < 3 ? 0 : 2));
-    const ring = `<circle class="fa-slice${felixActivity.pin && felixActivity.pin.d === kind && felixActivity.pin.i === i ? ' on' : ''}" data-fa-d="${kind}" data-fa-i="${i}" cx="60" cy="60" r="52" fill="none" stroke="${faColour(slice.rank, kind === 'm' ? 1 : 4)}" stroke-width="12" stroke-dasharray="${length.toFixed(2)} ${(FA_RING - length).toFixed(2)}" stroke-dashoffset="${(-at).toFixed(2)}" transform="rotate(-90 60 60)"/>`;
+    const ring = `<circle class="fa-slice${felixActivity.pin && felixActivity.pin.d === kind && felixActivity.pin.i === i ? ' on' : ''}" data-fa-d="${kind}" data-fa-i="${i}" cx="60" cy="60" r="52" fill="none" stroke="${colourOf(slice) ? colourOf(slice) : `url(#fa-hatch-${kind})`}" stroke-width="12" stroke-dasharray="${length.toFixed(2)} ${(FA_RING - length).toFixed(2)}" stroke-dashoffset="${(-at).toFixed(2)}" transform="rotate(-90 60 60)"/>`;
     at += arc;
     return ring;
   }).join('');
   const pinned = felixActivity.pin && felixActivity.pin.d === kind ? slices[felixActivity.pin.i] : null;
   const shown = pinned ? { big: faCompact(pinned.value), small: pinned.other ? 'Other' : (kind === 'm' ? faModelName(pinned.name) : faKindLabel(pinned.name)) } : { big: faCompact(total), small: label };
-  return `<div class="fa-ring${pinned ? ' hl' : ''}"><svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"><mask id="fa-mask-${kind}"><circle class="fa-sweep" cx="60" cy="60" r="52" fill="none" stroke="#fff" stroke-width="16" stroke-dasharray="${FA_RING.toFixed(2)} ${FA_RING.toFixed(2)}" transform="rotate(-90 60 60)"/></mask><g mask="url(#fa-mask-${kind})">${arcs}</g></svg><div class="fa-centre" data-big="${esc(faCompact(total))}" data-small="${esc(label)}"><b>${esc(shown.big)}</b><span>${esc(shown.small)}</span></div></div>`;
+  return `<div class="fa-ring${pinned ? ' hl' : ''}"><svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"><defs><pattern id="fa-hatch-${kind}" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0v5" style="stroke:var(--faint)" stroke-width="2.5"/></pattern></defs><mask id="fa-mask-${kind}"><circle class="fa-sweep" cx="60" cy="60" r="52" fill="none" stroke="#fff" stroke-width="16" stroke-dasharray="${FA_RING.toFixed(2)} ${FA_RING.toFixed(2)}" transform="rotate(-90 60 60)"/></mask><g mask="url(#fa-mask-${kind})">${arcs}</g></svg><div class="fa-centre" data-big="${esc(faCompact(total))}" data-small="${esc(label)}"><b>${esc(shown.big)}</b><span>${esc(shown.small)}</span></div></div>`;
 }
 function faPanel(kind, title, items, unit, label) {
+  const colourOf = (item) => (kind === 'm' ? item.colour : faColour(item.rank, 4));
   const total = items.reduce((sum, item) => sum + item.value, 0);
   const name = (item) => item.other ? 'Other' : (kind === 'm' ? faModelName(item.name) : faKindLabel(item.name));
   let body;
   if (!items.length) body = `<p class="set-note">${kind === 'm' ? 'No token counts reported.' : 'No requests.'}</p>`;
-  else if (items.length === 1) body = `<p class="fa-one"><i style="background:${faColour(items[0].rank, kind === 'm' ? 1 : 4)}"></i><b title="${esc(name(items[0]))}">${esc(name(items[0]))}</b><span>${faCompact(items[0].value)} ${unit}</span></p>`;
+  else if (items.length === 1) body = `<p class="fa-one"><i${faCls(colourOf(items[0]))} style="${faBg(colourOf(items[0]))}"></i><b title="${esc(name(items[0]))}">${esc(name(items[0]))}</b><span>${faCompact(items[0].value)} ${unit}</span></p>`;
   else {
     const rows = items.map((item, i) => {
       const on = felixActivity.pin && felixActivity.pin.d === kind && felixActivity.pin.i === i;
       const calls = kind === 'm' ? `<span class="fa-lg-r">${faCompact(item.calls)} req</span>` : '';
-      return `<button type="button" class="fa-lg${kind === 'k' ? ' k' : ''}${on ? ' on' : ''}" data-fa-d="${kind}" data-fa-i="${i}" data-big="${esc(faCompact(item.value))}" data-small="${esc(name(item))}" aria-pressed="${on}"><i style="background:${faColour(item.rank, kind === 'm' ? 1 : 4)}"></i><span class="fa-lg-n" title="${esc(name(item))}">${esc(name(item))}</span><span class="fa-lg-v" title="${faExact(item.value)}">${faCompact(item.value)}</span>${calls}<span class="fa-lg-s">${faShare(item.value, total)}</span></button>`;
+      return `<button type="button" class="fa-lg${kind === 'k' ? ' k' : ''}${on ? ' on' : ''}" data-fa-d="${kind}" data-fa-i="${i}" data-big="${esc(faCompact(item.value))}" data-small="${esc(name(item))}" aria-pressed="${on}"><i${faCls(colourOf(item))} style="${faBg(colourOf(item))}"></i><span class="fa-lg-n" title="${esc(name(item))}">${esc(name(item))}</span><span class="fa-lg-v" title="${faExact(item.value)}">${faCompact(item.value)}</span>${calls}<span class="fa-lg-s">${faShare(item.value, total)}</span></button>`;
     }).join('');
     body = `<div class="fa-dp">${faDonut(kind, items, total, label)}<div class="fa-legend">${rows}</div></div>`;
   }
@@ -486,24 +499,27 @@ function faPeriod(period, ranks, span) {
   const at = felixActivity.day !== null && felixActivity.day <= latest ? felixActivity.day : latest;
   const tallest = bars.reduce((best, bar) => (bar.input + bar.output > best.input + best.output ? bar : best), bars[0] || { input: 0, output: 0, by: [] });
   const top = tallest.input + tallest.output;
+  const scale = faNiceMax(top);
   const spare = FA_HEIGHT - 2 * Math.max(0, faParts(tallest, ranks).length - 1);
   const days = bars.map((bar, i) => {
     const segments = faParts(bar, ranks).map((part) => {
-      const height = top ? part.value / top * spare : 0;
-      return `<i style="height:${height.toFixed(1)}px;background:${faColour(part.rank, 1)}${height < 3 ? ';margin-top:-2px' : ''}"></i>`;
+      const height = top ? part.value / scale * spare : 0;
+      return `<i${faCls(part.colour)} style="height:${height.toFixed(1)}px;${faBg(part.colour)}${height < 3 ? ';margin-top:-2px' : ''}"></i>`;
     }).join('');
     return `<div class="fa-day${i === at ? ' on' : ''}" data-i="${i}"><div class="fa-stack">${segments}</div></div>`;
   }).join('');
-  const labels = bars.length ? [bars[0], bars[Math.floor(latest / 2)], bars[latest]].map((bar, i) => (i === 2 ? 'Today' : faDate(bar.from))) : [];
+  const step = period.length === 7 ? 1 : weekly ? 4 : 7;
+  const labels = bars.map((bar, i) => [i, bar]).filter(([i]) => i === latest || ((latest - i) % step === 0 && latest - i >= 3)).map(([i, bar]) => `<span style="left:${((i + 0.5) / bars.length * 100).toFixed(2)}%">${i === latest ? 'Today' : faDate(bar.from)}</span>`).join('');
+  const grid = [[0, faCompact(scale)], [FA_HEIGHT / 2, faCompact(scale / 2)], [FA_HEIGHT, '0']].map(([at, text]) => `<div class="fa-grid${at === FA_HEIGHT ? ' base' : ''}" style="top:${at}px"><span>${text}</span></div>`).join('');
   const stats = `<div class="fa-stats"><div class="fa-top"><div class="fa-tile fa-hero"><span class="fa-lab">Requests</span><b title="${faExact(t.calls)}">${faCompact(t.calls)}</b></div><span class="fa-cap">in the last ${span} days</span></div>
     <div class="fa-tile"><span class="fa-lab">Tokens in</span><b title="${faExact(t.input)}">${faCompact(t.input)}</b></div>
     <div class="fa-tile"><span class="fa-lab">Tokens out</span><b title="${faExact(t.output)}">${faCompact(t.output)}</b></div>
     <div class="fa-tile"><span class="fa-lab">From cache</span><b>${Math.round(t.share * 100)}%</b><span class="fa-meter"><i style="width:${Math.round(t.share * 100)}%"></i></span></div></div>`;
   const chart = bars.length ? `<div class="fa-block"><div class="fa-h">Tokens per day</div>
-    <div class="fa-chart" tabindex="0" role="group" aria-roledescription="chart" aria-label="Tokens per day" aria-describedby="fa-hint"><div class="fa-grid"><span>${faCompact(top)}</span></div><div class="fa-days">${days}</div><div class="fa-xl"><span>${labels[0]}</span><span>${labels[1]}</span><span>${labels[2]}</span></div></div>
+    <div class="fa-chart" tabindex="0" role="group" aria-roledescription="chart" aria-label="Tokens per day" aria-describedby="fa-hint">${grid}<div class="fa-days">${days}</div><div class="fa-xl">${labels}</div></div>
     <span id="fa-hint" class="fa-sr">Use arrow keys to move between days</span><div id="fa-say" class="fa-sr" aria-live="polite"></div>
     <div class="fa-readout">${faReadout(at)}</div></div>` : '';
-  const models = window.leoChat.usageFold(period.models.map((row) => ({ name: row.name, value: row.tokens, calls: row.calls })), ranks.models.slice(0, 3));
+  const models = faFold(period.models.map((row) => ({ name: row.name, value: row.tokens, calls: row.calls })), ranks);
   const kinds = window.leoChat.usageFold(period.kinds.map((row) => ({ name: row.name, value: row.calls, calls: row.calls })), ranks.kinds.slice(0, 2));
   return `${stats}${chart}<div class="fa-donuts">${faPanel('m', 'Tokens by model', models, 'tokens', 'tokens')}${faPanel('k', 'Requests by kind', kinds, 'requests', 'requests')}</div>`;
 }
@@ -517,9 +533,10 @@ function faProcessIcon(name) {
   return svg('<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9.5 9.5h5v5h-5z"/>');
 }
 function faProcessColour(name, ranks) {
-  const pattern = name === 'Codex' ? /^(gpt|codex|o\d)/i : name === 'Claude Code' ? /claude/i : null;
-  const rank = pattern ? ranks.models.slice(0, 3).findIndex((model) => pattern.test(model)) : -1;
-  return rank < 0 ? FA_NEUTRAL : `var(--chart-${rank + 1})`;
+  const family = name === 'Codex' ? 'openai' : name === 'Claude Code' ? 'claude' : null;
+  const shades = faShades(ranks);
+  const model = ranks.models.find((one) => faFamily(one) === family && shades[one]);
+  return model ? shades[model] : FA_NEUTRAL;
 }
 function faRunning() {
   const held = felixActivity.processes;
@@ -532,10 +549,9 @@ function faRunning() {
   else if (held.unavailable) top = '<span class="set-note">Couldn’t read the process list on this computer.</span>';
   else {
     if (!held.groups.length) {
-      top = '<b class="fa-total">0 processes</b>';
-      rows = '<p class="set-note">leo has no helper processes running right now.</p>';
+      top = '<span class="set-note">No helper processes running</span>';
     } else {
-      top = `<b class="fa-total">${held.total === 1 ? '1 process' : `${faExact(held.total)} processes`}</b>`;
+      top = `<b class="fa-total">${held.total === 1 ? '1 helper process' : `${faExact(held.total)} helper processes`}</b>`;
       const most = Math.max(1, ...held.groups.map((group) => group.count));
       rows = `<div class="fa-run-rows">${held.groups.map((group) => `<div class="fa-run-row"><span class="fa-run-ic">${faProcessIcon(group.name)}</span><span class="fa-run-n" title="${esc(group.name)}">${esc(group.name)}</span><span class="fa-run-c">${faExact(group.count)}</span><span class="fa-run-bar"><i style="width:${Math.round(group.count / most * 100)}%;background:${faProcessColour(group.name, ranks)}"></i></span></div>`).join('')}</div>`;
       ids = `<details class="source-more fa-run-ids"><summary>${ICON.chevron}Show process IDs</summary><div class="fa-pids">${held.groups.map((group) => `<div><div class="fa-pid-h">${esc(group.name)}</div>${group.pids.map((one) => `<div class="fa-pid"><span>${Number(one.pid) || 0}</span><span>${esc(one.name)}</span></div>`).join('')}</div>`).join('')}</div></details>`;
@@ -568,10 +584,10 @@ function felixUsageInner(page) {
   return `<header><h3>Felix activity</h3>${segmented({ label: 'Activity period', choices: [['7', '7 days'], ['30', '30 days'], ['90', '90 days']], current: String(span), field: 'id="fa-span"' })}</header>
     <div class="fa-body" role="group" aria-label="Last ${span} days">${empty ? '<p class="set-note">No AI requests recorded yet.</p>' : faPeriod(period, ranks, span)}</div>
     <div class="fa-block fa-run">${faRunning()}</div>
-    <div class="fa-block"><div class="fa-h">Since leo started</div>
+    <details class="source-more fa-more"><summary>${ICON.chevron}More detail</summary><div class="fa-block"><div class="fa-h">Since leo started</div>
       ${kinds.length ? `<div class="fa-kinds">${faKindRows(kinds)}</div>` : ''}
       <div class="fa-tools"><span class="fa-lab">Tools</span><span>${faCompact(Number(tools.calls) || 0)} calls · ${faCompact(Number(tools.reused) || 0)} unchanged reads reused · ${faCompact(Number(tools.failures) || 0)} failed</span></div>
-      <p class="fa-foot">Cache is part of input, not your subscription balance. Provider retries may be unreported. Timing is the latest 64 requests of each kind.</p></div>`;
+      <p class="fa-foot">Cache is part of input, not your subscription balance. Provider retries may be unreported. Timing is the latest 64 requests of each kind.</p></div></details>`;
 }
 
 function felixUsageCard(page) {
@@ -869,12 +885,12 @@ function speechCards(view) {
   const available = view.models.filter((model) => !model.downloaded);
   if (!state.speechFilter || state.speechFilter === 'downloaded') state.speechFilter = 'recommended';
   const filter = state.speechFilter;
-  const filters = [['recommended', 'Recommended'], ['english', 'English'], ['many', 'Many languages'], ['all', `All ${available.length}`]];
+  const filters = [['recommended', 'Recommended'], ['english', 'English'], ['many', 'Multilingual'], ['all', `All ${available.length}`]];
   const rows = speechFiltered(available, filter).map(speechModelRow).join('');
   return `<section class="set-card" data-find="speech-in-use"><header><h3>In use</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header><div class="set-row"><span class="grow set-value-text">${view.ready && current ? esc(current.name) : 'Download a model below, then choose Use.'}</span></div><p class="set-note">Dictation and recording share this model. Audio stays on this computer.</p>${language}</section>
     <section class="set-card" data-models-downloaded data-find="speech-downloaded"><header><h3>Downloaded</h3><span class="hint">${plural(downloaded.length + extras.length, 'model')} · ${speechBytes(view.disk_bytes)} on this computer</span></header>
       ${downloaded.map(speechModelRow).join('')}${extras.map((file) => `<div class="set-row"><span class="grow"><span>${esc(file.name)}</span><span class="set-note">${speechBytes(file.bytes)} · Not in the current catalog</span></span><button class="btn plain sm" data-action="speech-model" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`).join('')}${!downloaded.length && !extras.length ? '<p class="set-note">No models downloaded yet.</p>' : ''}</section>
-    <section class="set-card" data-models-all data-find="speech-all"><header><h3>All models</h3></header><p class="hint">Choose a local model. Larger models use more memory.</p><div class="library-views model-filters" role="group" aria-label="Filter models">${filters.map(([id, label]) => `<button class="btn plain sm${filter === id ? ' on' : ''}" data-action="speech-filter" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div>${rows || '<p class="set-note">No models match this filter.</p>'}<p class="set-note">Accuracy uses the chosen language, or combines measured languages with Detect language. Benchmark speed may differ on your computer.</p></section>`;
+    <section class="set-card" data-models-all data-find="speech-all"><header><h3>All models</h3></header><p class="hint">Choose a local model. Larger models use more memory.</p><div class="model-filters">${segmented({ label: 'Filter models', action: 'speech-filter', key: 'filter', current: filter, choices: filters })}</div>${rows || '<p class="set-note">No models match this filter.</p>'}<p class="set-note">Accuracy uses the chosen language, or combines measured languages with Detect language. Benchmark speed may differ on your computer.</p></section>`;
 }
 function speechBytes(bytes) {
   bytes = Math.max(0, Number(bytes) || 0);
@@ -907,8 +923,9 @@ function speechModelRow(model) {
   return `<div class="set-row column" data-model-row="${esc(model.id)}"><div class="set-line"><span class="set-label">${esc(model.name)}${model.recommended ? ' <span class="chip">Recommended</span>' : ''}</span><span class="set-value">${controls}</span></div>${model.description ? `<p class="hint">${esc(model.description)}</p>` : ''}<span class="hint" title="${esc(names.join(', '))}">${esc(names.length === 1 ? names[0] + ' only' : names.length + ' languages')} · ${speechBytes(model.size)} · ${model.streaming ? 'Streaming' : 'Text after you speak'} · ${model.live ? 'Live lecture transcripts' : 'Lecture transcript after recording'}</span>${speechRatings(model)}${progress && progress.error && progress.state !== 'cancelled' ? `<span class="set-note warn">${esc(progress.error)}</span>` : ''}</div>`;
 }
 function filterSpeech(el) {
-  state.speechFilter = el.dataset.filter;
   const box = $('#speech-library');
+  const from = Number(box?.querySelector('.model-filters .segmented')?.style.getPropertyValue('--at'));
+  state.speechFilter = el.dataset.filter;
   if (!box) return;
   const section = box.closest('.settings-section') || box.parentElement;
   const before = box.querySelector('.model-filters')?.getBoundingClientRect().top;
@@ -920,7 +937,9 @@ function filterSpeech(el) {
   }
   const after = box.querySelector('.model-filters')?.getBoundingClientRect().top;
   if (before != null && after != null) scrollBy(0, after - before);
-  box.querySelector(`[data-filter="${CSS.escape(state.speechFilter)}"]`)?.focus({ preventScroll: true });
+  const filters = box.querySelector('.model-filters .segmented');
+  if (filters) syncSegmented(filters, Number.isFinite(from) ? from : null);
+  filters?.querySelector(`[data-filter="${CSS.escape(state.speechFilter)}"]`)?.focus({ preventScroll: true });
 }
 
 let speechPollGeneration = 0;

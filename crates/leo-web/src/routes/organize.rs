@@ -325,7 +325,11 @@ fn add_margin_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<
     })
     .map_err(|code| {
         if code == StatusCode::CONFLICT {
-            "quote must be words copied exactly from the note, 3 to 600 characters".to_string()
+            format!(
+                "quote must be words copied exactly from the note, {} to {} characters",
+                crate::margin::LEAST_QUOTE,
+                crate::margin::MOST_QUOTE
+            )
         } else {
             "leo could not find that note; use its id like n3 or its exact title".to_string()
         }

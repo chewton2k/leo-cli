@@ -15,6 +15,14 @@ fn main() -> Result<()> {
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let port = port_from(&args)?;
+    let chats = leo_web::chats::dir_for(&leo_core::store::Store::notes_dir()?);
+    leo_web::margin::set_prefs(
+        &chats,
+        &leo_web::margin::Prefs {
+            default_mode: "ask".into(),
+            ..leo_web::margin::prefs(&chats)
+        },
+    );
     let mut powers = leo_host::powers();
     if let Ok(reply) = std::env::var("LEO_TEST_FAKE_AI") {
         powers.toolless = Some(std::sync::Arc::new(move |_, _, _| Ok(reply.clone())));

@@ -196,7 +196,7 @@ fn changed(mut prefs: Prefs, body: PrefsBody) -> Option<Prefs> {
         prefs.layout = layout;
     }
     if let Some(pace) = body.pace {
-        if !matches!(pace.as_str(), "regular" | "slow") {
+        if !matches!(pace.as_str(), "fast" | "regular" | "slow") {
             return None;
         }
         prefs.pace = pace;
@@ -513,7 +513,7 @@ pub(crate) async fn ask(
     }
     let question = body.question.trim().to_string();
     if question.chars().count() > margin::MOST_ASK
-        || body.quote.chars().count() > margin::MOST_QUOTE
+        || body.quote.chars().count() > margin::MOST_ASKED
         || body.prefix.chars().count() > margin::MOST_QUOTE
         || body.suffix.chars().count() > margin::MOST_QUOTE
     {

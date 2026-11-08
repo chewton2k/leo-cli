@@ -172,10 +172,10 @@ const PASSAGE: &str = "then login just checks if it matches";
 const SAYS: &str = r#"{"quote":"just checks if it matches","text":"In plain text?"}"#;
 
 #[tokio::test]
-async fn read_along_is_off_on_a_fresh_install() {
+async fn read_along_is_the_default_for_new_notes_on_a_fresh_install() {
     let (engine, calls) = reading(SAYS).await;
     let (_, settings) = engine.get("/api/margin").await;
-    assert_eq!(settings["default_mode"], "ask");
+    assert_eq!(settings["default_mode"], "along");
     assert_eq!(settings["cap"], margin::DAILY_CAP);
     assert_eq!(settings["gap"], margin::READ_GAP);
     assert_eq!(settings["today"], 0);
@@ -187,10 +187,7 @@ async fn read_along_is_off_on_a_fresh_install() {
         .await;
     let id = made["id"].as_str().unwrap();
     let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
-    assert_eq!(view["mode"], "ask");
-    let version = engine.edit(id, PASSAGE).await;
-    let (status, why) = engine.read(id, &version, &[PASSAGE]).await;
-    assert_eq!((status, why["why"].as_str()), (403, Some("mode")));
+    assert_eq!(view["mode"], "along");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     engine.stop().await;
 }
@@ -204,6 +201,10 @@ async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
             serde_json::json!({ "title": "Old", "body": "" }),
         )
         .await;
+    let (status, _) = engine
+        .post("/api/margin", serde_json::json!({ "default_mode": "ask" }))
+        .await;
+    assert_eq!(status, 200);
     let (status, _) = engine
         .post(
             "/api/margin",
@@ -246,11 +247,17 @@ async fn a_new_default_reaches_new_notes_and_leaves_old_ones_alone() {
         )
         .await;
     assert_eq!(status, 400);
+    for good in [
+        serde_json::json!({ "pace": "fast" }),
+        serde_json::json!({ "gap": 180 }),
+    ] {
+        assert_eq!(engine.post("/api/margin", good).await.0, 200);
+    }
     for bad in [
         serde_json::json!({ "cap": 7 }),
         serde_json::json!({ "gap": 7 }),
         serde_json::json!({ "layout": "left" }),
-        serde_json::json!({ "pace": "fast" }),
+        serde_json::json!({ "pace": "turbo" }),
         serde_json::json!({ "default_mode": "x" }),
     ] {
         assert_eq!(engine.post("/api/margin", bad).await.0, 400);
@@ -811,8 +818,18 @@ async fn asking_about_selected_words_needs_no_read_along_and_the_words_must_be_t
     assert_eq!(engine.post(&path, ask("same words", "", "0")).await.0, 409);
     let (status, why) = engine.post(&path, ask("not there", "", &version)).await;
     assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
-    let long = "x".repeat(margin::MOST_QUOTE + 1);
+    let long = "x".repeat(margin::MOST_ASKED + 1);
     assert_eq!(engine.post(&path, ask(&long, "", &version)).await.0, 413);
+    let wide = "word ".repeat(200);
+    let (wide_id, wide_version) = engine.note("Wide", &wide).await;
+    margin::set_mode(&engine.chats(), &wide_id, "ask");
+    let (status, thread) = engine
+        .post(
+            &format!("/api/notes/{wide_id}/margin/threads"),
+            ask(wide.trim(), "", &wide_version),
+        )
+        .await;
+    assert_eq!(status, 200, "{thread}");
     let (status, why) = engine
         .post(&path, ask("same words", "not beside it ", &version))
         .await;

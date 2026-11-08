@@ -98,7 +98,6 @@ const actions = {
   menu,
   'calendar-add': () => addCalendar().catch(fail),
   'calendar-remove': (el) => removeCalendar(el).catch(fail),
-  'calendar-refresh': () => refreshCalendar().catch(fail),
   'calendar-more': () => {
     state.calendarAdding = true;
     drawSettings(state.settings);

@@ -139,7 +139,8 @@ lighter).
 - Choice of a few options: `segmented()` (settings-navigation.js; `field` mode fires
   `change` on a hidden input, `action` mode makes `data-action` buttons with
   `aria-pressed`; a 4th choice item is the tooltip). Calendar views, Which days change,
-  onboarding Recommended/All, Add to note's where, the card panel's priority.
+  onboarding Recommended/All, the speech-model filters (2026-11-08: the pill slides between them,
+  `syncSegmented(box, from)` after the redraw; "Multilingual"), Add to note's where, the card panel's priority.
 - Picture choices: `choiceCards()` (the same two modes; `columns` keeps rows aligned).
 - On/off: `settingsSwitch()`; checkboxes stay only for task completion and picking
   several items (Trash).
@@ -162,8 +163,7 @@ lighter).
 - Empty pages: `empty(icon, title, text)`. Counts: `.badge`. Small uppercase section
   labels share one rule (`.side-group`, `.source-label`, `.quick-due-head`,
   `.chat-history-group`, `.pick-head`).
-- Kept on purpose: the speech-model filters (five wrapping filters, `library-views`),
-  the model picker (a menu of models with effort chips), the margin-mode menu (its own
+- Kept on purpose: the model picker (a menu of models with effort chips), the margin-mode menu (its own
   interrupted-motion and keyboard tests) and chat.js's attach and access menus (their
   rows are richer than a list; they move through `leoMotion`).
 
@@ -201,6 +201,9 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   `arcPoints`) and lifts onto a fixed carrier when an ancestor clips (`clippedBy`), so a drop
   passes lane and row bounds. `flyInto(ghost, target)` carries a card into another board's tab, or
   "n more" when that tab went back into the overflow; it pulses on landing.
+- Opening a note (2026-11-08, the user's pick): the title wipes in left to right (`clip-path`, `OPEN_MS`, `EASE_OUT`)
+  only when `swap` reports a new page; nothing glides over from the explorer. Enter or Tab in the title goes to the body
+  (Shift+Tab stays; Escape then Shift+Tab reaches the Felix mode button).
 - Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
 - Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
   and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
@@ -360,7 +363,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   width while the 52 px rail stays fixed. `pane-resize.js` shares bounded sizing,
   32/96 px arrow steps, Home/double-click reset and drag cleanup with Felix's
   Chats divider (`leo-chat-history-width`); shrinking a window clamps the visible
-  width without replacing the saved preference. Overlay chat lists have no grip.
+  width without replacing the saved preference. Overlay chat lists have no grip. Crossing the overlay width while resizing swaps modes under `.chat.mode-switch` (no transition), so the list never slides over the chat (2026-11-08).
   There is no Top level row (2026-11-02, the user's call: the tree already lists
   top-level notes); the pinned Folders heading is the top-level drop target, and
   folder and note rows retain drag data. Drops work like a file explorer
@@ -373,7 +376,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (`side.revealed`, never saved); the tree scrolls near its
   edges; moved folders keep their open state (`moveOpenFolders`). A redraw can
   replace the dragged row, so `dragend` is also caught on the source element,
-  a pointer move with no button ends a drag, and drops check the drag's type. Opening another note clears the previous folder selection. Selecting a folder while a note stays open highlights that folder and scopes creation there until another note opens. The rail, explorer, tabs and
+  a pointer move with no button ends a drag, and drops check the drag's type. Opening another note clears the previous folder selection. Selecting a folder while a note stays open moves the one highlight (the pill) to that folder and scopes creation there until another note opens; the open note's row turns `.open` (text colour, weight 500, no fill) and keeps `aria-current`, which a folder gets only when no note is open. Clicking the open note again clears the folder target (2026-11-08, the user's call: never two rows highlighted). The rail, explorer, tabs and
   segmented controls are not text-selectable.
   The sidebar head and page toolbar share `--bar-height`, including the safe-area
   inset, so their rows stay aligned with the explorer open or hidden (no rule
@@ -663,7 +666,7 @@ target. Check the page sequence after loading preferences.
   note missing, in case it was a partial sync or a rename, and never runs while no
   notes loaded or a file is unreadable. Export adds `leo/margin.json` with Chats,
   without trashed notes' threads unless Trash is chosen.
-- Modes: `ask` (When you ask, the default) or `along`. A note's own row wins;
+- Modes: `along` (Reads along, the default since 2026-11-08, the user's call; first card in Settings → Felix → New notes start) or `ask`. A fresh install stores its prefs with `since = now` on the first `prefs()` read, so notes made before never start reading. A note's own row wins;
   without one, the global default applies only to notes leo made (a v4 id, so never a
   headerless file) after it was set (`Prefs.since`), so turning it on never starts
   reading old notes. Turning the default off pins the notes made while it was on
@@ -672,7 +675,7 @@ target. Check the page sequence after loading preferences.
   in `marginPage.wanted`; the created hook (`marginCreated`) loads the note's margin and
   POSTs it (2026-11-06, the user's call).
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
-  sends changed blocks after a pause (4 s, slow 8 s). Silence is the normal answer:
+  sends changed blocks after a pause (fast 2 s, regular 4 s, slow 8 s). Silence is the normal answer:
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
   does: a stale version (409), a note not in `along` or not edited in this engine
   run (403, `Reads::edited` is set by the PATCH route, so browsing can never read),
@@ -698,7 +701,7 @@ target. Check the page sequence after loading preferences.
   escaped Markdown renderer, strict Mermaid rendering and inert SVG images. Settings says text
   stays here only for a loopback address and a model without `cloud` in its name
   (`ai::reads_stay_here`).
-- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (10 s, 15 s, 30 s, 90 s since 2026-11-07, the user's call; default 90 s, `Prefs.gap`; a saved gap no longer offered reads as 90 s; at 10 s, 40 reads can go in under 7 minutes) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
+- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (10 s, 15 s, 30 s, 90 s, 3 min since 2026-11-08, the user's call; default 90 s, `Prefs.gap`; a saved gap no longer offered reads as 90 s; at 10 s, 40 reads can go in under 7 minutes) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
   most 8,000 characters in and 220 tokens out. At the defaults, 40 reads
   take an hour of writing at least, and a day's worst case is about 90k input
@@ -718,7 +721,7 @@ target. Check the page sequence after loading preferences.
   Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
   Add to note. A closed thread with more messages says "N more" (marks get a ring).
   Word arrival animates colour only, never opacity (blur on WebKit); positions are rounded. With Felix open, under
-  3 or over 600 characters, it goes to the chat as before. The server anchors on
+  3 or over `MOST_ASKED` (1,000) characters, it goes to the chat as before (2026-11-08; read-along and `add_margin_note` quotes stay at `MOST_QUOTE`, 600). The server anchors on
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
   POST `.../threads/{id}/reply`, bounded (`MOST_REPLY`, `MOST_MESSAGES`, the last 8
   messages sent), and never run twice at once for a thread.
@@ -1321,7 +1324,12 @@ row directly above the composer. Writing AI providers are logo cards
 are listed newest release first, then most capable first (the Rust list stays
 cheapest-first: `models.first()` is the quick model); Ollama models largest
 first. Felix activity is a dashboard (period switch, stat tiles, tokens-per-day
-bars by model, model and purpose donuts, "Since leo started", and Running now:
+bars scaled to `faNiceMax` with three labelled gridlines and dates under the bars,
+model and purpose donuts, Running now, and "Since leo started" under a closed More
+detail). Models are coloured by maker (2026-11-08, the user's call: `faFamily`, a
+name with `:` is local first, then GPT, then Claude; `--fam-openai|claude|local-1..3`,
+per-theme ramps at 3:1 or more; a fourth model of one maker and Other are hatched);
+purpose keeps `--chart-*`. Running now is one line when empty and otherwise lists
 the processes leo owns from `GET /api/processes`, grouped by kind, polled every
 10 s without counting as use, never sending arguments to the page). Health is
 one card: a head sentence, problem rows with their fix and button, then ready
@@ -1450,6 +1458,7 @@ minimum timed block. Overlap layout includes that visual minimum; saved task
 times stay unchanged. Google export, .ics download and delete/stop-tracking
 actions use icon controls with accessible names and hover titles in both peeks
 and task sheets.
+The hour grid (`.cal-hours`, `.cal-cols`) has a `min-height` of 24 hours, so a tall window extends the grid lines instead of leaving a plain band below 11 PM (2026-11-08).
 A block that would hang past midnight (a deadline at 23:59 with its 60 px minimum) is placed
 higher (`calColumn` `placed`, 2026-11-06) so it never adds empty scroll under the grid; its
 label and drags still use the real start.

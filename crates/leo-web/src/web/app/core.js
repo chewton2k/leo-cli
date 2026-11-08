@@ -32,7 +32,7 @@ const ICON = {
   close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
   more: svg('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>'),
   folder: svg(FOLDER),
-  folderPlus: svg(FOLDER + '<path d="M12 10.5v6M9 13.5h6"/>'),
+  folderPlus: svg('<path d="M11 19.5H6.5A3.5 3.5 0 0 1 3 16V8a3 3 0 0 1 3-3h2.9a2 2 0 0 1 1.5.7l1.2 1.4a2 2 0 0 0 1.5.7H18a3 3 0 0 1 3 3v1"/><circle cx="17.5" cy="17.5" r="4"/><path d="M17.5 15.6v3.8M15.6 17.5h3.8"/>'),
   move: svg(FOLDER + '<path d="M9.5 13.5h6M13 11l2.5 2.5L13 16"/>'),
   pin: svg('<path d="M12 16v6"/><path d="M8 3h8l-1.2 6.2L18 12.5V15H6v-2.5l3.2-3.3z"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
@@ -51,7 +51,7 @@ const ICON = {
   fit: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
   expand: svg('<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>'),
   restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
-  filePlus: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M12 10v7M8.5 13.5h7"/>'),
+  filePlus: svg('<path d="M11.5 21H8a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h5.8a3 3 0 0 1 2.1.9l1.9 1.9a3 3 0 0 1 .9 2.1v3.6"/><path d="M8 9h5M8 13h3"/><circle cx="17.5" cy="17.5" r="4"/><path d="M17.5 15.6v3.8M15.6 17.5h3.8"/>'),
   note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
   refresh: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6L20 8.5"/><path d="M20 4v4.5h-4.5"/>'),
   check: svg('<path d="M5 12l4.5 4.5L19 7"/>'),
@@ -797,7 +797,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   await marginLoadPrefs();
   if (mine !== seq) return;
   let s;
-  swap(`n:${note.id || 'new'}`, () => {
+  const opened = swap(`n:${note.id || 'new'}`, () => {
     scrollToTop();
     document.body.classList.toggle('on-note', true);
     if (source.note && source.note !== note.id) closeSource();
@@ -829,11 +829,9 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
       reading.id = note.id;
       reading.user = false;
     } else restoreReading(note.id, mine);
-  }, {
-    from: () => morphTitle(note.id),
-    to: () => ($('#title')?.textContent.trim() ? $('#title') : null),
   });
   arriveOnPage(app.querySelector('article.note'));
+  if (opened && !stillMotion()) s.title.animate({ clipPath: ['inset(0 100% 0 0)', 'inset(0 0 0 0)'] }, { duration: OPEN_MS, easing: EASE_OUT });
   drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
@@ -851,7 +849,8 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     changed(s);
   });
   s.title.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.isComposing) return;
+    if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
       e.preventDefault();
       s.doc.editStart();
     }

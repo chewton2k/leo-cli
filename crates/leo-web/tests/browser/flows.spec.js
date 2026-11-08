@@ -3431,7 +3431,8 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
   await card.locator('#calendar-link').fill('https://calendar.google.com/calendar/ical/me/private-abc/basic.ics');
   await card.locator('[data-action="calendar-add"]').click();
   await expect(page.locator('.cal-card')).toContainText('Classes');
-  await expect(page.locator('.cal-card .cal-next')).toContainText('Algorithms lecture');
+  await expect(page.locator('.cal-card .cal-icon')).toHaveCount(1);
+  await expect(page.locator('.cal-card')).not.toContainText('Next up');
   await expect(page.locator('#calendar-link')).toHaveCount(0);
   await page.locator('.cal-card [data-action="calendar-more"]').click();
   await expect(page.locator('#calendar-link')).toBeFocused();

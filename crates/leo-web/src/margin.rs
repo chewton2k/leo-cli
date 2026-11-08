@@ -15,6 +15,7 @@ pub const LEAST_QUOTE: usize = 3;
 pub const MOST_TEXT: usize = 500;
 pub const MOST_REPLY: usize = 4_000;
 pub const MOST_ASK: usize = 1_000;
+pub const MOST_ASKED: usize = 1_000;
 pub const MOST_MESSAGES: usize = 24;
 pub const MOST_OPEN: usize = 24;
 pub const MOST_CLOSED: usize = 48;
@@ -25,7 +26,7 @@ pub const MOST_READ_CHARS: usize = 8_000;
 pub const BODY_BYTES: usize = 40_000;
 pub const READ_TOKENS: u32 = 220;
 pub const REPLY_TOKENS: u32 = 1_200;
-pub const READ_GAPS: [u32; 4] = [10, 15, 30, 90];
+pub const READ_GAPS: [u32; 5] = [10, 15, 30, 90, 180];
 pub const READ_GAP: u32 = 90;
 pub const READ_LIMIT: Duration = Duration::from_secs(90);
 pub const SWEEP_EVERY: Duration = Duration::from_secs(60 * 60);
@@ -87,7 +88,7 @@ fn read_gap() -> u32 {
 impl Default for Prefs {
     fn default() -> Prefs {
         Prefs {
-            default_mode: "ask".into(),
+            default_mode: "along".into(),
             since: None,
             layout: "both".into(),
             pace: "regular".into(),
@@ -348,7 +349,14 @@ fn set_state(chats: &Path, key: &str, value: &impl Serialize) -> bool {
 }
 
 pub fn prefs(chats: &Path) -> Prefs {
-    let mut prefs: Prefs = state_of(chats, "prefs").unwrap_or_default();
+    let mut prefs = state_of(chats, "prefs").unwrap_or_else(|| {
+        let fresh = Prefs {
+            since: Some(Utc::now()),
+            ..Prefs::default()
+        };
+        set_state(chats, "prefs", &fresh);
+        fresh
+    });
     if !READ_GAPS.contains(&prefs.gap) {
         prefs.gap = READ_GAP;
     }
@@ -536,12 +544,12 @@ fn context_around(body: &str, at: usize, length: usize) -> Option<Place> {
     })
 }
 
-fn quotable(quote: &str) -> bool {
-    (LEAST_QUOTE..=MOST_QUOTE).contains(&quote.chars().count()) && !quote.trim().is_empty()
+fn quotable(quote: &str, most: usize) -> bool {
+    (LEAST_QUOTE..=most).contains(&quote.chars().count()) && !quote.trim().is_empty()
 }
 
 pub fn placed_exact(body: &str, prefix: &str, quote: &str, suffix: &str) -> Option<Place> {
-    if !quotable(quote) {
+    if !quotable(quote, MOST_ASKED) {
         return None;
     }
     let at = body.find(&format!("{prefix}{quote}{suffix}"))? + prefix.len();
@@ -549,7 +557,7 @@ pub fn placed_exact(body: &str, prefix: &str, quote: &str, suffix: &str) -> Opti
 }
 
 pub fn placed(body: &str, quote: &str, within: &[String]) -> Option<Place> {
-    if !quotable(quote) {
+    if !quotable(quote, MOST_QUOTE) {
         return None;
     }
     let at = within

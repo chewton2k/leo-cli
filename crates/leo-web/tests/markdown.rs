@@ -34,6 +34,7 @@ fn the_calendar_helpers_pass_their_tests() {
 fn saving_and_draft_recovery_pass_their_tests() {
     run_node_tests("printing.test.js");
     run_node_tests("coding-plans.test.js");
+    run_node_tests("activity.test.js");
     run_node_tests("search-highlights.test.js");
     run_node_tests("motion.test.js");
     run_node_tests("browser-server.test.js");

@@ -174,7 +174,7 @@ test('When you ask says how to ask, with the real shortcut and no promise of aut
   for (const [mac, keys] of [[true, 'Cmd+Shift+E'], [false, 'Ctrl+Shift+E']]) {
     const h = harness();
     h.context.ON_MAC = mac;
-    const html = h.context.felixSettingsCards({ gap: 90, gaps: [10, 15, 30, 90], cap: 40, caps: [20, 40, 80, 0], today: 0, default_mode: 'ask', layout: 'right', pace: 'regular' }, { tasks: [] });
+    const html = h.context.felixSettingsCards({ gap: 90, gaps: [10, 15, 30, 90, 180], cap: 40, caps: [20, 40, 80, 0], today: 0, default_mode: 'ask', layout: 'right', pace: 'regular' }, { tasks: [] });
     assert.ok(html.includes(`Select text, then Ask Felix or ${keys}.`));
     assert.ok(html.includes('Reads along sends the note’s title and the text you change to your writing AI.'));
     assert.ok(!/automatic/i.test(html));
