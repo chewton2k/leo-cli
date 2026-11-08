@@ -1,107 +1,52 @@
 # leo
 
-Leo is a desktop note app for macOS and Windows, with local recording and
-dictation and Felix to help you study. Your notes stay as
-Markdown files on your computer. Writing AI uses your signed-in Claude Code or
-Codex plan, or a local Ollama model.
+**Record a lecture, get the notes, then get quizzed on them.**
+
+leo is a note app for macOS and Windows. It transcribes on your computer, writes
+your recordings up as Markdown notes, and Felix helps you study them. Your notes
+are plain files in a folder you own.
+
+[Download](https://github.com/chewton2k/leo-cli/releases/latest) · [Install](#install) · [Install guide](docs/install.md)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/demo-dark.gif">
+  <img src="docs/assets/demo-light.gif" alt="leo recording a lecture, writing it up as a note, then Felix quizzing on the note after a dictated question">
+</picture>
 
 ## Install
 
-Download Leo from [Releases](https://github.com/chewton2k/leo-cli/releases).
-Choose a macOS disk image (`.dmg`) for Apple Silicon or Intel, or the Windows x64
-installer (`-setup.exe`). Linux is not supported by the desktop app.
-
-During the desktop transition, check that the release includes those app assets.
-Older releases contain the terminal version; until the first desktop release is
-published, the install commands below still provide that version.
-
-On macOS, drag Leo into Applications. For browser downloads on macOS 15, open
-System Settings → Privacy & Security and choose **Open Anyway** after the first
-attempt to open Leo. The app uses a stable self-signed certificate; it is not
-notarized. Windows browser downloads may show a SmartScreen prompt.
-
-After the first desktop release, these commands install the app too:
+macOS:
 
 ```sh
 curl -fsSL https://github.com/chewton2k/leo-cli/releases/latest/download/install.sh | sh
 ```
 
-On Windows, in PowerShell:
+Windows, in PowerShell:
 
 ```powershell
 irm https://github.com/chewton2k/leo-cli/releases/latest/download/install.ps1 | iex
 ```
 
-The existing main-branch installers switch over only after every desktop app
-asset is published. Before that switch, they keep installing the terminal version.
+Or download the [macOS `.dmg` or Windows `-setup.exe`](https://github.com/chewton2k/leo-cli/releases/latest).
+The [install guide](docs/install.md) covers the first launch on macOS, updates,
+uninstalling and moving from the old terminal version.
 
-The macOS installer puts Leo in `/Applications`; Windows uses
-`%LOCALAPPDATA%\Leo`. The terminal command points into the app, so app updates
-update it too. `LEO_INSTALL_DIR` chooses the terminal command's folder;
-`LEO_INSTALL_SKIP_PATH=1` leaves your shell or user PATH unchanged.
+## What it does
 
-Open Leo like any other app, or type `leo` in a terminal. First launch offers
-three skippable steps: microphone, Accessibility, and a local speech model.
-Dictation defaults to Option+Space on macOS and Ctrl+Space on Windows; rebind it
-in Settings. Models and speech stay on this computer. Choose Writing AI when
-you need it; dictation uses writing AI only if you turn on its AI writing switch.
+- **Record.** A lecture, meeting or call becomes a note: leo transcribes it
+  locally, then writes up the main ideas in the folder you chose.
+- **Study with Felix.** Ask about your notes, learn a topic one step at a time,
+  or get quizzed and marked on what you wrote.
+- **Dictate anywhere.** Press Option+Space (Ctrl+Space on Windows), speak, and
+  leo pastes your words into whatever app you're in.
+- **Plan.** Tasks, a calendar and boards sit beside your notes.
 
-Settings → Health has setup checks and fixes. Updates & about checks for app
-updates, shows what changed, and installs when you quit by default. Updates wait
-for recording and dictation to finish. `leo update` uses the same app download;
-quit Leo before using the terminal installer. `leo uninstall` removes the app,
-its login item and its local settings/models while keeping your notes.
+## Private by default
 
-## Moving from the terminal version
-
-After the desktop release is published, macOS users with a standard installation
-can quit their old Leo session, run `leo update`, then open Leo in Applications.
-The installer replaces the terminal command with the app launcher, so typing
-`leo` opens the app. The terminal interface and browser-server workflow are
-replaced by the desktop window.
-
-Your notes stay in the same folder. Leo reads the existing database and writing
-settings; there is no export/import step. Built-in GitHub backup is retired;
-existing repositories and remotes stay untouched. Keep the same
-operating-system account and data location when switching.
-
-On first launch, allow microphone access for recording and Accessibility access
-for pasting dictation into other apps. Download a speech model in Settings →
-Speech models. The previous speech model cannot be reused. Previous cloud speech choices
-fall back to local speech. Stored keys, writing AI sign-ins and calendar
-credentials stay in leo's credentials file.
-
-Two migration cases are not automatic yet:
-
-- **Windows:** the old `leo update` command keeps its executable running while
-  the installer tries to replace it. Use the downloaded Windows installer after
-  quitting old Leo, then open the app from Start. An existing terminal command
-  may still point to the old version; automatic command migration is not ready.
-- **Custom `LEO_HOME`:** a value set only in your shell is not remembered by an
-  app opened from Finder or Start. That launch may show a different notes folder.
-  Keep your existing setup until custom-location migration is supported.
-
-Linux users can keep their existing terminal installation and notes; the desktop
-app supports macOS and Windows only.
-
-## What you can do
-
-**Organize your notes.** Browse folders and notes in the explorer beside your
-note. Right-click a note or folder to rename, move or trash it, with Undo. Search
-your notes and keep tasks close by.
-
-**Study with Felix.** Ask anything, or say what you want to learn: Felix finds where
-your understanding stops, teaches one step at a time and quizzes you on your notes.
-
-
-**Dictate into other apps.** Hold or tap your global shortcut, speak, and Leo
-pastes your words back. Custom words, filler removal, the last 20 dictations and
-popup appearance are in Settings. Speech stays local; AI writing of the text is
-off unless you turn it on.
-
-**Choose your speech model.** Dictation and recording share one local model.
-Settings → Speech models shows downloaded models, language and streaming support,
-size, accuracy and speed, with download progress and cancellation.
+Speech never leaves your computer: recording and dictation use a local model you
+pick in Settings. Writing AI uses your signed-in Claude Code or Codex plan, or a
+local Ollama model. Notes are Markdown files with front matter, so Obsidian,
+git and any editor can read them.
 
 [Contributing](CONTRIBUTING.md) · [Developer guide](DEVELOPER.md)
 

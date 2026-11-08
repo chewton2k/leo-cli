@@ -5,7 +5,9 @@
 
 target*
 todo.md
-docs
+docs/*
+!docs/install.md
+!docs/assets/
 
 node_modules/
 playwright-report/
