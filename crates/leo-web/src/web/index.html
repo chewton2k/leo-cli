@@ -290,6 +290,7 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-note[data-active]:not([data-open]) { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 9%, transparent); }
 .margin-waiting { position: absolute; left: 0; top: 0; pointer-events: none !important; transition: opacity .12s ease-out; }
 .margin-waiting.leaving { opacity: 0; }
+.margin-waiting .margin-dots i { width: 6px; height: 6px; background: var(--accent); }
 .margin-mark.reading { pointer-events: none; }
 .margin-mark.reading .margin-anchor { animation: margin-dot 1.1s ease-in-out infinite both; }
 .margin-toggle { position: absolute; inset: -4px; z-index: 1; padding: 0; border: 0; border-radius: var(--r-md); background: none; cursor: pointer; }
@@ -397,12 +398,20 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-persona-menu button[aria-checked="true"] .persona-icon { background: var(--accent-soft); color: var(--accent); }
 .margin-persona-menu button[aria-checked="true"] { background: none; }
 .margin-persona-menu button:hover { background: var(--tint); }
+.margin-persona-menu button[aria-checked="true"]::after { content: "✓"; margin-left: auto; padding-left: 8px; color: var(--accent); }
 .persona-words { display: grid; min-width: 0; }
 .persona-words b { font-weight: 600; color: var(--text); }
 .persona-words small { margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .persona-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
-.persona-tile { position: relative; display: grid; justify-items: center; gap: 5px; width: 76px; margin: 0; padding: 10px 4px 8px; border: 1px solid transparent; border-radius: var(--r-tile); background: var(--raised); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1.3; text-align: center; cursor: pointer; }
-.persona-tile > span:last-child:not(.persona-icon) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.persona-slot { position: relative; display: flex; }
+.persona-tile { position: relative; display: grid; justify-items: center; align-content: start; gap: 5px; width: 84px; margin: 0; padding: 10px 4px 8px; border: 1px solid transparent; border-radius: var(--r-tile); background: var(--raised); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1.3; text-align: center; cursor: pointer; }
+.persona-tile > span:last-child:not(.persona-icon) { max-width: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--text); }
+.persona-edit { position: absolute; z-index: 1; top: 4px; right: 4px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--muted); cursor: pointer; opacity: 0; }
+.persona-edit svg { width: 13px; height: 13px; }
+.persona-slot:hover .persona-edit, .persona-edit:focus-visible { opacity: 1; }
+.persona-edit:hover { color: var(--text); background: var(--tint); }
+.persona-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: none) { .persona-edit { opacity: 1; } }
 .persona-tile > input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; appearance: none; -webkit-appearance: none; }
 .persona-tile .persona-icon { width: 24px; height: 24px; background: none; color: inherit; }
 .persona-tile .persona-icon svg { width: 20px; height: 20px; }

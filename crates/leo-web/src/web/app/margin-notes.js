@@ -28,7 +28,8 @@ const PERSONA_ICON = {
   pen: svg('<path d="M4 20l1.2-4.6L16.6 4a2 2 0 012.8 2.8L8 18.4z"/><path d="M14.5 6.1l3.4 3.4"/>'),
   plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
 };
-let personaStartNew = false;
+let personaStartNew = null;
+let personaReturn = null;
 let personaEditing = null;
 let personaDetails = false;
 const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
@@ -307,7 +308,7 @@ function marginPersonaControl() {
       if (!option) return;
       if (option.dataset.marginPersona !== 'new') return marginChangePersona(option.dataset.marginPersona).catch(fail);
       marginPersonaMenu(false);
-      personaStartNew = true;
+      personaStartNew = marginPage.s?.note.id || '';
       location.hash = '#/settings/felix';
     });
   }
@@ -321,7 +322,7 @@ function marginPersonaControl() {
   const key = JSON.stringify([list, now.id]);
   if (menu.dataset.key === key) return;
   menu.dataset.key = key;
-  menu.innerHTML = list.map((p) => `<button type="button" role="menuitemradio" aria-checked="${p.id === now.id}" data-margin-persona="${esc(p.id)}"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span class="persona-words"><b>${esc(p.name)}</b><small>${esc(p.line || p.details)}</small></span></button>`).join('')
+  menu.innerHTML = list.map((p) => `<button type="button" role="menuitemradio" aria-checked="${p.id === now.id}" data-margin-persona="${esc(p.id)}" title="${esc(p.details)}"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span class="persona-words"><b>${esc(p.name)}</b><small>${esc(p.line || p.details)}</small></span></button>`).join('')
     + `<hr><button type="button" role="menuitem" data-margin-persona="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span class="persona-words"><b>New persona</b></span></button>`;
 }
 
@@ -1374,17 +1375,18 @@ function felixPersonaCard(view) {
   const list = view.personas || [];
   const now = list.find((p) => p.id === view.default_persona) || list[0];
   if (!now) return '';
-  if (personaStartNew) {
-    personaStartNew = false;
+  if (personaStartNew !== null) {
+    personaReturn = personaStartNew || null;
+    personaStartNew = null;
     personaEditing = 'new';
   }
   const editing = personaEditing === 'new' ? { id: '', name: '', icon: (view.persona_icons || ['flask'])[0], details: '' } : list.find((p) => p.custom && p.id === personaEditing);
   if (editing) return `<section class="set-card" data-find="felix-persona" id="felix-persona-card"><header><h3>${editing.id ? 'Edit persona' : 'New persona'}</h3></header>${felixPersonaForm(view, editing)}</section>`;
   personaEditing = null;
-  const tiles = list.map((p) => `<label class="persona-tile"><input type="radio" name="felix-persona" value="${esc(p.id)}" data-margin-pref="default_persona"${p.id === now.id ? ' checked' : ''}><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span>${esc(p.name)}</span></label>`).join('');
+  const tiles = list.map((p) => `<div class="persona-slot"><label class="persona-tile"><input type="radio" name="felix-persona" value="${esc(p.id)}" data-margin-pref="default_persona"${p.id === now.id ? ' checked' : ''}><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span>${esc(p.name)}</span></label>${p.custom ? `<button type="button" class="persona-edit" data-persona-act="edit" data-id="${esc(p.id)}" aria-label="Edit ${esc(p.name)}" title="Edit">${PERSONA_ICON.pen}</button>` : ''}</div>`).join('');
   const add = list.filter((p) => p.custom).length < (view.most_personas || 8) ? `<button type="button" class="persona-tile add" data-persona-act="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span>New</span></button>` : '';
   return `<section class="set-card" data-find="felix-persona" id="felix-persona-card"><header><h3>Who reads your notes</h3></header><p class="hint">New notes start with this one. Each note can switch. Felix chat stays the same.</p><div class="persona-tiles" role="radiogroup" aria-label="Who reads your notes">${tiles}${add}</div>
-    <div class="persona-line"><span>${esc(now.line || 'Your own persona.')}</span><button type="button" class="link-btn" data-persona-act="details" aria-expanded="${personaDetails}">${personaDetails ? 'Hide details' : 'See details'}</button>${now.custom ? '<button type="button" class="link-btn" data-persona-act="edit">Edit</button>' : ''}</div>${personaDetails ? `<p class="persona-details">${esc(now.details)}</p>` : ''}</section>`;
+    <div class="persona-line"><span>${esc(now.line || 'Your own persona.')}</span><button type="button" class="link-btn" data-persona-act="details" aria-expanded="${personaDetails}">${personaDetails ? 'Hide details' : 'See details'}</button></div>${personaDetails ? `<p class="persona-details">${esc(now.details)}</p>` : ''}</section>`;
 }
 
 function felixPersonaRedraw(view, focus = '') {
@@ -1420,8 +1422,11 @@ document.addEventListener('click', async (e) => {
       await felixSavePersonas(felixCustoms(view).filter((p) => p.id !== personaEditing));
       personaEditing = null;
     } else if (act === 'new') personaEditing = 'new';
-    else if (act === 'edit') personaEditing = view.default_persona;
-    else if (act === 'cancel') personaEditing = null;
+    else if (act === 'edit') personaEditing = button.dataset.id;
+    else if (act === 'cancel') {
+      personaEditing = null;
+      if (personaReturn) return felixPersonaBack(null);
+    }
     else if (act === 'details') personaDetails = !personaDetails;
   } catch (error) {
     return fail(error);
@@ -1439,14 +1444,23 @@ document.addEventListener('submit', async (e) => {
   const save = $('[type="submit"]', form);
   save.disabled = true;
   try {
-    await felixSavePersonas(id ? customs.map((p) => (p.id === id ? entry : p)) : [...customs, entry]);
+    const view = await felixSavePersonas(id ? customs.map((p) => (p.id === id ? entry : p)) : [...customs, entry]);
     personaEditing = null;
+    const made = id ? null : felixCustoms(view).find((p) => !customs.some((old) => old.id === p.id));
+    if (personaReturn) return felixPersonaBack(made?.id);
     felixPersonaRedraw(state.margin, '[name="felix-persona"]:checked');
   } catch (error) {
     save.disabled = false;
     toast('Could not save this persona. Check the name and what he should look for.');
   }
 });
+
+async function felixPersonaBack(persona) {
+  const note = personaReturn;
+  personaReturn = null;
+  if (persona) await api(`/api/notes/${enc(note)}/margin`, { method: 'POST', body: { persona } }).catch(fail);
+  location.hash = `#/n/${note}`;
+}
 
 function felixSettingsCards(view, page) {
   if (!view) return '<section class="set-card"><p class="hint">Felix’s settings are not available right now.</p></section>';
