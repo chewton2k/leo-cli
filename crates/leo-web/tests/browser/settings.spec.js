@@ -595,7 +595,7 @@ test('Felix activity draws gridlines and colours bars by maker', async ({ page }
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
   await page.setContent(`<style>${css}</style><main id="app"></main>`);
-  await page.evaluate(`const app=document.querySelector('#app'), esc=t=>String(t), ICON=new Proxy({}, {get:()=>'<svg></svg>'}), svg=p=>'<svg>'+p+'</svg>', segmented=()=>'', stillMotion=()=>true;`);
+  await page.addScriptTag({ content: `var app=document.querySelector('#app'), esc=t=>String(t), ICON=new Proxy({}, {get:()=>'<svg></svg>'}), svg=p=>'<svg>'+p+'</svg>', segmented=()=>'', stillMotion=()=>true;` });
   await page.addScriptTag({ content: read('chat.js') });
   await page.addScriptTag({ content: read('app/settings.js').replace(/^(const|let) /gm, 'var ') });
   await page.evaluate(() => {

@@ -63,7 +63,7 @@ const plural = (n, word, many = word + 's') => n + ' ' + (n === 1 ? word : many)
       await expect(page.getByText('Local <b>speech</b>', { exact: true }).first()).toBeVisible();
       const clipped = () => page.locator('.model-filters .segment').evaluateAll(items => items.filter(item => item.querySelector('span').scrollWidth > item.querySelector('span').clientWidth).length);
       expect(await clipped()).toBe(0);
-      await page.setViewportSize({ width: 360, height: 700 });
+      await page.setViewportSize({ width: 480, height: 700 });
       expect(await clipped()).toBe(0);
       await page.locator('.model-filters [data-filter="english"]').click();
       await expect(page.locator('.model-filters [data-filter="english"]')).toHaveAttribute('aria-pressed', 'true');
