@@ -1601,7 +1601,7 @@
         } catch (e) {
           return [];
         }
-        return [...range.getClientRects()].filter((box) => box.width > 0).slice(0, 8).map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
+        return [...range.getClientRects()].filter((box) => box.width > 0).slice(0, 24).map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
       },
       blockAt(at) {
         const index = blockAtLine(lineOf(at));

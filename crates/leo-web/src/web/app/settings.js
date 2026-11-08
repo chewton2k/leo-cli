@@ -509,8 +509,8 @@ function faPeriod(period, ranks, span) {
     return `<div class="fa-day${i === at ? ' on' : ''}" data-i="${i}"><div class="fa-stack">${segments}</div></div>`;
   }).join('');
   const step = period.length === 7 ? 1 : weekly ? 4 : 7;
-  const labels = bars.map((bar, i) => [i, bar]).filter(([i]) => i === latest || ((latest - i) % step === 0 && latest - i >= 3)).map(([i, bar]) => `<span style="left:${((i + 0.5) / bars.length * 100).toFixed(2)}%">${i === latest ? 'Today' : faDate(bar.from)}</span>`).join('');
-  const grid = [[0, faCompact(scale)], [FA_HEIGHT / 2, faCompact(scale / 2)], [FA_HEIGHT, '0']].map(([at, text]) => `<div class="fa-grid${at === FA_HEIGHT ? ' base' : ''}" style="top:${at}px"><span>${text}</span></div>`).join('');
+  const labels = bars.map((bar, i) => [i, bar]).filter(([i]) => i === latest || ((latest - i) % step === 0 && (step === 1 || latest - i >= 3))).map(([i, bar]) => `<span style="left:${((i + 0.5) / bars.length * 100).toFixed(2)}%">${i === latest ? 'Today' : faDate(bar.from)}</span>`).join('');
+  const grid = [[0, faCompact(scale).replace('.0', '')], [FA_HEIGHT / 2, faCompact(scale / 2).replace('.0', '')], [FA_HEIGHT, '0']].map(([at, text]) => `<div class="fa-grid${at === FA_HEIGHT ? ' base' : ''}" style="top:${at}px"><span>${text}</span></div>`).join('');
   const stats = `<div class="fa-stats"><div class="fa-top"><div class="fa-tile fa-hero"><span class="fa-lab">Requests</span><b title="${faExact(t.calls)}">${faCompact(t.calls)}</b></div><span class="fa-cap">in the last ${span} days</span></div>
     <div class="fa-tile"><span class="fa-lab">Tokens in</span><b title="${faExact(t.input)}">${faCompact(t.input)}</b></div>
     <div class="fa-tile"><span class="fa-lab">Tokens out</span><b title="${faExact(t.output)}">${faCompact(t.output)}</b></div>
