@@ -115,12 +115,19 @@ test('both margins: spaced notes alternate right, left, right', () => {
   assert.deepEqual(on, { a: 'right', b: 'left', c: 'right', d: 'left' });
 });
 
-test('both margins: a new note never moves notes already placed', () => {
+test('both margins: a new note never moves a placed note whose side is still free', () => {
   const items = [{ id: 'a', want: 0, height: 80 }, { id: 'b', want: 300, height: 80 }, { id: 'c', want: 600, height: 80 }];
   const before = M.sides(items);
   const after = M.sides([...items, { id: 'new', want: 150, height: 80 }], 16, before);
   for (const id of ['a', 'b', 'c']) assert.equal(after[id], before[id], id);
   assert.equal(M.sides([{ id: 'a', want: 0, height: 80 }], 16, { a: 'left', gone: 'right' }).a, 'left');
+});
+
+test('reading dots never move notes: free spot, then the other side, then below what blocks them', () => {
+  const note = { top: 100, height: 80, side: 'right' };
+  assert.deepEqual(M.clear({ want: 400, height: 16 }, [note]), { side: 'right', top: 400 });
+  assert.deepEqual(M.clear({ want: 120, height: 16 }, [note], true), { side: 'left', top: 120 });
+  assert.deepEqual(M.clear({ want: 120, height: 16 }, [note, { top: 196, height: 40, side: 'right' }]), { side: 'right', top: 252 });
 });
 
 test('layout: the margin is reserved up front, with or without threads', () => {

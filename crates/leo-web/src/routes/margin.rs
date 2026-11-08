@@ -670,6 +670,7 @@ async fn answered(
     };
     let user = margin::reply_prompt(&note.title, &note.body, thread, question);
     let (chats, held) = (state.chats.clone(), thread.note.clone());
+    let asked = question != margin::UNSPOKEN;
     let started = Instant::now();
     let usage = std::sync::Arc::clone(&state.usage);
     let reply = blocking(move || {
@@ -677,7 +678,7 @@ async fn answered(
         let prefs = margin::prefs(&chats);
         let voice = margin::voice_of(&prefs, &margin::persona_of(&chats, &held));
         let reply = streamer(
-            &margin::voiced(margin::REPLY_SYSTEM, &voice, true),
+            &margin::voiced(margin::REPLY_SYSTEM, &voice, asked),
             &user,
             margin::REPLY_TOKENS,
             &mut |_| {},

@@ -390,7 +390,6 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .margin-mode-menu button[aria-checked="true"], .margin-mode-menu button:hover { background: var(--tint); }
 .margin-mode-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .margin-mode-menu small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.35; color: var(--muted); }
-.margin-persona-menu { left: 0; right: auto; width: min(272px, calc(100vw - 32px)); }
 .margin-persona-menu button { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 7px; }
 .margin-persona-menu hr { margin: 4px 6px; border: 0; border-top: 1px solid var(--line); }
 .persona-icon { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--tint); color: var(--muted); }
@@ -459,6 +458,8 @@ body.on-note main { max-width: none; margin-inline: 0; }
   .margin-ink path.squiggle { stroke: CanvasText; }
   .margin-ink path.solid { stroke: Highlight; }
   .margin-ink path.wash { fill: Highlight; }
+  .persona-tile:has(> input:checked) { outline: 2px solid Highlight; }
+  .margin-persona-menu button[aria-checked="true"] .persona-icon { outline: 2px solid Highlight; }
   .margin-note[data-open] .margin-toggle svg { color: CanvasText; }
   .margin-anchor { background: Highlight; box-shadow: 0 0 0 2px Canvas; }
   .choice-diagram .d-page { fill: Canvas; stroke: CanvasText; }
@@ -2175,6 +2176,7 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .select-menu-button svg { width: 15px; height: 15px; flex: none; color: var(--muted); transform: rotate(90deg); transition: transform var(--t-follow) var(--ease-arrive); }
 .select-menu-button[aria-expanded="true"] svg { transform: rotate(-90deg); }
 .select-menu, .margin-mode-menu { position: absolute; z-index: 20; right: 0; top: calc(100% + 6px); min-width: 100%; width: max-content; max-width: min(360px, calc(100vw - 32px)); max-height: 280px; overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-pop); outline: none; }
+.margin-mode-menu.margin-persona-menu { left: 0; right: auto; width: 272px; max-width: min(272px, calc(100vw - 32px)); max-height: min(420px, 70vh); }
 .select-menu.up { top: auto; bottom: calc(100% + 6px); }
 .select-menu-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 34px; padding: 0 10px; border-radius: var(--r-tile); color: var(--text); font-size: var(--fs-base); cursor: pointer; }
 .select-menu-option > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

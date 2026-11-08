@@ -1669,6 +1669,52 @@ async fn a_persona_shapes_the_system_prompt_and_reader_leaves_it_alone() {
 }
 
 #[tokio::test]
+async fn asks_and_replies_take_the_note_persona_and_only_a_real_question_is_told_to_answer_first() {
+    let systems = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::clone(&systems);
+    let streamer: crate::chat::Streamer = Arc::new(move |system, _, _, _, _, _| {
+        kept.lock().unwrap().push(system.to_string());
+        Ok(crate::chat::Reply::from("Nice work.".to_string()))
+    });
+    let engine = Engine::with(Powers {
+        toolless_chat: Some(streamer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Styled asks", PASSAGE).await;
+    let margin_path = format!("/api/notes/{id}/margin");
+    assert_eq!(
+        engine
+            .post(&margin_path, serde_json::json!({ "persona": "encourager" }))
+            .await
+            .0,
+        200
+    );
+    let (status, asked) = engine
+        .post(
+            &format!("{margin_path}/threads"),
+            serde_json::json!({ "version": version, "quote": PASSAGE, "question": "" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let thread = asked["id"].as_str().unwrap().to_string();
+    let reply = format!("{margin_path}/threads/{thread}/reply");
+    assert_eq!(
+        engine
+            .post(&reply, serde_json::json!({ "text": "Why?" }))
+            .await
+            .0,
+        200
+    );
+    let systems = systems.lock().unwrap().clone();
+    assert_eq!(systems.len(), 2);
+    assert!(systems.iter().all(|s| s.contains("encouraging mentor")));
+    assert!(!systems[0].contains("answer it directly first"));
+    assert!(systems[1].contains("answer it directly first"));
+    engine.stop().await;
+}
+
+#[tokio::test]
 async fn custom_personas_are_listed_and_the_default_follows_the_list() {
     let (engine, _) = reading("{}").await;
     let (_, view) = engine.get("/api/margin").await;

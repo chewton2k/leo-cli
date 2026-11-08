@@ -24,9 +24,10 @@ function harness() {
   const state = vm.runInContext('marginPage', context);
   const session = () => ({ note: { id: 'a', version: 'abc' }, doc: { source: () => 'A changed paragraph long enough to read.' } });
   Object.assign(state, { s: session(), mode: 'along', baseline: [] });
+  const showReading = context.marginShowReading;
   context.marginShowReading = () => {};
   context.marginRedraw = () => {};
-  return { context, state, session, timers, settle: () => settle };
+  return { context, state, session, timers, showReading, settle: () => settle };
 }
 
 test('an obsolete read cannot clear a newer note reading state or timer', async () => {
@@ -139,6 +140,21 @@ async function finish(h, answer) {
   await pending;
   return el;
 }
+
+test('the dots wait 200 ms, then mark the last changed block, and only while that read is current', () => {
+  for (const current of [true, false]) {
+    const h = harness();
+    const source = 'First block here.\n\nThe changed paragraph long enough.';
+    h.state.reading = true;
+    h.showReading(h.state.s, source, ['The changed paragraph long enough.']);
+    const timer = h.timers.get(h.state.faceTimer);
+    assert.equal(timer.delay, 200);
+    assert.equal(h.state.readingAt, null);
+    if (!current) h.state.reading = false;
+    timer();
+    assert.equal(h.state.readingAt, current ? source.indexOf('The changed') : null);
+  }
+});
 
 test('silence fades the reading dots and leaves no status', async () => {
   const h = harness();

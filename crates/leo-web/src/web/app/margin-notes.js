@@ -35,7 +35,7 @@ let personaDetails = false;
 const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -83,7 +83,7 @@ function marginLeave() {
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
   chat.setLost([]);
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -136,6 +136,7 @@ async function marginLoad(s, current = () => true, id = s.note.id) {
   if (!current() || marginPage.s !== s || !view) return;
   marginPage.mode = view.mode;
   marginPage.persona = view.persona || 'reader';
+  marginPage.saved = marginPage.persona;
   marginPage.threads = view.threads || [];
   marginPage.loaded = true;
   cancelAnimationFrame(marginPage.frame);
@@ -150,7 +151,7 @@ async function marginCreated(s, note) {
   marginPage.wanted = null;
   marginPage.wantedPersona = null;
   await marginLoad(s, undefined, note.id);
-  if (persona && marginPage.s === s && marginPage.persona !== persona) await marginChangePersona(persona, false);
+  if (persona && marginPage.s === s) await marginChangePersona(persona, false);
   if (!wanted || marginPage.s !== s || marginPage.mode === wanted) return;
   try {
     await api(`/api/notes/${enc(note.id)}/margin`, { method: 'POST', body: { mode: wanted } });
@@ -319,6 +320,7 @@ function marginPersonaControl() {
   $('#margin-persona-icon').innerHTML = PERSONA_ICON[now.icon] || PERSONA_ICON.book;
   $('#margin-persona-label').textContent = now.name;
   button.title = `${now.name} reads this note. Shapes margin notes and replies.`;
+  button.setAttribute('aria-label', `Who reads this note: ${now.name}`);
   const key = JSON.stringify([list, now.id]);
   if (menu.dataset.key === key) return;
   menu.dataset.key = key;
@@ -329,8 +331,10 @@ function marginPersonaControl() {
 async function marginChangePersona(id, picked = true) {
   const s = marginPage.s;
   if (picked) marginPersonaMenu(false, true);
-  if (!s || id === marginPage.persona) return;
-  const before = marginPage.persona;
+  if (!s) return;
+  const before = marginPage.saved ?? marginPage.persona;
+  const token = {};
+  marginPage.personaToken = token;
   marginPage.persona = id;
   marginPersonaControl();
   if (!s.note.id) {
@@ -339,9 +343,11 @@ async function marginChangePersona(id, picked = true) {
   }
   try {
     await api(`/api/notes/${enc(s.note.id)}/margin`, { method: 'POST', body: { persona: id } });
+    if (marginPage.s === s && marginPage.personaToken === token) marginPage.saved = id;
   } catch (e) {
     if (marginPage.s !== s) return;
     if (e instanceof Locked) throw e;
+    if (marginPage.personaToken !== token) return;
     marginPage.persona = before;
     marginPersonaControl();
     marginSetStatus('Could not save this persona. Try again.');
@@ -684,11 +690,18 @@ function marginDraw() {
 function marginPlaceInMargin(boxes, layout, page, origin) {
   const left = page.left - origin.left;
   const right = page.right - origin.left;
-  const items = boxes.map(({ t, rects, el }) => ({ id: t.id, want: rects[0].top - 2, height: el.offsetHeight }));
+  const all = boxes.map(({ t, rects, el }) => ({ id: t.id, want: rects[0].top - 2, height: el.offsetHeight }));
+  const items = all.filter((i) => i.id !== 'reading');
   const side = layout === 'both' ? marginKit.sides(items, 16, marginPage.sides) : Object.fromEntries(items.map((item) => [item.id, 'right']));
   marginPage.sides = layout === 'both' ? side : {};
   const pinned = marginPage.open;
   const tops = { ...marginKit.stack(items.filter((i) => side[i.id] === 'right'), { pinned }), ...marginKit.stack(items.filter((i) => side[i.id] === 'left'), { pinned }) };
+  const dots = all.find((i) => i.id === 'reading');
+  if (dots) {
+    const spot = marginKit.clear(dots, items.map((i) => ({ top: tops[i.id], height: i.height, side: side[i.id] })), layout === 'both');
+    side.reading = spot.side;
+    tops.reading = spot.top;
+  }
   for (const { t, el } of boxes) {
     const on = side[t.id];
     const x = on === 'right' ? right + marginKit.MARGIN_GAP : left - marginKit.MARGIN_GAP - marginKit.MARGIN_WIDTH;
@@ -1383,7 +1396,7 @@ function felixPersonaCard(view) {
   const editing = personaEditing === 'new' ? { id: '', name: '', icon: (view.persona_icons || ['flask'])[0], details: '' } : list.find((p) => p.custom && p.id === personaEditing);
   if (editing) return `<section class="set-card" data-find="felix-persona" id="felix-persona-card"><header><h3>${editing.id ? 'Edit persona' : 'New persona'}</h3></header>${felixPersonaForm(view, editing)}</section>`;
   personaEditing = null;
-  const tiles = list.map((p) => `<div class="persona-slot"><label class="persona-tile"><input type="radio" name="felix-persona" value="${esc(p.id)}" data-margin-pref="default_persona"${p.id === now.id ? ' checked' : ''}><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span>${esc(p.name)}</span></label>${p.custom ? `<button type="button" class="persona-edit" data-persona-act="edit" data-id="${esc(p.id)}" aria-label="Edit ${esc(p.name)}" title="Edit">${PERSONA_ICON.pen}</button>` : ''}</div>`).join('');
+  const tiles = list.map((p) => `<div class="persona-slot"><label class="persona-tile" title="${esc(p.name)}"><input type="radio" name="felix-persona" value="${esc(p.id)}" data-margin-pref="default_persona"${p.id === now.id ? ' checked' : ''}><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span>${esc(p.name)}</span></label>${p.custom ? `<button type="button" class="persona-edit" data-persona-act="edit" data-id="${esc(p.id)}" aria-label="Edit ${esc(p.name)}" title="Edit">${PERSONA_ICON.pen}</button>` : ''}</div>`).join('');
   const add = list.filter((p) => p.custom).length < (view.most_personas || 8) ? `<button type="button" class="persona-tile add" data-persona-act="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span>New</span></button>` : '';
   return `<section class="set-card" data-find="felix-persona" id="felix-persona-card"><header><h3>Who reads your notes</h3></header><p class="hint">New notes start with this one. Each note can switch. Felix chat stays the same.</p><div class="persona-tiles" role="radiogroup" aria-label="Who reads your notes">${tiles}${add}</div>
     <div class="persona-line"><span>${esc(now.line || 'Your own persona.')}</span><button type="button" class="link-btn" data-persona-act="details" aria-expanded="${personaDetails}">${personaDetails ? 'Hide details' : 'See details'}</button></div>${personaDetails ? `<p class="persona-details">${esc(now.details)}</p>` : ''}</section>`;
@@ -1403,6 +1416,13 @@ async function felixSavePersonas(list) {
   return view;
 }
 
+async function felixFreshCustoms() {
+  const view = await api('/api/margin');
+  marginRemember(view);
+  state.margin = view;
+  return felixCustoms(view);
+}
+
 function felixCustoms(view) {
   return (view.personas || []).filter((p) => p.custom).map((p) => ({ id: p.id, name: p.name, icon: p.icon, says: p.details }));
 }
@@ -1419,7 +1439,7 @@ document.addEventListener('click', async (e) => {
   }
   try {
     if (act === 'delete') {
-      await felixSavePersonas(felixCustoms(view).filter((p) => p.id !== personaEditing));
+      await felixSavePersonas((await felixFreshCustoms()).filter((p) => p.id !== personaEditing));
       personaEditing = null;
     } else if (act === 'new') personaEditing = 'new';
     else if (act === 'edit') personaEditing = button.dataset.id;
@@ -1440,10 +1460,10 @@ document.addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = form.dataset.personaForm;
   const entry = { id: id || null, name: $('[name="name"]', form).value, icon: $('[name="persona-icon"]:checked', form)?.value || 'flask', says: $('[name="says"]', form).value };
-  const customs = felixCustoms(state.margin);
   const save = $('[type="submit"]', form);
   save.disabled = true;
   try {
+    const customs = await felixFreshCustoms();
     const view = await felixSavePersonas(id ? customs.map((p) => (p.id === id ? entry : p)) : [...customs, entry]);
     personaEditing = null;
     const made = id ? null : felixCustoms(view).find((p) => !customs.some((old) => old.id === p.id));
@@ -1463,6 +1483,7 @@ async function felixPersonaBack(persona) {
 }
 
 function felixSettingsCards(view, page) {
+  if (!view) personaStartNew = null;
   if (!view) return '<section class="set-card"><p class="hint">Felix’s settings are not available right now.</p></section>';
   const provider = page.tasks.find((task) => task.task === 'writing')?.provider || '';
   const name = page.tasks.find((task) => task.task === 'writing')?.choices?.find((choice) => choice.id === provider)?.label || 'your writing AI';
@@ -1491,6 +1512,7 @@ document.addEventListener('change', async (e) => {
     if (rhythm) rhythm.textContent = felixRhythm(view);
   } catch (error) {
     if (key === 'auto_model') field.checked = !value;
+    if (key === 'default_persona' && state.margin) felixPersonaRedraw(state.margin, '[name="felix-persona"]:checked');
     fail(error);
   }
 });

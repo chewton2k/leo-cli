@@ -121,6 +121,15 @@
     return out;
   }
 
+  function clear(item, placed, both = false, gap = 16) {
+    const hits = (side, top) => placed.filter((p) => p.side === side && p.top < top + item.height + gap && top < p.top + p.height + gap);
+    if (!hits('right', item.want).length) return { side: 'right', top: item.want };
+    if (both && !hits('left', item.want).length) return { side: 'left', top: item.want };
+    let top = item.want;
+    for (let blocked = hits('right', top); blocked.length; blocked = hits('right', top)) top = Math.max(...blocked.map((p) => p.top + p.height + gap));
+    return { side: 'right', top };
+  }
+
   const ROOM_RIGHT = TICK_GUTTER + LEAST_COLUMN + MARGIN_GAP + MARGIN_WIDTH + END_GUTTER;
   const ROOM_BOTH = ROOM_RIGHT + MARGIN_WIDTH + MARGIN_GAP;
 
@@ -207,7 +216,7 @@
     return `M${from.x.toFixed(1)} ${from.y.toFixed(1)}${lead} C${middle.toFixed(1)} ${(from.y + 2).toFixed(1)} ${(middle - 4).toFixed(1)} ${to.y.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
   }
 
-  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, arrangement, wordDelay, blocksOf, changedBlocks, passes, wave, tether };
+  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, clear, arrangement, wordDelay, blocksOf, changedBlocks, passes, wave, tether };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMargin = api;
 })(typeof window !== 'undefined' ? window : globalThis);
