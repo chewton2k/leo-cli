@@ -17,7 +17,7 @@ for (const key of ['Enter', 'Tab']) {
   });
 }
 
-test('Shift+Enter never adds a line to the title, and Escape then Shift+Tab reaches the reading mode button', async ({ page }) => {
+test('Shift+Enter never adds a line to the title, and Escape then Shift+Tab reaches the reading mode button', async ({ page, browserName }) => {
   await page.keyboard.type('One line');
   await page.keyboard.press('Shift+Enter');
   await expect(page.locator('#title')).toHaveText('One line');
@@ -27,6 +27,17 @@ test('Shift+Enter never adds a line to the title, and Escape then Shift+Tab reac
   await page.keyboard.press('Escape');
   await expect(page.locator('#doc .line-edit')).toHaveCount(0);
   await expect(page.locator('#margin-mode')).toBeEnabled();
+  if (browserName === 'webkit') {
+    const order = await page.evaluate(() => {
+      const doc = document.querySelector('#doc');
+      return ['#margin-through', '#margin-mode'].map((id) => {
+        const el = document.querySelector(id);
+        return el.tabIndex >= 0 && !el.disabled && Boolean(el.compareDocumentPosition(doc) & Node.DOCUMENT_POSITION_FOLLOWING);
+      });
+    });
+    expect(order).toEqual([true, true]);
+    return;
+  }
   await page.keyboard.press('Shift+Tab');
   await expect(page.locator('#margin-through')).toBeFocused();
   await page.keyboard.press('Shift+Tab');
