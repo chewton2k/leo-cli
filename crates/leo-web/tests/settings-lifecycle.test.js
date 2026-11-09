@@ -61,3 +61,42 @@ test('Codex and Claude Code models list newest release first, then by power', ()
   assert.equal(order(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']), JSON.stringify(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']));
   assert.equal(order(['plain', 'gpt-6.9-a', 'gpt-6.10-a']), JSON.stringify(['gpt-6.10-a', 'gpt-6.9-a', 'plain']));
 });
+test('the calendar card guides each provider and checks the address before saving', () => {
+  const listeners = {};
+  const nodes = {};
+  const field = (extra = {}) => ({ value: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, ...extra });
+  const context = { app: { addEventListener() {} }, document: { addEventListener: (type, fn) => (listeners[type] = [...(listeners[type] || []), fn]) }, window: {}, ICON: new Proxy({}, { get: () => '' }), esc: text => String(text), $: sel => nodes[sel] || null, segmented: ({ current, choices, field: f }) => `<seg ${f} ${current}>${choices.map(c => c[1]).join('|')}</seg>`, state: {} };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const firstLink = { google: 'https://calendar.google.com/calendar/r/settings', outlook: 'https://outlook.live.com/calendar/0/options/calendar/SharedCalendars', apple: 'https://www.icloud.com/calendar' };
+  for (const [provider, url] of Object.entries(firstLink)) {
+    context.state.calendarProvider = provider;
+    const html = context.calendarCard({ calendars: [] });
+    assert.equal((html.match(/<li>/g) || []).length, 3, provider);
+    assert.ok(html.includes(`<li>Open <a href="${url}" target="_blank" rel="noopener noreferrer">`), provider);
+    assert.ok(html.includes('<seg data-cal-provider ' + provider + '>Google|Outlook|Apple</seg>'));
+  }
+  assert.ok(context.calendarSteps('apple').includes('webcal://'));
+  assert.ok(context.calendarSteps('outlook').includes('Publish a calendar'));
+  const steps = { outerHTML: '' };
+  nodes['.cal-steps'] = steps;
+  nodes['#calendar-link'] = field();
+  nodes['#calendar-error'] = { textContent: 'old' };
+  for (const fn of listeners.change) fn({ target: { closest: () => ({ value: 'outlook' }) } });
+  assert.equal(context.state.calendarProvider, 'outlook');
+  assert.ok(steps.outerHTML.includes('outlook.live.com') && !steps.outerHTML.includes('google.com'));
+  assert.equal(nodes['#calendar-error'].textContent, '');
+  const share = 'That is the share link. Paste the secret address that ends in .ics.';
+  const generic = 'Paste the calendar address that starts with https:// or webcal://.';
+  assert.equal(context.calendarAddressError('https://calendar.google.com/calendar/u/0?cid=abc', 'google'), share);
+  assert.equal(context.calendarAddressError('https://calendar.google.com/calendar?cid=abc', 'google'), share);
+  assert.equal(context.calendarAddressError('hello', 'google'), generic);
+  assert.equal(context.calendarAddressError('webcal://p01-caldav.icloud.com/published/2/abc', 'apple'), '');
+  assert.equal(context.calendarAddressError('https://calendar.google.com/calendar/ical/me/private-abc/basic.ics', 'google'), '');
+  context.state.calendarProvider = 'google';
+  nodes['#calendar-link'].value = 'https://calendar.google.com/calendar/u/0?cid=abc';
+  return context.addCalendar().then(() => {
+    assert.equal(nodes['#calendar-error'].textContent, share);
+    assert.equal(nodes['#calendar-link'].attrs['aria-invalid'], 'true');
+  });
+});

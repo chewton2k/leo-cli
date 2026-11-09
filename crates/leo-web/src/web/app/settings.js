@@ -29,7 +29,44 @@ async function showSettings(section) {
   if (section === 'dictation') pollDictation(mine, ++dictationGeneration);
 }
 
-const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
+const CALENDAR_PROVIDERS = {
+  google: ['https://calendar.google.com/calendar/r/settings', 'Google Calendar settings', 'Under <b>Settings for my calendars</b>, pick the calendar.', 'In <b>Integrate calendar</b>, copy <b>Secret address in iCal format</b>.'],
+  outlook: ['https://outlook.live.com/calendar/0/options/calendar/SharedCalendars', 'Outlook calendar settings', 'Under <b>Shared calendars</b> and <b>Publish a calendar</b>, pick the calendar and choose <b>Publish</b>.', 'Copy the <b>ICS</b> link.'],
+  apple: ['https://www.icloud.com/calendar', 'iCloud Calendar', 'Share the calendar as a <b>Public Calendar</b>.', 'Copy the link, which starts with <b>webcal://</b>.'],
+};
+
+function calendarSteps(provider) {
+  const [url, name, second, third] = CALENDAR_PROVIDERS[provider] || CALENDAR_PROVIDERS.google;
+  return `<ol class="cal-steps">
+        <li>Open <a href="${url}" target="_blank" rel="noopener noreferrer">${name}</a>.</li>
+        <li>${second}</li>
+        <li>${third}</li>
+      </ol>`;
+}
+
+function calendarAddressError(link, provider) {
+  if (!/^(https|webcal):\/\//i.test(link)) return 'Paste the calendar address that starts with https:// or webcal://.';
+  const share = link.includes('calendar.google.com/calendar/u/') || (link.includes('?cid=') && !link.includes('.ics'));
+  return provider === 'google' && share ? 'That is the share link. Paste the secret address that ends in .ics.' : '';
+}
+
+function showCalendarError(message) {
+  const box = $('#calendar-link'), note = $('#calendar-error');
+  if (box) box.setAttribute('aria-invalid', String(Boolean(message)));
+  if (note) note.textContent = message;
+}
+
+document.addEventListener('change', (e) => {
+  const field = e.target.closest?.('[data-cal-provider]');
+  const steps = field && $('.cal-steps');
+  if (!steps) return;
+  state.calendarProvider = field.value;
+  steps.outerHTML = calendarSteps(field.value);
+  showCalendarError('');
+});
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'calendar-link') showCalendarError('');
+});
 
 function calendarCard(cal) {
   if (!cal) return '';
@@ -44,13 +81,11 @@ function calendarCard(cal) {
     </div>`)
     .join('');
   const open = !count || state.calendarAdding;
-  const form = `<ol class="cal-steps">
-        <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a>.</li>
-        <li>Under <b>Settings for my calendars</b>, pick the calendar.</li>
-        <li>In <b>Integrate calendar</b>, copy <b>Secret address in iCal format</b>.</li>
-      </ol>
-      <div class="cal-add"><input id="calendar-link" class="set-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste the address here"><button class="btn primary sm" data-action="calendar-add">Connect</button></div>
-      <p class="set-note">Outlook or Apple Calendar work too: paste the calendar’s published ICS link.</p>`;
+  const provider = state.calendarProvider || 'google';
+  const form = `<div class="set-row"><span class="set-label">Connect a calendar</span>${segmented({ label: 'Connect a calendar', field: 'data-cal-provider', current: provider, choices: [['google', 'Google'], ['outlook', 'Outlook'], ['apple', 'Apple']] })}</div>
+      ${calendarSteps(provider)}
+      <div class="cal-add"><input id="calendar-link" class="set-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste the address here" aria-describedby="calendar-error"><button class="btn primary sm" data-action="calendar-add">Connect</button></div>
+      <p class="set-note warn" id="calendar-error" role="alert"></p>`;
   const adder = open
     ? `<div class="cal-form">${count ? '<div class="cal-form-head"><span>Add another calendar</span><button class="btn plain sm" data-action="calendar-cancel">Cancel</button></div>' : ''}${form}</div>`
     : `<button class="set-advanced cal-more" data-action="calendar-more">${ICON.plus}<span class="grow">Add another calendar</span>${ICON.chevron}</button>`;
@@ -65,6 +100,9 @@ function calendarCard(cal) {
 async function addCalendar() {
   const box = $('#calendar-link');
   if (!box || !box.value.trim()) throw Object.assign(new Error('Paste your calendar’s secret address first.'), { shown: true });
+  const bad = calendarAddressError(box.value.trim(), state.calendarProvider || 'google');
+  showCalendarError(bad);
+  if (bad) return;
   const button = $('[data-action="calendar-add"]');
   if (button) {
     button.disabled = true;

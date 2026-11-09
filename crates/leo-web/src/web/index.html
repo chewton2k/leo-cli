@@ -2814,6 +2814,7 @@ body.files-over main::after {
 :is(.sheet, .sheet-gone) .source-none { margin: 10px 0; }
 .set-card .grow { flex: 1; min-width: 0; }
 .set-input { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-md); padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--bg); color: var(--text); box-sizing: border-box; }
+.set-input[aria-invalid="true"] { border-color: var(--danger); }
 .set-input:focus, textarea.set-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 .cal-row .grow { display: flex; flex-direction: column; gap: 2px; }
