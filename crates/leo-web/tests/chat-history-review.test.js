@@ -8,7 +8,7 @@ test('confirming a chat deletion retains its button and both animated labels', a
   const classes = new Set(), attrs = new Map([['aria-label', 'Delete A long chat']]);
   const button = { focus() {}, dataset: { id: 'one' }, isConnected: true, classList: { toggle: (key, on) => on ? classes.add(key) : classes.delete(key), remove: key => classes.delete(key) }, setAttribute: (key, value) => attrs.set(key, value), getAttribute: key => attrs.get(key) };
   let draws = 0;
-  const context = { state: { doomed: null, chats: [{ id: 'one', title: 'A long chat' }] }, panel: { querySelectorAll: () => [button], addEventListener() {} }, document: { addEventListener() {} }, drawChats: () => draws++, fetch: async () => ({ ok: true }), begin() {}, notify() {} };
+  const context = { state: { doomed: null, chats: [{ id: 'one', title: 'A long chat' }] }, panel: { querySelectorAll: () => [button], addEventListener() {} }, document: { addEventListener() {} }, drawChats: () => draws++, request: async () => ({ ok: true }), begin() {}, notify() {} };
   const start = source.includes('    function syncChatDelete(') ? source.indexOf('    function syncChatDelete(') : source.indexOf('    async function forget(');
   vm.createContext(context); vm.runInContext(source.slice(start, source.indexOf("    document.addEventListener('pointerdown', spare", start)), context);
   await context.forget('one');

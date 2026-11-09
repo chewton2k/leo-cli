@@ -1818,16 +1818,7 @@ async function openSource(id, name, page = null) {
     <div class="source-body">${body}</div>`;
   sourceSizeLabel();
   if (kind === 'text') {
-    const box = sourcePane.querySelector('.source-text');
-    try {
-      const response = await fetch(url, { credentials: 'same-origin' });
-      if (!response.ok) throw new Error();
-      const text = await response.text();
-      if (!box.isConnected) return;
-      box.innerHTML = /\.md$/i.test(name) ? md.render(text) : `<pre>${esc(text)}</pre>`;
-    } catch (e) {
-      box.textContent = 'This file could not be shown. Download it instead.';
-    }
+    await fillTextFile(sourcePane.querySelector('.source-text'), url, name);
   }
 }
 

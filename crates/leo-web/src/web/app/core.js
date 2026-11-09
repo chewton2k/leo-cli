@@ -97,6 +97,7 @@ const chat = felix.create({
     return { name: ready.name, type: ready.type, data: await base64(ready.blob) };
   },
   notify: (message) => toast(message, { bad: true }),
+  onLocked: () => showLocked(),
   onUndone: (note, removed) => {
     const open = state.view === 'note' && state.session && state.session.note.id === note.id;
     if (open && removed) go(folderHash(state.dir || ''), { replace: true });
@@ -633,7 +634,7 @@ function pageName() {
   return PAGE_NAMES[kind] || '';
 }
 
-function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
+function chrome({ dir = '', showBack = false, actions = null }) {
   $('#back').hidden = !showBack;
   const crumbs = $('#crumbs');
   let trail;
@@ -650,7 +651,7 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
     trail = name ? `<span class="page-name">${esc(name)}</span>` : '';
   }
   if (crumbs.innerHTML !== trail) crumbs.innerHTML = trail;
-  floating.innerHTML = (fab || '') + (actions || '');
+  floating.innerHTML = actions || '';
   document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
 }
 

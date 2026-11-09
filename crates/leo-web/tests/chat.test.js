@@ -471,7 +471,7 @@ function chatSendFixture(id = 'practice', access = 'ask', before = async () => t
     pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
     onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),
-    fetch: async (_url, options) => {
+    request: async (_url, options) => {
       requests.push(JSON.parse(options.body));
       const reply = stream.replies ? stream.replies[requests.length - 1] || {} : stream;
       let read = false;
@@ -883,7 +883,7 @@ function answers(messages, { busy = null, send = () => {}, clipboard = null, fet
     root: { navigator: { clipboard } }, upload: Promise.resolve(), openTraces: new Set(), working: new Map(), tick() {}, workingFor: () => '', writer: () => '', writerOf: () => '',
     stepChevron: '', MOST_REPLY_STEPS: 64, clipped: (t) => t, stored: () => messages.filter((m) => !m.pending), fit() {}, persist() {}, draw() {}, send,
     notify: (text) => calls.push(`notify:${text}`), setTimeout: () => 0,
-    fetch: async (url, init) => { calls.push(['fetch', url, JSON.parse(init.body)]); return { ok: fetchOk }; },
+    request: async (url, init) => { calls.push(['fetch', url, JSON.parse(init.body)]); return { ok: fetchOk }; },
   };
   vm.createContext(context);
   for (let tries = 0; tries < 40; tries++) {
