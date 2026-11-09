@@ -102,6 +102,10 @@ test('a note keeps its own persona, and a persona made in Settings joins the not
   await expect(tiles.getByRole('radio', { name: 'Reader' })).toBeChecked();
   await page.getByRole('button', { name: 'See details' }).click();
   await expect(page.locator('.persona-details')).toContainText('Stays quiet otherwise.');
+  await page.getByRole('button', { name: 'Hide details' }).click();
+  await expect(page.locator('.persona-details')).toHaveCount(0);
+  expect(await page.locator('#felix-persona-card').evaluate((card) => card.getAnimations().length)).toBe(0);
+  await expect(page.getByRole('button', { name: 'See details' })).toBeFocused();
   await page.goto(`/#/n/${note.id}`);
   await expect(button).toHaveText('Reader');
   await page.request.post('/api/margin', { data: { default_persona: 'reader' } });

@@ -699,7 +699,7 @@ target. Check the page sequence after loading preferences.
   read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
   A refused read waits for the next edit; a stale-version refusal resets the page's
   retry delay to the normal typing pause, while provider cooldowns stay bounded.
-  The model's quote must be in the note now, or the note is dropped. There is no Reading… status
+  The model's quote must be in the note now, or the note is dropped. One note per sentence (2026-11-09, the user's call: three notes stacked on one phrase): `margin::crowded` drops a found note whose sentence (ended by `.`, `!` or `?` before a space, a line break, or `。！？`) holds an open thread's quote, or which lies in an open quote's sentence, in read-along and Read through alike; resolved and dismissed threads do not count. There is no Reading… status
   (2026-11-07, the user's call): 200 ms into a read, dots (`.margin-waiting`, never a `.margin-note`, never in
   `threads`) sit in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
   move for them (free spot on the right, else the left in Both, else below what blocks them), or its gutter mark pulses in Marks only;

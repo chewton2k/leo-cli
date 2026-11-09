@@ -407,18 +407,37 @@ async fn reads_wait_a_while_and_only_changed_blocks_reach_the_model() {
 #[tokio::test]
 async fn a_recent_comment_does_not_add_a_five_minute_read_lockout() {
     let (engine, calls) = reading(SAYS).await;
-    let (id, version) = engine.note("Spoke", PASSAGE).await;
+    let body = format!("Spoken already.\n{PASSAGE}");
+    let (id, version) = engine.note("Spoke", &body).await;
     let held = margin::new_thread(
         &id,
         "read",
-        margin::placed(PASSAGE, PASSAGE, &[]).unwrap(),
-        PASSAGE,
+        margin::placed(&body, "Spoken already", &[]).unwrap(),
+        "Spoken already",
         vec![margin::felix_says("Hm.")],
     );
     assert!(margin::put(&engine.chats(), &held));
     let (status, reply) = engine.read(&id, &version, &[PASSAGE]).await;
     assert_eq!(status, 200);
     assert!(reply["note"].is_object());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_sentence_with_a_margin_note_gets_no_second_one() {
+    let (engine, calls) = reading(SAYS).await;
+    let (id, version) = engine.note("Once", PASSAGE).await;
+    let held = margin::new_thread(
+        &id,
+        "read",
+        margin::placed(PASSAGE, "then login", &[]).unwrap(),
+        "then login",
+        vec![margin::felix_says("Hm.")],
+    );
+    assert!(margin::put(&engine.chats(), &held));
+    let (status, reply) = engine.read(&id, &version, &[PASSAGE]).await;
+    assert_eq!((status, reply["note"].is_null()), (200, true));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     engine.stop().await;
 }
@@ -1335,15 +1354,15 @@ async fn a_part_saves_at_most_its_share_and_drops_what_it_cannot_place() {
         .iter()
         .map(|n| n["quote"].as_str().unwrap())
         .collect();
-    assert_eq!(quotes, ["just checks if it matches", "Save the password"]);
+    assert_eq!(quotes, ["just checks if it matches"]);
     let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
-    assert_eq!(view["threads"].as_array().unwrap().len(), 3);
+    assert_eq!(view["threads"].as_array().unwrap().len(), 2);
     engine.stop().await;
 
     let (engine, _) = reading(FOUR).await;
     let (id, version) = engine.plain(TWO_BLOCKS).await;
     let (_, reply) = engine.analyze(&id, &version, &[TWO_BLOCKS], Some(9)).await;
-    assert_eq!(reply["notes"].as_array().unwrap().len(), 3);
+    assert_eq!(reply["notes"].as_array().unwrap().len(), 2);
     engine.stop().await;
 }
 

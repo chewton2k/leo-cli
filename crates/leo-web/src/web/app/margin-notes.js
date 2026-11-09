@@ -1456,7 +1456,14 @@ document.addEventListener('click', async (e) => {
     else if (act === 'details') {
       const shown = personaDetails && $('#felix-persona-card .persona-details');
       personaDetails = !personaDetails;
-      if (shown) return slideHeight(shown, shown.getBoundingClientRect().height, 0, () => felixPersonaRedraw(state.margin, '[data-persona-act="details"]'));
+      if (shown) {
+        const card = shown.parentElement;
+        const from = card.getBoundingClientRect().height;
+        shown.hidden = true;
+        const to = card.getBoundingClientRect().height;
+        shown.hidden = false;
+        return slideHeight(card, from, to, () => (shown.remove(), felixPersonaRedraw(state.margin, '[data-persona-act="details"]')));
+      }
     }
   } catch (error) {
     return fail(error);

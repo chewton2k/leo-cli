@@ -549,11 +549,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     let mut quotes = facts.quotes;
     let mut saved = Vec::new();
     for found in founds {
-        if through
-            && quotes
-                .iter()
-                .any(|q| q.contains(&found.quote) || found.quote.contains(q.as_str()))
-        {
+        if margin::crowded(&now.body, &found.quote, &blocks, &quotes) {
             continue;
         }
         let Some(place) = margin::placed(&now.body, &found.quote, &blocks) else {
