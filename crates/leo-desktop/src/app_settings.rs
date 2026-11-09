@@ -10,13 +10,14 @@ use tauri::AppHandle;
 use tauri_plugin_autostart::ManagerExt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Preferences {
     pub open_at_login: bool,
     pub show_tray: bool,
     pub automatic_updates: bool,
     pub install_on_quit: bool,
     pub onboarding: [bool; 3],
+    pub writing_done: Option<bool>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -26,10 +27,15 @@ impl Default for Preferences {
             automatic_updates: true,
             install_on_quit: true,
             onboarding: [false; 3],
+            writing_done: None,
         }
     }
 }
 impl Preferences {
+    pub fn writing_done(&self) -> bool {
+        self.writing_done
+            .unwrap_or_else(|| self.onboarding.iter().all(|done| *done))
+    }
     pub fn finish_step(&mut self, step: usize) -> Result<()> {
         ensure!(step < 3, "Choose a setup step.");
         self.onboarding[step] = true;
@@ -357,6 +363,15 @@ mod tests {
         let path = dir.path().join("app-settings.json");
         preferences.save(&path).unwrap();
         assert_eq!(Preferences::load(&path).unwrap(), preferences);
-        assert!(serde_json::from_str::<Preferences>(r#"{"unknown":true}"#).is_err());
+    }
+    #[test]
+    fn newer_files_load_and_writing_done_follows_old_setup() {
+        let load = |json: &str| serde_json::from_str::<Preferences>(json).unwrap();
+        assert!(load(r#"{"onboarding":[true,true,true]}"#).writing_done());
+        assert!(!load(r#"{"onboarding":[true,true,false]}"#).writing_done());
+        assert!(!load(r#"{"onboarding":[true,true,true],"writing_done":false}"#).writing_done());
+        assert!(load(r#"{"writing_done":true}"#).writing_done());
+        let newer = load(r#"{"automatic_updates":false,"from_a_newer_build":1}"#);
+        assert!(!newer.automatic_updates);
     }
 }
