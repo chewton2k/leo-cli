@@ -2037,8 +2037,9 @@ test.describe('readability', () => {
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['keeping', '#/settings/keeping'], ['record', '#/record'], ['calendar', '#/calendar']]) {
+      for (const [name, hash, ready] of [['folders', '#/', '#home-ask'], ['folder', '#/f/readable', '#home-ask'], ['note', `#/n/${note.id}`, '#doc .blk'], ['search', '#/search/readable', '#app .cards .card'], ['trash', '#/trash', '.trash-row'], ['settings', '#/settings', '.settings-section .settings-head'], ['keeping', '#/settings/keeping', 'select[data-keep="trash_days"]'], ['record', '#/record', '#rec-box [data-action="rec-start"]'], ['calendar', '#/calendar', '#cal-main .cal-week, #cal-main .cal-month']]) {
         await page.goto(`/${hash}`);
+        await expect(page.locator(ready).first()).toBeVisible();
         await look(name);
       }
       await page.goto('/');

@@ -11,7 +11,7 @@ test('graph page has no navigation, actions, route or bundled renderer', () => {
     assert.doesNotMatch(read(file), /sideRow\('map'|#\/map|showMap|leaveMap|['"]map-[a-z-]+['"]|note-map/, file);
   }
   assert.doesNotMatch(read('routes/assets.rs'), /web\/graph\.js|app\/map\.js/);
-  assert.doesNotMatch(read('lib.rs'), /\.route\("\/(?:api\/graph|graph\.js)/);
+  assert.doesNotMatch(read('routes/mod.rs'), /\.route\("\/(?:api\/graph|graph\.js)/);
   const page = pageHtml();
   assert.match(page, /\.side-rail\b[\s\S]*<\/html>/);
   assert.doesNotMatch(page, /src="\/graph\.js"|on-map|\.map-(?:tools|panel|zoom)/);
@@ -81,4 +81,15 @@ test('move choices leave out where the note or folder already is', () => {
     await move({ kind: 'folder', dir: 'D' }, null);
     assert.deepEqual(JSON.parse(JSON.stringify(shown)), [['', 'A', 'A/B/C', 'D'], ['A', 'A/B', 'A/B/C', 'D'], ['', 'D'], ['A', 'A/B', 'A/B/C']]);
   })();
+});
+
+test('the page is assembled from every stylesheet in order, between the head and tail', () => {
+  const assets = read('routes/assets.rs');
+  const listed = [...assets.matchAll(/include_str!\("\.\.\/web\/(styles\/[^"]+)"\)/g)].map((m) => m[1]);
+  const onDisk = fs.readdirSync(path.join(__dirname, '../src/web/styles')).filter((name) => name.endsWith('.css')).sort().map((name) => `styles/${name}`);
+  assert.ok(listed.length > 10);
+  assert.deepEqual(listed, onDisk);
+  const parts = [...assets.matchAll(/include_str!\("\.\.\/web\/([^"]+)"\)/g)].map((m) => m[1]);
+  const page = parts.slice(0, parts.indexOf('page-tail.html') + 1);
+  assert.deepEqual(page, ['page-head.html', ...onDisk, 'page-tail.html']);
 });

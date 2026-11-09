@@ -453,6 +453,23 @@ test('conversation rows display only escaped titles, including search results', 
 
 
 
+test('removing a document keeps the chip gone when the server no longer has it and restores it on a real failure', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('    async function removeFile(id) {');
+  const removeFile = source.slice(start, source.indexOf('\n    let pickTimer', start));
+  for (const [status, kept, notices] of [[200, false, 0], [404, false, 0], [401, false, 0], [500, true, 1]]) {
+    const state = { id: 'c1', files: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }] };
+    const noted = [];
+    const context = vm.createContext({ state, drawRefs() {}, notify: (message) => noted.push(message), encodeURIComponent, request: async () => ({ ok: status === 200, status }) });
+    vm.runInContext(removeFile, context);
+    await context.removeFile('b');
+    assert.equal(state.files.map((f) => f.id).join(), kept ? 'a,b,c' : 'a,c', String(status));
+    assert.equal(noted.length, notices, String(status));
+  }
+});
+
 function chatSendFixture(id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');

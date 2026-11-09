@@ -25,7 +25,11 @@ while IFS= read -r file; do
         '') ;;
         crates/leo-web/src/web/*) browser=true; node=true ;;
         crates/leo-web/tests/browser/*) browser=true ;;
-        crates/leo-web/tests/*.test.js) node=true ;;
+        crates/leo-web/tests/*.js) node=true ;;
+        crates/leo-web/src/routes/assets.rs|crates/leo-web/src/routes/mod.rs)
+            rust=true; browser=true; node=true ;;
+        crates/leo-desktop/src/lib.rs|crates/leo-desktop/src/print.js|crates/leo-desktop/permissions/*|crates/leo-desktop/capabilities/*|crates/leo-desktop/dist/dictation.js)
+            rust=true; node=true ;;
         *.md|docs/*|LICENSE) ;;
         scripts/install-app.*|scripts/desktop_release.py|scripts/test_desktop_release.py|scripts/activate_app_installers.py|scripts/validate_updater_signing.py|scripts/import_macos_certificate.py|scripts/stage_windows_runtime.ps1|install.sh|install.ps1)
             installers=true; rust=true ;;

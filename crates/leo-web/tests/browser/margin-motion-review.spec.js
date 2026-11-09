@@ -514,6 +514,7 @@ test.describe('chat history list', () => {
       expect(title.weight).toBeGreaterThanOrEqual(450);
       expect(title.weight).toBeLessThanOrEqual(560);
     });
+    expect(pageHtml()).toContain('.chat-history-row');
     expect(pageHtml()).not.toContain('.chat-history-new');
   });
 

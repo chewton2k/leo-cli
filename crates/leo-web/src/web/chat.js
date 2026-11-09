@@ -1681,7 +1681,8 @@
       drawRefs();
       let removed = false;
       try {
-        removed = (await request(`/api/chats/${encodeURIComponent(chat)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' })).ok;
+        const response = await request(`/api/chats/${encodeURIComponent(chat)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        removed = response.ok || response.status === 404 || response.status === 401;
       } catch (e) {
         removed = false;
       }

@@ -65,11 +65,25 @@ class ScopeTests(unittest.TestCase):
     def test_node_specs_do_not_require_rust_or_browsers(self):
         self.assert_scope(self.scope('crates/leo-web/tests/saving.test.js'), 'node')
 
+    def test_node_support_files_run_node(self):
+        self.assert_scope(self.scope('crates/leo-web/tests/page-source.js'), 'node')
+
+    def test_rust_sources_read_by_node_tests_run_node(self):
+        for path in ('crates/leo-web/src/routes/assets.rs', 'crates/leo-web/src/routes/mod.rs'):
+            with self.subTest(path=path):
+                self.assert_scope(self.scope(path), 'rust', 'browser', 'node')
+                self.base = self.git('rev-parse', 'HEAD').strip()
+        for path in ('crates/leo-desktop/src/lib.rs', 'crates/leo-desktop/permissions/print.json',
+                     'crates/leo-desktop/capabilities/main.json', 'crates/leo-desktop/dist/dictation.js'):
+            with self.subTest(path=path):
+                self.assert_scope(self.scope(path), 'rust', 'node')
+                self.base = self.git('rev-parse', 'HEAD').strip()
+
     def test_shared_rust_changes_keep_cross_platform_and_browser_coverage(self):
         self.assert_scope(self.scope('crates/leo-core/src/store.rs'), 'rust', 'browser')
 
     def test_desktop_and_cli_changes_keep_cross_platform_coverage(self):
-        self.assert_scope(self.scope('crates/leo-desktop/src/lib.rs', 'src/main.rs'), 'rust')
+        self.assert_scope(self.scope('crates/leo-desktop/src/tray.rs', 'src/main.rs'), 'rust')
 
     def test_rust_integration_tests_run_without_browsers(self):
         self.assert_scope(self.scope('tests/e2e.rs', 'crates/leo-web/tests/markdown.rs'), 'rust')
