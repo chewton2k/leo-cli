@@ -2197,7 +2197,8 @@
       const thinking = thinkingOpen.has(q) ? String(state.drafts[`think:${i}:${k}`] || '').trim().slice(0, MOST_THINKING) : '';
       let correct = checkQuiz(q, text);
       if (correct === null && q.kind === 'fill_blank' && accepted(q).some((a) => plainAnswer(a) === plainAnswer(text))) correct = true;
-      if (correct === null && !q.predict) {
+      const known = correct;
+      if ((known === null || thinking) && !q.predict) {
         const chatId = state.id;
         checking.add(q);
         draw();
@@ -2209,9 +2210,9 @@
         checking.delete(q);
         if (state.id !== chatId) return;
         if (mark && typeof mark.correct === 'boolean') {
-          correct = mark.correct;
+          correct = known ?? mark.correct;
           q.feedback = String(mark.feedback || '');
-        } else if (state.busy || m.pending) {
+        } else if (known === null && (state.busy || m.pending)) {
           draw();
           return;
         }

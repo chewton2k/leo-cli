@@ -947,6 +947,18 @@ test.describe('Felix', () => {
     await expect(choice.locator('.quiz-thinking'), 'switching thinking off hides it').toHaveCount(0);
     await choice.locator('.quiz-option', { hasText: 'the front' }).click();
     await expect(choice.locator('.quiz-own'), 'thinking switched off is not sent').toHaveText('90% sure');
+    expect(marks, 'a multiple-choice answer with no thinking is marked by the page alone').toHaveLength(1);
+
+    await choice.locator('[data-chat="quiz-next"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveCount(4);
+    const reasoned = chat.locator('.quiz-card').last();
+    await reasoned.locator('[data-chat="quiz-think"]').click();
+    await page.keyboard.type('a queue is first in, first out');
+    await reasoned.locator('.quiz-option', { hasText: 'the back' }).click();
+    await expect.poll(() => marks.length, 'thinking on a multiple-choice answer goes to the marker too').toBe(2);
+    expect(marks[1]).toMatchObject({ given: 'the back', thinking: 'a queue is first in, first out' });
+    await expect(reasoned.locator('.quiz-verdict'), 'the page keeps its own verdict for a choice').toHaveText('Not quite');
+    await expect(reasoned.locator('.quiz-explain').first()).toContainText('Yes: the oldest item leaves first.');
   });
 
   test('a growing reply keeps its finished words, and a citation lights its passage in the open note', async ({ page }) => {
