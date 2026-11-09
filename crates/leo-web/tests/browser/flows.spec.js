@@ -1436,7 +1436,7 @@ test.describe('Felix', () => {
     await expect(chip.locator('.file-page')).toContainText('Heaps keep the minimum at the root.');
     const card = await chip.boundingBox();
     expect(card.width).toBeGreaterThan(card.height);
-    expect(card.height).toBeGreaterThan(90);
+    expect(card.height, 'a short tile in the composer, so the chat is not pushed down').toBeLessThanOrEqual(60);
     await expect(chip).not.toHaveClass(/reading/);
     await chat.locator('#chat-input').fill('what does my file say?');
     await chat.locator('#chat-input').press('Enter');
