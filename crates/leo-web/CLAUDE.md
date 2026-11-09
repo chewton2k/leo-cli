@@ -904,7 +904,9 @@ target. Check the page sequence after loading preferences.
   marks anything else `position: fixed` with `data-print-off`.
 
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
-  top).
+  top). A folded Tasks pill opens while the mouse is over it and folds when it
+  leaves (`tasksWin.hovering`, never saved); a click within `TASKS_PIN_MS` of that
+  opening pins it open, so the click never lands on the row under the pill.
 
 ## Note connections (`graph.rs`; "map" in storage)
 

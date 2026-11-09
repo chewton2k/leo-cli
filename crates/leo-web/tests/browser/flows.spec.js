@@ -4476,6 +4476,13 @@ test.describe('beside the note', () => {
     expect(small.width).toBeLessThan(wide / 4);
     await page.reload();
     await expect(page.locator('#dock #tasks-window .tasks-pill')).toBeVisible();
+    await box.locator('.tasks-pill').hover();
+    await expect(box.locator('.tasks-body'), 'hovering the pill opens the panel').toBeVisible();
+    await box.locator('.tasks-body').hover();
+    await expect(box.locator('.tasks-body'), 'it stays open while the pointer is over it').toBeVisible();
+    await page.mouse.move(640, 300);
+    await expect(box.locator('.tasks-pill'), 'leaving folds it again').toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('1');
     const opening = await box.evaluate((el) => {
       el.querySelector('.tasks-pill').click();
       return { runs: el.getAnimations().filter((run) => !run.animationName).length, body: Boolean(el.querySelector('.tasks-body')) };
@@ -4488,9 +4495,14 @@ test.describe('beside the note', () => {
       return { runs: el.getAnimations().filter((run) => !run.animationName).length, pill: Boolean(el.querySelector('.tasks-pill')) };
     });
     expect(still).toEqual({ runs: 0, pill: true });
-    await box.locator('.tasks-pill').click();
+    const spot = await box.locator('.tasks-pill').boundingBox();
+    await page.mouse.click(spot.x + spot.width / 2, spot.y + spot.height / 2);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await expect(page.locator('#dock #tasks-window [data-action="tasks-fold"]')).toContainText('Hide');
+    await expect(page, 'a click as the pill opens pins the panel, not the row now under the pointer').not.toHaveURL(/#\/calendar/);
+    await page.mouse.move(640, 300);
+    await expect(box.locator('.tasks-body'), 'a pinned panel stays open after the pointer leaves').toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
     await page.goto('/#/calendar');
     await expect(page.locator('#tasks-window')).toBeHidden();
   });
