@@ -62,9 +62,9 @@ use crate::routes::assets::{
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
-    add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat, get_chat,
-    get_review, list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
-    steer_answer,
+    add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat,
+    drop_last_messages, get_chat, get_review, list_chat_files, list_chats, mark_reviewed, put_chat,
+    remove_chat_file, steer_answer,
 };
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
@@ -88,6 +88,9 @@ pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
     fn refresh_usage(&self, _claude: bool) -> Option<String> {
         None
+    }
+    fn writing(&self, _probe: bool) -> serde_json::Value {
+        serde_json::Value::Null
     }
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
@@ -925,6 +928,7 @@ fn router(state: AppState) -> Router {
             post(routes::housekeeping::preview_keep),
         )
         .route("/api/export", get(export_zip))
+        .route("/api/chats/{id}/drop", post(drop_last_messages))
         .route(
             "/api/chats/{id}",
             get(get_chat)
@@ -935,6 +939,7 @@ fn router(state: AppState) -> Router {
         .route("/api/settings", get(get_settings).post(change_setting))
         .route("/api/settings/test", post(test_setting))
         .route("/api/settings/usage", post(routes::settings::refresh_usage))
+        .route("/api/writing", get(routes::settings::writing))
         .route("/api/processes", get(routes::processes::list))
         .route(
             "/api/import",

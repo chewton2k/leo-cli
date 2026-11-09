@@ -187,6 +187,37 @@ pub(crate) async fn put_chat(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct DropBody {
+    pub(crate) count: usize,
+    pub(crate) total: usize,
+}
+
+pub(crate) async fn drop_last_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<DropBody>,
+) -> StatusCode {
+    if !chats::valid_id(&id) {
+        return StatusCode::BAD_REQUEST;
+    }
+    let dir = state.chats.clone();
+    let warm = Arc::clone(&state.warm);
+    match tokio::task::spawn_blocking(move || {
+        let dropped = chats::drop_last(&dir, &id, body.count, body.total);
+        if matches!(dropped, Ok(Some(_))) {
+            warm.forget(&id);
+        }
+        dropped
+    })
+    .await
+    {
+        Ok(Ok(Some(_))) => StatusCode::NO_CONTENT,
+        Ok(Ok(None)) => StatusCode::CONFLICT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 const MOST_BACKGROUND: usize = 8;
 
 struct BusyGuard {

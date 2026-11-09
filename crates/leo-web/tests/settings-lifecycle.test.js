@@ -59,7 +59,7 @@ test('the note footer keeps its note tools without the bottom Ask button', () =>
   vm.runInContext(script, context);
   const html = context.noteActions('note-id', true);
   assert.doesNotMatch(html, /data-action="(?:ask-selection|note-map)"/);
-  for (const name of ['Show transcript', 'Show tasks', 'Add picture', 'Move to folder', 'Export as PDF', 'Move to trash']) assert.ok(html.includes('aria-label="' + name + '"'));
+  for (const name of ['Show transcript', 'Show tasks', 'Add picture', 'Move to folder', 'Share', 'Move to trash']) assert.ok(html.includes('aria-label="' + name + '"'));
 });
 
 test('Codex and Claude Code models list newest release first, then by power', () => {

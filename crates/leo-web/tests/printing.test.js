@@ -78,3 +78,68 @@ test('finishing a save or print never prints or renames a newer page', async () 
   await empty.share();
   assert.match(message, /Write something first/);
 });
+
+function shareHarness(extra = {}) {
+  const source = fs.readFileSync(path.resolve(__dirname, '../src/web/app/sheets.js'), 'utf8');
+  const code = source.slice(source.indexOf('async function noteMarkdown()'), source.indexOf('async function openTitle'));
+  const log = { toasts: [], menus: [], clicks: [], printed: 0 };
+  const context = {
+    seq: 1, ICON: { note: 'N', download: 'D', share: 'S' }, document: { title: 'Leo', createElement: () => ({ click() { log.clicks.push(this); } }) },
+    ready: async () => ({ note: { title: 'Saved title' }, id: 1 }), snapshot: () => ({ title: 'Cell biology', body: 'First line\n- [ ] one\n' }),
+    toast: (text, options) => log.toasts.push([text, options]), popupMenu: (owner, menu) => log.menus.push([owner, menu]),
+    navigator: { clipboard: { writeText: async (text) => { log.copied = text; } } },
+    URL: { createObjectURL: (blob) => { log.blob = blob; return 'blob:x'; }, revokeObjectURL() {} }, Blob: class { constructor(parts, options) { this.parts = parts; this.options = options; } },
+    window: { addEventListener() {}, removeEventListener() {}, print: async () => { log.printed++; } }, setTimeout: () => 0, ...extra,
+  };
+  vm.createContext(context);
+  vm.runInContext(code, context);
+  return { context, log };
+}
+
+test('Share opens a menu of Copy as Markdown, Save .md file and Export as PDF', () => {
+  const { context, log } = shareHarness();
+  const owner = {};
+  context.shareMenu(owner);
+  const [menuOwner, menu] = log.menus[0];
+  assert.equal(menuOwner, owner);
+  assert.equal(menu.label, 'Share');
+  assert.deepEqual(JSON.parse(JSON.stringify(menu.rows.map((row) => [row.text, row.icon]))), [['Copy as Markdown', 'N'], ['Save .md file', 'D'], ['Export as PDF', 'S']]);
+  assert.ok(menu.rows.every((row) => typeof row.run === 'function'));
+});
+
+test('Copy as Markdown writes the title and body, and says why when it cannot', async () => {
+  const { context, log } = shareHarness();
+  await context.shareMenu({});
+  await log.menus[0][1].rows[0].run();
+  assert.equal(log.copied, '# Cell biology\n\nFirst line\n- [ ] one\n');
+  assert.equal(log.toasts.length, 1);
+  assert.equal(log.toasts[0][0], 'Copied as Markdown');
+  const refused = shareHarness({ navigator: { clipboard: { writeText: async () => { throw Error('Permission denied'); } } } });
+  refused.context.shareMenu({});
+  await refused.log.menus[0][1].rows[0].run();
+  assert.equal(refused.log.toasts[0][0], 'Could not copy: Permission denied');
+  assert.equal(refused.log.toasts[0][1].bad, true);
+});
+
+test('Save .md file downloads the same Markdown under the note title', async () => {
+  const { context, log } = shareHarness({ snapshot: () => ({ title: 'a/b: c', body: 'Body' }) });
+  context.shareMenu({});
+  await log.menus[0][1].rows[1].run();
+  assert.equal(log.blob.parts[0], '# a/b: c\n\nBody\n');
+  assert.equal(log.clicks[0].download, 'a-b- c.md');
+  assert.equal(log.clicks[0].href, 'blob:x');
+});
+
+test('Export as PDF from the menu still prints, and an unsaved note says to write first', async () => {
+  const { context, log } = shareHarness();
+  context.shareMenu({});
+  await log.menus[0][1].rows[2].run();
+  assert.equal(log.printed, 1);
+  const empty = shareHarness({ ready: async () => null });
+  empty.context.shareMenu({});
+  await empty.log.menus[0][1].rows[0].run();
+  await empty.log.menus[0][1].rows[1].run();
+  assert.equal(empty.log.copied, undefined);
+  assert.equal(empty.log.clicks.length, 0);
+  assert.deepEqual(empty.log.toasts.map((t) => t[0]), ['Write something first.', 'Write something first.']);
+});

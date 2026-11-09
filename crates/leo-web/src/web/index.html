@@ -613,6 +613,8 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .msg-meta { margin-left: auto; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; cursor: default; }
 .msg-act { font: inherit; font-size: 12.5px; color: var(--muted); background: none; border: 0; border-radius: var(--r-tile); padding: 3px 6px; cursor: pointer; }
 .msg-act:hover { color: var(--accent); }
+.msg-act:disabled { color: var(--muted); opacity: .5; cursor: default; }
+.msg.user .msg-acts { justify-content: flex-end; }
 .chat-review { display: grid; gap: 6px; justify-items: start; text-align: left; margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--accent-soft); }
 .chat-review b { font-size: var(--fs-md); }
 .chat-review span { color: var(--muted); font-size: 13.5px; }

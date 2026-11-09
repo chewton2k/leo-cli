@@ -3498,3 +3498,41 @@ fn a_retired_interview_request_uses_chat_and_refuses_removed_tools_cleanly() {
     assert!(!prompts[0].contains("<interview_material>"));
     assert!(prompts[1].contains("there is no tool called"));
 }
+
+#[test]
+fn taking_back_the_last_reply_removes_it_and_refuses_a_stale_count() {
+    use crate::routes::felix::{drop_last_messages, DropBody};
+    let (state, _d, _ids) = state_with(&[]);
+    let said = |role: &str| serde_json::json!({ "role": role, "text": role });
+    chats::save(
+        &state.chats,
+        "chat-take-0001",
+        chats::Saving {
+            title: String::new(),
+            refs: vec![],
+            messages: vec![said("user"), said("assistant")],
+        },
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let drop = |total: usize| {
+        run(drop_last_messages(
+            State(state.clone()),
+            Path("chat-take-0001".into()),
+            Json(DropBody { count: 2, total }),
+        ))
+    };
+    assert_eq!(drop(4), axum::http::StatusCode::CONFLICT);
+    assert_eq!(
+        chats::load(&state.chats, "chat-take-0001")
+            .unwrap()
+            .messages
+            .len(),
+        2
+    );
+    assert_eq!(drop(2), axum::http::StatusCode::NO_CONTENT);
+    assert!(chats::load(&state.chats, "chat-take-0001")
+        .unwrap()
+        .messages
+        .is_empty());
+}

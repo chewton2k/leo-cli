@@ -653,6 +653,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   buttons with number, note and line; copy, Save and Add to note still drop every `.cite`. `cite()` numbers
   only when given `marks`: quiz cards and file chips keep their look. The prompt (`BASE`, `REPLY_STYLE`):
   one cite per bullet, short plain sentences, no bold except a closing "Next:" line.
+- Copy, Retry and Edit (2026-11-09): every answer has Copy (Markdown, citations as links); the last answer has Retry and the last question Edit, both off while a reply streams. They take the last pair back with POST `/api/chats/{id}/drop` `{count, total}` (`chats::drop_last`, 409 unless the saved chat has `total` messages), then resend or put the text in the composer.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
@@ -894,6 +895,7 @@ target. Check the page sequence after loading preferences.
   text through the writer. Late encoding/responses cannot attach to another
   recording; ordinary text paste stays normal.
 
+- Share (2026-11-09): the note's share button opens a `popupMenu`: Copy as Markdown (`# Title`, blank line, body; clipboard), Save .md file (a Blob `a[download]`, which the desktop's `on_download` saves to Downloads; no route) and Export as PDF (below).
 - PDF export (Share → PDF, or the browser's print): print CSS hides every
   fixed overlay (dock, tasks, source pane, toasts, chat, FABs…), zeroes the
   layout variables and the scrollbar gutter, and uses fixed `@page` margins

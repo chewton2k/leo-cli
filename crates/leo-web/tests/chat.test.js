@@ -868,3 +868,99 @@ test('a streamed list marker waits until it has text', () => {
   assert.equal(C.held('Steps\n3 apples'), 'Steps\n3 apples');
   assert.equal(C.held('Pay 5'), 'Pay 5');
 });
+
+function answers(messages, { busy = null, send = () => {}, clipboard = null, fetchOk = true } = {}) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/chat.js'), 'utf8');
+  const cut = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+  const code = `${cut('    function bubble(m, i) {', '    function onNote()')}\n${cut('    function lastPair()', '    async function startWith(')}`;
+  const calls = [];
+  const input = { value: '', focus() { calls.push('focus'); } };
+  const context = {
+    ...C, state: { messages, busy, preparingSend: false, id: 'chat-12345678' }, escape: esc, render: (t) => `<p>${esc(t)}</p>`, input,
+    root: { navigator: { clipboard } }, upload: Promise.resolve(), openTraces: new Set(), working: new Map(), tick() {}, workingFor: () => '', writer: () => '', writerOf: () => '',
+    stepChevron: '', MOST_REPLY_STEPS: 64, clipped: (t) => t, stored: () => messages.filter((m) => !m.pending), fit() {}, persist() {}, draw() {}, send,
+    notify: (text) => calls.push(`notify:${text}`), setTimeout: () => 0,
+    fetch: async (url, init) => { calls.push(['fetch', url, JSON.parse(init.body)]); return { ok: fetchOk }; },
+  };
+  vm.createContext(context);
+  for (let tries = 0; tries < 40; tries++) {
+    try { vm.runInContext(`${code}\n;globalThis.__bubble = bubble; globalThis.__fns = { copyAnswer, takeBack, retryAnswer, editQuestion, lastPair };`, context); break; }
+    catch (e) { if (!(e instanceof ReferenceError)) throw e; context[e.message.split(' ')[0]] = () => ''; }
+  }
+  return { context, calls, input, html: () => messages.map((m, i) => context.__bubble(m, i)), ...context.__fns };
+}
+
+const pair = () => [{ role: 'user', text: 'What is a heap?' }, { role: 'assistant', text: '[n1] A heap keeps the minimum on top.', sources: [{ n: 1, id: 'a', title: 'Heaps' }] }];
+
+test('every answer offers Copy, the last one Retry, and the last question Edit', () => {
+  const { html } = answers([...pair(), ...pair()]);
+  const [q1, a1, q2, a2] = html();
+  assert.doesNotMatch(q1, /data-chat="edit"/);
+  assert.match(q2, /data-chat="edit"/);
+  assert.match(a1, /data-chat="copy"/);
+  assert.doesNotMatch(a1, /data-chat="retry"/);
+  assert.match(a2, /data-chat="copy"[^>]*>Copy<\/button><button class="msg-act" data-chat="retry">Retry<\/button>/);
+  assert.doesNotMatch(a2, /disabled/);
+});
+
+test('Copy, Retry and Edit are disabled while Felix is working', () => {
+  const [q, a] = answers(pair(), { busy: {} }).html();
+  assert.match(q, /data-chat="edit" disabled/);
+  assert.match(a, /data-chat="copy" data-i="1" disabled/);
+  assert.match(a, /data-chat="retry" disabled/);
+  const pending = answers([...pair(), { role: 'user', text: 'More' }, { role: 'assistant', text: '', pending: true }]).html();
+  assert.doesNotMatch(pending.join(''), /data-chat="retry"|data-chat="edit"/);
+});
+
+test('Copy writes the answer as Markdown without citation marks or the grading marker', async () => {
+  let written = null;
+  const box = answers(pair(), { clipboard: { writeText: async (t) => { written = t; } } });
+  const button = { textContent: 'Copy' };
+  await box.copyAnswer(1, button);
+  assert.equal(written, C.linkCitations(C.grade(pair()[1].text).text, pair()[1].sources).trim());
+  assert.equal(button.textContent, 'Copied');
+  const busy = answers(pair(), { busy: {}, clipboard: { writeText: async () => { throw new Error('no'); } } });
+  await busy.copyAnswer(1, button);
+  assert.equal(busy.calls.length, 0, 'nothing happens while streaming');
+  const refused = answers(pair(), { clipboard: { writeText: async () => { throw new Error('Denied'); } } });
+  await refused.copyAnswer(1, { textContent: 'Copy' });
+  assert.deepEqual(refused.calls, ['notify:Could not copy: Denied']);
+});
+
+test('Retry drops the last pair on the server and sends the question again', async () => {
+  const sent = [];
+  const messages = [...pair(), ...pair()];
+  const box = answers(messages, { send: (t) => sent.push(t) });
+  await box.retryAnswer();
+  assert.deepEqual(box.calls, [['fetch', '/api/chats/chat-12345678/drop', { count: 2, total: 4 }]]);
+  assert.equal(messages.length, 2);
+  assert.deepEqual(sent, ['What is a heap?']);
+});
+
+test('Edit puts the question back in the composer and drops the pair', async () => {
+  const messages = pair();
+  const box = answers(messages);
+  box.input.value = 'draft';
+  await box.editQuestion();
+  assert.equal(messages.length, 0);
+  assert.equal(box.input.value, 'What is a heap?\n\ndraft');
+  assert.deepEqual(box.calls.at(-1), 'focus');
+});
+
+test('a refused or busy take-back keeps the chat as it is', async () => {
+  const sent = [];
+  const messages = pair();
+  const refused = answers(messages, { fetchOk: false, send: (t) => sent.push(t) });
+  await refused.retryAnswer();
+  assert.equal(messages.length, 2);
+  assert.deepEqual(sent, []);
+  assert.match(refused.calls.at(-1), /^notify:/);
+  const busy = answers(messages, { busy: {}, send: (t) => sent.push(t) });
+  await busy.editQuestion();
+  await busy.retryAnswer();
+  assert.deepEqual(busy.calls, []);
+  assert.equal(messages.length, 2);
+});

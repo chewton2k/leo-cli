@@ -803,7 +803,7 @@ function noteActions(id, recorded = false) {
       ${id ? `<button type="button" data-action="note-tasks" aria-label="Show tasks">${ICON.calendar}</button>` : ''}
       <button type="button" data-action="note-picture" aria-label="Add picture">${ICON.image}</button>
       <button type="button" data-action="move" aria-label="Move to folder">${ICON.move}</button>
-      <button type="button" data-action="share" aria-label="Export as PDF">${ICON.share}</button>
+      <button type="button" data-action="share" aria-label="Share" aria-haspopup="menu" aria-expanded="false">${ICON.share}</button>
       <button type="button" data-action="delete" class="danger" aria-label="Move to trash">${ICON.trash}</button>
     </nav>`;
 }

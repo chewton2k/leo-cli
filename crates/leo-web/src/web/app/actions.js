@@ -221,7 +221,7 @@ const actions = {
     route();
   },
   move: (el) => moveSheet(el),
-  share,
+  share: (el) => shareMenu(el),
   delete: () => trashNote(),
   restore: (el) => restore(el.dataset.id, false),
   'trash-select': () => {
