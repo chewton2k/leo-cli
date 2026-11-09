@@ -2,13 +2,14 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 // The Boards page with its real CSS, icons, sheets and boards.js over an in-memory API
 // that behaves like routes/boards.rs (order by position, same-name columns across boards).
 async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const core = read('app/core.js');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const sheets = read('app/sheets.js');

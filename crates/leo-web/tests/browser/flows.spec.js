@@ -53,7 +53,7 @@ async function goPlace(page, action) {
 
 
 function control(page, action) {
-  return page.locator(`.fab[data-action="${action}"]:visible, .new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
+  return page.locator(`.new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
 async function dragBetween(page, source, target) {

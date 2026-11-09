@@ -2,10 +2,11 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss, pageHtml } = require('../page-source');
 
 const web = path.resolve(__dirname, '../../src/web');
 const read = (name) => fs.readFileSync(path.join(web, name), 'utf8');
-const css = () => read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+const css = () => pageCss();
 
 const WORDS = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ');
 const SHORT = 'The password is stored as plain text.';
@@ -499,7 +500,7 @@ test.describe('chat history list', () => {
       expect(title.weight).toBeGreaterThanOrEqual(450);
       expect(title.weight).toBeLessThanOrEqual(560);
     });
-    expect(read('index.html')).not.toContain('.chat-history-new');
+    expect(pageHtml()).not.toContain('.chat-history-new');
   });
 
   test('Delete grows from the cross in width while the labels cross-fade, reversing cleanly', async ({ browser }) => {

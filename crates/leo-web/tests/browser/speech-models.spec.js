@@ -2,6 +2,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 test('speech model downloads keep drafts and ignore late progress after cancel', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
@@ -10,7 +11,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
   const nav = fs.readFileSync(path.join(web, 'app/settings-navigation.js'), 'utf8');
   const segments = nav.slice(nav.indexOf('function segmented('), nav.indexOf('function pickSegment('));
   const option = source.slice(source.indexOf('function settingsOption('), source.indexOf('const effortName'));
-  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const initial = () => ({ selected: { id: 'local', language: 'en' }, ready: true, disk_bytes: 5,
     models: [{ id: 'local', name: 'Local <b>speech</b>', description: 'Fast, accurate <live> English transcription', streaming: true, speed: 13.955, accuracy: 96.01, accuracy_measured: true, benchmark_language: 'en', languages: ['en'], size: 731357568, bytes: 5, downloaded: true, verified: true, in_use: true, live: true, progress: null },
       { id: 'next', name: 'Another model', recommended: true, languages: ['en'], size: 100, bytes: 0, downloaded: false, verified: false, in_use: false, live: false, progress: null }] });

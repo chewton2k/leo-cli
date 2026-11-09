@@ -2,11 +2,12 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 async function editorFixture(browser, run, { remember = false, body = null, touch = false, related = false } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const settings = read('app/settings.js');
   const pickWidth = settings.slice(settings.indexOf('function pickWidth('), settings.indexOf('function pickFelix('));
   const passages = read('app/passages.js');

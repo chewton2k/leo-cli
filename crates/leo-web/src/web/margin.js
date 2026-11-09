@@ -210,13 +210,7 @@
     return path;
   }
 
-  function tether(from, to, clear = from.x) {
-    const middle = (clear + to.x) / 2;
-    const lead = clear === from.x ? '' : ` L${clear.toFixed(1)} ${from.y.toFixed(1)}`;
-    return `M${from.x.toFixed(1)} ${from.y.toFixed(1)}${lead} C${middle.toFixed(1)} ${(from.y + 2).toFixed(1)} ${(middle - 4).toFixed(1)} ${to.y.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`;
-  }
-
-  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, clear, arrangement, wordDelay, blocksOf, changedBlocks, passes, wave, tether };
+  const api = { MARGIN_WIDTH, MARGIN_GAP, ROOM_RIGHT, ROOM_BOTH, find, around, lineAfter, stack, sides, clear, arrangement, wordDelay, blocksOf, changedBlocks, passes, wave };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMargin = api;
 })(typeof window !== 'undefined' ? window : globalThis);

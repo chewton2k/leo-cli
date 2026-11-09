@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pageHtml } = require('./page-source');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '../src', file), 'utf8').replace(/\r\n/g, '\n');
 
@@ -11,7 +12,9 @@ test('graph page has no navigation, actions, route or bundled renderer', () => {
   }
   assert.doesNotMatch(read('routes/assets.rs'), /web\/graph\.js|app\/map\.js/);
   assert.doesNotMatch(read('lib.rs'), /\.route\("\/(?:api\/graph|graph\.js)/);
-  assert.doesNotMatch(read('web/index.html'), /src="\/graph\.js"|on-map|\.map-(?:tools|panel|zoom)/);
+  const page = pageHtml();
+  assert.match(page, /\.side-rail\b[\s\S]*<\/html>/);
+  assert.doesNotMatch(page, /src="\/graph\.js"|on-map|\.map-(?:tools|panel|zoom)/);
 });
 
 test('shared count wording works without the removed graph script', () => {

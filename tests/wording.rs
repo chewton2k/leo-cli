@@ -136,7 +136,8 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
         "CONTRIBUTING.md",
         "install.sh",
         "install.ps1",
-        "crates/leo-web/src/web/index.html",
+        "crates/leo-web/src/web/page-head.html",
+        "crates/leo-web/src/web/page-tail.html",
     ]
     .map(|doc| root().join(doc));
     for path in docs.into_iter().chain(page_parts) {

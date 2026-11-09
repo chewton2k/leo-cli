@@ -2,6 +2,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 test('panel refresh updates controls and keyed rows without resetting native state', async ({ page }) => {
   await page.setContent('<main id="panel"></main>');
@@ -39,7 +40,7 @@ test('panel refresh updates controls and keyed rows without resetting native sta
 
 test('coding accounts show readable usage and sign-in states in both themes and narrow windows', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
-  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const source = fs.readFileSync(path.join(web, 'app/settings.js'), 'utf8');
   await page.setContent('<style>' + css + '</style><main class="settings" id="plans"></main>');
   await page.addScriptTag({ content: `const esc = text => String(text).replace(/</g, '&lt;').replace(/"/g, '&quot;'), rel = () => 'just now'; ${source.slice(source.indexOf('const PLAN_STALE_MS'), source.indexOf('const THEME_LABELS'))}` });
@@ -67,7 +68,7 @@ test('coding accounts show readable usage and sign-in states in both themes and 
 test('Usage keeps cached readings through refresh failure and ignores a closed sheet', async ({ page }, testInfo) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const settings = read('app/settings.js');
   const plans = settings.slice(settings.indexOf('const PLAN_STALE_MS'), settings.indexOf('const THEME_LABELS'));
   const usage = settings.slice(settings.indexOf('async function showUsage('));
@@ -140,7 +141,7 @@ test('Usage keeps cached readings through refresh failure and ignores a closed s
 test('note mention picker scrolls within its list and keeps the composer caret', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const chat = read('chat.js');
   const start = chat.indexOf('  function containChatPickWheel(');
   const end = chat.indexOf('  function felix(', start);
@@ -193,7 +194,7 @@ test('note mention picker scrolls within its list and keeps the composer caret',
 test('Settings sections keep drafts and selections across redraws in both themes', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -399,7 +400,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
 test('setup groups permissions with live checkmarks, then offers speech models as cards', async ({ browser }, testInfo) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const sheets = read('app/sheets.js').split('const QUICK_PLACES')[0];
   const settings = read('app/settings.js');
   const speechHelpers = settings.slice(settings.indexOf('function speechBytes('), settings.indexOf('function speechModelRow('));
@@ -597,7 +598,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
 
 test('page toolbars share geometry', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
-  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   await page.setContent('<header class="bar"><div class="bar-row"><button class="icon-btn">‹</button><nav class="crumbs">Settings / Keeping</nav><button class="icon-btn">…</button></div></header><main class="settings-section"></main>');
   await page.addStyleTag({ content: css });
   for (const width of [2000, 1200, 390]) {
@@ -616,7 +617,7 @@ test('page toolbars share geometry', async ({ page }) => {
 test('Felix activity draws gridlines and colours bars by maker', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   await page.setContent(`<style>${css}</style><main id="app"></main>`);
   await page.addScriptTag({ content: `var app=document.querySelector('#app'), esc=t=>String(t), ICON=new Proxy({}, {get:()=>'<svg></svg>'}), svg=p=>'<svg>'+p+'</svg>', segmented=()=>'', stillMotion=()=>true;` });
   await page.addScriptTag({ content: read('chat.js') });

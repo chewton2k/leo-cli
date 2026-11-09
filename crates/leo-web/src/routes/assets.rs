@@ -1,7 +1,23 @@
 use axum::http::header;
 use axum::response::{Html, IntoResponse, Response};
 
-const HTML: &str = include_str!("../web/index.html");
+const HTML: &str = concat!(
+    include_str!("../web/page-head.html"),
+    include_str!("../web/styles/01-tokens.css"),
+    include_str!("../web/styles/02-base.css"),
+    include_str!("../web/styles/03-note.css"),
+    include_str!("../web/styles/04-surfaces.css"),
+    include_str!("../web/styles/05-doc-actions.css"),
+    include_str!("../web/styles/06-felix.css"),
+    include_str!("../web/styles/07-side-popup.css"),
+    include_str!("../web/styles/08-chat.css"),
+    include_str!("../web/styles/09-kanban.css"),
+    include_str!("../web/styles/10-schedule.css"),
+    include_str!("../web/styles/11-source-study.css"),
+    include_str!("../web/styles/12-settings.css"),
+    include_str!("../web/styles/13-setup-misc.css"),
+    include_str!("../web/page-tail.html"),
+);
 const APP_JS: &str = concat!(
     "(function () {\n'use strict';\n",
     include_str!("../web/app/refresh.js"),

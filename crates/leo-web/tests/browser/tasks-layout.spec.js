@@ -2,13 +2,14 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 test('task completion shows its check before hiding and survives refresh, Undo and failure', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const calendar = fs.readFileSync(path.join(web, 'app/calendar.js'), 'utf8');
   const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
   const actions = fs.readFileSync(path.join(web, 'app/actions.js'), 'utf8');
-  const styles = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const styles = pageCss();
   const completion = calendar.slice(calendar.indexOf('function taskDoneOn'), calendar.indexOf('function pickerBody'));
   const panel = calendar.slice(calendar.indexOf('var tasksWin'), calendar.indexOf('const source ='));
   const action = actions.slice(actions.indexOf("  'task-done':"), actions.indexOf("  'task-date':"));

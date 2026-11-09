@@ -2,11 +2,11 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 test('documents split notes and keep Felix at the right without losing drafts', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
-  const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
-  const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const style = pageCss();
   const calendar = fs.readFileSync(path.join(web, 'app/calendar.js'), 'utf8');
   const uploads = fs.readFileSync(path.join(web, 'app/uploads.js'), 'utf8');
   const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
@@ -141,8 +141,7 @@ test('documents split notes and keep Felix at the right without losing drafts', 
 
 test('note headings navigate without losing edits and adapt beside Felix in both themes', async ({ browser }, testInfo) => {
   const web = path.resolve(__dirname, '../../src/web');
-  const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
-  const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const style = pageCss();
   const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const show = core.slice(core.indexOf('function noteActions('), core.indexOf('function newNote('));

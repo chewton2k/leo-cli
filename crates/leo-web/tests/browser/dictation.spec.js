@@ -1,12 +1,13 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 const http = require('node:http');
 
 test('dictation preferences keep drafts and caret while shortcut and history update', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const source = fs.readFileSync(path.join(web, 'app/refresh.js'), 'utf8') + fs.readFileSync(path.join(web, 'app/settings-navigation.js'), 'utf8') + fs.readFileSync(path.join(web, 'app/dictation.js'), 'utf8');
-  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const initial = () => ({ settings: { shortcut: 'option+space', mode: 'both', custom_words: ['Initial'], fillers: true, popup: 'live', top: false }, microphones: ['External microphone'], shortcut: {}, recent: [{ id: 1, text: '<img src=x onerror=bad()>' }] });
   let view = initial();
   const script = `const app=document.querySelector('#app'),$=s=>document.querySelector(s); let seq=1,state={view:'settings',dictation:${JSON.stringify(view)}};
