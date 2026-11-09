@@ -854,7 +854,6 @@
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
       <div class="study-progress" id="study-progress" hidden></div>
-      <details class="chat-lost" id="chat-lost" hidden><summary></summary><div class="chat-lost-list"></div></details>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
       <footer class="chat-foot">
         <div class="chat-pick" id="chat-pick" hidden></div>
@@ -3262,15 +3261,6 @@
         toggle(true);
         drawRefs();
         input.focus();
-      },
-      setLost(threads) {
-        const box = $('#chat-lost');
-        const key = threads.map((t) => t.id).join(',');
-        if (box.dataset.key === key) return;
-        box.dataset.key = key;
-        box.hidden = !threads.length;
-        box.querySelector('summary').textContent = threads.length === 1 ? 'A margin note lost its place' : `${threads.length} margin notes lost their place`;
-        box.querySelector('.chat-lost-list').innerHTML = threads.map((t) => `<div class="chat-lost-row"><q>${escape(t.quote)}</q><p>${escape((t.messages[t.messages.length - 1] || {}).text || '')}</p><button type="button" class="msg-act" data-action="margin-lost-open" data-id="${escape(t.id)}">Open in chat</button><button type="button" class="msg-act" data-action="margin-lost-dismiss" data-id="${escape(t.id)}">Dismiss</button></div>`).join('');
       },
       attachFiles(list) {
         toggle(true);

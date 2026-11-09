@@ -4083,7 +4083,7 @@ test.describe('passages', () => {
     await touch.close();
   });
 
-  test('a lost margin note moves to the Felix panel and Settings starts with read-along off', async ({ page }) => {
+  test('a margin note whose words are gone stays out of the page and the Felix panel, and Settings starts with read-along off', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Lost place', body: 'Nothing like it here.' } })).json();
     const lost = { id: 'stub-lost', note: note.id, quote: 'words that went away', prefix: 'nothing near ', suffix: ' nothing after', status: 'open', source: 'read', messages: [{ from: 'felix', text: 'This passage has gone.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
@@ -4091,8 +4091,8 @@ test.describe('passages', () => {
     await page.goto(`/#/n/${note.id}`);
     await expect(page.locator('#margin-mode')).toBeVisible();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat-lost')).toBeVisible();
-    await expect(page.locator('#chat-lost summary')).toHaveText('A margin note lost its place');
+    await expect(page.locator('#chat .chat-hello-lead')).toBeVisible();
+    await expect(page.locator('#chat')).not.toContainText('lost its place');
     await expect(page.locator('.margin-note')).toHaveCount(0);
 
     await page.goto('/#/settings/felix');

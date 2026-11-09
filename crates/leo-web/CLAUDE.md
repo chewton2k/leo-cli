@@ -789,8 +789,8 @@ target. Check the page sequence after loading preferences.
   room or Felix open centre the note with a left gutter reserved before the first
   comment arrives. A mark centered vertically on the passage (24 px to hit,
   44 px on touch) opens the note inline, with
-  `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
-  in the panel.
+  `.margin-room` holding the space under its block. A thread whose passage is gone
+  is not shown (2026-11-09, the user's call: the "lost its place" box in Felix was confusing).
 - The reading-mode menu, the Read through button and status sit on the line under the title, beside the save state, so a status never moves the note. Saving a mode keeps the
   last confirmed value on failure. Its own menu class keeps generic select-menu
   click and close handlers from dismissing it. Each note remains a labelled article with an
