@@ -10,7 +10,7 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `filename`, `open` (opens a link with the system), `children` (stops a process tree, lists the processes leo owns for Felix activity's Running now; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices), `paths`, `recording`, `activity` | — |
+| `crates/leo-core` | `notes`, `store`, `filename`, `open` (opens a link with the system), `children` (stops a process tree, lists the processes leo owns for Felix activity's Running now; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices), `paths`, `recording`, `activity` | — |
 | `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials), `health`, `providers`, `speech`, `dictation`, `session`, `update`, `usage`, `import` | core |
 | `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
 | `crates/leo-host` | `powers()` (the AI, speech, settings, recording housekeeping and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
@@ -54,19 +54,6 @@ the design live in `docs/superpowers/` (gitignored, local).
 Subsystem notes load only when working in that crate:
 `crates/leo-services/CLAUDE.md`, `crates/leo-web/CLAUDE.md`,
 `crates/leo-desktop/CLAUDE.md`.
-
-### Undo lives in the store
-
-`Store` keeps a bounded stack of `Undoable` values, and `delete_note`,
-`delete_dir_recursive`, `move_note` and `toggle_checkbox` all record onto it. It
-restores whole `Note` values rather than replaying an inverse operation, because a
-restored note has to come back with its original id and timestamps instead of as a
-copy that resembles it. The stack is not persisted: undo covers a session, and a
-deletion that survived a restart is a decision the user has lived with.
-
-Two invariants worth keeping: a no-op (a delete that matched nothing, a refused
-root delete) must record nothing, or `u` appears to do nothing; and undo must not
-push its own inverse, or one press would toggle forever.
 
 ### Notes stay local
 
@@ -146,8 +133,8 @@ settings and credentials are excluded from note exports.
   `<title> (conflict from leo)` with a new id (`CONFLICT_SUFFIX`, listed by
   doctor) instead of overwriting; deleted notes are trashed only if their file
   is still what leo saw. Writes are temp-file + rename.
-- `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes;
-  refresh keeps undo). Engine mutations reconcile before writing; hot read-only
+- `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes).
+  Engine mutations reconcile before writing; hot read-only
   paths use the existing filesystem watcher with a 60 s reconciliation fallback.
   Returning to the native window forces a check before serving cached reads.
 - Never slice strings by byte offsets computed from lengths: use char indices
