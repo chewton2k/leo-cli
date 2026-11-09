@@ -202,7 +202,8 @@ age past `STALE_AFTER`, a window past its reset reads 0%); the Usage action in
 Settings asks Codex; doctor adds `<name> limits` with
 reset times. Never `--bare` (it skips the
 OAuth login). Usable = program on PATH (`locate`, `.cmd` on Windows); failures
-are retryable and name the sign-in step; settings shows a sign-in fact row,
+are retryable and name the sign-in step; `health::writing` is SignInNeeded only from
+the last sign-in probe's result (`agent_cli::last_signed_in`, ten minutes), never a new probe; settings shows a sign-in fact row,
 no key row; doctor's "answers" probe is the sign-in check.
 
 An override that names a provider with no `[providers]` block is ignored with a

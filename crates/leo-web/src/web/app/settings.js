@@ -244,7 +244,7 @@ function providerCard(c) {
   return [c.id, title, about, '', icon];
 }
 
-const SIGN_IN_POLL_MS = 2000, SIGN_IN_WAIT_MS = 120000;
+const SIGN_IN_POLL_MS = 3000, SIGN_IN_WAIT_MS = 120000;
 const SIGN_IN_LATE = 'Still waiting. Finish signing in, then press Check again.';
 const INSTALL_URL = { claude_code: 'https://claude.com/claude-code', codex: 'https://github.com/openai/codex' };
 let signInWait = null;
@@ -382,8 +382,9 @@ async function loadOllama(mine) {
   if (wait) ollamaTimer = setTimeout(() => loadOllama(mine), wait);
 }
 async function ollamaChange(change) {
-  const mine = seq;
+  const mine = seq, setup = onboardingHere(3) ? onboardingGeneration : null;
   const view = await api('/api/writing/ollama', { method: 'POST', body: change });
+  if (setup !== null) return onboardingOllamaHere(setup) && showOnboardingOllama(view, setup);
   if (mine !== seq || state.view !== 'settings') return;
   state.ollama = view;
   refreshPanel($('#ollama-setup'), ollamaSetup(view, writingModel()));
@@ -392,7 +393,7 @@ async function ollamaChange(change) {
 function ollamaPull(el) {
   const model = state.ollama?.models?.find((m) => m.name === el.dataset.model);
   if (!model || state.ollama.pull?.state === 'pulling') return;
-  if (model.pulled) return changeSetting({ set: 'model', task: 'writing', value: model.name });
+  if (model.pulled) return onboardingHere(3) ? pickOnboardingOllama(model.name) : changeSetting({ set: 'model', task: 'writing', value: model.name });
   return ollamaChange({ action: 'pull', model: model.name });
 }
 

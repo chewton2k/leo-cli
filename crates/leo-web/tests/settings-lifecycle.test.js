@@ -187,9 +187,9 @@ test('Settings → Writing AI signs in, waits for the probe and turns the status
   await context.writingSignIn({ dataset: { provider: 'claude_code' } });
   assert.deepEqual(calls, ['{"action":"sign_in","provider":"claude_code"}']);
   assert.match(card, /disabled>Waiting for sign-in…/);
-  assert.equal(timers[0][1], 2000);
+  assert.equal(timers[0][1], 3000);
   signedIn = true;
-  clock += 2000;
+  clock += 3000;
   await timers.shift()[0]();
   assert.match(card, /set-status ok">Ready/);
   assert.doesNotMatch(card, /writing-sign-in|Waiting/);

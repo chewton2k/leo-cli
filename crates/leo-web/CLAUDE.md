@@ -1311,7 +1311,7 @@ existing append behavior, so picture insertion never uses a detached textarea.
 
 Sign in and Install (2026-11-09): onboarding's writing status row and Settings → Writing AI's card offer
 Sign in (POST `/api/app` `sign_in`, provider checked in `app_settings::call`) or an Install link (`INSTALL_URL`);
-after Sign in, `signIn` polls `/api/writing?probe=signin` every 2 s for at most 2 minutes, then offers Check again
+after Sign in, `signIn` polls `/api/writing?probe=signin` every 3 s for at most 2 minutes, then offers Check again
 (one probe), and stops when the view closes.
 Writing AI shows detected Codex/Claude accounts with bounded CLI sign-in checks,
 5-hour/7-day meters, reset times and the age of saved usage. Detection never
@@ -1351,7 +1351,9 @@ TooBig ones and a second concurrent pull (409); `{action:"cancel"}` marks it can
 at once, and a stale pull thread can no longer write. Writing AI with Ollama shows
 the install link (re-checked every 5 s while not running), then the model cards
 (`.onboarding-model` markup); a finished pull is saved as the model through the
-picker's `changeSetting`. Tests: `src/tests/ollama.rs`, `settings-lifecycle.test.js`.
+picker's `changeSetting`; in setup a finished pull or a clicked downloaded card is only picked and
+Use sends it as `model` with the provider. Choosing Ollama keeps an installed configured model, else
+saves the sent or first installed one. Tests: `src/tests/ollama.rs`, `settings-lifecycle.test.js`, `onboarding.test.js`.
 
 `Powers.dictation` implements `DictationApi::{view,change}` over session-gated
 GET/POST `/api/dictation` (200 KB input, blocking work off async tasks). Desktop
@@ -1455,7 +1457,7 @@ the Settings rating meters), preselecting the in-use or first recommended model,
 with one action bar: Download and use · size (uses the model and finishes when the
 download ends), a progress bar with Cancel, or Use and finish. Writing AI shows the
 Settings provider cards preselected (signed-in Claude Code, Codex, Ollama with a model),
-a status row, Skip for now and Use <Name> (Ready only), plus the dictation shortcut hint
+a status row, Skip for now and Use <Name> (Ready, or installed with sign-in unknown), plus the dictation shortcut hint
 (`dictateHint`, also under the empty home's ask field). Download polling updates chips and the bar in place so a click is never
 lost to a replaced button. Back returns to Access. The existing three completion
 flags remain compatible, and late responses cannot dismiss another sheet or page.

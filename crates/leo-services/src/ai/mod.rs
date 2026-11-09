@@ -285,6 +285,7 @@ fn why(state: crate::health::WritingState, agent: Option<&str>, text: &str) -> S
         NotRunning => "no writing AI is ready (Ollama isn't running).".to_string(),
         NoModel => "no writing AI is ready (Ollama has no models yet).".to_string(),
         NotInstalled => format!("{name} isn't installed."),
+        SignInNeeded => format!("{name} needs you to sign in."),
         Ready => {
             let lower = text.to_lowercase();
             if ["not signed in", "not logged in", "/login", "codex login"]
@@ -418,6 +419,10 @@ mod tests {
                 "claude ended. If it is not signed in, run it"
             ),
             "leo can't write yet: Claude Code needs you to sign in."
+        );
+        assert_eq!(
+            super::why(SignInNeeded, Some("Codex"), "x"),
+            "leo can't write yet: Codex needs you to sign in."
         );
         let said = super::why(Ready, None, "boom\nsecond line");
         assert_eq!(said, "leo can't write yet: boom.");

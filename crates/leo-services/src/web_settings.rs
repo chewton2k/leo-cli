@@ -263,6 +263,21 @@ pub fn apply(
             };
             let mut doc = open(config_path)?;
             choice::write_choice(&mut doc, task, chosen.provider);
+            if task == Task::Chat && chosen.provider == "ollama" {
+                let installed = |m: &str| local.ollama.iter().any(|o| o == m);
+                let asked = change.get("model").and_then(Value::as_str);
+                let set = Config::load_from(config_path)
+                    .provider("ollama")
+                    .and_then(|p| p.model.clone());
+                let model = match asked.filter(|m| installed(m)) {
+                    Some(model) => Some(model),
+                    None if set.as_deref().is_some_and(installed) => None,
+                    None => local.ollama.first().map(String::as_str),
+                };
+                if let Some(model) = model {
+                    choice::write_model(&mut doc, "ollama", model);
+                }
+            }
             edit::save_document(config_path, &doc)?;
             Ok(format!(
                 "{} now uses {}.",
@@ -655,6 +670,42 @@ mod tests {
             text.contains("[transcribe]"),
             "the rest of the file is kept"
         );
+    }
+
+    #[test]
+    fn choosing_ollama_uses_an_installed_model() {
+        let (_d, path) = setup("[chat]\nchain = [\"claude_code\"]\n[providers.ollama]\nmodel = \"qwen3:8b\"\n[transcribe]\nchain = []\n");
+        let store = MemoryStore::default();
+        let model = || {
+            Config::load_from(&path)
+                .provider("ollama")
+                .unwrap()
+                .model
+                .clone()
+        };
+        let choose = |extra: Value, models: &[&str]| {
+            let mut change = json!({"set": "provider", "task": "writing", "value": "ollama"});
+            if let Some(m) = extra.as_str() {
+                change["model"] = json!(m);
+            }
+            let local = Local {
+                ollama_running: true,
+                ollama: models.iter().map(|m| m.to_string()).collect(),
+                speech_ready: false,
+            };
+            apply(&change, &path, &store, &local).unwrap();
+        };
+        choose(Value::Null, &[]);
+        assert_eq!(model().as_deref(), Some("qwen3:8b"));
+        choose(Value::Null, &["qwen3:4b", "gemma3:4b"]);
+        assert_eq!(model().as_deref(), Some("qwen3:4b"));
+        assert_eq!(Config::load_from(&path).chat.chain, ["ollama"]);
+        choose(Value::Null, &["gemma3:4b", "qwen3:4b"]);
+        assert_eq!(model().as_deref(), Some("qwen3:4b"));
+        choose(json!("gemma3:4b"), &["qwen3:4b", "gemma3:4b"]);
+        assert_eq!(model().as_deref(), Some("gemma3:4b"));
+        choose(json!("made-up"), &["qwen3:4b", "gemma3:4b"]);
+        assert_eq!(model().as_deref(), Some("gemma3:4b"));
     }
 
     #[test]

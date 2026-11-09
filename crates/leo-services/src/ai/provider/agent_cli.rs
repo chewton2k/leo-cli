@@ -1416,15 +1416,33 @@ fn auth_probe(agent: Agent, bin: &str) -> Option<(bool, String)> {
     probe_status(command).ok()
 }
 
+const SIGN_IN_FRESH: Duration = Duration::from_secs(600);
+static SIGN_INS: Mutex<Vec<(String, bool, Instant)>> = Mutex::new(Vec::new());
+
 pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
-    auth_probe(agent, bin).and_then(|(success, text)| {
+    let found = auth_probe(agent, bin).and_then(|(success, text)| {
         let evidence = sign_in_evidence(agent, &text);
         if evidence == Some(true) && !success {
             None
         } else {
             evidence
         }
-    })
+    });
+    let mut seen = SIGN_INS.lock().unwrap_or_else(|e| e.into_inner());
+    seen.retain(|(was, _, _)| was != bin);
+    if let Some(found) = found {
+        seen.push((bin.to_string(), found, Instant::now()));
+    }
+    found
+}
+
+pub fn last_signed_in(bin: &str) -> Option<bool> {
+    SIGN_INS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(was, _, at)| was == bin && at.elapsed() < SIGN_IN_FRESH)
+        .map(|(_, found, _)| *found)
 }
 
 fn claude_on_plan(text: &str) -> bool {
@@ -2491,6 +2509,7 @@ mod sign_in_tests {
             super::signed_in(super::Agent::Codex, path.to_str().unwrap()),
             Some(false)
         );
+        assert_eq!(super::last_signed_in(path.to_str().unwrap()), Some(false));
     }
 
     #[test]

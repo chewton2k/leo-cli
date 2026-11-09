@@ -256,6 +256,7 @@ pub enum WritingState {
     NotRunning,
     NoModel,
     NotChosen,
+    SignInNeeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -279,6 +280,15 @@ pub fn writing(
     let agent = pc.and_then(crate::ai::provider::agent_cli::Agent::of);
     let state = match (pc, usable) {
         (None, _) => WritingState::NotChosen,
+        (Some(pc), Some(name))
+            if agent.is_some_and(|agent| {
+                crate::ai::provider::agent_cli::last_signed_in(
+                    crate::ai::provider::agent_cli::AgentCli::new(name.clone(), agent, pc).bin(),
+                ) == Some(false)
+            }) =>
+        {
+            WritingState::SignInNeeded
+        }
         (Some(_), Some(name)) => match models.filter(|_| name == "ollama") {
             Some(local) if !local.ollama_running => WritingState::NotRunning,
             Some(local) if local.ollama.is_empty() => WritingState::NoModel,
@@ -322,6 +332,7 @@ fn fix_text(
             "Ollama is installed but not running. Open the Ollama app.".to_string()
         }
         WritingState::NoModel => "Ollama has no models yet. Choose one in Writing AI.".to_string(),
+        WritingState::SignInNeeded => format!("{name} needs you to sign in. Open Writing AI."),
         WritingState::NotChosen => "No writing AI is ready. Choose one in Writing AI.".to_string(),
     })
 }
@@ -622,6 +633,46 @@ mod tests {
         ] {
             assert_eq!(writing(&config, &store(), Some(&models)).state, state);
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_signed_out_cli_reads_only_the_last_sign_in_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let bin = dir.path().join("claude");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\ntouch '{}'\nprintf '{{\"loggedIn\": false}}'\n",
+                ran.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = config_with(vec![("cli", cli(bin.to_str().unwrap()))], vec!["cli"]);
+
+        assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
+        assert!(!ran.exists(), "the cheap path ran the program");
+
+        assert_eq!(
+            crate::ai::provider::agent_cli::signed_in(
+                crate::ai::provider::agent_cli::Agent::ClaudeCode,
+                bin.to_str().unwrap()
+            ),
+            Some(false)
+        );
+        std::fs::remove_file(&ran).unwrap();
+
+        let found = writing(&config, &store(), None);
+        assert_eq!(found.state, WritingState::SignInNeeded);
+        assert_eq!(
+            found.fix.as_deref(),
+            Some("Claude Code needs you to sign in. Open Writing AI.")
+        );
+        assert!(!chain_check(&config, Chain::Chat, &store()).state.is_ready());
+        assert!(!ran.exists(), "the cheap path ran the program");
     }
 
     /// Screen capture does not go through the microphone, so a silent mic must

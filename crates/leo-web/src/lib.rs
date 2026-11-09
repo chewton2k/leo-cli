@@ -280,6 +280,7 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
             "/api/app"
                 | "/api/dictation"
                 | "/api/speech"
+                | "/api/writing"
                 | "/api/writing/ollama"
                 | "/api/tasks"
                 | "/api/processes"
@@ -1093,6 +1094,7 @@ mod activity_tests {
             "/api/app",
             "/api/dictation",
             "/api/speech",
+            "/api/writing",
             "/api/writing/ollama",
             "/api/tasks",
             "/api/processes",

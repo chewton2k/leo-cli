@@ -408,7 +408,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
   const dictateHelper = core.slice(core.indexOf('async function dictateHint('), core.indexOf('function wireHomeAsk('));
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector), ON_MAC=true;
     let seq=0,state={view:'folder'};
-    const LEAVE_MS=180, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
+    const LEAVE_MS=180, stillMotion=()=>true, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     window.errors=[]; const fail=e=>window.errors.push(e.message);
     let native, pending=null, rejectStep=null;

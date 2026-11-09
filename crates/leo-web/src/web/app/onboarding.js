@@ -14,6 +14,7 @@ let onboardingWriting = null;
 let onboardingWriter = '';
 let onboardingOllama = null;
 let onboardingOllamaTimer = 0;
+let onboardingOllamaPick = '';
 const ONBOARDING_POLL_MS = 1000;
 const ONBOARDING_STEPS = [['access', 'Access'], ['model', 'Speech model'], ['writing', 'Writing AI']];
 const ONBOARDING_WRITERS = ['claude_code', 'codex', 'ollama'];
@@ -235,7 +236,7 @@ async function loadOnboardingWriting(generation) {
     if (generation !== onboardingGeneration || !onboardingHere(3)) return;
     onboardingWriting = view;
     const candidates = view.candidates || [];
-    onboardingWriter = ONBOARDING_WRITERS.find((id) => onboardingWriterReady(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterCandidate(id)) || '';
+    onboardingWriter = ONBOARDING_WRITERS.find((id) => onboardingWriterReady(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterUsable(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterCandidate(id)) || '';
     const box = $('#onboarding-writing');
     if (box) box.innerHTML = `${choiceCards({ label: 'Writing AI', choices: ONBOARDING_WRITERS.filter((id) => candidates.some((c) => c.id === id)).map((id) => providerCard({ id })), current: onboardingWriter, action: 'onboarding-writer', key: 'writer', className: 'providers' })}<div id="onboarding-writer-status" role="status"></div>`;
     drawOnboardingWriting();
@@ -248,11 +249,13 @@ async function loadOnboardingWriting(generation) {
 }
 function onboardingWriterCandidate(id) { return onboardingWriting?.candidates?.find((c) => c.id === id); }
 function onboardingWriterReady(c) { return c?.id === 'ollama' ? !!(c.running && c.models?.length) : c?.signed_in === true; }
+function onboardingWriterUsable(c) { return onboardingWriterReady(c) || (c?.id !== 'ollama' && !!c?.installed && c.signed_in == null); }
 function onboardingWriterStatus(c) {
   if (!c) return '';
   const name = providerCard(c)[1], where = ON_MAC ? 'this Mac' : 'this computer';
   const row = (text, label, ok = false) => `<div class="set-row"><span class="grow">${text}</span>${ok ? '' : signInControl(c, 'onboarding-sign-in')}<span class="set-status ${ok ? 'ok' : 'missing'}">${label}</span></div>`;
-  if (onboardingWriterReady(c)) return row(c.id === 'ollama' ? `Ollama is running on ${where}.` : `${name} is signed in on ${where}.`, 'Ready', true);
+  if (onboardingWriterReady(c)) return c.id === 'ollama' ? row(`Ollama is running on ${where}.`, 'Ready', true) + ollamaSetup(onboardingOllama, onboardingOllamaPick) : row(`${name} is signed in on ${where}.`, 'Ready', true);
+  if (onboardingWriterUsable(c)) return row(`${name} is installed on ${where}. leo couldn’t tell whether you’re signed in.`, 'Sign-in unknown');
   if (c.id !== 'ollama') return c.installed ? row(signInLate(c.id) ? SIGN_IN_LATE : `Sign in to ${name}, then come back.`, 'Sign in needed') : row(`${name} is not installed on ${where}.`, 'Not installed');
   if (!c.installed) return ollamaSetup({ installed: false }, '');
   if (!c.running) return row('Open Ollama to start it.', 'Not running');
@@ -264,7 +267,7 @@ function drawOnboardingWriting() {
   const use = $('#onboarding-use');
   if (!use) return;
   use.textContent = c ? `Use ${providerCard(c)[1]}` : 'Use writing AI';
-  use.disabled = !onboardingWriterReady(c) || onboardingBusy;
+  use.disabled = !onboardingWriterUsable(c) || onboardingBusy;
 }
 function pickOnboardingWriter(el) {
   if (!onboardingHere(3) || el.dataset.writer === onboardingWriter) return;
@@ -286,25 +289,37 @@ function onboardingSignIn(el) {
 }
 async function loadOnboardingOllama(generation) {
   clearTimeout(onboardingOllamaTimer);
-  const here = () => generation === onboardingGeneration && onboardingHere(3) && onboardingWriter === 'ollama';
+  const here = () => onboardingOllamaHere(generation);
   try {
     const view = await api('/api/writing/ollama');
     if (!here()) return;
-    state.ollama = onboardingOllama = view;
-    Object.assign(onboardingWriterCandidate('ollama'), { installed: view.installed, running: view.running, models: view.pulled || [] });
-    drawOnboardingWriting();
+    showOnboardingOllama(view, generation);
   } catch (e) {
     if (!here()) return;
+    onboardingOllamaTimer = setTimeout(() => loadOnboardingOllama(generation), 5000);
   }
-  if (!onboardingWriterReady(onboardingWriterCandidate('ollama'))) onboardingOllamaTimer = setTimeout(() => loadOnboardingOllama(generation), onboardingOllama?.pull?.state === 'pulling' ? 1000 : 5000);
+}
+function showOnboardingOllama(view, generation) {
+  clearTimeout(onboardingOllamaTimer);
+  const pulling = view.pull?.state === 'pulling';
+  if (onboardingOllama?.pull?.state === 'pulling' && view.pull?.state === 'done') onboardingOllamaPick = view.pull.model;
+  state.ollama = onboardingOllama = view;
+  Object.assign(onboardingWriterCandidate('ollama'), { installed: view.installed, running: view.running, models: view.pulled || [] });
+  drawOnboardingWriting();
+  if (pulling || !onboardingWriterReady(onboardingWriterCandidate('ollama'))) onboardingOllamaTimer = setTimeout(() => loadOnboardingOllama(generation), pulling ? 1000 : 5000);
+}
+function onboardingOllamaHere(generation) { return generation === onboardingGeneration && onboardingHere(3) && onboardingWriter === 'ollama'; }
+function pickOnboardingOllama(model) {
+  onboardingOllamaPick = model;
+  drawOnboardingWriting();
 }
 async function onboardingUse() {
   const c = onboardingWriterCandidate(onboardingWriter);
-  if (!onboardingWriterReady(c) || onboardingBusy || !onboardingHere(3)) return;
+  if (!onboardingWriterUsable(c) || onboardingBusy || !onboardingHere(3)) return;
   onboardingBusy = true;
   drawOnboardingWriting();
   try {
-    await api('/api/settings', { method: 'POST', body: { set: 'provider', task: 'writing', value: c.id } });
+    await api('/api/settings', { method: 'POST', body: { set: 'provider', task: 'writing', value: c.id, ...(c.id === 'ollama' && onboardingOllamaPick ? { model: onboardingOllamaPick } : {}) } });
   } finally {
     onboardingBusy = false;
     drawOnboardingWriting();
