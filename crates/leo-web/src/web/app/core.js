@@ -84,7 +84,7 @@ const chat = felix.create({
   icons: ICON,
   onOpen: (id, lines) => {
     citedLines = lines ? { id, ...lines } : null;
-    if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();
+    if (state.view === 'note' && state.session && state.session.note.id === id) showCitedLines();
     else go(noteHash(id));
   },
   onCite: (id, lines) => {
