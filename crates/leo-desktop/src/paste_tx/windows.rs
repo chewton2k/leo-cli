@@ -578,11 +578,19 @@ fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
         );
 
         let published = match snapshot_clipboard(hwnd, &shared) {
-            Ok(()) if (shared.current)() && !shared.state.lock().unwrap_or_else(|e| e.into_inner()).cancelled => {
+            Ok(())
+                if (shared.current)()
+                    && !shared
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .cancelled =>
+            {
                 match publish(hwnd) {
                     Ok(sequence) => Ok(sequence),
                     Err(e) => {
-                        *shared.sequence.lock().unwrap_or_else(|e| e.into_inner()) = GetClipboardSequenceNumber();
+                        *shared.sequence.lock().unwrap_or_else(|e| e.into_inner()) =
+                            GetClipboardSequenceNumber();
                         restore_snapshot(&shared);
                         Err(e)
                     }
@@ -600,7 +608,11 @@ fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
             }
         };
         *shared.sequence.lock().unwrap_or_else(|e| e.into_inner()) = sequence;
-        shared.state.lock().unwrap_or_else(|e| e.into_inner()).published_at = Instant::now();
+        shared
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .published_at = Instant::now();
         if let Ok(mut slot) = PENDING.lock() {
             *slot = Some(shared.clone());
         }
@@ -647,7 +659,11 @@ pub(super) fn run(
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e),
         Err(_) => {
-            shared.state.lock().unwrap_or_else(|e| e.into_inner()).cancelled = true;
+            shared
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .cancelled = true;
             return Err(
                 "Automatic paste took too long. Copy your text from Recent dictations.".into(),
             );
@@ -655,13 +671,21 @@ pub(super) fn run(
     }
     info!("[reliable-paste] published transcript (delayed render)");
 
-    shared.state.lock().unwrap_or_else(|e| e.into_inner()).injected_at = Some(Instant::now());
+    shared
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .injected_at = Some(Instant::now());
     match send_chord(enigo, paste_method) {
         Ok(()) => {
             info!("[reliable-paste] paste chord sent ({paste_method:?})");
         }
         Err(e) => {
-            shared.state.lock().unwrap_or_else(|e| e.into_inner()).injection_failed = true;
+            shared
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .injection_failed = true;
             error!("[reliable-paste] failed to send paste chord: {e}");
         }
     }
