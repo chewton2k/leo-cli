@@ -1029,3 +1029,12 @@ test('a refused or busy take-back keeps the chat as it is', async () => {
   assert.deepEqual(busy.calls, []);
   assert.equal(messages.length, 2);
 });
+
+test('a step Felix got wrong and then fixed with the same tool is not shown', () => {
+  const tried = { text: 'Tried to ask you something', tool: 'quiz', failed: true };
+  const asked = { text: 'Asked you a practice question', tool: 'quiz', failed: false };
+  const read = { text: 'Opened “Heaps”', tool: 'open_note', failed: false };
+  assert.deepEqual(C.fixedSteps([tried, read, asked]), [read, asked]);
+  assert.deepEqual(C.fixedSteps([read, tried]), [read, tried], 'a failure Felix never fixed stays visible');
+  assert.deepEqual(C.fixedSteps([asked, tried]), [asked, tried], 'only a later success hides it');
+});

@@ -159,6 +159,10 @@
     return changes > 0 ? `${line} · made ${plural(changes, 'change')}` : line;
   }
 
+  function fixedSteps(steps) {
+    return steps.filter((step, n) => !(step && step.failed && steps.slice(n + 1).some((later) => later && later.tool === step.tool && !later.failed)));
+  }
+
   function notFromNotes(steps, shown, used) {
     if (!String(shown).trim() || used > 0 || /beyond your notes/i.test(shown)) return false;
     const worked = steps.filter((step) => !step.failed);
@@ -1947,18 +1951,16 @@
       const keep = save || meta || bigger ? `<div class="msg-acts">${save}${meta}${bigger}</div>` : '';
       const removed = verdict ? m.text.length - spoken.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
-      const taken = parts.flatMap((part) => part.steps || []);
-      const newest = parts.findLastIndex((part) => part.steps);
+      const taken = fixedSteps(parts.flatMap((part) => part.steps || []));
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
       const prose = (text) => `<div class="prose">${cite(render(text, { rows: true }), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
-      const live = (part, k) => {
-        const run = stepRuns(part.steps).at(-1);
-        return k === newest ? `<div class="msg-steps">${stepLine(run.step, k === parts.length - 1, run.times)}</div>` : '';
-      };
-      const trace = !m.pending && taken.length
+      const now = m.pending && taken.length ? stepRuns(taken).at(-1) : null;
+      const trace = now
+        ? `<div class="msg-status" role="status">${stepLine({ ...now.step, found: [] }, true, now.times)}</div>`
+        : !m.pending && taken.length
         ? `<details class="msg-trace" data-i="${i}"${openTraces.has(m) ? ' open' : ''}><summary>${escape(traceSummary(taken, used.map((s) => s.title), made))}${stepChevron}</summary><div class="msg-steps">${stepRuns(taken).map((run) => stepLine(run.step, false, run.times)).join('')}</div></details>`
         : '';
-      const words = parts.length ? parts.map((part, k) => part.steps ? (m.pending ? live(part, k) : '') : prose(part.text)).join('') : html ? `<div class="prose">${html}</div>` : '';
+      const words = parts.length ? parts.map((part) => part.steps ? '' : prose(part.text)).join('') : html ? `<div class="prose">${html}</div>` : '';
       const outside = !m.pending && notFromNotes(taken, shown, used.length) ? '<div class="msg-note msg-outside">Not from your notes</div>' : '';
       const body = `${trace}${words}${larger}${outside}`;
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
@@ -3346,5 +3348,5 @@
     };
   }
 
-  root.leoChat = { noAi, retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay, sureOf, noteCard, noteExcerpt };
+  root.leoChat = { noAi, retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay, sureOf, noteCard, noteExcerpt, fixedSteps };
 })(typeof window !== 'undefined' ? window : globalThis);

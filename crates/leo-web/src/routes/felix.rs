@@ -837,7 +837,7 @@ fn execute_tool(
         "step": done.step,
         "tool": call.name,
         "found": done.found,
-        "failed": done.result.starts_with("That did not work:"),
+        "failed": done.result.starts_with("That did not work:") || done.step.starts_with("Tried to "),
     }));
     let added = desk.take_steering();
     if !added.is_empty() {

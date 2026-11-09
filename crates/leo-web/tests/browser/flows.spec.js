@@ -4728,6 +4728,7 @@ test('Felix shows one live step, then one line, and marks an answer from outside
     { step: 'Worked out the numbers', tool: 'calculate', found: [] },
     { wait: 700 },
     { t: 'Wear goggles.' },
+    { wait: 700 },
     { done: true },
   ];
   await page.addInitScript((script) => {
@@ -4755,7 +4756,14 @@ test('Felix shows one live step, then one line, and marks an answer from outside
   await expect(answer.locator('.msg-step')).toHaveText(['Searched your notes for “lab safety”']);
   await expect(answer.locator('.msg-step')).toHaveText(['Worked out the numbers']);
   await expect(answer.locator('.msg-trace')).toHaveCount(0);
+  await expect(answer.locator('.prose')).toHaveText('Wear goggles.');
+  const inReply = () => answer.evaluate((el) => Math.round(el.querySelector('.prose').getBoundingClientRect().y - el.getBoundingClientRect().y));
+  const status = await answer.locator('.msg-status').boundingBox();
+  const words = await answer.locator('.prose').boundingBox();
+  expect(status.y, 'the live step sits above the words, where the summary will be').toBeLessThan(words.y);
+  const before = await inReply();
   await expect(answer.locator('.msg-trace > summary')).toHaveText('Searched your notes');
+  expect(await inReply(), 'the words do not move inside the reply when Felix finishes').toBe(before);
   await expect(answer.locator('.msg-steps .msg-step').first()).toBeHidden();
   await expect(answer.locator('.msg-outside')).toHaveText('Not from your notes');
 });
