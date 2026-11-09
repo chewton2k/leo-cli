@@ -1,3 +1,38 @@
+type Streaming = fn(
+    leo_services::ai::chat::Prompt,
+    u32,
+    &mut dyn FnMut(&str),
+    &mut dyn FnMut(),
+    &dyn Fn() -> bool,
+) -> anyhow::Result<(String, Option<leo_services::ai::spend::Answered>)>;
+
+fn streamer_of(run: Streaming) -> leo_web::Streamer {
+    std::sync::Arc::new(
+        move |system: &str,
+              user: &str,
+              most: u32,
+              piece: &mut dyn FnMut(&str),
+              restart: &mut dyn FnMut(),
+              stopped: &dyn Fn() -> bool| {
+            let (text, answered) = run(
+                leo_services::ai::chat::Prompt {
+                    system: system.to_string(),
+                    user: user.to_string(),
+                },
+                most,
+                piece,
+                restart,
+                stopped,
+            )
+            .map_err(crate::felix::said)?;
+            Ok(leo_web::Reply {
+                text,
+                spent: answered.map(crate::felix::spent_of),
+            })
+        },
+    )
+}
+
 pub fn powers() -> leo_web::Powers {
     std::thread::spawn(leo_services::ai::tidy_rooms);
     let usage = std::sync::Arc::new(leo_web::usage::Usage::default());
@@ -5,78 +40,9 @@ pub fn powers() -> leo_web::Powers {
         std::sync::Arc::clone(&usage),
         leo_web::usage::Purpose::OtherWriting,
     );
-    let streamer: leo_web::Streamer = std::sync::Arc::new(
-        |system: &str,
-         user: &str,
-         most: u32,
-         piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut(),
-         stopped: &dyn Fn() -> bool| {
-            let (text, answered) = leo_services::ai::chat_streaming(
-                leo_services::ai::chat::Prompt {
-                    system: system.to_string(),
-                    user: user.to_string(),
-                },
-                most,
-                piece,
-                restart,
-                stopped,
-            )
-            .map_err(crate::felix::said)?;
-            Ok(leo_web::Reply {
-                text,
-                spent: answered.map(crate::felix::spent_of),
-            })
-        },
-    );
-    let light_chat: leo_web::Streamer = std::sync::Arc::new(
-        |system: &str,
-         user: &str,
-         most: u32,
-         piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut(),
-         stopped: &dyn Fn() -> bool| {
-            let (text, answered) = leo_services::ai::quick_streaming(
-                leo_services::ai::chat::Prompt {
-                    system: system.to_string(),
-                    user: user.to_string(),
-                },
-                most,
-                piece,
-                restart,
-                stopped,
-            )
-            .map_err(crate::felix::said)?;
-            Ok(leo_web::Reply {
-                text,
-                spent: answered.map(crate::felix::spent_of),
-            })
-        },
-    );
-    let toolless_chat: leo_web::Streamer = std::sync::Arc::new(
-        |system: &str,
-         user: &str,
-         most: u32,
-         piece: &mut dyn FnMut(&str),
-         restart: &mut dyn FnMut(),
-         stopped: &dyn Fn() -> bool| {
-            let (text, answered) = leo_services::ai::toolless_streaming(
-                leo_services::ai::chat::Prompt {
-                    system: system.to_string(),
-                    user: user.to_string(),
-                },
-                most,
-                piece,
-                restart,
-                stopped,
-            )
-            .map_err(crate::felix::said)?;
-            Ok(leo_web::Reply {
-                text,
-                spent: answered.map(crate::felix::spent_of),
-            })
-        },
-    );
+    let streamer = streamer_of(leo_services::ai::chat_streaming);
+    let light_chat = streamer_of(leo_services::ai::quick_streaming);
+    let toolless_chat = streamer_of(leo_services::ai::toolless_streaming);
     leo_web::Powers {
         writer: Some(writer),
         quick: Some(crate::felix::writer(

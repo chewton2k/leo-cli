@@ -298,7 +298,12 @@ pub fn finish(
     finish_now: &AtomicBool,
 ) {
     session.manifest.stopped = true;
-    let _ = session.save();
+    if let Err(e) = session.save() {
+        session.trace(
+            "save-failed",
+            &format!("could not mark the recording stopped: {e}"),
+        );
+    }
     transcriber.recording_ended();
     let segment_samples = session.manifest.segment_secs * wav::RATE as u64;
     let mut no_model = false;
@@ -489,6 +494,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     let mut state = Live::new(live_pace());
     let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
     let mut saved_points = 0;
+    let mut save_failed = false;
     let mut heard_up_to = 0;
     let mut lost_up_to = 0;
 
@@ -498,9 +504,18 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
 
         let latest_points = controls.points.lock().ok().map(|points| points_of(&points));
         if let Some(points) = latest_points.filter(|points| points.len() != saved_points) {
-            saved_points = points.len();
+            let count = points.len();
             session.manifest.points = points;
-            let _ = session.save();
+            match session.save() {
+                Ok(()) => {
+                    saved_points = count;
+                    save_failed = false;
+                }
+                Err(e) if !std::mem::replace(&mut save_failed, true) => {
+                    session.trace("save-failed", &format!("could not save typed points: {e}"));
+                }
+                Err(_) => {}
+            }
         }
         if take_wants(&mut session, controls) {
             let _ = session.save();
@@ -746,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "benchmark; run by hand"]
     fn benchmark_preview_audio_preparation() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("live.wav");

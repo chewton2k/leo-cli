@@ -446,10 +446,6 @@ impl Session {
         Ok(())
     }
 
-    pub fn next_index(&self) -> u32 {
-        self.segments().last().map_or(0, |s| s.index + 1)
-    }
-
     pub fn finish(mut self) -> Result<()> {
         let assembled = self.assemble();
         let keep_audio = !assembled.failed.is_empty() || assembled.pending > 0;
@@ -611,7 +607,6 @@ mod tests {
                 SegmentState::Done(String::new()),
             ]
         );
-        assert_eq!(s.next_index(), 5);
     }
 
     #[test]

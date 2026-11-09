@@ -14,42 +14,17 @@ pub struct Section {
     pub checks: Vec<Check>,
 }
 
-/// Which checks may reach outside the machine or use hardware. All on for
-/// `leo doctor`; tests turn on only what they can run.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Probe {
-    /// Send one small request to each AI provider in use.
-    pub ai: bool,
-    /// Record a moment of audio to check the microphone is heard.
-    pub microphone: bool,
-    pub update: bool,
-}
-
-impl Probe {
-    pub fn all() -> Probe {
-        Probe {
-            ai: true,
-            microphone: !crate::session::mic::disabled(),
-            update: true,
-        }
-    }
-}
-
 /// Run every check.
 pub fn scan(
     config: &Config,
     secrets: &dyn SecretStore,
     notes_dir: &Path,
     config_path: &Path,
-    probe: Probe,
 ) -> Vec<Section> {
     vec![
         Section {
             title: "leo",
-            checks: leo_checks(
-                config_path,
-                probe.update.then(crate::update::available).flatten(),
-            ),
+            checks: leo_checks(config_path),
         },
         Section {
             title: "notes",
@@ -57,11 +32,11 @@ pub fn scan(
         },
         Section {
             title: "AI",
-            checks: ai_checks(config, secrets, probe),
+            checks: ai_checks(config, secrets),
         },
         Section {
             title: "recording",
-            checks: recording_checks(probe),
+            checks: recording_checks(),
         },
     ]
 }
@@ -75,20 +50,9 @@ fn warn(what: &str, needed_for: &str, note: String) -> Check {
     }
 }
 
-fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
+fn leo_checks(config_path: &Path) -> Vec<Check> {
     let version = format!("version {}", env!("CARGO_PKG_VERSION"));
-    let mut checks = vec![match newer {
-        None => Check::ready("leo", "everything", Some(version)),
-        Some(newer) => {
-            let mut c = warn(
-                "leo",
-                "everything",
-                format!("leo {newer} is out: run `leo update`"),
-            );
-            c.detail = Some(version);
-            c
-        }
-    }];
+    let mut checks = vec![Check::ready("leo", "everything", Some(version))];
 
     checks.push(if health::on_path("leo") {
         Check::ready("leo on your PATH", "running `leo` from any terminal", None)
@@ -246,13 +210,6 @@ fn notes_checks(notes_dir: &Path) -> Vec<Check> {
     checks
 }
 
-fn speech_model_check(config: &Config, secrets: &dyn SecretStore) -> Option<Check> {
-    let _ = (config, secrets);
-    Some(speech_result(
-        crate::speech::library::library().and_then(|l| l.selected()),
-    ))
-}
-
 fn speech_result(selected: anyhow::Result<crate::speech::library::Selected>) -> Check {
     let what = "speech model";
     let needed_for = "turning speech into text on this computer";
@@ -262,77 +219,16 @@ fn speech_result(selected: anyhow::Result<crate::speech::library::Selected>) -> 
     }
 }
 
-fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Check> {
-    if probe.microphone {
-        crate::session::mic::warm_up();
-    }
-    let mut checks = vec![
+fn ai_checks(config: &Config, secrets: &dyn SecretStore) -> Vec<Check> {
+    vec![
         health::chain_check(config, health::Chain::Chat, secrets),
         health::credentials_check(),
-    ];
-    checks.extend(speech_model_check(config, secrets));
-    if probe.ai {
-        let usable = |chain: &[String]| {
-            chain
-                .iter()
-                .find(|n| health::provider_usable(config, n, secrets))
-                .cloned()
-        };
-        let chat = usable(&config.chat.chain);
-        let writer = chat.clone();
-        let speech = usable(&config.transcribe.chain).filter(|name| {
-            config.provider(name).and_then(|p| p.kind)
-                != Some(crate::config::provider::ProviderKind::Parakeet)
-        });
-        for (label, name) in [("writing", chat), ("speech", speech)] {
-            let Some(name) = name else { continue };
-            let what = format!("{name} answers");
-            let needed_for = format!("AI for {label}");
-            checks.push(match crate::providers::test_provider(&name) {
-                Ok(report) => Check::ready(&what, &needed_for, Some(report)),
-                Err(e) => {
-                    let fix = match config
-                        .provider(&name)
-                        .and_then(crate::ai::provider::agent_cli::Agent::of)
-                    {
-                        Some(agent) => agent.sign_in().to_string(),
-                        None => "check its key in Settings, or that the service is up".to_string(),
-                    };
-                    let mut c = Check::missing(&what, &needed_for, &fix);
-                    c.detail = Some(e.to_string());
-                    c
-                }
-            });
-        }
-        if let Some(name) = writer {
-            checks.extend(limits_check(config, &name));
-        }
-    }
-    checks
+        speech_result(crate::speech::library::library().and_then(|l| l.selected())),
+    ]
 }
 
-fn limits_check(config: &Config, name: &str) -> Option<Check> {
-    use crate::ai::provider::agent_cli::Agent;
-    let agent = config.provider(name).and_then(Agent::of)?;
-    if agent == Agent::Codex {
-        crate::usage::refresh_codex(config);
-    }
-    let seen = crate::usage::load().get(name).cloned()?;
-    Some(Check::ready(
-        &format!("{name} limits"),
-        &format!("how much of {} is left", agent.plan()),
-        Some(crate::usage::detail(&seen, chrono::Utc::now())),
-    ))
-}
-
-fn recording_checks(probe: Probe) -> Vec<Check> {
-    let device = health::microphone_device();
-    let found = device.state.is_ready();
-    let mut checks = vec![device];
-    if probe.microphone && found {
-        checks.push(health::microphone());
-    }
-    checks
+fn recording_checks() -> Vec<Check> {
+    vec![health::microphone_device()]
 }
 
 #[cfg(test)]
@@ -353,10 +249,6 @@ mod tests {
 
     use crate::config::secret::MemoryStore;
     use tempfile::TempDir;
-
-    fn quiet() -> Probe {
-        Probe::default()
-    }
 
     fn section<'a>(sections: &'a [Section], title: &str) -> &'a Section {
         sections
@@ -386,31 +278,9 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_release_is_a_note_with_the_command_to_update() {
-        let (_tmp, _notes, config) = setup();
-        let checks = leo_checks(&config, Some("9.9.9".to_string()));
-        match &checks[0].state {
-            State::Warn { note } => {
-                assert!(
-                    note.contains("9.9.9") && note.contains("leo update"),
-                    "{note}"
-                )
-            }
-            other => panic!("expected a note, got {other:?}"),
-        }
-        assert!(leo_checks(&config, None)[0].state.is_ready());
-    }
-
-    #[test]
     fn every_missing_check_carries_a_fix() {
         let (_tmp, notes, config) = setup();
-        for section in scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        ) {
+        for section in scan(&Config::default(), &MemoryStore::default(), &notes, &config) {
             for check in section.checks {
                 if let State::Missing { fix } = &check.state {
                     assert!(
@@ -426,13 +296,7 @@ mod tests {
     #[test]
     fn every_part_of_leo_has_a_section_in_order() {
         let (_tmp, notes, config) = setup();
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
+        let sections = scan(&Config::default(), &MemoryStore::default(), &notes, &config);
         let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
         assert_eq!(titles, ["leo", "notes", "AI", "recording"]);
         let speech = section(&sections, "AI")
@@ -461,13 +325,7 @@ mod tests {
         store.save().unwrap();
         std::fs::write(notes.join("broken.md"), "---\ntitle: [unclosed\n---\nx").unwrap();
 
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
+        let sections = scan(&Config::default(), &MemoryStore::default(), &notes, &config);
         let notes_section = section(&sections, "notes");
         let count = check(notes_section, "notes");
         assert!(count.state.is_ready());
@@ -487,13 +345,7 @@ mod tests {
     fn a_config_file_that_does_not_parse_is_a_failure() {
         let (_tmp, notes, config) = setup();
         std::fs::write(&config, "[chat\nchain = [").unwrap();
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
+        let sections = scan(&Config::default(), &MemoryStore::default(), &notes, &config);
         let c = check(section(&sections, "leo"), "config file");
         assert!(matches!(c.state, State::Missing { .. }), "{c:?}");
     }
@@ -501,13 +353,7 @@ mod tests {
     #[test]
     fn no_config_file_yet_is_fine() {
         let (_tmp, notes, config) = setup();
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
+        let sections = scan(&Config::default(), &MemoryStore::default(), &notes, &config);
         assert!(check(section(&sections, "leo"), "config file")
             .state
             .is_ready());
@@ -522,13 +368,7 @@ mod tests {
             .unwrap();
         store.save().unwrap();
 
-        let sections = scan(
-            &Config::default(),
-            &MemoryStore::default(),
-            &notes,
-            &config,
-            quiet(),
-        );
+        let sections = scan(&Config::default(), &MemoryStore::default(), &notes, &config);
         match &check(section(&sections, "notes"), "conflict copies").state {
             State::Warn { note } => {
                 assert!(note.contains("Shared (conflict from leo)"), "{note}");

@@ -484,25 +484,6 @@ impl Drop for Mic {
     }
 }
 
-pub fn listen_for(seconds: f64) -> Result<Vec<i16>> {
-    let (mut mic, rx) = Mic::open(false)?;
-    let wanted = (seconds * RATE as f64) as usize;
-    let deadline =
-        std::time::Instant::now() + Duration::from_secs_f64(seconds) + Duration::from_secs(3);
-    let mut heard = Vec::with_capacity(wanted);
-    while heard.len() < wanted && std::time::Instant::now() < deadline {
-        if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
-            heard.extend(chunk);
-        }
-    }
-    mic.close();
-    if let Some(p) = mic.problem.lock().ok().and_then(|p| p.clone()) {
-        bail!(p);
-    }
-    heard.truncate(wanted);
-    Ok(heard)
-}
-
 pub fn microphones() -> Vec<String> {
     if disabled() {
         return Vec::new();
@@ -516,6 +497,25 @@ pub fn microphones() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn listen_for(seconds: f64) -> Result<Vec<i16>> {
+        let (mut mic, rx) = Mic::open(false)?;
+        let wanted = (seconds * RATE as f64) as usize;
+        let deadline =
+            std::time::Instant::now() + Duration::from_secs_f64(seconds) + Duration::from_secs(3);
+        let mut heard = Vec::with_capacity(wanted);
+        while heard.len() < wanted && std::time::Instant::now() < deadline {
+            if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
+                heard.extend(chunk);
+            }
+        }
+        mic.close();
+        if let Some(p) = mic.problem.lock().ok().and_then(|p| p.clone()) {
+            bail!(p);
+        }
+        heard.truncate(wanted);
+        Ok(heard)
+    }
 
     #[test]
     fn only_a_headset_without_a_loopback_device_off_windows_blocks_recording() {
@@ -686,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "needs a real audio output device"]
     fn the_screen_device_is_what_the_computer_plays() {
         let device = find_device(true).unwrap();
         eprintln!(
@@ -701,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "needs a real audio output device playing sound"]
     fn what_the_computer_plays_is_heard() {
         let (mut mic, samples) = Mic::open(true).unwrap();
         let until = std::time::Instant::now() + Duration::from_secs(5);
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "needs a real microphone"]
     fn a_real_microphone_is_heard() {
         let started = std::time::Instant::now();
         let heard = listen_for(3.0).unwrap();
@@ -742,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "needs LEO_TEST_SPEECH_48K and LEO_TEST_SPEECH_OUT files"]
     fn real_speech_at_48_khz_converts_cleanly() {
         let input = std::env::var("LEO_TEST_SPEECH_48K").expect("LEO_TEST_SPEECH_48K");
         let output = std::env::var("LEO_TEST_SPEECH_OUT").expect("LEO_TEST_SPEECH_OUT");

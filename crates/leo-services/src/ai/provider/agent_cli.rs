@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -293,6 +293,7 @@ pub(crate) fn stop_all(child: &mut std::process::Child) {
 
 pub const QUIET_LIMIT: Duration = Duration::from_secs(180);
 pub const TOTAL_LIMIT: Duration = Duration::from_secs(15 * 60);
+const EXIT_GRACE: Duration = Duration::from_secs(2);
 
 struct Watched<R> {
     inner: R,
@@ -561,28 +562,6 @@ pub fn codex_banner(stderr: &str) -> (Option<String>, Option<String>, Option<u64
         }
     }
     (model, effort, tokens)
-}
-
-pub fn read_stream(mut lines: impl BufRead, sink: Sink<'_>) -> Heard {
-    let mut heard = Heard::default();
-    let mut bytes = 0usize;
-    loop {
-        let line = match process::line(&mut lines) {
-            Ok(Some(line)) => line,
-            Ok(None) => break,
-            Err(_) => {
-                heard.exceeded = true;
-                break;
-            }
-        };
-        bytes = bytes.saturating_add(line.len());
-        if bytes > MOST_OUTPUT {
-            heard.exceeded = true;
-            break;
-        }
-        hear(&line, &mut heard, sink);
-    }
-    heard
 }
 
 pub fn hear(line: &str, heard: &mut Heard, sink: Sink<'_>) -> bool {
@@ -991,7 +970,7 @@ impl AgentCli {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        super::scoped_cli::configure(&mut command, self.agent)?;
+        super::scoped_cli::plan_environment(&mut command);
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command.spawn().map_err(|e| {
@@ -1004,25 +983,12 @@ impl AgentCli {
         let stdout = stdout.ok_or_else(|| {
             ProviderError::Retryable(format!("{}: could not read {}", self.name, self.bin))
         })?;
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                match process::line(&mut reader) {
-                    Ok(Some(line)) => {
-                        if tx.send(super::mcp::Incoming::Line(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(None) => {
-                        let _ = tx.send(super::mcp::Incoming::Ended);
-                        break;
-                    }
-                    Err(_) => {
-                        let _ = tx.send(super::mcp::Incoming::Failed);
-                        break;
-                    }
-                }
-            }
+        process::lines(stdout, tx, |line| {
+            Some(match line {
+                Ok(Some(line)) => super::mcp::Incoming::Line(line),
+                Ok(None) => super::mcp::Incoming::Ended,
+                Err(_) => super::mcp::Incoming::Failed,
+            })
         });
         Ok(ClaudeSession {
             name: self.name.clone(),
@@ -1193,7 +1159,7 @@ impl AgentCli {
                 });
             }
         }
-        super::scoped_cli::configure(&mut command, self.agent)?;
+        super::scoped_cli::plan_environment(&mut command);
         let input_len = input.chars().count();
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
@@ -1232,20 +1198,11 @@ impl AgentCli {
             last: Arc::clone(&watch.last),
         });
         let (messages, lines) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
-        let reader = std::thread::spawn(move || {
-            if let Some(stdout) = stdout {
-                let mut reader = BufReader::new(stdout);
-                loop {
-                    let line = process::line(&mut reader);
-                    let ended = !matches!(&line, Ok(Some(_)));
-                    if messages.send(line).is_err() || ended {
-                        break;
-                    }
-                }
-            }
-        });
+        let reader = stdout.map(|stdout| process::lines(stdout, messages, Some));
         let mut heard = Heard::default();
         let mut bytes = 0usize;
+        let mut finished = None;
+        let mut forced = false;
         loop {
             if stopped() || watch.stalled.load(Ordering::Relaxed) {
                 child.stop();
@@ -1258,7 +1215,10 @@ impl AgentCli {
                         heard.exceeded = true;
                         break;
                     }
-                    hear(&line, &mut heard, sink);
+                    if hear(&line, &mut heard, sink) {
+                        finished = Some(Instant::now());
+                        break;
+                    }
                 }
                 Ok(Ok(None)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Ok(Err(_)) => {
@@ -1276,6 +1236,10 @@ impl AgentCli {
             if stopped() {
                 child.stop();
                 break Err(ProviderError::Fatal("The answer was stopped.".into()));
+            }
+            if !forced && finished.is_some_and(|at: Instant| at.elapsed() >= EXIT_GRACE) {
+                child.stop();
+                forced = true;
             }
             let waited = child
                 .0
@@ -1307,8 +1271,14 @@ impl AgentCli {
             }
         };
         let _ = writer.join();
-        let _ = reader.join();
-        let (stderr, exceeded) = errors.join().unwrap_or_default();
+        let (stderr, exceeded) = if forced {
+            Default::default()
+        } else {
+            if let Some(reader) = reader {
+                let _ = reader.join();
+            }
+            errors.join().unwrap_or_default()
+        };
         let status = status?;
         if watch.stalled.load(Ordering::Relaxed) {
             return Err(ProviderError::Retryable(self.stalled()));
@@ -1323,7 +1293,7 @@ impl AgentCli {
             crate::usage::save(&self.name, usage);
         }
         let failed_in_result = matches!(heard.result, Some((true, _)));
-        if !status.success() || failed_in_result {
+        if (!status.success() && !forced) || failed_in_result {
             let said = match &heard.result {
                 Some((true, said)) if !said.trim().is_empty() => last_words(said),
                 _ if !stderr.trim().is_empty() => last_words(&stderr),
@@ -1484,6 +1454,29 @@ fn sign_in_evidence(agent: Agent, text: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
+
+    fn read_stream(mut lines: impl BufRead, sink: Sink<'_>) -> Heard {
+        let mut heard = Heard::default();
+        let mut bytes = 0usize;
+        loop {
+            let line = match process::line(&mut lines) {
+                Ok(Some(line)) => line,
+                Ok(None) => break,
+                Err(_) => {
+                    heard.exceeded = true;
+                    break;
+                }
+            };
+            bytes = bytes.saturating_add(line.len());
+            if bytes > MOST_OUTPUT {
+                heard.exceeded = true;
+                break;
+            }
+            hear(&line, &mut heard, sink);
+        }
+        heard
+    }
 
     fn request() -> ChatRequest {
         ChatRequest {
@@ -2208,6 +2201,29 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
         assert!(pieces.is_empty());
         assert!(heard.answer.is_empty());
         assert_eq!(heard.result, Some((true, "Try signing in again.".into())));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_finished_turn_is_kept_when_the_program_lingers_after_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(
+            dir.path(),
+            r##"[ "$1" = features ] && exit 0
+cat >/dev/null
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'
+sleep 30"##,
+        );
+        let cfg = config(ProviderKind::Codex, &bin, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        let started = Instant::now();
+        assert_eq!(agent.complete(&request()).unwrap(), "done");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[cfg(unix)]

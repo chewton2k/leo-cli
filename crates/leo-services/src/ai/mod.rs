@@ -115,8 +115,16 @@ pub fn transcribe_outcome(audio_path: &Path) -> Result<chain::ChainOutcome<Strin
 
 /// One chat completion through the configured chain, without printing.
 pub fn chat_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
+    outcome_with(Config::clone, prompt, max_tokens)
+}
+
+fn outcome_with(
+    derive: fn(&Config) -> Config,
+    prompt: chat::Prompt,
+    max_tokens: u32,
+) -> Result<chain::ChainOutcome<String>> {
     let (cfg, store) = context();
-    chat::complete(&cfg, &store, prompt, max_tokens)
+    chat::complete(&derive(&cfg), &store, prompt, max_tokens)
 }
 
 pub fn quick_config(cfg: &Config) -> Config {
@@ -163,16 +171,14 @@ pub fn lighter_model_exists() -> bool {
 }
 
 pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
-    let (cfg, store) = context();
-    chat::complete(&quick_config(&cfg), &store, prompt, max_tokens)
+    outcome_with(quick_config, prompt, max_tokens)
 }
 
 pub fn toolless_outcome(
     prompt: chat::Prompt,
     max_tokens: u32,
 ) -> Result<chain::ChainOutcome<String>> {
-    let (cfg, store) = context();
-    chat::complete(&toolless_config(&cfg), &store, prompt, max_tokens)
+    outcome_with(toolless_config, prompt, max_tokens)
 }
 
 pub fn toolless_streaming(
@@ -182,20 +188,14 @@ pub fn toolless_streaming(
     on_restart: &mut dyn FnMut(),
     stopped: &dyn Fn() -> bool,
 ) -> Result<(String, Option<spend::Answered>)> {
-    let (cfg, store) = context();
-    let outcome = chat::complete_streaming(
-        &without_tools(cfg.clone(), &cfg),
-        &store,
+    streaming_with(
+        |cfg| without_tools(cfg.clone(), cfg),
         prompt,
         max_tokens,
         on_fragment,
         on_restart,
         stopped,
-    )?;
-    let answered = outcome
-        .spent
-        .map(|spent| spend::answered(&cfg, &outcome.provider, spent));
-    Ok((outcome.value, answered))
+    )
 }
 
 fn without_tools(mut chosen: Config, cfg: &Config) -> Config {
@@ -320,9 +320,27 @@ pub fn quick_streaming(
     on_restart: &mut dyn FnMut(),
     stopped: &dyn Fn() -> bool,
 ) -> Result<(String, Option<spend::Answered>)> {
+    streaming_with(
+        quick_config,
+        prompt,
+        max_tokens,
+        on_fragment,
+        on_restart,
+        stopped,
+    )
+}
+
+fn streaming_with(
+    derive: fn(&Config) -> Config,
+    prompt: chat::Prompt,
+    max_tokens: u32,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+    stopped: &dyn Fn() -> bool,
+) -> Result<(String, Option<spend::Answered>)> {
     let (cfg, store) = context();
     let outcome = chat::complete_streaming(
-        &quick_config(&cfg),
+        &derive(&cfg),
         &store,
         prompt,
         max_tokens,
@@ -343,20 +361,14 @@ pub fn chat_streaming(
     on_restart: &mut dyn FnMut(),
     stopped: &dyn Fn() -> bool,
 ) -> Result<(String, Option<spend::Answered>)> {
-    let (cfg, store) = context();
-    let outcome = chat::complete_streaming(
-        &cfg,
-        &store,
+    streaming_with(
+        Config::clone,
         prompt,
         max_tokens,
         on_fragment,
         on_restart,
         stopped,
-    )?;
-    let answered = outcome
-        .spent
-        .map(|spent| spend::answered(&cfg, &outcome.provider, spent));
-    Ok((outcome.value, answered))
+    )
 }
 
 #[cfg(test)]

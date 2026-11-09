@@ -129,34 +129,6 @@ pub fn microphone_device() -> Check {
     }
 }
 
-pub fn microphone() -> Check {
-    match crate::session::mic::listen_for(0.4).map(|s| crate::session::wav::peak(&s)) {
-        Ok(peak) if crate::ai::live::is_silent(peak) => Check {
-            what: "microphone".to_string(),
-            needed_for: "recording audio".to_string(),
-            state: State::Missing {
-                fix: "System Settings > Privacy & Security > Microphone — allow \
-                      Leo, then try recording again"
-                    .to_string(),
-            },
-            detail: Some("recorded silence; the mic is not being heard".to_string()),
-        },
-        Ok(peak) => Check::ready(
-            "microphone",
-            "recording audio",
-            Some(format!("hearing input (peak {peak:.3})")),
-        ),
-        Err(e) => Check {
-            what: "microphone".to_string(),
-            needed_for: "recording audio".to_string(),
-            state: State::Warn {
-                note: "could not be tested".to_string(),
-            },
-            detail: Some(e.to_string()),
-        },
-    }
-}
-
 /// Everything needed to record speech into a note.
 ///
 /// Separate from the full report so `listen` can check it before recording
@@ -169,12 +141,7 @@ pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool
     let mut checks = Vec::new();
 
     if uses_microphone {
-        let device = microphone_device();
-        let found = device.state.is_ready();
-        checks.push(device);
-        if found {
-            checks.push(microphone());
-        }
+        checks.push(microphone_device());
     }
     checks.push(chain_check(config, Chain::Transcribe, store));
     checks
@@ -213,11 +180,7 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
 
     let (usable, fix) = match chain {
         Chain::Chat => {
-            let writing = writing(
-                config,
-                store,
-                Some(&crate::config::choice::local_models(config)),
-            );
+            let writing = writing(config, store, None);
             let ready = writing.state == WritingState::Ready;
             (
                 writing.provider.filter(|_| ready),
@@ -659,15 +622,11 @@ mod tests {
     }
 
     #[test]
-    fn the_chat_check_is_not_ready_for_ollama_without_a_model() {
+    fn the_chat_check_does_not_ask_ollama_for_its_models() {
         let config = config_with(vec![("ollama", server(&empty_ollama()))], vec!["ollama"]);
         assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
         let check = chain_check(&config, Chain::Chat, &store());
-        assert!(!check.state.is_ready(), "{check:?}");
-        assert!(matches!(
-            check.state,
-            State::Missing { ref fix } if fix.contains("no models")
-        ));
+        assert!(check.state.is_ready(), "{check:?}");
     }
 
     #[test]

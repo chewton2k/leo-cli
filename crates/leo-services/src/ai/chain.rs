@@ -16,10 +16,6 @@ pub struct Fallback {
 #[derive(Debug, Clone)]
 pub struct ChainOutcome<T> {
     pub value: T,
-    /// Which provider actually served the request. Asserted on by the chain
-    /// runner's tests and rendered by the status line in the follow-on TUI
-    /// plan; the current CLI reports only the fallbacks it had to take.
-    #[allow(dead_code)]
     pub provider: String,
     pub fallbacks: Vec<Fallback>,
     pub spent: Option<crate::ai::provider::Spent>,

@@ -355,7 +355,7 @@ mod tests {
     use crate::session::wav;
 
     #[test]
-    #[ignore]
+    #[ignore = "needs a real microphone"]
     fn the_real_microphone_is_recorded_to_a_segment() {
         let out = std::env::var("LEO_TEST_CAPTURE_OUT").expect("LEO_TEST_CAPTURE_OUT");
         let dir = std::path::PathBuf::from(&out);

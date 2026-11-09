@@ -1,7 +1,7 @@
 use anyhow::Result;
 use leo_services::{
     config::{secret::default_store, Config},
-    doctor::{self, Probe},
+    doctor,
     health::State,
 };
 use serde_json::{json, Value};
@@ -10,7 +10,7 @@ pub fn scan(notes: &Path) -> Result<Value> {
     let config = Config::load();
     let secrets = default_store();
     let path = Config::config_path()?;
-    let sections = doctor::scan(&config, secrets.as_ref(), notes, &path, Probe::default());
+    let sections = doctor::scan(&config, secrets.as_ref(), notes, &path);
     let sign_in=config.chat.chain.first().and_then(|name|config.provider(name)).and_then(|provider| {
         let agent=leo_services::ai::provider::agent_cli::Agent::of(provider)?;
         let signed_in=leo_services::ai::provider::agent_cli::signed_in(agent,provider.bin.as_deref().unwrap_or(agent.program()));
