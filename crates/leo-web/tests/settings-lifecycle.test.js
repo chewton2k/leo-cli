@@ -29,6 +29,16 @@ test('the writing card says Ready only when the writing check is ready', () => {
     assert.ok(context.taskCard(task).includes(`>${label}</span>`), writing);
   }
 });
+test('the writing card says where notes go for each provider and stays quiet for custom ones', () => {
+  const context = { app: { addEventListener() {} }, document: { addEventListener() {} }, window: {}, ICON: new Proxy({}, {get: () => ''}), esc: text => String(text), choiceCards: () => '', state: { settings: {} } };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const line = (provider, task = 'writing') => (context.taskCard({ task, provider, choices: [], models: [] }).match(/<p class="set-note">([^<]*)<\/p>/) || [])[1];
+  assert.equal(line('claude_code'), 'Notes and transcripts you send go to Anthropic through Claude Code.');
+  assert.equal(line('codex'), 'Notes and transcripts you send go to OpenAI through Codex.');
+  assert.equal(line('ollama'), 'Ollama runs on this computer; nothing leaves it.');
+  assert.equal(line('my-custom'), undefined);
+});
 test('late onboarding completion cannot close a newer sheet', async () => {
   let finish, closed = 0;
   const context = { desktopApp: null, appChange: () => new Promise(resolve => { finish = resolve; }), closeSheet() { closed++; }, document: { querySelector: () => null } };

@@ -1,3 +1,8 @@
+const WRITING_PRIVACY = {
+  claude_code: 'Notes and transcripts you send go to Anthropic through Claude Code.',
+  codex: 'Notes and transcripts you send go to OpenAI through Codex.',
+  ollama: 'Ollama runs on this computer; nothing leaves it.',
+};
 const TASK_TITLE = { writing: 'AI for writing', speech: 'AI for speech' };
 const TASK_USE = {
   writing: 'Turns recordings into notes, powers Felix and note connections.',
@@ -249,13 +254,14 @@ function taskCard(t) {
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '';
   const usage = t.usage && !plan ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
   const note = t.note ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
+  const privacy = t.task === 'writing' && WRITING_PRIVACY[t.provider] ? `<p class="set-note">${WRITING_PRIVACY[t.provider]}</p>` : '';
   return `<section class="set-card" data-task-card="${t.task}" data-find="writing-provider">
     <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
     <p class="hint">${TASK_USE[t.task]}</p>
     ${t.custom || t.choices.length > 4
       ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
       : `<div class="set-row column"><span class="set-label">Provider</span>${choiceCards({ label: 'Provider', choices: t.choices.map((c) => providerCard(c)), current: t.provider, field: `data-set="provider" data-task="${t.task}"`, className: 'providers' })}</div>`}
-    ${model}${key}${signin}${usage}${note}
+    ${privacy}${model}${key}${signin}${usage}${note}
     <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test connection</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
 }
