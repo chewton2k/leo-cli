@@ -44,3 +44,27 @@ fn dictation_copy_uses_only_the_kept_text_and_successes_are_json() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json_of(response)["recent"], serde_json::json!([]));
 }
+#[test]
+fn dictation_edit_updates_the_row_and_refuses_an_unknown_id() {
+    let (mut state, dir, _) = state_with(&[]);
+    state.dictation = Some(Arc::new(Fake(Mutex::new(Vec::new()))));
+    crate::dictation::remember(dir.path(), "ship it to leo seal I").unwrap();
+    let id = json_of(run(crate::dictation::get(State(state.clone()))))["recent"][0]["id"].clone();
+    let response = run(crate::dictation::change(
+        State(state.clone()),
+        Ok(Json(
+            serde_json::json!({"action":"edit","id":id,"text":"Ship it to Leo CLI"}),
+        )),
+    ));
+    assert_eq!(response.status(), StatusCode::OK);
+    let view = json_of(response);
+    assert_eq!(view["recent"][0]["text"], "Ship it to Leo CLI");
+    assert_eq!(view["recent"][0]["edited"], true);
+    let response = run(crate::dictation::change(
+        State(state),
+        Ok(Json(
+            serde_json::json!({"action":"edit","id":999,"text":"x"}),
+        )),
+    ));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

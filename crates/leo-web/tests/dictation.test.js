@@ -38,6 +38,85 @@ test('dictation controls escape history and preserve explicit text settings', ()
   context.app.querySelectorAll = () => fields(true, 'quick');
   assert.equal(context.dictationDraft().writing, 'quick');
 });
+function editContext(words, recent) {
+  const listeners = {}, calls = [], panel = { html: '' }, field = { value: words.join('\n') }, result = { textContent: '' };
+  const context = {
+    app: { addEventListener: (name, fn) => { listeners[name] = fn; }, querySelectorAll: () => [{ dataset: { dictation: 'custom_words' }, value: field.value }] },
+    ICON: { plus: '' }, esc: (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'),
+    state: { dictation: { settings: { custom_words: words }, recent } }, window: {}, document: { activeElement: null, addEventListener() {} }, setTimeout() {}, clearTimeout() {},
+    refreshPanel: (box, html) => { panel.html = html; },
+    $: (selector) => selector === '#dictation-recent' ? {} : selector === '#dictation-result' ? result : selector === '[data-dictation="custom_words"]' ? field : null,
+    fail: (e) => { throw e; },
+    api: async (url, options) => {
+      calls.push(options.body);
+      const edited = context.state.dictation.recent.map((item) => item.id === options.body.id ? { ...item, text: options.body.text, edited: true } : item);
+      return { settings: { custom_words: words }, recent: edited };
+    },
+    seq: 1, updateDictationStatus() {}, appVisible: () => false, pulse() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/dictation.js'), 'utf8'), context);
+  vm.runInContext('state.view = "settings"', context);
+  context.field = field;
+  return { context, listeners, calls, panel, field, result };
+}
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const type = (context, text) => vm.runInContext(`dictationEdit.text = ${JSON.stringify(text)}`, context);
+const chipWords = (html) => [...html.matchAll(/data-word="([^"]*)"/g)].map((m) => m[1]);
+test('editing a recent dictation offers only its new words as custom words', async () => {
+  const { context, calls, panel } = editContext(['Felix'], [{ id: 7, text: 'ship it to leo seal I users, Felix says' }]);
+  context.startDictationEdit({ dataset: { id: '7' } });
+  assert.ok(panel.html.includes('data-edit-text'));
+  type(context, 'ship it to Leo CLI users, Felix says Acme Corp now Zed Labs today Extra Word');
+  await context.saveDictationEdit();
+  assert.deepEqual(plain(calls), [{ action: 'edit', id: 7, text: 'ship it to Leo CLI users, Felix says Acme Corp now Zed Labs today Extra Word' }]);
+  assert.deepEqual(chipWords(panel.html), ['Leo CLI', 'Acme Corp now Zed Labs today Extra Word']);
+  assert.ok(panel.html.includes('Edited'));
+  assert.ok(!panel.html.includes('data-edit-text'));
+  assert.ok(panel.html.includes('Add \u201cLeo CLI\u201d to custom words'));
+});
+test('edit offers skip known words, punctuation-only changes and cap at three', () => {
+  const offers = (before, after, known) => plain(editContext(known, []).context.dictationWordOffers(before, after, known));
+  assert.deepEqual(offers('a leo b', 'a Leo b', ['leo']), []);
+  assert.deepEqual(offers('hello users', 'hello users.', []), []);
+  assert.deepEqual(offers('x y', 'x A1 y Bb y Cc y Dd', []), ['A1', 'Bb', 'Cc']);
+  assert.deepEqual(offers('x y', 'x Q y Zed', []), ['Zed']);
+  assert.deepEqual(offers('x y', 'x Zed y zed', []), ['Zed']);
+});
+test('accepting an offer adds the word once, respects the limit, and Escape cancels', async () => {
+  const { context, listeners, calls, panel, field, result } = editContext(['Felix'], [{ id: 7, text: 'leo seal I' }]);
+  context.startDictationEdit({ dataset: { id: '7' } });
+  type(context, 'Leo CLI');
+  await context.saveDictationEdit();
+  const saved = [];
+  context.saveDictation = () => { saved.push(field.value); return Promise.resolve(); };
+  const chip = { dataset: { id: '7', word: 'Leo CLI' } };
+  await context.addDictationWord(chip);
+  assert.equal(field.value, 'Felix\nLeo CLI');
+  assert.deepEqual(chipWords(panel.html), []);
+  assert.equal(saved.length, 1);
+  vm.runInContext("dictationOffers[7] = ['Leo CLI']", context);
+  await context.addDictationWord(chip);
+  assert.equal(field.value, 'Felix\nLeo CLI');
+  field.value = Array.from({ length: 200 }, (_, n) => `w${n}`).join('\n');
+  vm.runInContext("dictationOffers[7] = ['Other']", context);
+  await context.addDictationWord({ dataset: { id: '7', word: 'Other' } });
+  assert.equal(field.value.split('\n').length, 200);
+  assert.ok(!field.value.includes('Other'));
+  assert.ok(result.textContent.includes('full'));
+  assert.deepEqual(chipWords(panel.html), []);
+  context.state.dictation.recent = [{ id: 7, text: 'leo seal I' }];
+  const before = calls.length;
+  context.startDictationEdit({ dataset: { id: '7' } });
+  type(context, 'something else');
+  let stopped = false;
+  listeners.keydown({ target: { matches: () => true }, key: 'Escape', preventDefault() {}, stopPropagation() { stopped = true; } });
+  assert.equal(vm.runInContext('dictationEdit', context), null);
+  assert.ok(stopped);
+  assert.equal(calls.length, before);
+  assert.ok(!panel.html.includes('data-edit-text'));
+});
+
 test('clearing history asks first', () => {
   const calls = [];
   const context = { app: { addEventListener() {} }, confirmSheet: (options) => calls.push(options), state: {}, window: {}, document: { activeElement: null, addEventListener() {} }, setTimeout() {} };

@@ -1345,6 +1345,7 @@ history only; fields, drafts, focus and caret survive. There is no Save button
 700 ms after typing stops, in order (`saveDictation` chains saves so the last
 wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
+A Recent dictations row edits in place (`{action:"edit",id,text}` updates the `dictations` row and sets its `edited` flag; unknown id refused); the new words in a fix are offered as up to three chips that append to Custom words (≤200). leo never watches other apps: corrections come only from this list.
 
 Settings look (2026-11-02, the user's call, stageshow's craft rules; redone
 2026-11-04): group labels in sentence case, no "Settings" title in the section

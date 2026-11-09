@@ -28,8 +28,26 @@ pub fn remember(data: &Path, text: &str) -> Result<()> {
 }
 pub fn recent(data: &Path) -> Result<Vec<Value>> {
     crate::db::at(&data.join(crate::db::FILE)).with(|db| {
-        db.prepare("SELECT id,at,text FROM dictations ORDER BY id DESC LIMIT 20")?.query_map([], |r| Ok(json!({"id":r.get::<_,i64>(0)?, "at":r.get::<_,String>(1)?, "text":r.get::<_,String>(2)?})))?.collect()
+        db.prepare("SELECT id,at,text,edited FROM dictations ORDER BY id DESC LIMIT 20")?.query_map([], |r| Ok(json!({"id":r.get::<_,i64>(0)?, "at":r.get::<_,String>(1)?, "text":r.get::<_,String>(2)?, "edited":r.get::<_,i64>(3)? != 0})))?.collect()
     })
+}
+pub fn edit(data: &Path, id: i64, text: &str) -> Result<()> {
+    let text = text.trim();
+    ensure!(
+        !text.is_empty() && text.len() <= 100_000,
+        "This dictation is too long to keep in Recent dictations."
+    );
+    let changed = crate::db::at(&data.join(crate::db::FILE)).with(|db| {
+        db.execute(
+            "UPDATE dictations SET text=?1, edited=1 WHERE id=?2",
+            rusqlite::params![text, id],
+        )
+    })?;
+    ensure!(
+        changed == 1,
+        "This dictation is no longer in Recent dictations."
+    );
+    Ok(())
 }
 pub fn clear(data: &Path) -> Result<()> {
     crate::db::at(&data.join(crate::db::FILE)).with(|db| {
@@ -55,6 +73,11 @@ async fn call(
         if let Some(mut change) = change {
             match change["action"].as_str() {
                 Some("clear") => clear(&data)?,
+                Some("edit") => edit(
+                    &data,
+                    change["id"].as_i64().unwrap_or(0),
+                    change["text"].as_str().unwrap_or(""),
+                )?,
                 Some("copy") => {
                     let id = change["id"].as_i64();
                     let item = recent(&data)?.into_iter().find(|v| v["id"].as_i64() == id);
@@ -126,5 +149,23 @@ mod tests {
         assert!(!dir.path().join("notes").exists());
         clear(dir.path()).unwrap();
         assert!(recent(dir.path()).unwrap().is_empty());
+    }
+    #[test]
+    fn editing_a_recent_dictation_keeps_the_row_and_refuses_unknown_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        remember(dir.path(), "ship it to leo seal I users").unwrap();
+        let id = recent(dir.path()).unwrap()[0]["id"].as_i64().unwrap();
+        assert_eq!(recent(dir.path()).unwrap()[0]["edited"], false);
+        edit(dir.path(), id, "  Ship it to Leo CLI users  ").unwrap();
+        let all = recent(dir.path()).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0]["text"], "Ship it to Leo CLI users");
+        assert_eq!(all[0]["edited"], true);
+        assert!(edit(dir.path(), id + 1, "x").is_err());
+        assert!(edit(dir.path(), id, "   ").is_err());
+        assert_eq!(
+            recent(dir.path()).unwrap()[0]["text"],
+            "Ship it to Leo CLI users"
+        );
     }
 }

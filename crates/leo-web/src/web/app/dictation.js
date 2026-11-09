@@ -22,8 +22,75 @@ function dictationCards(view) {
     <div class="set-row" id="dictation-position-row"${s.popup === 'off' ? ' hidden' : ''}><span class="set-label">Position</span>${segmented({ label: 'Popup position', choices: [['false', 'Bottom'], ['true', 'Top']], current: String(s.top == null ? 'false' : s.top), field: 'data-dictation="top"' })}</div>
   </section><section class="set-card" data-find="dictation-recent"><header><h3>Recent dictations</h3><button class="btn plain sm" data-action="dictation-clear">Clear history</button></header><p class="hint">Last 20, on this computer only.</p><div id="dictation-recent">${dictationRecent(view.recent || [])}</div></section>`;
 }
+let dictationEdit = null;
+const dictationOffers = {}, DICTATION_MOST_WORDS = 200;
 function dictationRecent(items) {
-  return items.length ? items.map((item) => `<div class="set-row" data-refresh-key="${esc(String(item.id))}"><span class="grow">${esc(item.text)}</span><button class="btn plain sm" data-action="dictation-copy" data-id="${esc(String(item.id))}">Copy</button></div>`).join('') : '<p class="set-note">Your dictations will appear here.</p>';
+  return items.length ? items.map((item) => {
+    const id = esc(String(item.id));
+    const text = dictationEdit && dictationEdit.id === item.id
+      ? `<input class="set-input grow" data-edit-text value="${esc(dictationEdit.text)}" aria-label="Edit dictation">`
+      : `<span class="grow" role="button" tabindex="0" title="Edit" data-action="dictation-edit" data-id="${id}">${esc(item.text)}</span>`;
+    const offers = (dictationOffers[item.id] || []).map((word) => `<button class="chip accent" data-action="dictation-add-word" data-id="${id}" data-word="${esc(word)}">${ICON.plus}Add \u201c${esc(word)}\u201d to custom words</button>`).join('');
+    return `<div class="set-row" data-refresh-key="${id}">${text}${item.edited ? '<span class="hint">Edited</span>' : ''}<button class="btn plain sm" data-action="dictation-copy" data-id="${id}">Copy</button></div>${offers ? `<div class="card-meta" data-refresh-key="offers-${id}">${offers}</div>` : ''}`;
+  }).join('') : '<p class="set-note">Your dictations will appear here.</p>';
+}
+function showDictationRecent() {
+  refreshPanel($('#dictation-recent'), dictationRecent((state.dictation && state.dictation.recent) || []));
+}
+function dictationWordOffers(before, after, known) {
+  const seen = new Set(before.split(/\s+/)), runs = [];
+  let run = [];
+  for (const word of after.split(/\s+/).filter(Boolean)) {
+    if (seen.has(word)) { if (run.length) runs.push(run); run = []; } else run.push(word);
+  }
+  if (run.length) runs.push(run);
+  const lower = new Set(known.map((word) => word.toLowerCase()));
+  const phrases = runs.map((r) => r.join(' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter((phrase) => {
+    const key = phrase.toLowerCase();
+    if (phrase.length < 2 || before.includes(phrase) || lower.has(key)) return false;
+    lower.add(key);
+    return true;
+  });
+  return phrases.slice(0, 3);
+}
+function startDictationEdit(el) {
+  const id = Number(el.dataset.id), item = ((state.dictation && state.dictation.recent) || []).find((i) => i.id === id);
+  if (!item) return;
+  dictationEdit = { id, text: item.text };
+  showDictationRecent();
+  const input = $('[data-edit-text]');
+  if (input) { input.focus(); input.select(); }
+}
+function cancelDictationEdit() {
+  dictationEdit = null;
+  showDictationRecent();
+}
+async function saveDictationEdit() {
+  const edit = dictationEdit, text = edit.text.trim();
+  const before = (state.dictation.recent.find((i) => i.id === edit.id) || {}).text || '';
+  dictationEdit = null;
+  try {
+    if (text && text !== before) {
+      await dictationChange({ action: 'edit', id: edit.id, text });
+      dictationOffers[edit.id] = dictationWordOffers(before, text, state.dictation.settings.custom_words || []);
+    }
+  } finally {
+    showDictationRecent();
+  }
+}
+function addDictationWord(el) {
+  const id = Number(el.dataset.id), word = el.dataset.word, words = dictationDraft().custom_words;
+  if (!words.some((w) => w.toLowerCase() === word.toLowerCase())) {
+    if (words.length >= DICTATION_MOST_WORDS) {
+      const result = $('#dictation-result');
+      if (result) result.textContent = `Custom words is full (${DICTATION_MOST_WORDS}). Remove one to add more.`;
+      return;
+    }
+    $('[data-dictation="custom_words"]').value = words.concat(word).join('\n');
+  }
+  dictationOffers[id] = (dictationOffers[id] || []).filter((w) => w !== word);
+  showDictationRecent();
+  return saveDictation();
 }
 function dictationDraft() {
   const settings = Object.assign({}, state.dictation.settings);
@@ -96,7 +163,21 @@ app.addEventListener('change', (e) => {
     saveDictation().catch(fail);
   }
 });
+app.addEventListener('keydown', (e) => {
+  const el = e.target;
+  if (el.matches?.('[data-edit-text]')) {
+    if (e.isComposing || (e.key !== 'Enter' && e.key !== 'Escape')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') cancelDictationEdit();
+    else saveDictationEdit().catch(fail);
+  } else if ((e.key === 'Enter' || e.key === ' ') && el.dataset?.action === 'dictation-edit') {
+    e.preventDefault();
+    startDictationEdit(el);
+  }
+});
 app.addEventListener('input', (e) => {
+  if (e.target.matches?.('[data-edit-text]') && dictationEdit) dictationEdit.text = e.target.value;
   if (e.target.dataset?.dictation !== 'custom_words') return;
   clearTimeout(dictationTyping);
   const settings = dictationDraft(), mine = seq;

@@ -12,6 +12,8 @@ const actions = {
   'dictation-use-shortcut': useDictationShortcut,
   'dictation-clear': clearDictationsAsk, 'dictation-clear-now': clearDictationsNow,
   'dictation-copy': (el) => dictationChange({action:'copy',id:Number(el.dataset.id)}).then(() => pulse(el)),
+  'dictation-edit': startDictationEdit,
+  'dictation-add-word': addDictationWord,
   'speech-filter': filterSpeech,
   'speech-model': changeSpeechModel,
   'ollama-pull': ollamaPull,
