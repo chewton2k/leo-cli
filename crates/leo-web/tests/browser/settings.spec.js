@@ -405,7 +405,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
   const speechHelpers = settings.slice(settings.indexOf('function speechBytes('), settings.indexOf('function speechModelRow('));
   const writingHelpers = settings.slice(settings.indexOf('function providerCard('), settings.indexOf('function taskCard(')) + settings.slice(settings.indexOf('function ollamaGB('), settings.indexOf('let ollamaTimer'));
   const core = read('app/core.js');
-  const dictateHelper = core.slice(core.indexOf('async function dictateHint('), core.indexOf('function wireHomeAsk('));
+  const dictateHelper = core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('function wireHomeAsk('));
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector), ON_MAC=true;
     let seq=0,state={view:'folder'};
     const LEAVE_MS=180, stillMotion=()=>true, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
