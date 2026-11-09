@@ -244,10 +244,16 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
             .unwrap_or_else(|| "no model chosen".into());
         let _ = status.speech.set_text(format!("Speech: {speech}"));
         let writing = leo_services::web_settings::writing_status(clicked);
+        let ready = leo_services::health::writing(
+            &leo_services::config::Config::load(),
+            leo_services::config::secret::default_store().as_ref(),
+            None,
+        )
+        .state;
         let _ = status.writing.set_text(format!("Writing: {}", writing.0));
         let _ = status
             .limits
-            .set_text(plan_use(&writing.0, writing.1.as_deref()));
+            .set_text(plan_use(ready, &writing.0, writing.1.as_deref()));
         let used = app.try_state::<crate::Engine>().and_then(|engine| {
             engine
                 .0
@@ -264,10 +270,14 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
     }
 }
 
-fn plan_use(writing: &str, limits: Option<&str>) -> String {
+fn plan_use(
+    state: leo_services::health::WritingState,
+    writing: &str,
+    limits: Option<&str>,
+) -> String {
     match limits {
         Some(limits) => format!("Plan use: {limits}"),
-        None if writing == "No writing AI chosen" => {
+        None if state == leo_services::health::WritingState::NotChosen => {
             "Plan use: choose a writing AI in Settings".into()
         }
         None if writing.starts_with("Codex") => {
@@ -293,16 +303,25 @@ mod tests {
 
     #[test]
     fn limits_explain_the_selected_provider_and_preserve_reported_use() {
-        for (provider, expected) in [
-            ("No writing AI chosen", "choose a writing AI"),
-            ("Codex · model", "open Codex"),
-            ("Claude Code · model", "Claude Code reports limits"),
-            ("OpenAI · model", "this provider has not reported limits"),
-            ("Ollama · model", "this provider has not reported limits"),
+        use leo_services::health::WritingState::{NotChosen, Ready};
+        for (state, provider, expected) in [
+            (NotChosen, "No writing AI chosen", "choose a writing AI"),
+            (Ready, "Codex · model", "open Codex"),
+            (Ready, "Claude Code · model", "Claude Code reports limits"),
+            (
+                Ready,
+                "OpenAI · model",
+                "this provider has not reported limits",
+            ),
+            (
+                Ready,
+                "Ollama · model",
+                "this provider has not reported limits",
+            ),
         ] {
-            assert!(super::plan_use(provider, None).contains(expected));
+            assert!(super::plan_use(state, provider, None).contains(expected));
             assert_eq!(
-                super::plan_use(provider, Some("5h 20%")),
+                super::plan_use(state, provider, Some("5h 20%")),
                 "Plan use: 5h 20%"
             );
         }

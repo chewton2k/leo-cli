@@ -79,6 +79,11 @@ changes and quit never commit or push. Existing repositories/remotes and legacy
 `health.rs` answers "can leo do X here?" in one place, so the doctor scan and
 the pre-flight before recording agree, and every gap arrives with what fixes it
 rather than as a failure discovered mid-use.
+`health::writing` is the one writing-AI answer (Ready, NotInstalled,
+NotRunning, NoModel, NotChosen, with its fix): the doctor's chat check,
+`ai::writing_ready` and the tray use its cheap path (no HTTP, never NoModel);
+Settings (`web_settings::describe`'s `writing`) passes the listed local models, so
+an Ollama with no models is NoModel there.
 
 Two rules there, both learned from tests that hung:
 

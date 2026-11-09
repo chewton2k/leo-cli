@@ -19,6 +19,16 @@ test('late Settings saves cannot redraw a different page on success or failure',
     assert.equal(draws, 0);
   }
 });
+test('the writing card says Ready only when the writing check is ready', () => {
+  const context = { app: { addEventListener() {} }, document: { addEventListener() {} }, window: {}, ICON: new Proxy({}, {get: () => ''}), esc: text => String(text), choiceCards: () => '' };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const task = { task: 'writing', provider: 'ollama', ready: true, choices: [], models: [] };
+  for (const [writing, label] of [['ready', 'Ready'], ['no_model', 'Not set up'], [undefined, 'Not set up']]) {
+    context.state = { settings: { writing: writing && { state: writing } } };
+    assert.ok(context.taskCard(task).includes(`>${label}</span>`), writing);
+  }
+});
 test('late onboarding completion cannot close a newer sheet', async () => {
   let finish, closed = 0;
   const context = { desktopApp: null, appChange: () => new Promise(resolve => { finish = resolve; }), closeSheet() { closed++; }, document: { querySelector: () => null } };

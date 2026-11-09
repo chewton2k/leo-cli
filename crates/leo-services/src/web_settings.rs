@@ -172,6 +172,7 @@ pub fn describe(
             task_view(cfg, store, local, usage, Task::Chat),
             task_view(cfg, store, local, usage, Task::Transcribe),
         ],
+        "writing": crate::health::writing(cfg, store, Some(local)),
         "paths": {
             "notes": notes_dir.map(|p| p.display().to_string()),
             "config": Config::config_path().ok().map(|p| p.display().to_string()),
@@ -368,6 +369,8 @@ mod tests {
         let page = view(&path, &MemoryStore::default());
         let writing = &page["tasks"][0];
         assert!(writing["key"].is_null());
+        assert_eq!(page["writing"]["state"], "not_installed");
+        assert_eq!(page["writing"]["provider"], "codex");
         assert_eq!(writing["signin"]["installed"], false);
         assert!(writing["signin"]["text"]
             .as_str()

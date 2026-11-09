@@ -150,7 +150,8 @@ the raw audio, so quiet speech is not lost whole. Text stays
 visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
-reason. Settings warns when no writing AI is set up (`writing_ready`).
+reason. Settings warns when no writing AI is set up (`writing_ready`, which is
+`health::writing`'s cheap state; the tray's plan-use line reads the same state).
 Shutdown cancels dictation/shortcuts and stops the speech worker before the
 loopback engine finishes.
 
@@ -160,6 +161,9 @@ loopback engine finishes.
 actor; native login/tray failures restore the previous file and cached state.
 First-launch microphone, Accessibility and model completion flags persist
 independently; the page groups both permissions before the model choice.
+`Preferences` ignores unknown keys, so a file from a newer build never resets
+settings; `writing_done()` is true when the key is true, or absent and all three
+older flags are done.
 Permission status checks never open the microphone; requests are explicit.
 A microphone request after a macOS denial opens the Microphone privacy pane,
 since the system shows its dialog only once.

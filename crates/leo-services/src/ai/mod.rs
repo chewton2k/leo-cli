@@ -260,9 +260,7 @@ pub fn dictation_outcome(
 
 pub fn writing_ready() -> bool {
     let (cfg, store) = context();
-    provider::build_chat_chain(&cfg, &*store)
-        .iter()
-        .any(|p| p.available())
+    crate::health::writing(&cfg, &*store, None).state == crate::health::WritingState::Ready
 }
 
 pub fn see(prompt: chat::Prompt, images: &[provider::Image], max_tokens: u32) -> Result<String> {

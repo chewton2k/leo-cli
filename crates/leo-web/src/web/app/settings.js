@@ -194,7 +194,7 @@ function taskCard(t) {
   const plan = state.settings?.plans?.find(plan => plan.provider === t.provider);
   const status = plan && plan.installed && plan.signed_in !== true
     ? `<span class="set-status missing">${plan.signed_in === false ? 'Sign in needed' : 'Sign-in unknown'}</span>`
-    : t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
+    : state.settings?.writing?.state === 'ready' ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
   const providers = t.choices.map((c) => settingsOption(c.id, c.label, t.provider)).join('') + (t.custom ? settingsOption(t.provider, `${t.provider} (from config.toml)`, t.provider) : '');
   let model = '';
   if (t.fixed_model) {
