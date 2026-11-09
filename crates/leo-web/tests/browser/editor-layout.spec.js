@@ -109,6 +109,37 @@ test('a style key with no selection opens a pair to type in, and leaves it or re
   }, { body: '' });
 });
 
+test('a slash opens a capped quick menu that writes Markdown, and Escape keeps what was typed', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    const editor = page.locator('#doc textarea');
+    const menu = page.locator('.popup-menu.slash-menu');
+    await page.locator('#doc .blk').first().click();
+    await page.keyboard.type('/');
+    await expect(menu).toBeVisible();
+    expect(await menu.evaluate(el => el.scrollHeight > el.clientHeight && el.getBoundingClientRect().height <= 320)).toBe(true);
+    await page.keyboard.type('check');
+    await expect(menu.getByRole('option').first()).toHaveText('Checkbox');
+    await page.keyboard.press('Enter');
+    await expect(menu).toHaveCount(0);
+    await page.keyboard.type('Milk /sta');
+    await expect(menu.getByRole('option', { selected: true })).toContainText('Star icon');
+    await menu.getByRole('option', { name: 'Star icon' }).click();
+    await expect(editor).toBeFocused();
+    await page.keyboard.type('a/b /hea');
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(editor).toBeFocused();
+    await page.keyboard.type('d');
+    await expect(menu).toHaveCount(0);
+    expect(await page.evaluate(() => window.doc.source())).toBe('- [ ] Milk :star: a/b /head');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#doc .note-icon[data-tone="amber"]')).toBeVisible();
+  }, { body: '' });
+});
+
 test('an active heading refits after pane resizing without clipping text or losing selection', async ({ browser }) => {
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();

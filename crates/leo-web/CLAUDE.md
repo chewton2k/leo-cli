@@ -280,6 +280,16 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   and preserves the checkbox’s viewport position and focus.
   Cmd/Ctrl+A selects the whole note at once, even from inside one line
   (2026-10-19; it used to take a second press).
+  Quick menu (2026-11-09, the user's call: "/ opens a quick menu … then it'll convert it into
+  markdown"): in a line editor, `/` at the start of a line or after a space opens `.slash-menu`
+  (`doc.js` `slashSeen`; `.popup-menu` look, at most 320 px tall, then it scrolls). Focus stays in
+  the textarea (`aria-activedescendant`); letters filter, arrows move, Enter or Tab picks, Escape
+  closes only the menu and that `/` stays dismissed. `editing.slash` writes plain Markdown: a
+  line kind (`SLASH`: headings, bullet, numbered, checkbox, quote, warning/note/tip callouts, code
+  block, divider) replaces the line's marker, keeping a list's indent; an icon inserts `:name:`.
+  Icons are `markdown.js` `NOTE_ICONS` (house-style line icons, a tinted fill on the first shape,
+  `data-tone` colours from the `--hue-*` tokens), drawn wherever `:name:` appears outside code;
+  GitHub shows the same codes as emoji, other apps as text. Never emoji in the file.
 
 - Rich text (2026-11-06, the user's words: "all different types of bullet points, heading,
   italics, bold, enumerations with a) b)... or 1) 2), tables, underlining"): the file stays plain

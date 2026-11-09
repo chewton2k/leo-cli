@@ -100,6 +100,26 @@
     return { html, next: at };
   }
 
+  const NOTE_ICONS = {
+    star: ['Star', 'amber', '<path d="M12 3.8l2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/>'],
+    warning: ['Warning', 'orange', '<path d="M12 4L2.8 19.5h18.4z"/><path d="M12 10v4.5M12 17.2v.3"/>'],
+    info: ['Info', 'blue', '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.3"/>'],
+    check: ['Done', 'green', '<circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.5"/>'],
+    cross: ['No', 'red', '<circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/>'],
+    question: ['Question', 'violet', '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.6a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.4M12 16.8v.3"/>'],
+    idea: ['Idea', 'amber', '<path d="M8.2 14.2A6 6 0 1 1 15.8 14.2c-.8.7-1.3 1.6-1.3 2.6v.7h-5v-.7c0-1-.5-1.9-1.3-2.6"/><path d="M9 17.5h6M10 20.5h4"/>'],
+    heart: ['Heart', 'pink', '<path d="M12 19.5s-7.5-4.4-7.5-9.7A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6c0 5.3-7.5 9.7-7.5 9.7z"/>'],
+    fire: ['Fire', 'orange', '<path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.6-5.3 3.6-8.3.9 1.6 1.4 2.8 1.4 4.3 1.6-1.2 2.6-3.5 2.4-6.3 3.5 2.3 5.6 6.2 5.6 10.1 0 3.7-2.6 6.4-6.5 6.4z"/>'],
+    flag: ['Flag', 'red', '<path d="M5.5 4.5h11l-2 4 2 4h-11"/><path d="M5.5 21V4"/>'],
+    pin: ['Pin', 'red', '<path d="M12 21s-6-5.6-6-10.5a6 6 0 0 1 12 0C18 15.4 12 21 12 21z"/><circle cx="12" cy="10.5" r="2.2"/>'],
+    bookmark: ['Bookmark', 'blue', '<path d="M7 3.5h10v17l-5-3.6-5 3.6z"/>'],
+    calendar: ['Date', 'blue', '<rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>'],
+    clock: ['Time', 'teal', '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'],
+    target: ['Goal', 'red', '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>'],
+  };
+
+  const noteIcon = (name, hidden = false) => `<svg class="note-icon" data-tone="${NOTE_ICONS[name][1]}" viewBox="0 0 24 24" ${hidden ? 'aria-hidden="true"' : `role="img" aria-label="${NOTE_ICONS[name][0]}"`}>${NOTE_ICONS[name][2]}</svg>`;
+
   function inline(text) {
     const slots = [];
     const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
@@ -127,6 +147,7 @@
       return safe ? keep(link(safe, emphasis(escape(label || safe)))) : whole;
     });
     s = s.replace(/\bhttps?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]]/g, (url) => keep(link(url, escape(url))));
+    s = s.replace(/:([a-z]+):/g, (whole, name, at, all) => (Object.hasOwn(NOTE_ICONS, name) && !/[\w:]/.test(all[at - 1] || '') && !/[\w:]/.test(all[at + whole.length] || '') ? keep(noteIcon(name)) : whole));
     s = emphasis(escape(s));
     return s.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[Number(i)]);
   }
@@ -416,7 +437,7 @@
       .trim();
   }
 
-  const api = { render, plain, escape, MARKER, listKind, listable };
+  const api = { render, plain, escape, MARKER, listKind, listable, NOTE_ICONS, noteIcon };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMarkdown = api;
 })(typeof window !== 'undefined' ? window : globalThis);

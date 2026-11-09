@@ -1324,6 +1324,20 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 .popup-menu input { width: 100%; box-sizing: border-box; margin-bottom: 5px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); }
 .popup-menu input:focus { border-color: var(--accent); outline: none; }
 .popup-menu:has(input) { width: min(300px, calc(100vw - 16px)); box-sizing: border-box; overflow: hidden; }
+.slash-menu { width: min(260px, calc(100vw - 16px)); box-sizing: border-box; max-height: min(320px, calc(100dvh - 16px)); overscroll-behavior: contain; }
+.slash-menu button[aria-selected="true"] { background: var(--tint); }
+.slash-menu svg:not(.note-icon) { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.slash-menu kbd { margin-left: auto; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; }
+.note-icon { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -.18em; fill: none; stroke: var(--tone); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.note-icon > :first-child { fill: color-mix(in srgb, var(--tone) 24%, transparent); }
+.note-icon[data-tone="amber"] { --tone: var(--hue-amber); }
+.note-icon[data-tone="orange"] { --tone: var(--hue-4); }
+.note-icon[data-tone="blue"] { --tone: var(--hue-0); }
+.note-icon[data-tone="green"] { --tone: var(--hue-2); }
+.note-icon[data-tone="red"] { --tone: var(--hue-red); }
+.note-icon[data-tone="violet"] { --tone: var(--hue-violet); }
+.note-icon[data-tone="pink"] { --tone: var(--hue-5); }
+.note-icon[data-tone="teal"] { --tone: var(--hue-teal); }
 .popup-menu:has(input) .popup-rows { max-height: min(320px, calc(100dvh - 80px)); overflow-y: auto; }
 .inline-edit { position: fixed; z-index: 111; box-sizing: border-box; min-width: 120px; padding: 0 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); outline: none; }
 .popup-menu button:not(:disabled):hover { background: var(--tint); }

@@ -5,6 +5,22 @@ const md = require('../src/web/markdown.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('a slash command becomes Markdown in place of what was typed', () => {
+  const mark = (text) => ed.SLASH.find((c) => c.text === text).mark;
+  assert.deepEqual(ed.slash('/check', [], 0, 6, mark('Checkbox')), { lines: ['- [ ] '], line: 0, caret: 6 });
+  assert.deepEqual(ed.slash('- milk /check', [], 7, 13, mark('Checkbox')), { lines: ['- [ ] milk '], line: 0, caret: 11 });
+  assert.deepEqual(ed.slash('  - [ ] eggs/', [], 12, 13, mark('Bullet')), { lines: ['  - eggs'], line: 0, caret: 8 });
+  assert.deepEqual(ed.slash('## Old /h', [], 7, 9, mark('Heading')), { lines: ['# Old '], line: 0, caret: 6 });
+  assert.deepEqual(ed.slash('> [!note] Title /w', [], 16, 18, mark('Warning box')), { lines: ['> [!warning] Title '], line: 0, caret: 19 });
+  assert.deepEqual(ed.slash('/code', [], 0, 5, mark('Code block')), { lines: ['```', '', '```'], line: 1, caret: 0 });
+  assert.deepEqual(ed.slash('/div', ['Text above'], 0, 4, mark('Divider')), { lines: ['', '---', ''], line: 2, caret: 0 });
+  assert.deepEqual(ed.slash('/div', [''], 0, 4, mark('Divider')), { lines: ['---', ''], line: 1, caret: 0 });
+  assert.deepEqual(ed.slash('Milk /star', [], 5, 10, ':star:'), { lines: ['Milk :star: '], line: 0, caret: 12 });
+  assert.deepEqual(ed.slash('a /st b', [], 2, 5, ':star:'), { lines: ['a :star: b'], line: 0, caret: 8 });
+  assert.equal(md.render('std::fire::new and Note:info:x'), '<p>std::fire::new and Note:info:x</p>');
+  assert.match(md.render('Done :check: and `:check:` :nope:'), /^<p>Done <svg class="note-icon" data-tone="green"[^]*<code>:check:<\/code> :nope:<\/p>/);
+});
+
 test('the outline finds headings at every level but excludes code, maths, quotes and tables', () => {
   const lines = ['# Intro', '## **Sounds**', '```md', '# Not a heading', '```', '> ## Quoted', '$$', '# Formula', '$$', '| Name |', '|---|', '# Table row |', '### Phrase [structure](https://example.com)', '###### Deep 😀', '## Again', '## Again', '####### Too deep', 'no # heading'];
   assert.deepEqual(ed.headings(lines), [

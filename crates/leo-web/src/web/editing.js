@@ -479,7 +479,31 @@
     });
   }
 
-  const api = { restyle, stylePair, cellEnd, nextCell, addRow, listPrefix, itemHead, listed, listLevels, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const SLASH = [
+    { text: 'Heading', mark: '# ' }, { text: 'Subheading', mark: '## ' }, { text: 'Small heading', mark: '### ' },
+    { text: 'Bullet', mark: '- ' }, { text: 'Numbered list', mark: '1. ' }, { text: 'Checkbox', mark: '- [ ] ' },
+    { text: 'Quote', mark: '> ' }, { text: 'Warning box', mark: '> [!warning] ' }, { text: 'Note box', mark: '> [!note] ' },
+    { text: 'Tip box', mark: '> [!tip] ' }, { text: 'Code block', mark: '```' }, { text: 'Divider', mark: '---' },
+  ];
+
+  function slash(line, above, at, end, mark) {
+    const before = line.slice(0, at);
+    const after = line.slice(end);
+    if (/^:[a-z]+:$/.test(mark)) {
+      const icon = mark + (/^\s/.test(after) ? '' : ' ');
+      return { lines: [before + icon + after], line: 0, caret: before.length + icon.length };
+    }
+    const joined = before + after;
+    const head = itemHead(joined, above) || joined.match(/^\s*>[^\S\n]?(?:\[![A-Za-z-]+\][+-]?[^\S\n]*)?/)?.[0] || '';
+    const text = joined.slice(head.length);
+    const caret = Math.max(0, before.length - head.length);
+    if (mark === '```') return { lines: ['```', text, '```'], line: 1, caret };
+    if (mark === '---') return above.length && above[above.length - 1].trim() ? { lines: ['', '---', text], line: 2, caret } : { lines: ['---', text], line: 1, caret };
+    const lead = /^[-1]/.test(mark) ? head.match(/^\s*/)[0] : '';
+    return { lines: [lead + mark + text], line: 0, caret: lead.length + mark.length + caret };
+  }
+
+  const api = { SLASH, slash, restyle, stylePair, cellEnd, nextCell, addRow, listPrefix, itemHead, listed, listLevels, renumber, closeList, stepBack, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

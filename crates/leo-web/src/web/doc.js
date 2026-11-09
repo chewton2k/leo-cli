@@ -551,6 +551,7 @@
     }
 
     function tell() {
+      slashSeen();
       if (!onSelection) return;
       requestAnimationFrame(() => {
         const has = Boolean(container.isConnected && ((editing && document.activeElement === editing.area && liveSelection()) || selectedSpan()));
@@ -913,6 +914,111 @@
       if (index >= 0) edit(index, caret, reveal);
     }
 
+    const lineIcon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+    const SLASH_ICON = {
+      Heading: lineIcon('<path d="M5 5v14M13 5v14M5 12h8M17 11l2-1.5V19"/>'),
+      Subheading: lineIcon('<path d="M4 5v14M12 5v14M4 12h8M15.5 11a2 2 0 1 1 3.5 1.4L15.5 19H20"/>'),
+      'Small heading': lineIcon('<path d="M4 5v14M12 5v14M4 12h8M15.5 10.5h4l-2.5 3a2.3 2.3 0 1 1-1.8 3.8"/>'),
+      Bullet: lineIcon('<circle cx="5.5" cy="7" r="1"/><circle cx="5.5" cy="17" r="1"/><path d="M10 7h10M10 17h10"/>'),
+      'Numbered list': lineIcon('<path d="M10 7h10M10 17h10M4.5 5.5l1.5-1v5M4.5 15.2a1.4 1.4 0 1 1 2.2 1.4L4.5 19.5h3"/>'),
+      Checkbox: lineIcon('<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M8.5 12.3l2.4 2.4 4.6-5"/>'),
+      Quote: lineIcon('<path d="M6 5v14M10 8h9M10 12h9M10 16h6"/>'),
+      'Warning box': md.noteIcon('warning', true),
+      'Note box': md.noteIcon('info', true),
+      'Tip box': md.noteIcon('idea', true),
+      'Code block': lineIcon('<path d="M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5"/>'),
+      Divider: lineIcon('<path d="M3.5 12h17M8 7h8M8 17h8"/>'),
+    };
+    const SLASH_ROWS = [...ed.SLASH.map((row) => ({ ...row, icon: SLASH_ICON[row.text] })), ...Object.entries(md.NOTE_ICONS).map(([name, [text]]) => ({ text: `${text} icon`, mark: `:${name}:`, icon: md.noteIcon(name, true), name }))];
+    let slash = null;
+    let slashGone = null;
+
+    function slashSeen() {
+      const area = editing && editing.kind === 'line' && document.activeElement === editing.area ? editing.area : null;
+      const typed = area && area.selectionStart === area.selectionEnd && area.value.slice(0, area.selectionStart).match(/(?:^|\s)\/([a-z]*)$/i);
+      const word = typed ? typed[1].toLowerCase() : '';
+      const rows = typed ? SLASH_ROWS.filter((row) => !word || row.name?.startsWith(word) || row.text.toLowerCase().split(' ').some((part) => part.startsWith(word))) : [];
+      const at = typed ? area.selectionStart - word.length - 1 : -1;
+      if (slashGone && (slashGone.area !== area || slashGone.at !== at)) slashGone = null;
+      if (!rows.length || slashGone) return slashClose();
+      if (slash && slash.area === area && slash.at === at && slash.word === word) return;
+      if (!slash || slash.area !== area) {
+        slashClose();
+        const box = document.createElement('div');
+        box.className = 'popup-menu slash-menu';
+        box.id = 'slash-menu';
+        box.setAttribute('role', 'listbox');
+        box.setAttribute('aria-label', 'Insert');
+        box.addEventListener('mousedown', (e) => e.preventDefault());
+        box.addEventListener('click', (e) => {
+          const row = e.target.closest('[data-row]');
+          if (row) slashPick(Number(row.dataset.row));
+        });
+        document.body.appendChild(box);
+        slash = { area, box };
+        area.setAttribute('aria-controls', 'slash-menu');
+        addEventListener('scroll', slashPlace, true);
+      }
+      Object.assign(slash, { at, word, rows });
+      slash.box.innerHTML = rows.map((row, i) => `${i && row.name && !rows[i - 1].name ? '<hr aria-hidden="true">' : ''}<button type="button" tabindex="-1" role="option" id="slash-${i}" data-row="${i}">${row.icon}<span class="grow">${md.escape(row.text)}</span>${row.name ? `<kbd>${row.mark}</kbd>` : ''}</button>`).join('');
+      const spot = slashPlace();
+      slashMove(0);
+      if (!slash.box.dataset.shown) {
+        slash.box.dataset.shown = '1';
+        window.leoMotion?.unfold(slash.box, spot);
+      }
+    }
+
+    function slashPlace() {
+      const { area, box, at } = slash;
+      const spot = caretBox(area, at);
+      const high = parseFloat(getComputedStyle(area).lineHeight) || 24;
+      box.style.left = `${Math.max(8, Math.min(spot.x - 12, root.innerWidth - box.offsetWidth - 8))}px`;
+      box.style.top = `${spot.y + 6 + box.offsetHeight > root.innerHeight - 8 ? Math.max(8, spot.y - high - box.offsetHeight - 6) : spot.y + 6}px`;
+      return spot;
+    }
+
+    function slashMove(i) {
+      slash.active = i;
+      for (const row of slash.box.querySelectorAll('[data-row]')) row.setAttribute('aria-selected', String(Number(row.dataset.row) === i));
+      slash.area.setAttribute('aria-activedescendant', `slash-${i}`);
+      slash.box.querySelector(`#slash-${i}`)?.scrollIntoView({ block: 'nearest' });
+    }
+
+    function slashClose() {
+      if (!slash) return;
+      const { area, box } = slash;
+      slash = null;
+      removeEventListener('scroll', slashPlace, true);
+      area.removeAttribute('aria-activedescendant');
+      area.removeAttribute('aria-controls');
+      for (const named of [box, ...box.querySelectorAll('[id]')]) named.removeAttribute('id');
+      box.className = 'popup-menu-gone slash-menu';
+      box.setAttribute('aria-hidden', 'true');
+      box.inert = true;
+      if (window.leoMotion) window.leoMotion.fold(box, () => box.remove());
+      else box.remove();
+    }
+
+    function slashPick(i) {
+      const row = slash && slash.rows[i];
+      if (!row || !editing) return;
+      const { area, start, prefix } = editing;
+      const value = prefix + area.value;
+      const caret = prefix.length + area.selectionStart;
+      const from = value.lastIndexOf('\n', caret - 1) + 1;
+      const line = start + value.slice(0, from).split('\n').length - 1;
+      const done = ed.slash(lines[line], lines.slice(0, line), prefix.length + slash.at - from, caret - from, row.mark);
+      slashClose();
+      lines.splice(line, 1, ...done.lines);
+      ed.renumber(lines, line + done.line, line + done.line);
+      changed();
+      stop();
+      const target = line + done.line;
+      const index = blockAtLine(target);
+      if (index >= 0) edit(index, lineStart(target) - lineStart(blocks[index].start) + done.caret);
+    }
+
     function onInput(e) {
       if (told) tell();
       const { area, start } = editing;
@@ -924,6 +1030,7 @@
       look(area);
       fit(area);
       changed();
+      if (!e?.isComposing) slashSeen();
       const marker = ed.listPrefix(editing.prefix + area.value, lines.slice(0, start));
       if (editing.kind === 'line' && !e?.isComposing && marker.length > editing.prefix.length && /[^\S\n]$/.test(marker)) {
         const caret = lineStart(start) + editing.prefix.length + area.selectionStart;
@@ -975,6 +1082,25 @@
 
     function onKey(e) {
       if (e.isComposing || e.keyCode === 229) return;
+      if (slash && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.shiftKey) {
+          e.preventDefault();
+          slashMove((slash.active + (e.key === 'ArrowDown' ? 1 : slash.rows.length - 1)) % slash.rows.length);
+          return;
+        }
+        if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) {
+          e.preventDefault();
+          slashPick(slash.active);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          slashGone = { area: slash.area, at: slash.at };
+          slashClose();
+          return;
+        }
+      }
       editing.softBreak = e.key === 'Enter' && e.shiftKey;
       if (historyKey(e) || styleKey(e)) return;
       const { area, start, kind } = editing;
