@@ -2643,11 +2643,11 @@
       if (typing) {
         const again = body.querySelector(`.${typing.box}[data-i="${typing.i}"][data-k="${typing.k}"]`);
         if (again && !again.disabled) {
-          again.focus();
+          again.focus({ preventScroll: true });
           again.setSelectionRange(typing.from, typing.to);
-          body.scrollTop = kept;
         }
-      } else if (stick || near) body.scrollTop = body.scrollHeight;
+      }
+      body.scrollTop = !typing && (stick || near) ? body.scrollHeight : kept;
       drawSend();
     }
 

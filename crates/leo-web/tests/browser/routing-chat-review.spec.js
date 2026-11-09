@@ -263,3 +263,26 @@ test('Escape closes an open Felix menu or the Chats list and leaves the note ope
   await expect(page.locator('#chat')).toBeHidden();
   expect(await here()).toBe(open.slice(1));
 });
+test('pressing Enter on a quiz answer keeps the chat where it was while the answer is checked', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const long = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1} about stack canaries and return addresses.`).join('\n\n');
+  await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [] }, { t: long }, { quiz: { kind: 'free_response', question: 'Will the function return to the attacker address?', answer: 'No, the canary check aborts first.' } }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' }));
+  let release;
+  const marked = new Promise((resolve) => { release = resolve; });
+  await page.route('**/api/quiz/mark', async (route) => { await marked; await route.fulfill({ json: { correct: true, feedback: 'Right: the check runs before ret.' } }); });
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('quiz me');
+  await page.locator('#chat-input').press('Enter');
+  const answer = page.locator('#chat .quiz-input');
+  await answer.click();
+  await page.keyboard.type('No, the canary check fails first');
+  const scrolled = () => page.locator('#chat-body').evaluate((el) => el.scrollTop);
+  const before = await scrolled();
+  expect(before).toBeGreaterThan(200);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#chat .quiz-result')).toContainText('Checking your answer');
+  expect(await scrolled(), 'the chat does not jump to the top while the answer is checked').toBeGreaterThan(before - 40);
+  release();
+  await expect(page.locator('#chat .quiz-verdict')).toHaveText('Right');
+  expect(await scrolled()).toBeGreaterThan(before - 40);
+});
