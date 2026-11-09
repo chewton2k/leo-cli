@@ -21,9 +21,10 @@ pub struct Steer {
 impl Steering {
     pub fn open(&self) -> Steer {
         let id = uuid::Uuid::new_v4().to_string();
-        if let Ok(mut all) = self.0.lock() {
-            all.insert(id.clone(), Waiting::default());
-        }
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.clone(), Waiting::default());
         Steer {
             id,
             all: self.clone(),
@@ -31,7 +32,7 @@ impl Steering {
     }
 
     pub fn any_open(&self) -> bool {
-        self.0.lock().is_ok_and(|all| !all.is_empty())
+        !self.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     pub fn add(&self, id: &str, text: &str) -> Result<usize, &'static str> {
@@ -39,9 +40,7 @@ impl Steering {
         if text.is_empty() {
             return Err("empty");
         }
-        let Ok(mut all) = self.0.lock() else {
-            return Err("gone");
-        };
+        let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let Some(waiting) = all.get_mut(id) else {
             return Err("gone");
         };
@@ -53,7 +52,7 @@ impl Steering {
     }
 
     pub fn set_access(&self, id: &str, access: crate::tools::Access) -> Result<(), &'static str> {
-        let mut all = self.0.lock().map_err(|_| "gone")?;
+        let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let waiting = all.get_mut(id).ok_or("gone")?;
         waiting.access = Some(access);
         Ok(())
@@ -63,8 +62,10 @@ impl Steering {
     pub fn open_ids(&self) -> Vec<String> {
         self.0
             .lock()
-            .map(|all| all.keys().cloned().collect())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect()
     }
 }
 
@@ -77,8 +78,9 @@ impl Steer {
         self.all
             .0
             .lock()
-            .ok()
-            .and_then(|mut all| all.get_mut(&self.id).map(|w| std::mem::take(&mut w.texts)))
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&self.id)
+            .map(|w| std::mem::take(&mut w.texts))
             .unwrap_or_default()
     }
 
@@ -86,20 +88,20 @@ impl Steer {
         self.all
             .0
             .lock()
-            .map(|all| {
-                all.get(&self.id)
-                    .map(|w| w.access.unwrap_or(fallback))
-                    .unwrap_or(crate::tools::Access::Read)
-            })
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&self.id)
+            .map(|w| w.access.unwrap_or(fallback))
             .unwrap_or(crate::tools::Access::Read)
     }
 }
 
 impl Drop for Steer {
     fn drop(&mut self) {
-        if let Ok(mut all) = self.all.0.lock() {
-            all.remove(&self.id);
-        }
+        self.all
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
     }
 }
 

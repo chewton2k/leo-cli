@@ -71,25 +71,25 @@ fn mime_of(name: &str) -> &'static str {
 impl Originals {
     pub fn text(&self, reader: &crate::Reader, path: &Path, name: &str) -> Result<Arc<String>> {
         use std::io::Read;
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options.open(path)?;
+        let file = match leo_core::paths::open_regular(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::Other => {
+                bail!("{name} is too big for leo to read")
+            }
+            opened => opened?,
+        };
         let meta = file.metadata()?;
-        if !meta.is_file() || meta.len() > MOST_BYTES {
+        if meta.len() > MOST_BYTES {
             bail!("{name} is too big for leo to read");
         }
         let key: Key = (path.to_path_buf(), meta.len(), meta.modified().ok());
-        if let Some((_, text)) = self
+        let cached = self
             .read
             .lock()
-            .ok()
-            .and_then(|kept| kept.iter().find(|(k, _)| *k == key).cloned())
-        {
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(k, _)| *k == key)
+            .cloned();
+        if let Some((_, text)) = cached {
             return Ok(text);
         }
         let mut bytes = Vec::new();
@@ -105,12 +105,11 @@ impl Originals {
             },
             &mut |_| {},
         )?);
-        if let Ok(mut kept) = self.read.lock() {
-            kept.retain(|(k, _)| k.0 != key.0);
-            kept.push_back((key, Arc::clone(&text)));
-            while kept.len() > KEPT {
-                kept.pop_front();
-            }
+        let mut kept = self.read.lock().unwrap_or_else(|e| e.into_inner());
+        kept.retain(|(k, _)| k.0 != key.0);
+        kept.push_back((key, Arc::clone(&text)));
+        while kept.len() > KEPT {
+            kept.pop_front();
         }
         Ok(text)
     }

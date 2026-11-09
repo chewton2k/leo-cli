@@ -1,3 +1,4 @@
+use crate::reply::error;
 use crate::AppState;
 use anyhow::{ensure, Result};
 use axum::{
@@ -55,9 +56,6 @@ pub fn clear(data: &Path) -> Result<()> {
         Ok(())
     })
 }
-fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({"error":message}))).into_response()
-}
 async fn call(
     api: Option<Arc<dyn DictationApi>>,
     data: std::path::PathBuf,
@@ -100,7 +98,7 @@ async fn call(
     .await;
     match work {
         Ok(Ok(view)) => Json(view).into_response(),
-        Ok(Err(e)) => error(StatusCode::BAD_REQUEST, &e.to_string()),
+        Ok(Err(e)) => error(StatusCode::BAD_REQUEST, e.to_string()),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Dictation settings could not be opened. Try again.",

@@ -118,8 +118,9 @@ pub(crate) async fn would_delete(state: &AppState, field: &str, days: Option<u32
     let active = state
         .recording
         .lock()
-        .ok()
-        .and_then(|held| held.as_ref().map(|job| job.session_id()));
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|job| job.session_id());
     let Ok(notes_dir) = state.read_store(|store| Ok(store.notes_dir.clone())).await else {
         return 0;
     };
@@ -198,8 +199,9 @@ pub(crate) async fn expire_now(state: &AppState) {
     let active = state
         .recording
         .lock()
-        .ok()
-        .and_then(|held| held.as_ref().map(|job| job.session_id()));
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|job| job.session_id());
     let _ = tokio::task::spawn_blocking(move || {
         let now = Utc::now();
         crate::tasks::forget_deleted(&chats, keep.trash_days, now);

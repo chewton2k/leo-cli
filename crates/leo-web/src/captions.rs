@@ -18,6 +18,7 @@ pub type Seer = Arc<dyn Fn(&str, &str, Vec<Picture>) -> Result<String> + Send + 
 pub const DESCRIBE: &str = "You describe pictures from someone's study notes for a reader who cannot see them. Say what kind of picture it is, then its content: any text, labels and numbers, the structure of a diagram, a chart's axes and trend, code, or the steps shown, and what it explains. Use interpretable language. Two to six sentences. Reply with the description only.";
 const MOST_PICTURE_BYTES: u64 = 20 * 1024 * 1024;
 const RETRY_FAILED_AFTER: Duration = Duration::from_secs(60 * 60);
+const MOST_CAPTIONS: i64 = 2_000;
 
 pub struct Captions {
     db: Arc<crate::db::Db>,
@@ -88,6 +89,10 @@ impl Captions {
             c.execute(
                 "INSERT OR REPLACE INTO captions (key, caption) VALUES (?1, ?2)",
                 [&key, &caption],
+            )?;
+            c.execute(
+                "DELETE FROM captions WHERE rowid NOT IN (SELECT rowid FROM captions ORDER BY rowid DESC LIMIT ?1)",
+                [MOST_CAPTIONS],
             )
         });
     }
@@ -263,6 +268,30 @@ mod tests {
         assert_eq!(caption_some(&store, &captions, &failing, 10), 0);
         assert!(uncaptioned(&store, &captions, 10).is_empty());
         assert!(captions.waiting(), "the loop comes back for them");
+    }
+
+    #[test]
+    fn only_the_newest_captions_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let captions = Captions::for_notes(&dir.path().join("notes"));
+        captions
+            .db
+            .with(|c| {
+                let tx = c.transaction()?;
+                for i in 0..MOST_CAPTIONS {
+                    tx.execute(
+                        "INSERT INTO captions (key, caption) VALUES (?1, 'old')",
+                        [format!("k{i}")],
+                    )?;
+                }
+                tx.commit()
+            })
+            .unwrap();
+        captions.put("newest".into(), "fresh".into());
+        assert_eq!(captions.len(), MOST_CAPTIONS as usize);
+        assert_eq!(captions.get("newest").as_deref(), Some("fresh"));
+        assert!(captions.get("k0").is_none());
+        assert!(captions.get("k1").is_some());
     }
 
     #[test]

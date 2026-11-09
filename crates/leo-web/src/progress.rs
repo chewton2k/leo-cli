@@ -136,8 +136,9 @@ impl Board {
         let runs = self
             .runs
             .lock()
-            .ok()
-            .and_then(|r| r.get(kind.name).cloned())
+            .unwrap_or_else(|e| e.into_inner())
+            .get(kind.name)
+            .cloned()
             .unwrap_or_default();
         let mut chars: Vec<f64> = runs.iter().map(|r| r.1).collect();
         let mut secs: Vec<f64> = runs.iter().map(|r| r.0).collect();
@@ -161,7 +162,7 @@ impl Board {
         expected: Option<f64>,
     ) -> Option<Ticket> {
         let (chars, secs) = self.estimate(kind, expected);
-        let mut meters = self.meters.lock().ok()?;
+        let mut meters = self.meters.lock().unwrap_or_else(|e| e.into_inner());
         if meters.contains_key(&key) || meters.len() >= MOST_METERS {
             return None;
         }
@@ -182,7 +183,8 @@ impl Board {
     }
 
     fn finish(&self, key: &str, meter: &Meter) {
-        if let Ok(mut meters) = self.meters.lock() {
+        {
+            let mut meters = self.meters.lock().unwrap_or_else(|e| e.into_inner());
             if meters.get(key).is_some_and(|m| m.id == meter.id) {
                 meters.remove(key);
             }
@@ -196,9 +198,7 @@ impl Board {
 
     fn record(&self, kind: Kind, secs: f64, chars: f64) {
         let list = {
-            let Ok(mut runs) = self.runs.lock() else {
-                return;
-            };
+            let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
             let list = runs.entry(kind.name).or_default();
             list.insert(0, (secs, chars));
             list.truncate(KEPT_RUNS);
@@ -215,7 +215,11 @@ impl Board {
     }
 
     pub fn view(&self, key: &str) -> Option<serde_json::Value> {
-        self.meters.lock().ok()?.get(key).map(|m| m.view())
+        self.meters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .map(|m| m.view())
     }
 }
 

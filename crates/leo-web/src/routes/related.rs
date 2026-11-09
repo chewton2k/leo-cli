@@ -93,9 +93,9 @@ pub(crate) async fn get_reading(State(state): State<AppState>, Path(id): Path<St
     if !crate::chats::valid_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let db = crate::chats::db_of(&state.chats);
-    let anchor = db
-        .with(|c| {
+    let chats = state.chats.clone();
+    let anchor = tokio::task::spawn_blocking(move || {
+        crate::db::try_for_chats(&chats)?.with(|c| {
             c.query_row("SELECT anchor FROM reading WHERE note = ?1", [&id], |r| {
                 r.get::<_, String>(0)
             })
@@ -105,9 +105,12 @@ pub(crate) async fn get_reading(State(state): State<AppState>, Path(id): Path<St
                 other => Err(other),
             })
         })
-        .ok()
-        .flatten()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten()
+    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
     Json(serde_json::json!({ "anchor": anchor })).into_response()
 }
 
@@ -125,9 +128,10 @@ pub(crate) async fn put_reading(
     if !crate::chats::valid_id(&id) || !body.anchor.is_object() || text.len() > MOST_ANCHOR_BYTES {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let db = crate::chats::db_of(&state.chats);
+    let chats = state.chats.clone();
     let now = chrono::Utc::now().to_rfc3339();
-    let saved = db.with(|c| {
+    let saved = tokio::task::spawn_blocking(move || {
+        crate::db::try_for_chats(&chats)?.with(|c| {
         c.execute(
             "INSERT INTO reading (note, anchor, at) VALUES (?1, ?2, ?3) ON CONFLICT(note) DO UPDATE SET anchor = excluded.anchor, at = excluded.at",
             [&id, &text, &now],
@@ -136,10 +140,12 @@ pub(crate) async fn put_reading(
             "DELETE FROM reading WHERE note NOT IN (SELECT note FROM reading ORDER BY at DESC LIMIT ?1)",
             [MOST_POSITIONS],
         )
-    });
+        })
+    })
+    .await;
     match saved {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Ok(_)) => StatusCode::NO_CONTENT.into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 

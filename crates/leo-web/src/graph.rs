@@ -807,7 +807,7 @@ impl Graphs {
             return None;
         }
         let version = vectors.version();
-        let mut held = self.near.lock().ok()?;
+        let mut held = self.near.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, near)) = held.as_ref().filter(|(at, _)| *at == version) {
             let _ = at;
             return Some(Arc::clone(near));
@@ -1049,14 +1049,12 @@ impl Graphs {
         let since = self
             .auto
             .lock()
-            .ok()
-            .and_then(|auto| auto.map(|at| at.elapsed()));
+            .unwrap_or_else(|e| e.into_inner())
+            .map(|at| at.elapsed());
         if !should_update(&self.status(&sources), idle, since) {
             return false;
         }
-        if let Ok(mut auto) = self.auto.lock() {
-            *auto = Some(std::time::Instant::now());
-        }
+        *self.auto.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
         self.start(sources);
         true
     }

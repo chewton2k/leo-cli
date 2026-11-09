@@ -14,6 +14,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ics::{self, Event};
+use crate::reply::error;
 use crate::AppState;
 
 pub const MOST_BYTES: u64 = 5_000_000;
@@ -115,18 +116,19 @@ impl Calendar {
                 from.timestamp(),
                 to.timestamp()
             );
-            let kept = self.expanded.lock().ok().and_then(|kept| {
-                kept.iter()
-                    .find(|(k, _)| *k == key)
-                    .map(|(_, e)| Arc::clone(e))
-            });
+            let kept = self
+                .expanded
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, e)| Arc::clone(e));
             let events = kept.unwrap_or_else(|| {
                 let events = Arc::new(ics::read(&String::from_utf8_lossy(&body), from, to).events);
-                if let Ok(mut kept) = self.expanded.lock() {
-                    kept.push_back((key, Arc::clone(&events)));
-                    while kept.len() > KEPT_EXPANSIONS {
-                        kept.pop_front();
-                    }
+                let mut kept = self.expanded.lock().unwrap_or_else(|e| e.into_inner());
+                kept.push_back((key, Arc::clone(&events)));
+                while kept.len() > KEPT_EXPANSIONS {
+                    kept.pop_front();
                 }
                 events
             });
@@ -422,14 +424,6 @@ fn forget_old_google(notes: &Path, access: &dyn crate::CalendarAccess) {
     for name in OLD_FILES {
         let _ = std::fs::remove_file(data(notes).join(name));
     }
-}
-
-fn error(code: StatusCode, message: impl ToString) -> Response {
-    (
-        code,
-        Json(serde_json::json!({ "error": message.to_string() })),
-    )
-        .into_response()
 }
 
 async fn notes_of(state: &AppState) -> Result<PathBuf, StatusCode> {

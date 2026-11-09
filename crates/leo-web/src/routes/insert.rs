@@ -52,18 +52,17 @@ pub(crate) fn inserted(body: &str, text: &str, line: Option<usize>) -> String {
 }
 
 fn remembered(note: &str, request: &str) -> Option<serde_json::Value> {
-    let done = DONE.lock().ok()?;
+    let done = DONE.lock().unwrap_or_else(|e| e.into_inner());
     done.iter()
         .find(|(n, r, _)| n == note && r == request)
         .map(|(_, _, v)| v.clone())
 }
 
 fn remember(note: &str, request: &str, value: &serde_json::Value) {
-    if let Ok(mut done) = DONE.lock() {
-        done.push_back((note.to_string(), request.to_string(), value.clone()));
-        while done.len() > REMEMBERED {
-            done.pop_front();
-        }
+    let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+    done.push_back((note.to_string(), request.to_string(), value.clone()));
+    while done.len() > REMEMBERED {
+        done.pop_front();
     }
 }
 

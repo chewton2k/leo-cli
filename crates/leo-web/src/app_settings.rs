@@ -1,3 +1,4 @@
+use crate::reply::error;
 use crate::AppState;
 use anyhow::Result;
 use axum::{
@@ -22,9 +23,6 @@ pub trait AppApi: Send + Sync {
     fn change(&self, value: Value) -> Result<Value>;
     fn health(&self, notes: &Path) -> Result<Value>;
     fn event_starting(&self, _event: EventStarting) {}
-}
-fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({"error":message}))).into_response()
 }
 async fn call(
     api: Option<Arc<dyn AppApi>>,
@@ -67,7 +65,7 @@ async fn call(
     .await
     {
         Ok(Ok(view)) => Json(view).into_response(),
-        Ok(Err(e)) => error(StatusCode::BAD_REQUEST, &e.to_string()),
+        Ok(Err(e)) => error(StatusCode::BAD_REQUEST, e.to_string()),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "App settings could not be opened. Try again in a moment.",

@@ -7,6 +7,7 @@ use leo_core::notes::checkbox_line;
 use leo_core::tasks::{self as core, Located};
 use serde::{Deserialize, Deserializer};
 
+use crate::reply::error;
 use crate::routes::notes::save;
 use crate::tasks::{self, Meta, Task};
 use crate::AppState;
@@ -19,9 +20,8 @@ where
     Option::<T>::deserialize(d).map(Some)
 }
 
-fn error(code: StatusCode, message: &str) -> Response {
-    (code, Json(serde_json::json!({ "error": message }))).into_response()
-}
+const NO_OLD_DATE: &str =
+    "leo could not find the old date to replace. Check the change, then confirm it.";
 
 fn time_of(text: Option<&str>) -> Result<Option<NaiveTime>, ()> {
     match text.map(str::trim).filter(|t| !t.is_empty()) {
@@ -99,49 +99,56 @@ pub(crate) async fn create_task(
         None => format!("t{}", uuid::Uuid::new_v4().simple()),
     };
     let chats = state.chats.clone();
-    if let Some(existing) = tasks::load(&chats, &id) {
-        return Json(serde_json::json!(tasks::standalone(&existing, None))).into_response();
-    }
-    if tasks::count(&chats) >= tasks::MOST_TASKS {
-        return error(
-            StatusCode::CONFLICT,
-            "leo keeps up to 10,000 tasks. Delete finished ones first.",
-        );
-    }
-    let now = Utc::now();
-    let repeat = tasks::clean_repeat(&body.repeat);
-    let date = if repeat.is_empty() {
-        body.date
-    } else {
-        body.date
-            .or_else(|| Some(chrono::Local::now().date_naive()))
-    };
-    let task = Task {
-        id,
-        title,
-        description,
-        kind: tasks::clean_kind(body.kind.as_deref().unwrap_or("other")),
-        done: body.done && repeat.is_empty(),
-        date,
-        time: date.and(time),
-        end: date.and(time).and(end),
-        note: body.note.filter(|n| !n.is_empty() && n.len() <= 64),
-        sent_at: None,
-        created_at: now,
-        updated_at: now,
-        repeat,
-        done_on: Vec::new(),
-        moved: Default::default(),
-        deleted: false,
-    };
-    if tasks::put(&chats, &task).is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    (
-        StatusCode::CREATED,
-        Json(serde_json::json!(tasks::standalone(&task, None))),
-    )
-        .into_response()
+    state
+        .read_store(move |_| {
+            if let Some(existing) = tasks::load(&chats, &id) {
+                return Ok(
+                    Json(serde_json::json!(tasks::standalone(&existing, None))).into_response()
+                );
+            }
+            if tasks::count(&chats) >= tasks::MOST_TASKS {
+                return Ok(error(
+                    StatusCode::CONFLICT,
+                    "leo keeps up to 10,000 tasks. Delete finished ones first.",
+                ));
+            }
+            let now = Utc::now();
+            let repeat = tasks::clean_repeat(&body.repeat);
+            let date = if repeat.is_empty() {
+                body.date
+            } else {
+                body.date
+                    .or_else(|| Some(chrono::Local::now().date_naive()))
+            };
+            let task = Task {
+                id,
+                title,
+                description,
+                kind: tasks::clean_kind(body.kind.as_deref().unwrap_or("other")),
+                done: body.done && repeat.is_empty(),
+                date,
+                time: date.and(time),
+                end: date.and(time).and(end),
+                note: body.note.filter(|n| !n.is_empty() && n.len() <= 64),
+                sent_at: None,
+                created_at: now,
+                updated_at: now,
+                repeat,
+                done_on: Vec::new(),
+                moved: Default::default(),
+                deleted: false,
+            };
+            if tasks::put(&chats, &task).is_err() {
+                return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+            Ok((
+                StatusCode::CREATED,
+                Json(serde_json::json!(tasks::standalone(&task, None))),
+            )
+                .into_response())
+        })
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
 }
 
 #[derive(Deserialize, Default)]
@@ -198,89 +205,89 @@ pub(crate) async fn change_task(
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
     let chats = state.chats.clone();
-    if let Some(mut task) = tasks::load(&chats, &id) {
-        if let Some(title) = change.title {
-            let title: String = title.trim().chars().take(tasks::MOST_TITLE).collect();
-            if title.is_empty() {
-                return error(StatusCode::BAD_REQUEST, "Give the task a title.");
-            }
-            task.title = title;
-        }
-        if let Some(description) = description {
-            task.description = description;
-        }
-        if let Some(kind) = change.kind {
-            task.kind = tasks::clean_kind(&kind);
-        }
-        if let Some(repeat) = &change.repeat {
-            task.repeat = tasks::clean_repeat(repeat);
-            if !task.repeat.is_empty() {
-                task.done = false;
-                if task.date.is_none() && change.date.is_none() {
-                    task.date = Some(chrono::Local::now().date_naive());
-                }
-            }
-        }
-        if let Some(done) = change.done {
-            if task.repeat.is_empty() {
-                task.done = done;
-            } else {
-                let day = change
-                    .on
-                    .unwrap_or_else(|| chrono::Local::now().date_naive());
-                task.done_on.retain(|d| *d != day);
-                if done {
-                    task.done_on.push(day);
-                    task.done_on.sort_unstable();
-                    let extra = task.done_on.len().saturating_sub(tasks::MOST_DONE_DAYS);
-                    task.done_on.drain(..extra);
-                }
-            }
-        }
-        if let Some(on) = change.occurrence {
-            if !tasks::repeats_on(&task.repeat, task.date, on) {
-                return error(
-                    StatusCode::BAD_REQUEST,
-                    "That day is not one of this task's days.",
-                );
-            }
-            let Some(date) = change.date.flatten() else {
-                return error(StatusCode::BAD_REQUEST, "Say which day it moves to.");
-            };
-            tasks::move_occurrence(
-                &mut task,
-                on,
-                tasks::Slot {
-                    date,
-                    time,
-                    end: time.and(end),
-                },
-            );
-        } else if let Some(date) = change.date {
-            task.date = date;
-            task.time = date.and(time);
-            task.end = date.and(time).and(end);
-        }
-        if let Some(note) = change.note {
-            task.note = note.filter(|n| !n.is_empty() && n.len() <= 64);
-        }
-        if let Some(sent) = change.sent {
-            task.sent_at = sent.then(Utc::now);
-        }
-        task.updated_at = Utc::now();
-        if tasks::put(&chats, &task).is_err() {
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-        return Json(serde_json::json!(tasks::standalone(&task, None))).into_response();
-    }
-    if change.occurrence.is_some() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "Only repeating tasks have days to move.",
-        );
-    }
     let found = state
         .with_store(move |store| {
+            if let Some(mut task) = tasks::load(&chats, &id) {
+                if let Some(title) = change.title {
+                    let title: String = title.trim().chars().take(tasks::MOST_TITLE).collect();
+                    if title.is_empty() {
+                        return Ok(error(StatusCode::BAD_REQUEST, "Give the task a title."));
+                    }
+                    task.title = title;
+                }
+                if let Some(description) = description {
+                    task.description = description;
+                }
+                if let Some(kind) = change.kind {
+                    task.kind = tasks::clean_kind(&kind);
+                }
+                if let Some(repeat) = &change.repeat {
+                    task.repeat = tasks::clean_repeat(repeat);
+                    if !task.repeat.is_empty() {
+                        task.done = false;
+                        if task.date.is_none() && change.date.is_none() {
+                            task.date = Some(chrono::Local::now().date_naive());
+                        }
+                    }
+                }
+                if let Some(done) = change.done {
+                    if task.repeat.is_empty() {
+                        task.done = done;
+                    } else {
+                        let day = change
+                            .on
+                            .unwrap_or_else(|| chrono::Local::now().date_naive());
+                        task.done_on.retain(|d| *d != day);
+                        if done {
+                            task.done_on.push(day);
+                            task.done_on.sort_unstable();
+                            let extra = task.done_on.len().saturating_sub(tasks::MOST_DONE_DAYS);
+                            task.done_on.drain(..extra);
+                        }
+                    }
+                }
+                if let Some(on) = change.occurrence {
+                    if !tasks::repeats_on(&task.repeat, task.date, on) {
+                        return Ok(error(
+                            StatusCode::BAD_REQUEST,
+                            "That day is not one of this task's days.",
+                        ));
+                    }
+                    let Some(date) = change.date.flatten() else {
+                        return Ok(error(StatusCode::BAD_REQUEST, "Say which day it moves to."));
+                    };
+                    tasks::move_occurrence(
+                        &mut task,
+                        on,
+                        tasks::Slot {
+                            date,
+                            time,
+                            end: time.and(end),
+                        },
+                    );
+                } else if let Some(date) = change.date {
+                    task.date = date;
+                    task.time = date.and(time);
+                    task.end = date.and(time).and(end);
+                }
+                if let Some(note) = change.note {
+                    task.note = note.filter(|n| !n.is_empty() && n.len() <= 64);
+                }
+                if let Some(sent) = change.sent {
+                    task.sent_at = sent.then(Utc::now);
+                }
+                task.updated_at = Utc::now();
+                if tasks::put(&chats, &task).is_err() {
+                    return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                }
+                return Ok(Json(serde_json::json!(tasks::standalone(&task, None))).into_response());
+            }
+            if change.occurrence.is_some() {
+                return Ok(error(
+                    StatusCode::BAD_REQUEST,
+                    "Only repeating tasks have days to move.",
+                ));
+            }
             let metas = tasks::metas(&chats);
             let listed = tasks::note_tasks(store, &metas);
             let Some(task) = listed.into_iter().find(|t| t.id == id) else {
@@ -328,7 +335,8 @@ pub(crate) async fn change_task(
                 meta.after = after;
             }
             if let Some(preview) = preview {
-                return Ok(Err(preview));
+                let body = serde_json::json!({ "error": NO_OLD_DATE, "preview": preview });
+                return Ok((StatusCode::CONFLICT, Json(body)).into_response());
             }
             if let Some(description) = description {
                 meta.description = description;
@@ -354,16 +362,23 @@ pub(crate) async fn change_task(
                 tasks::put_meta(&chats, &meta).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             }
             let metas = tasks::metas(&chats);
-            Ok(Ok(tasks::note_tasks(store, &metas)
-                .into_iter()
-                .find(|t| t.id == id)))
+            Ok(
+                match tasks::note_tasks(store, &metas)
+                    .into_iter()
+                    .find(|t| t.id == id)
+                {
+                    Some(task) => Json(serde_json::json!(task)).into_response(),
+                    None => StatusCode::NO_CONTENT.into_response(),
+                },
+            )
         })
         .await;
     match found {
-        Ok(Ok(Some(task))) => Json(serde_json::json!(task)).into_response(),
-        Ok(Ok(None)) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Err(preview)) => (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "leo could not find the old date to replace. Check the change, then confirm it.", "preview": preview }))).into_response(),
-        Err(StatusCode::CONFLICT) => error(StatusCode::CONFLICT, "leo could not find that checkbox in the note any more. Open the note to check it."),
+        Ok(response) => response,
+        Err(StatusCode::CONFLICT) => error(
+            StatusCode::CONFLICT,
+            "leo could not find that checkbox in the note any more. Open the note to check it.",
+        ),
         Err(code) => code.into_response(),
     }
 }
@@ -372,22 +387,28 @@ pub(crate) async fn delete_task(State(state): State<AppState>, Path(id): Path<St
     if !tasks::valid_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    if let Some(task) = tasks::load(&state.chats, &id) {
-        tasks::remove(&state.chats, &id);
-        return Json(serde_json::json!(task)).into_response();
-    }
-    let metas = tasks::metas(&state.chats);
-    match metas.iter().find(|m| m.id == id) {
-        Some(meta) if meta.promoted => {
-            tasks::remove_meta(&state.chats, &id);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Some(_) | None if id.starts_with('n') => error(
-            StatusCode::CONFLICT,
-            "This task comes from the note's Action items. Remove it from the note to drop it.",
-        ),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    }
+    let chats = state.chats.clone();
+    state
+        .read_store(move |_| {
+            if let Some(task) = tasks::load(&chats, &id) {
+                tasks::remove(&chats, &id);
+                return Ok(Json(serde_json::json!(task)).into_response());
+            }
+            let metas = tasks::metas(&chats);
+            Ok(match metas.iter().find(|m| m.id == id) {
+                Some(meta) if meta.promoted => {
+                    tasks::remove_meta(&chats, &id);
+                    StatusCode::NO_CONTENT.into_response()
+                }
+                Some(_) | None if id.starts_with('n') => error(
+                    StatusCode::CONFLICT,
+                    "This task comes from the note's Action items. Remove it from the note to drop it.",
+                ),
+                _ => StatusCode::NOT_FOUND.into_response(),
+            })
+        })
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
 }
 
 #[derive(Deserialize)]
@@ -490,35 +511,44 @@ pub(crate) async fn import_tasks(
     State(state): State<AppState>,
     Json(body): Json<Import>,
 ) -> Response {
-    let mut added = 0;
-    let mut kept = 0;
-    for mut task in body.tasks.into_iter().take(tasks::MOST_TASKS) {
-        if !tasks::valid_id(&task.id) || task.id.starts_with('n') || task.title.trim().is_empty() {
-            continue;
-        }
-        let Ok(description) = tasks::description_of(&task.description) else {
-            continue;
-        };
-        task.description = description;
-        task.title = task.title.trim().chars().take(tasks::MOST_TITLE).collect();
-        task.kind = tasks::clean_kind(&task.kind);
-        task.repeat = tasks::clean_repeat(&task.repeat);
-        task.done_on.sort_unstable();
-        task.done_on.dedup();
-        let extra = task.done_on.len().saturating_sub(tasks::MOST_DONE_DAYS);
-        task.done_on.drain(..extra);
-        task.deleted = false;
-        match tasks::load(&state.chats, &task.id) {
-            Some(mine) if mine.updated_at >= task.updated_at => kept += 1,
-            _ => {
-                if tasks::count(&state.chats) >= tasks::MOST_TASKS {
-                    break;
+    let chats = state.chats.clone();
+    state
+        .read_store(move |_| {
+            let mut added = 0;
+            let mut kept = 0;
+            for mut task in body.tasks.into_iter().take(tasks::MOST_TASKS) {
+                if !tasks::valid_id(&task.id)
+                    || task.id.starts_with('n')
+                    || task.title.trim().is_empty()
+                {
+                    continue;
                 }
-                if tasks::put(&state.chats, &task).is_ok() {
-                    added += 1;
+                let Ok(description) = tasks::description_of(&task.description) else {
+                    continue;
+                };
+                task.description = description;
+                task.title = task.title.trim().chars().take(tasks::MOST_TITLE).collect();
+                task.kind = tasks::clean_kind(&task.kind);
+                task.repeat = tasks::clean_repeat(&task.repeat);
+                task.done_on.sort_unstable();
+                task.done_on.dedup();
+                let extra = task.done_on.len().saturating_sub(tasks::MOST_DONE_DAYS);
+                task.done_on.drain(..extra);
+                task.deleted = false;
+                match tasks::load(&chats, &task.id) {
+                    Some(mine) if mine.updated_at >= task.updated_at => kept += 1,
+                    _ => {
+                        if tasks::count(&chats) >= tasks::MOST_TASKS {
+                            break;
+                        }
+                        if tasks::put(&chats, &task).is_ok() {
+                            added += 1;
+                        }
+                    }
                 }
             }
-        }
-    }
-    Json(serde_json::json!({ "added": added, "kept": kept })).into_response()
+            Ok(Json(serde_json::json!({ "added": added, "kept": kept })).into_response())
+        })
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
 }

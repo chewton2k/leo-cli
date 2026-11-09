@@ -16,6 +16,7 @@ pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
+mod jsonline;
 mod keeping;
 pub mod margin;
 pub mod ollama;

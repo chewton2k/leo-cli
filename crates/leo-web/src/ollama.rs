@@ -1,3 +1,4 @@
+use crate::reply::error;
 use crate::AppState;
 use anyhow::Result;
 use axum::{
@@ -27,24 +28,21 @@ impl Pulls {
     fn shown(&self) -> Value {
         self.0
             .lock()
-            .ok()
-            .and_then(|pull| pull.as_ref().map(|(shown, _)| shown.clone()))
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|(shown, _)| shown.clone())
             .unwrap_or_default()
     }
 
     fn update(&self, stop: &Arc<AtomicBool>, change: impl FnOnce(&mut Value)) {
-        if let Ok(mut pull) = self.0.lock() {
-            if let Some((shown, _)) = pull.as_mut().filter(|(shown, current)| {
-                Arc::ptr_eq(current, stop) && shown["state"] == "pulling"
-            }) {
-                change(shown);
-            }
+        let mut pull = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((shown, _)) = pull
+            .as_mut()
+            .filter(|(shown, current)| Arc::ptr_eq(current, stop) && shown["state"] == "pulling")
+        {
+            change(shown);
         }
     }
-}
-
-fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({ "error": message }))).into_response()
 }
 
 async fn view(state: &AppState) -> Response {
@@ -82,7 +80,12 @@ pub(crate) async fn change(
     };
     match change["action"].as_str() {
         Some("cancel") => {
-            if let Ok(mut pull) = state.ollama_pulls.0.lock() {
+            {
+                let mut pull = state
+                    .ollama_pulls
+                    .0
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 if let Some((shown, stop)) = pull.as_mut().filter(|(s, _)| s["state"] == "pulling")
                 {
                     stop.store(true, Ordering::Relaxed);
@@ -117,9 +120,11 @@ pub(crate) async fn change(
             }
             let stop = Arc::new(AtomicBool::new(false));
             {
-                let Ok(mut pull) = state.ollama_pulls.0.lock() else {
-                    return error(StatusCode::INTERNAL_SERVER_ERROR, "Try again in a moment.");
-                };
+                let mut pull = state
+                    .ollama_pulls
+                    .0
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 if pull.as_ref().is_some_and(|(s, _)| s["state"] == "pulling") {
                     return error(
                         StatusCode::CONFLICT,

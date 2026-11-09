@@ -186,26 +186,40 @@ fn a_point_or_stop_during_a_save_waits_for_it_instead_of_failing() {
         .to_string();
     recording_until(&state, |s| s == "recording");
     let saving = state.recording.lock().unwrap().as_ref().unwrap().writing();
-    let busy_for_a_moment = || {
+    let busy_until_told = || {
         saving.store(true, std::sync::atomic::Ordering::Release);
         let saving = saving.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+        let (tell, told) = std::sync::mpsc::channel::<()>();
+        let held = std::thread::spawn(move || {
+            let _ = told.recv();
             saving.store(false, std::sync::atomic::Ordering::Release);
+        });
+        (tell, held)
+    };
+    let (tell, held) = busy_until_told();
+    let point = {
+        let (state, id) = (state.clone(), id.clone());
+        std::thread::spawn(move || {
+            run(record::point(
+                State(state),
+                Path(id),
+                Json(serde_json::from_value(serde_json::json!({"text": "heaps"})).unwrap()),
+            ))
         })
     };
-    let done = busy_for_a_moment();
-    let point = run(record::point(
-        State(state.clone()),
-        Path(id.clone()),
-        Json(serde_json::from_value(serde_json::json!({"text": "heaps"})).unwrap()),
-    ));
-    assert_eq!(point.status(), StatusCode::OK);
-    done.join().unwrap();
-    let done = busy_for_a_moment();
-    let stopped = run(record::stop(State(state.clone()), Path(id)));
-    assert_eq!(stopped.status(), StatusCode::OK);
-    done.join().unwrap();
+    assert!(!point.is_finished(), "a point waits for the save");
+    tell.send(()).unwrap();
+    held.join().unwrap();
+    assert_eq!(point.join().unwrap().status(), StatusCode::OK);
+    let (tell, held) = busy_until_told();
+    let stopped = {
+        let state = state.clone();
+        std::thread::spawn(move || run(record::stop(State(state), Path(id))))
+    };
+    assert!(!stopped.is_finished(), "a stop waits for the save");
+    tell.send(()).unwrap();
+    held.join().unwrap();
+    assert_eq!(stopped.join().unwrap().status(), StatusCode::OK);
     let view = recording_until(&state, |s| s == "done");
     assert_eq!(view.points.len(), 1);
 }

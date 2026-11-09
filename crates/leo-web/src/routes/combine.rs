@@ -10,15 +10,12 @@ use leo_core::notes::Note;
 use serde::Deserialize;
 
 use super::notes::{save, version_of, NoteResponse};
+use crate::reply::error;
 use crate::{combine, progress, AppState};
 
 const MOST_JOBS: usize = 20;
 const MOST_WORKING: usize = 2;
 const KEPT_FOR: Duration = Duration::from_secs(6 * 60 * 60);
-
-fn error(code: StatusCode, message: &str) -> Response {
-    (code, Json(serde_json::json!({ "error": message }))).into_response()
-}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct CombineJob {
@@ -100,7 +97,7 @@ pub(crate) async fn start(
     Json(body): Json<Start>,
 ) -> Response {
     let Some(writer) = state.graphs.writer() else {
-        return error(StatusCode::SERVICE_UNAVAILABLE, &crate::no_writer());
+        return error(StatusCode::SERVICE_UNAVAILABLE, crate::no_writer());
     };
     let (into, from, notes_dir) = match notes_for(&state, into, body.with).await {
         Ok(found) => found,
@@ -119,12 +116,7 @@ pub(crate) async fn start(
         started: Some(Instant::now()),
     };
     {
-        let Ok(mut jobs) = state.combines.lock() else {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The notes could not be combined.",
-            );
-        };
+        let mut jobs = state.combines.lock().unwrap_or_else(|e| e.into_inner());
         jobs.retain(|_, j| j.started.is_some_and(|t| t.elapsed() < KEPT_FOR));
         if jobs
             .values()
@@ -173,11 +165,14 @@ pub(crate) async fn start(
             impl Drop for CombineGuard {
                 fn drop(&mut self) {
                     if !self.done {
-                        if let Ok(mut jobs) = self.jobs.lock() {
-                            if let Some(job) = jobs.get_mut(&self.id) {
-                                job.state = "failed";
-                                job.error = "The notes could not be combined.".into();
-                            }
+                        if let Some(job) = self
+                            .jobs
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .get_mut(&self.id)
+                        {
+                            job.state = "failed";
+                            job.error = "The notes could not be combined.".into();
                         }
                     }
                 }
@@ -189,26 +184,26 @@ pub(crate) async fn start(
                 done: false,
             };
             let done = combined(&writer, &into, &from, &notes_dir, request_chars);
-            if let Ok(mut jobs) = jobs.lock() {
-                if let Some(job) = jobs.get_mut(&id) {
-                    match done {
-                        Ok(view) => {
-                            job.state = "ready";
-                            job.result = Some(view);
-                        }
-                        Err(why) => {
-                            job.state = "failed";
-                            job.error = why.into();
-                        }
+            if let Some(job) = jobs.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id) {
+                match done {
+                    Ok(view) => {
+                        job.state = "ready";
+                        job.result = Some(view);
+                    }
+                    Err(why) => {
+                        job.state = "failed";
+                        job.error = why.into();
                     }
                 }
             }
             guard.done = true;
         });
     if spawned.is_err() {
-        if let Ok(mut jobs) = state.combines.lock() {
-            jobs.remove(&job.id);
-        }
+        state
+            .combines
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&job.id);
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "The notes could not be combined.",
@@ -221,8 +216,9 @@ pub(crate) async fn job(State(state): State<AppState>, Path(job): Path<String>) 
     let found = state
         .combines
         .lock()
-        .ok()
-        .and_then(|jobs| jobs.get(&job).cloned());
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&job)
+        .cloned();
     match found {
         Some(found) => {
             let mut view = serde_json::json!(found);
@@ -242,10 +238,9 @@ pub(crate) async fn job(State(state): State<AppState>, Path(job): Path<String>) 
 }
 
 pub(crate) async fn forget(State(state): State<AppState>, Path(job): Path<String>) -> Response {
-    if let Ok(mut jobs) = state.combines.lock() {
-        if jobs.get(&job).is_some_and(|j| j.state != "working") {
-            jobs.remove(&job);
-        }
+    let mut jobs = state.combines.lock().unwrap_or_else(|e| e.into_inner());
+    if jobs.get(&job).is_some_and(|j| j.state != "working") {
+        jobs.remove(&job);
     }
     StatusCode::NO_CONTENT.into_response()
 }

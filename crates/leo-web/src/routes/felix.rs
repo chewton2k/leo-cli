@@ -227,9 +227,10 @@ struct BusyGuard {
 
 impl Drop for BusyGuard {
     fn drop(&mut self) {
-        if let Ok(mut busy) = self.set.lock() {
-            busy.remove(&self.id);
-        }
+        self.set
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
     }
 }
 
@@ -237,7 +238,7 @@ fn claim_busy(
     set: &'static std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     id: &str,
 ) -> Option<BusyGuard> {
-    let mut busy = set.lock().ok()?;
+    let mut busy = set.lock().unwrap_or_else(|e| e.into_inner());
     if busy.len() >= MOST_BACKGROUND || !busy.insert(id.to_string()) {
         return None;
     }

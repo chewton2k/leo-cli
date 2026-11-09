@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::reply::error;
 use crate::routes::notes::{directory as valid_directory, save};
 use crate::{store_now, AppState};
 
@@ -233,11 +234,9 @@ pub(crate) type Recordings = Arc<Mutex<Option<RecordJob>>>;
 pub(crate) fn live(recordings: &Recordings) -> bool {
     recordings
         .lock()
-        .is_ok_and(|held| held.as_ref().is_some_and(RecordJob::live))
-}
-
-fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(serde_json::json!({ "error": message }))).into_response()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(RecordJob::live)
 }
 
 async fn writes_done(state: &AppState, id: &str) {
@@ -254,10 +253,7 @@ fn with_job<R>(
     id: &str,
     work: impl FnOnce(&mut RecordJob) -> R,
 ) -> Result<R, (StatusCode, &'static str)> {
-    let mut held = state
-        .recording
-        .lock()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "leo hit a problem."))?;
+    let mut held = state.recording.lock().unwrap_or_else(|e| e.into_inner());
     match held.as_mut() {
         Some(job) if job.view.id == id => Ok(work(job)),
         _ => Err((StatusCode::NOT_FOUND, "That recording is over.")),
@@ -265,10 +261,13 @@ fn with_job<R>(
 }
 
 fn change(recordings: &Recordings, id: &str, work: impl FnOnce(&mut RecordJob)) {
-    if let Ok(mut held) = recordings.lock() {
-        if let Some(job) = held.as_mut().filter(|j| j.view.id == id) {
-            work(job);
-        }
+    if let Some(job) = recordings
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+        .filter(|j| j.view.id == id)
+    {
+        work(job);
     }
 }
 
@@ -301,8 +300,9 @@ pub(crate) async fn overview(State(state): State<AppState>) -> Response {
     let job = state
         .recording
         .lock()
-        .ok()
-        .and_then(|held| held.as_ref().map(|j| j.view.clone()));
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|j| j.view.clone());
     Json(serde_json::json!({
         "available": state.listener.is_some(),
         "local": true,
@@ -345,7 +345,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
     }
     let profile = match body.profile.clone().unwrap_or_default().checked() {
         Ok(profile) => profile,
-        Err(e) => return error(StatusCode::BAD_REQUEST, &e.to_string()),
+        Err(e) => return error(StatusCode::BAD_REQUEST, e.to_string()),
     };
     let title = body
         .title
@@ -353,7 +353,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
         .filter(|t| !t.is_empty());
     let activity = match state.capture_activity.begin() {
         Ok(lease) => lease,
-        Err(e) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Err(e) => return error(StatusCode::CONFLICT, e.to_string()),
     };
     let id = uuid::Uuid::new_v4().simple().to_string();
     let stop = Arc::new(AtomicBool::new(false));
@@ -362,9 +362,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
     let points: Arc<Mutex<Vec<(u64, String)>>> = Default::default();
     let wants: Arc<Mutex<Option<String>>> = Default::default();
     {
-        let Ok(mut held) = state.recording.lock() else {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "leo hit a problem.");
-        };
+        let mut held = state.recording.lock().unwrap_or_else(|e| e.into_inner());
         if held
             .as_ref()
             .is_some_and(|j| j.busy() || j.writing.load(Ordering::Acquire))
@@ -696,7 +694,7 @@ async fn append_point(
         Ok((lease, at))
     }) {
         Ok(Ok(input)) => input,
-        Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Ok(Err(e)) => return error(StatusCode::CONFLICT, e.to_string()),
         Err((code, message)) => return error(code, message),
     };
     let (lease, at) = input;
@@ -729,9 +727,10 @@ fn persist_point(
     warning: Option<String>,
 ) -> Result<RecordView> {
     with_job(state, id, |job| {
-        if let Ok(mut points) = job.points.lock() {
-            points.push((at, text.clone()));
-        }
+        job.points
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((at, text.clone()));
         job.view.points.push((at, text));
         if let Some(warning) = warning {
             job.view.warn(warning);
@@ -763,13 +762,11 @@ pub(crate) async fn wants(
         Writing::take(job)
     }) {
         Ok(Ok(lease)) => lease,
-        Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Ok(Err(e)) => return error(StatusCode::CONFLICT, e.to_string()),
         Err((code, message)) => return error(code, message),
     };
     let result = with_job(&state, &id, |job| {
-        if let Ok(mut wants) = job.wants.lock() {
-            *wants = Some(text.clone());
-        }
+        *job.wants.lock().unwrap_or_else(|e| e.into_inner()) = Some(text.clone());
         job.view.wants = text;
         job.view.clone()
     });
@@ -885,7 +882,7 @@ pub(crate) async fn snapshot(
     });
     let (lease, at) = match input {
         Ok(Ok(input)) => input,
-        Ok(Err(problem)) => return error(StatusCode::CONFLICT, &problem.to_string()),
+        Ok(Err(problem)) => return error(StatusCode::CONFLICT, problem.to_string()),
         Err((status, problem)) => return error(status, problem),
     };
     let saved = tokio::task::spawn_blocking(move || -> Result<RecordView> {
@@ -925,7 +922,7 @@ pub(crate) async fn snapshot(
     .await;
     match saved {
         Ok(Ok(view)) => Json(view).into_response(),
-        Ok(Err(problem)) => error(StatusCode::BAD_REQUEST, &problem.to_string()),
+        Ok(Err(problem)) => error(StatusCode::BAD_REQUEST, problem.to_string()),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "The screenshot could not be kept. Try pasting it again.",
@@ -961,8 +958,9 @@ async fn discard_pending(state: AppState, id: String) -> Response {
     let in_use = state
         .recording
         .lock()
-        .ok()
-        .is_some_and(|held| held.as_ref().is_some_and(|job| job.session_id() == id));
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|job| job.session_id() == id);
     if in_use {
         return error(
             StatusCode::CONFLICT,
@@ -994,7 +992,8 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
     if state
         .discarded_recordings
         .lock()
-        .is_ok_and(|gone| gone.contains(&id))
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&id)
     {
         return Json(serde_json::json!({ "deleted": true })).into_response();
     }
@@ -1006,7 +1005,7 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
         Ok((Writing::take(job)?, job.session_id()))
     }) {
         Ok(Ok(found)) => found,
-        Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Ok(Err(e)) => return error(StatusCode::CONFLICT, e.to_string()),
         Err((StatusCode::NOT_FOUND, _)) => return discard_pending(state, id).await,
         Err((code, message)) => return error(code, message),
     };
@@ -1016,15 +1015,12 @@ pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String
         if let Some(housekeeper) = housekeeper {
             housekeeper.discard_recording(&session)?;
         }
-        let mut held = state
-            .recording
-            .lock()
-            .map_err(|_| anyhow::anyhow!("The recording state could not be updated."))?;
+        let mut held = state.recording.lock().unwrap_or_else(|e| e.into_inner());
         if held.as_ref().is_some_and(|job| job.view.id == id) {
             let mut gone = state
                 .discarded_recordings
                 .lock()
-                .map_err(|_| anyhow::anyhow!("The recording state could not be updated."))?;
+                .unwrap_or_else(|e| e.into_inner());
             gone.push_back(id);
             if gone.len() > DISCARDS_KEPT {
                 gone.pop_front();
