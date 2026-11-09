@@ -5168,6 +5168,8 @@ test('a late missing note response keeps a new draft open', async ({ page }) => 
     await held;
     await route.fulfill({status:404,json:{error:'That note is no longer there.'}});
   });
+  await expect(page.locator('.quick-leo'), 'only Cmd/Ctrl+K opens Quick Leo').toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+k');
   await page.goto('/#/n/late-route-note');
   await page.evaluate(() => { location.hash = '#/new'; });
   const title = `Kept draft ${Date.now().toString(36)}`;
