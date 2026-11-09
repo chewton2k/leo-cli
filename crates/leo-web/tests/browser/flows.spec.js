@@ -746,7 +746,7 @@ test.describe('drag and drop', () => {
     await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
     await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), chat.locator('#chat-input'));
-    await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
+    await expect(chat.locator('.note-card', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
 });
 
@@ -915,7 +915,7 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').press('Enter');
     const predict = chat.locator('.quiz-card').first();
     await expect(predict.locator('.quiz-kind')).toHaveText('Predict · a guess, not marked');
-    await expect(predict.locator('[data-chat="quiz-sure"]')).toHaveCount(0);
+    await expect(predict.locator('.quiz-sure')).toHaveCount(0);
     await predict.locator('.quiz-input').fill('the order');
     await predict.locator('[data-chat="quiz-check"]').click();
     await expect(chat.locator('.quiz-card')).toHaveCount(2);
@@ -924,24 +924,29 @@ test.describe('Felix', () => {
     await expect(predict).not.toHaveClass(/right|wrong/);
 
     const check = chat.locator('.quiz-card').nth(1);
-    const sure = check.locator('[data-chat="quiz-sure"]', { hasText: 'Guessing' });
-    await sure.click();
-    await expect(sure).toHaveAttribute('aria-pressed', 'true');
+    await expect(check.locator('.quiz-sure-pct'), 'nothing is said about confidence until the bar is moved').toHaveText('–');
+    await check.locator('.quiz-sure-range').fill('30');
+    await expect(check.locator('.quiz-sure-pct')).toHaveText('30%');
+    await expect(check.locator('[data-chat="quiz-think"]')).toHaveAttribute('role', 'switch');
     await check.locator('[data-chat="quiz-think"]').click();
     await expect(check.locator('.quiz-thinking')).toBeFocused();
     await page.keyboard.type('fairness maybe');
     await check.locator('.quiz-input').fill('so nobody waits forever');
     await check.locator('[data-chat="quiz-check"]').click();
-    await expect(check.locator('.quiz-own')).toHaveText('Guessing · fairness maybe');
+    await expect(check.locator('.quiz-own')).toHaveText('30% sure · fairness maybe');
     expect(marks[0]).toMatchObject({ confidence: 'guess', thinking: 'fairness maybe' });
     await check.locator('[data-chat="quiz-next"]').click();
     await expect.poll(() => asked.length).toBe(3);
-    expect(asked[2].messages.at(-1).text).toContain('(how sure I felt: guessing) My thinking: fairness maybe');
+    expect(asked[2].messages.at(-1).text).toContain('(how sure I felt: 30%) My thinking: fairness maybe');
 
     const choice = chat.locator('.quiz-card').last();
-    await choice.locator('[data-chat="quiz-sure"]', { hasText: 'Sure' }).click();
+    await choice.locator('.quiz-sure-range').fill('90');
+    await choice.locator('[data-chat="quiz-think"]').click();
+    await page.keyboard.type('not sure I want this sent');
+    await choice.locator('[data-chat="quiz-think"]').click();
+    await expect(choice.locator('.quiz-thinking'), 'switching thinking off hides it').toHaveCount(0);
     await choice.locator('.quiz-option', { hasText: 'the front' }).click();
-    await expect(choice.locator('.quiz-own')).toHaveText('Sure');
+    await expect(choice.locator('.quiz-own'), 'thinking switched off is not sent').toHaveText('90% sure');
   });
 
   test('a growing reply keeps its finished words, and a citation lights its passage in the open note', async ({ page }) => {
@@ -1040,7 +1045,7 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');
-    await expect(chat.locator('.chat-ref')).toHaveCount(1);
+    await expect(chat.locator('#chat-refs .note-card')).toHaveCount(1);
     await expect(chat.locator('#chat-input')).toHaveValue('compare ');
     await expect(chat.locator('.chat-pick')).toBeHidden();
 
@@ -1048,18 +1053,18 @@ test.describe('Felix', () => {
     await chat.locator('[data-chat="attach-note"]').click();
     await chat.locator('#chat-pick-search').fill(`Binary heaps ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Binary heaps ${tag}` }).click();
-    await expect(chat.locator('.chat-ref')).toHaveCount(2);
+    await expect(chat.locator('#chat-refs .note-card')).toHaveCount(2);
 
     await chat.locator('#chat-input').fill('compare these two');
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo').last()).toContainText('Both use a heap.');
     expect(asked[0].refs).toEqual([dijkstra.id, heaps.id]);
-    await expect(chat.locator('.msg.user .msg-refs .cite')).toHaveCount(2);
-    await expect(chat.locator('#chat-refs .chat-ref'), 'sent notes leave the box').toHaveCount(0);
+    await expect(chat.locator('.msg.user .note-card'), 'sent notes show as cards in the message').toHaveCount(2);
+    await expect(chat.locator('#chat-refs .note-card'), 'sent notes leave the box').toHaveCount(0);
 
     await page.reload();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat #chat-refs .chat-ref')).toHaveCount(0);
+    await expect(page.locator('#chat #chat-refs .note-card')).toHaveCount(0);
     await page.locator('#chat-input').fill('and now?');
     await page.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(2);
@@ -1694,7 +1699,7 @@ test.describe('Felix', () => {
     await expect(search).toBeFocused();
     await expect(chat.locator('.chat-pick-row').first()).toContainText(`Dijkstra picker ${tag}`);
     await chat.locator('.chat-pick-row').first().click();
-    await expect(chat.locator('#chat-refs .chat-ref')).toContainText(`Dijkstra picker ${tag}`);
+    await expect(chat.locator('#chat-refs .note-card')).toContainText(`Dijkstra picker ${tag}`);
   });
 
   test('says plainly when no AI is set up', async ({ page }) => {

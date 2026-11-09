@@ -30,6 +30,8 @@
     { text: 'Summarize this meeting and list the action items', needs: 'note', ask: 'Which meeting notes should I summarize?' },
   ];
   const SURE = { sure: 'Sure', think: 'Think so', guess: 'Guessing' };
+  const sureOf = (percent) => (percent >= 75 ? 'sure' : percent >= 40 ? 'think' : 'guess');
+  const sureText = (quiz) => (Number.isFinite(quiz.surePct) ? `${quiz.surePct}% sure` : SURE[quiz.sure] || '');
   const MOST_THINKING = 2000;
 
   function containChatPickWheel(list, event) {
@@ -183,7 +185,8 @@
   // stay: the user asked about this answer (Ask Felix why), so Felix explains
   // and stops; the card keeps its Next question button for when they are ready.
   function aside(quiz) {
-    const how = SURE[quiz.sure] ? ` (how sure I felt: ${SURE[quiz.sure].toLowerCase()})` : '';
+    const felt = Number.isFinite(quiz.surePct) ? `${quiz.surePct}%` : SURE[quiz.sure] ? SURE[quiz.sure].toLowerCase() : '';
+    const how = felt ? ` (how sure I felt: ${felt})` : '';
     const why = quiz.thinking ? ` My thinking: ${clipped(quiz.thinking, MOST_THINKING)}` : '';
     return how + why;
   }
@@ -310,7 +313,22 @@
     image: glyph('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
     text: glyph(`${PAGE}<path d="M9 12h6M9 16h6"/>`),
     other: glyph(PAGE),
+    note: glyph('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
   };
+
+  function noteExcerpt(title, body) {
+    const lines = String(body || '').replace(/```[\s\S]*?```/g, '').split('\n')
+      .map((line) => line.replace(/^\s*(#{1,6}\s+|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+|>\s?)/, '').replace(/\[\[|\]\]|[*_`~]/g, '').trim())
+      .filter(Boolean);
+    return [title || 'Untitled', ...lines.slice(0, 8)].join('\n').slice(0, 320);
+  }
+
+  function noteCard(r, escape, { excerpt = '', remove = false } = {}) {
+    const title = r.title || 'Untitled';
+    const peek = excerpt ? `<span class="file-page">${escape(excerpt)}</span>` : `<span class="file-glyph">${FILE_GLYPHS.note}</span>`;
+    const x = remove ? `<button type="button" class="file-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(title)}">×</button>` : '';
+    return `<span class="file-card note-card tone-note" title="${escape(title)}"><button type="button" class="file-open" data-chat="open" data-id="${escape(r.id)}" aria-label="Open ${escape(title)}"><span class="file-peek">${peek}</span><span class="file-foot"><span class="file-badge">${FILE_GLYPHS.note}Note</span><span class="file-name">${escape(title)}</span></span></button>${x}</span>`;
+  }
 
   function fileKind(name) {
     const found = String(name || '').match(/\.([a-z0-9]{1,8})$/i);
@@ -1555,15 +1573,29 @@
     document.addEventListener('pointerdown', spare, true);
     document.addEventListener('focusin', spare, true);
 
+    const excerpts = new Map();
+    function excerptOf(r) {
+      if (excerpts.has(r.id)) return excerpts.get(r.id);
+      excerpts.set(r.id, '');
+      fetch(`/api/notes/${encodeURIComponent(r.id)}`, { credentials: 'same-origin' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((note) => {
+          if (!note || typeof note.body !== 'string') return;
+          excerpts.set(r.id, noteExcerpt(note.title || r.title, note.body));
+          drawRefs();
+          if (state.messages.some((m) => m.role === 'user' && Array.isArray(m.refs) && m.refs.some((x) => x.id === r.id))) draw(false);
+        })
+        .catch(() => {});
+      return '';
+    }
+
     function drawRefs() {
       const p = state.selection;
       const passage = p
         ? `<span class="chat-ref chat-passage"><button class="chat-ref-open" data-chat="open" data-id="${escape(p.note)}" data-line="${p.from}-${p.to}" title="${escape(clipped(p.text, 400))}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7h4v4c0 2.5-1.5 4-4 5M14 7h4v4c0 2.5-1.5 4-4 5"/></svg>${escape(p.title || 'Note')}<span class="chat-passage-text">${escape(clipped(p.text.replace(/\s+/g, ' '), 60))}</span></button><button class="chat-ref-x" data-chat="unselect" aria-label="Remove the selected passage">×</button></span>`
         : '';
-      const notes = passage + state.refs
-        .map((r) => `<span class="chat-ref"><button class="chat-ref-open" data-chat="open" data-id="${escape(r.id)}" title="${escape(r.title)}">${escape(r.title)}</button><button class="chat-ref-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(r.title)}">×</button></span>`)
-        .join('');
-      const files = state.files
+      const notes = passage;
+      const files = state.refs.map((r) => noteCard(r, escape, { excerpt: excerptOf(r), remove: true })).join('') + state.files
         .map((f) => (f.status === 'reading' ? fileCard(f, escape, { reading: true }) : fileCard(f, escape, { remove: f.id })))
         .join('');
       $('#chat-refs').innerHTML = (notes ? `<div class="chat-notes">${notes}</div>` : '') + (files ? `<div class="file-cards">${files}</div>` : '');
@@ -1871,22 +1903,21 @@
     function bubble(m, i) {
       if (m.role === 'user' && m.next) return '<div class="chat-switch msg-next" role="separator">Next question</div>';
       if (m.role === 'user') {
-        const notes = (m.refs || []).map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`);
+        const notes = (m.refs || []).filter((r) => r && r.id).map((r) => noteCard(r, escape, { excerpt: excerptOf(r) }));
         const cards = Array.isArray(m.cards)
           ? m.cards.filter((c) => c && typeof c.name === 'string')
           : [...(m.docs || []).map((name) => ({ name })), ...(m.pics || []).filter((p) => p && typeof p.name === 'string')];
-        const refs = notes.length ? `<div class="msg-refs">${notes.join('')}</div>` : '';
         const p = m.selection && typeof m.selection.text === 'string' ? m.selection : null;
         const quote = p
           ? `<div class="msg-passage"><button class="msg-passage-from" data-chat="open" data-id="${escape(p.note || '')}" data-line="${Number(p.from) || 1}-${Number(p.to) || Number(p.from) || 1}">${escape(p.title || 'Note')}${p.from ? ` · ${p.to > p.from ? `lines ${p.from}–${p.to}` : `line ${p.from}`}` : ''}</button><div class="msg-passage-text">${escape(clipped(p.text, 280))}</div></div>`
           : '';
-        const files = cards.length ? `<div class="file-cards sent">${cards.filter(Boolean).map((c) => fileCard(c, escape, { reading: c.reading === true })).join('')}</div>` : '';
+        const files = notes.length || cards.length ? `<div class="file-cards sent">${notes.join('')}${cards.filter(Boolean).map((c) => fileCard(c, escape, { reading: c.reading === true })).join('')}</div>` : '';
         const quiz = m.quiz && typeof m.quiz === 'object'
           ? `<div class="msg-note">${m.quiz.correct === true ? 'Practice answer · correct' : m.quiz.correct === false ? 'Practice answer · not quite' : 'Practice answer'}</div>`
           : '';
         const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
         const edit = i === lastPair() ? `<div class="msg-acts"><button class="msg-act" data-chat="edit"${state.busy ? ' disabled' : ''}>Edit</button></div>` : '';
-        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}${edit}</div>`;
+        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}${edit}</div>`;
       }
       const spoken = grade(m.text).text;
       const shown = m.pending ? held(spoken) : spoken;
@@ -2117,8 +2148,9 @@
       const open = !done && !q.predict;
       const writing = thinkingOpen.has(q);
       const thinking = open && writing ? `<textarea class="quiz-thinking" ${where} rows="2" maxlength="${MOST_THINKING}" placeholder="What are you thinking? Half-formed is fine" aria-label="Your thinking"${off}>${escape(state.drafts[`think:${i}:${k}`] || '')}</textarea>` : '';
-      const sure = open ? `<div class="quiz-sure" role="group" aria-label="How sure are you?"><span class="quiz-sure-label" aria-hidden="true">How sure?</span>${Object.entries(SURE).map(([id, label]) => `<button type="button" class="quiz-sure-pick${q.sure === id ? ' on' : ''}" data-chat="quiz-sure" ${where} data-sure="${id}" aria-pressed="${q.sure === id}"${off}>${label}</button>`).join('')}${writing ? '' : `<button type="button" class="quiz-hint-ask" data-chat="quiz-think" ${where}${off}>Add your thinking</button>`}</div>${thinking}` : '';
-      const own = done && (SURE[q.sure] || q.thinking) ? `<div class="quiz-own">${[SURE[q.sure], q.thinking].filter(Boolean).map(escape).join(' · ')}</div>` : '';
+      const pct = Number.isFinite(q.surePct) ? q.surePct : null;
+      const sure = open ? `<div class="quiz-sure"><label class="quiz-sure-meter${pct === null ? ' unset' : ''}" style="--pct: ${pct ?? 50}%"><span class="quiz-sure-label">How sure?</span><input type="range" class="quiz-sure-range" ${where} min="0" max="100" step="5" value="${pct ?? 50}" aria-label="How sure are you"${pct === null ? ' aria-valuetext="Not set"' : ''}${off}><output class="quiz-sure-pct">${pct === null ? '–' : `${pct}%`}</output></label><label class="quiz-think-toggle"><input type="checkbox" class="switch" role="switch" data-chat="quiz-think" ${where}${writing ? ' checked' : ''}${off}><span>Add your thinking</span></label></div>${thinking}` : '';
+      const own = done && (sureText(q) || q.thinking) ? `<div class="quiz-own">${[sureText(q), q.thinking].filter(Boolean).map(escape).join(' · ')}</div>` : '';
       const hints = hintsOf(q);
       const hinted = hints
         .map((hint, n) => `<div class="quiz-hint prose">${hints.length > 1 ? `<span class="quiz-hint-n">Hint ${n + 1}</span>` : ''}${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`)
@@ -2162,7 +2194,7 @@
       const q = m && m.quizzes && m.quizzes[k];
       const text = String(given || '').trim();
       if (!q || typeof q.given === 'string' || state.busy || m.pending || !text || checking.has(q)) return;
-      const thinking = String(state.drafts[`think:${i}:${k}`] || '').trim().slice(0, MOST_THINKING);
+      const thinking = thinkingOpen.has(q) ? String(state.drafts[`think:${i}:${k}`] || '').trim().slice(0, MOST_THINKING) : '';
       let correct = checkQuiz(q, text);
       if (correct === null && q.kind === 'fill_blank' && accepted(q).some((a) => plainAnswer(a) === plainAnswer(text))) correct = true;
       if (correct === null && !q.predict) {
@@ -2996,17 +3028,13 @@
         if (q) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), q.options[Number(el.dataset.o)]);
       } else if (what === 'quiz-next' || what === 'quiz-why') {
         continueQuiz(Number(el.dataset.i), Number(el.dataset.k), what === 'quiz-why');
-      } else if (what === 'quiz-sure') {
-        const q = state.messages[Number(el.dataset.i)]?.quizzes?.[Number(el.dataset.k)];
-        if (!q) return;
-        q.sure = q.sure === el.dataset.sure ? null : el.dataset.sure;
-        draw(false);
       } else if (what === 'quiz-think') {
         const q = state.messages[Number(el.dataset.i)]?.quizzes?.[Number(el.dataset.k)];
         if (!q) return;
-        thinkingOpen.add(q);
+        if (thinkingOpen.has(q)) thinkingOpen.delete(q);
+        else thinkingOpen.add(q);
         draw(false);
-        body.querySelector(`.quiz-thinking[data-i="${el.dataset.i}"][data-k="${el.dataset.k}"]`)?.focus();
+        if (thinkingOpen.has(q)) body.querySelector(`.quiz-thinking[data-i="${el.dataset.i}"][data-k="${el.dataset.k}"]`)?.focus();
       } else if (what === 'quiz-hint') {
         askHint(Number(el.dataset.i), Number(el.dataset.k));
       } else if (what === 'quiz-check') {
@@ -3074,6 +3102,17 @@
     body.addEventListener('input', (e) => {
       if (e.target.classList.contains('quiz-input')) state.drafts[`${e.target.dataset.i}:${e.target.dataset.k}`] = e.target.value;
       if (e.target.classList.contains('quiz-thinking')) state.drafts[`think:${e.target.dataset.i}:${e.target.dataset.k}`] = e.target.value;
+      if (e.target.classList.contains('quiz-sure-range')) {
+        const q = state.messages[Number(e.target.dataset.i)]?.quizzes?.[Number(e.target.dataset.k)];
+        if (!q) return;
+        q.surePct = Number(e.target.value);
+        q.sure = sureOf(q.surePct);
+        const meter = e.target.closest('.quiz-sure-meter');
+        meter.classList.remove('unset');
+        meter.style.setProperty('--pct', `${q.surePct}%`);
+        meter.querySelector('.quiz-sure-pct').textContent = `${q.surePct}%`;
+        e.target.removeAttribute('aria-valuetext');
+      }
     });
     body.addEventListener('keydown', (e) => {
       if (!e.target.classList.contains('quiz-input') || e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
@@ -3306,5 +3345,5 @@
     };
   }
 
-  root.leoChat = { noAi, retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { noAi, retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay, sureOf, noteCard, noteExcerpt };
 })(typeof window !== 'undefined' ? window : globalThis);

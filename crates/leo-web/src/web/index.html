@@ -550,6 +550,9 @@ body.on-note main { max-width: none; margin-inline: 0; }
 .file-card.tone-slides { --tone: var(--tone-slides); }
 .file-card.tone-sheet { --tone: var(--tone-sheet); }
 .file-card.tone-image { --tone: var(--tone-image); }
+.file-card.tone-note { --tone: var(--accent); }
+.file-open { display: flex; flex-direction: inherit; align-items: inherit; flex: 1; min-width: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: inherit; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.file-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .file-peek { position: relative; flex: 1; min-height: 0; overflow: hidden; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 8%, var(--surface-2)); }
 .file-peek img { width: 100%; height: 100%; object-fit: cover; }
 .file-page {
@@ -1568,7 +1571,6 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-pick-row span { flex: none; max-width: 45%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--muted); }
 .chat-pick-row.on, .chat-pick-row:hover { background: var(--tint); }
 .chat-pick-none { padding: 7px 10px; font-size: 13.5px; color: var(--muted); }
-.msg-refs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
 .link-btn { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 html:has(> body.on-boards) { scrollbar-gutter: auto; }
 body.on-boards main { max-width: none; padding: 0 20px calc(var(--bottom) + 20px); }
@@ -2784,13 +2786,13 @@ body.files-over main::after {
 @keyframes tab-wipe { from { background-size: 0 100%; } }
 .overlap-gone { position: fixed; z-index: 5; margin: 0; overflow: hidden; pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) {
-  .btn, .icon-btn, .fab, .float-act, .rec-round, .picker-button, .pick-chip, button.chip, .chat-send, .chat-attach, .chat-chip, .chat-access, .starter, .quiz-sure-pick, .side-add, .side-row, .kanban-tab, .kanban-add-card, .tasks-pill, .msg-act, .choice-pick, .margin-mode { transition: scale var(--t-press) var(--ease-arrive); }
+  .btn, .icon-btn, .fab, .float-act, .rec-round, .picker-button, .pick-chip, button.chip, .chat-send, .chat-attach, .chat-chip, .chat-access, .starter, .side-add, .side-row, .kanban-tab, .kanban-add-card, .tasks-pill, .msg-act, .choice-pick, .margin-mode { transition: scale var(--t-press) var(--ease-arrive); }
   .select-menu-button { transition: border-color var(--t-press) ease, box-shadow var(--t-press) ease, scale var(--t-press) var(--ease-arrive); }
   .ask-option, .quiz-option { transition: border-color var(--t-press), background var(--t-press), scale var(--t-press) var(--ease-arrive); }
   .rec-go { transition: transform var(--t-press), scale var(--t-press) var(--ease-arrive); }
   .segment { transition: color var(--t-drawer) var(--ease-move), scale var(--t-press) var(--ease-arrive); }
   .switch { transition: background-color var(--t-drawer) var(--ease-move), scale var(--t-press) var(--ease-arrive); }
-  :is(.btn, .icon-btn, .fab, .float-act, .rec-round, .rec-go, .picker-button, .pick-chip, button.chip, .chat-send, .chat-attach, .chat-chip, .chat-access, .starter, .quiz-sure-pick, .side-add, .side-row, .kanban-tab:not(.on), .kanban-add-card, .tasks-pill, .msg-act, .see-larger, .fa-lg, .choice-pick, .margin-mode, .select-menu-button, .ask-option, .quiz-option, .segment, .switch):active:not(:disabled, [aria-disabled="true"], [draggable="true"], .actions *) { scale: .97; }
+  :is(.btn, .icon-btn, .fab, .float-act, .rec-round, .rec-go, .picker-button, .pick-chip, button.chip, .chat-send, .chat-attach, .chat-chip, .chat-access, .starter, .side-add, .side-row, .kanban-tab:not(.on), .kanban-add-card, .tasks-pill, .msg-act, .see-larger, .fa-lg, .choice-pick, .margin-mode, .select-menu-button, .ask-option, .quiz-option, .segment, .switch):active:not(:disabled, [aria-disabled="true"], [draggable="true"], .actions *) { scale: .97; }
   .rec-go:active:not(:disabled) { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -2849,15 +2851,29 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 .cite .cite-at { margin-left: 5px; font-weight: 500; opacity: .75; }
 .passage-list { max-height: min(56vh, 520px); }
 .passage-text { flex: 1; min-width: 0; font-size: var(--fs-md); line-height: 1.6; padding: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.quiz-sure { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.quiz-sure { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
 .keep-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
 .keep-about { margin: 0; font-size: 12.5px; font-weight: 400; white-space: normal; }
 .keep-note { margin: 10px 2px 0; }
-.quiz-sure-label { font-size: var(--fs-sm); color: var(--muted); margin-right: 2px; }
-.quiz-sure-pick { min-height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-pill); background: none; font: inherit; font-size: var(--fs-sm); color: var(--muted); cursor: pointer; }
-.quiz-sure-pick:hover:not(:disabled) { color: var(--text); }
-.quiz-sure-pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
-.quiz-sure .quiz-hint-ask { margin: 0 0 0 4px; }
+.quiz-sure-label { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
+.quiz-sure-meter { flex: 1 1 220px; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.quiz-sure-range { flex: 1; min-width: 80px; height: 22px; margin: 0; background: none; appearance: none; -webkit-appearance: none; cursor: pointer; }
+.quiz-sure-range::-webkit-slider-runnable-track { height: 6px; border-radius: var(--r-pill); background: linear-gradient(to right, var(--accent) var(--pct), var(--line) var(--pct)); }
+.quiz-sure-range::-moz-range-track { height: 6px; border-radius: var(--r-pill); background: linear-gradient(to right, var(--accent) var(--pct), var(--line) var(--pct)); }
+.quiz-sure-range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm), 0 0 0 .5px rgba(0, 0, 0, .12); }
+.quiz-sure-range::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm), 0 0 0 .5px rgba(0, 0, 0, .12); }
+.quiz-sure-range:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
+.quiz-sure-range:disabled { opacity: .5; cursor: default; }
+.quiz-sure-meter.unset .quiz-sure-range::-webkit-slider-runnable-track { background: var(--line); }
+.quiz-sure-meter.unset .quiz-sure-range::-moz-range-track { background: var(--line); }
+.quiz-sure-meter.unset .quiz-sure-range::-webkit-slider-thumb { opacity: .7; }
+.quiz-sure-pct { min-width: 3.2em; text-align: right; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text); }
+.quiz-sure-meter.unset .quiz-sure-pct { color: var(--faint); }
+.quiz-think-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); cursor: pointer; white-space: nowrap; }
+.quiz-think-toggle .switch { width: 34px; height: 20px; margin: 0; }
+.quiz-think-toggle .switch::before { width: 16px; height: 16px; }
+.quiz-think-toggle .switch:checked::before { transform: translateX(14px); }
+@media (forced-colors: active) { .quiz-sure-range::-webkit-slider-runnable-track { background: CanvasText; } }
 .quiz-thinking { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: var(--fs-base); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 10px; }
 .quiz-thinking:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .quiz-own { font-size: var(--fs-sm); color: var(--muted); white-space: pre-wrap; }

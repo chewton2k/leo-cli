@@ -846,6 +846,8 @@ test('how sure the user felt and their thinking reach Felix on the answer line',
   assert.match(C.heldSay(mc, false).split('\n').slice(0, 3).join('\n'), /first second/, 'a held result keeps them when it is folded into the next message');
   assert.match(C.quizSay({ ...mc, sure: null, thinking: undefined }, 'b', false), /My answer: b\n/);
   assert.deepEqual(Object.keys(C.SURE), ['sure', 'think', 'guess']);
+  assert.match(C.quizSay({ ...mc, surePct: 35, thinking: undefined }, 'b', false), /My answer: b \(how sure I felt: 35%\)\n/);
+  assert.deepEqual([0, 39, 40, 74, 75, 100].map(C.sureOf), ['guess', 'guess', 'think', 'think', 'sure', 'sure']);
 });
 
 test('a streamed list marker waits until it has text', () => {
