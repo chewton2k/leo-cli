@@ -7,10 +7,13 @@ public guide for contributors is CONTRIBUTING.md.
 
 ```sh
 cargo fmt --all
-cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p <the crate you changed>     # or one test; never the whole workspace here
 cargo fmt --all --check
 ```
+
+Run only targeted checks locally (one crate, one test, one node test file, one
+Playwright `-g` test); CI runs the full suite on every push.
 
 CI (`.github/workflows/ci.yml`) runs on main pushes and pull requests without
 duplicating branch pushes. `scripts/ci-base.cjs` selects the newest successful
@@ -121,18 +124,14 @@ it reaches users as soon as it is pushed, not when a release is made.
 ## The website's browser tests
 
 ```sh
-cargo test --no-run                       # rebuilds target/debug/leo, which the tests serve
+cargo test -p leo-host --no-run           # builds target/debug/leo-test-server, which the tests serve
 cd crates/leo-web/tests/browser
-./node_modules/.bin/playwright test       # flows (CI runs these), Chromium and WebKit
-pnpm visual                               # screenshots compared with the saved ones (local only)
-pnpm visual:update                        # after a deliberate look change; check the new PNGs
+./node_modules/.bin/playwright test -g "<one test>"   # one test locally; CI runs them all, Chromium and WebKit
 ```
 
 The flows include a contrast check (`readability`): every text on every page,
-light and dark, must be at least 3:1 against what is behind it. Screenshot
-baselines are saved per platform (`-darwin`), so they are compared on this Mac
-only; CI runs the flows. The visual config starts its own leo on port 31832
-with a fresh home.
+light and dark, must be at least 3:1 against what is behind it. CI fails on
+flaky tests (`failOnFlakyTests`). There is no screenshot suite.
 
 ## Tests that only run by hand
 
