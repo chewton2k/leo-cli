@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const kit = require('../src/web/margin.js');
+require('../src/web/chat.js');
+const FAILED = "leo can't write yet: Felix could not read your note just now.";
 
 function harness() {
   let settle;
@@ -17,7 +19,7 @@ function harness() {
     setTimeout: (fn, delay) => { const id = ++next; fn.delay = delay; timers.set(id, fn); return id; },
     clearTimeout: (id) => timers.delete(id), cancelAnimationFrame() {},
     $: () => null, svg: (paths) => paths, ICON: { book: '' }, stillMotion: () => false, fail: (e) => { throw e; }, ON_MAC: true, MOTION_MS: 180, POP_FROM: .95,
-    esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '', settingsSwitch: () => '',
+    noAi: globalThis.leoChat.noAi, esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '', settingsSwitch: () => '',
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/margin-notes.js'), 'utf8'), context);
@@ -56,7 +58,7 @@ test('read completion distinguishes silence from failure without losing failed b
     await pending;
     assert.equal(h.state.reading, false);
     assert.equal(h.state.baseline.length, failed ? 0 : 1);
-    assert.equal(h.state.status, failed ? 'Could not read this change. Check Writing AI and try again.' : '');
+    assert.equal(h.state.status, failed ? FAILED : '');
   }
 });
 
@@ -80,7 +82,7 @@ test('mode updates retain confirmed state after failure and ignore departed note
 });
 
 test('refused reads keep pending changes and show a safe pause reason', async () => {
-  for (const [why, status] of [['daily', 'Paused for today: daily limit reached'], ['felix', 'Paused while Felix answers'], ['unknown', 'Could not read this change. Check Writing AI and try again.']]) {
+  for (const [why, status] of [['daily', 'Paused for today: daily limit reached'], ['felix', 'Paused while Felix answers'], ['unknown', FAILED]]) {
     const h = harness();
     const pending = h.context.marginRead(h.state.s);
     await new Promise(setImmediate);
@@ -224,9 +226,9 @@ test('a new edit clears a brief status but not a failure', () => {
 test('a new edit leaves a failure status alone', () => {
   const h = harness();
   h.state.loaded = true;
-  h.context.marginSetStatus('Could not read this change. Check Writing AI and try again.');
+  h.context.marginSetStatus(FAILED);
   h.context.marginEdited(h.state.s);
-  assert.equal(h.state.status, 'Could not read this change. Check Writing AI and try again.');
+  assert.equal(h.state.status, FAILED);
 });
 
 test('When you ask says how to ask, with the real shortcut and no promise of automatic reading', () => {
@@ -508,4 +510,39 @@ test('note instructions show the saved text, save once on Enter and say so', asy
   await new Promise(setImmediate);
   assert.equal(box.hidden, true);
   assert.equal(h.state.status, 'Instructions removed.');
+});
+
+test('a writer failure shows the server sentence and a Set up writing AI link in the status line', async () => {
+  const sentence = "leo can't write yet: no writing AI is ready (Ollama isn't running).";
+  const h = harness();
+  const pending = h.context.marginRead(h.state.s);
+  await new Promise(setImmediate);
+  h.settle().reject(Object.assign(new Error(sentence), { status: 503, data: { why: 'no-ai' } }));
+  await pending;
+  assert.equal(h.state.status, sentence);
+  const status = { textContent: '', html: '', insertAdjacentHTML(where, html) { this.html = html; } };
+  h.context.$ = (sel) => (sel === '#margin-status' ? status : null);
+  h.context.marginSetStatus(sentence);
+  assert.equal(status.textContent, sentence);
+  assert.match(status.html, /<a href="#\/settings\/writing">Set up writing AI<\/a>/);
+  status.html = '';
+  h.context.marginSetStatus('Paused after a recent comment');
+  assert.equal(status.html, '');
+});
+
+test('read through shows the server sentence for a missing writing AI and passes other errors through unchanged', async () => {
+  const sentence = "leo can't write yet: no writing AI is chosen.";
+  for (const [message, say] of [[sentence, sentence], ['private provider detail', FAILED]]) {
+    const h = harness();
+    h.context.marginThroughControl = () => {};
+    h.context.marginSetStatus = (text) => { h.state.status = text; };
+    const run = { started: Date.now(), stop: false, added: [] };
+    const part = { blocks: ['A changed paragraph long enough to read.'], from: 0, to: 1 };
+    h.state.s.doc.glow = () => {};
+    h.state.s.doc.source = () => 'A changed paragraph long enough to read.';
+    const pending = h.context.marginThroughPart(h.state.s, run, part, 'Reading through…');
+    await new Promise(setImmediate);
+    h.settle().reject(Object.assign(new Error(message), { status: 503, data: { why: 'no-ai' } }));
+    assert.equal((await pending).say, say);
+  }
 });

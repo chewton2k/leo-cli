@@ -27,6 +27,7 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(!html.includes('No writing AI is set up'));
   const unready = context.dictationCards({ settings: { writing: 'quick' }, writing_ready: false, recent: [], shortcut: {} });
   assert.ok(unready.includes('No writing AI is set up'));
+  assert.ok(unready.includes('>Set up writing AI</a>'));
   const chosen = context.dictationCards({ settings: { writing: 'selected' }, recent: [], shortcut: {} });
   assert.ok(chosen.includes('data-dictation="writing" data-on="selected" checked'));
   const fields = (checked, on) => [{ dataset: { dictation: 'writing', on }, type: 'checkbox', checked }];

@@ -915,6 +915,41 @@ test('Copy, Retry and Edit are disabled while Felix is working', () => {
   assert.doesNotMatch(pending.join(''), /data-chat="retry"|data-chat="edit"/);
 });
 
+test('a writer failure shows the sentence in Felix\u2019s voice with a Set up writing AI button, and other errors keep their look', () => {
+  const sentence = "leo can't write yet: no writing AI is ready (Ollama isn't running).";
+  const [, said, , other] = answers([...pair(), { role: 'user', text: 'Hi' }, { role: 'assistant', text: '', error: 'Felix finished without an answer. Try again.' }]).html();
+  assert.doesNotMatch(said, /Set up writing AI/);
+  assert.match(other, /<div class="msg-error">Felix finished without an answer\. Try again\.<\/div>/);
+  assert.doesNotMatch(other, /Set up writing AI/);
+  const [, failed] = answers([{ role: 'user', text: 'Quiz me' }, { role: 'assistant', text: '', error: sentence }]).html();
+  assert.match(failed, /<div class="prose"><p>leo can&#39;t write yet|<div class="prose"><p>leo can't write yet/);
+  assert.match(failed, /<a class="btn primary sm" href="#\/settings\/writing">Set up writing AI<\/a>/);
+  assert.doesNotMatch(failed, /msg-error/);
+  assert.equal(C.noAi(sentence), true);
+  assert.equal(C.noAi('Stopped.'), false);
+  assert.equal(C.noAi(undefined), false);
+});
+
+test('a failed upload shows the writer sentence with the setup link, and other errors stay as they were', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const sentence = "leo can't write yet: no writing AI is chosen.";
+  for (const [error, link] of [[sentence, true], ['The file is empty.', false]]) {
+    const open = { innerHTML: '' };
+    const context = {
+      api: async () => ({ state: 'failed', error }), enc: encodeURIComponent, esc, noAi: C.noAi, felix: { felix: () => '' },
+      $: (sel) => (sel === '.upload-working' ? open : null), setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+    };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/uploads.js'), 'utf8'), context);
+    context.watchUpload('job', '');
+    await new Promise(setImmediate);
+    assert.ok(open.innerHTML.includes(`<p class="upload-error">${esc(error)}</p>`));
+    assert.equal(open.innerHTML.includes('<a class="btn plain" href="#/settings/writing">Set up writing AI</a>'), link);
+  }
+});
+
 test('Copy writes the answer as Markdown without citation marks or the grading marker', async () => {
   let written = null;
   const box = answers(pair(), { clipboard: { writeText: async (t) => { written = t; } } });

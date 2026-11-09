@@ -235,7 +235,7 @@ function watchUpload(id, dir, into = null) {
     const open = $('.upload-working');
     if (job.state === 'failed') {
       if (open) {
-        open.innerHTML = `${felix.felix(72, 'droop')}<h3>${into ? 'The file could not be added' : 'The note could not be made'}</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="upload"${into ? ' data-add="yes"' : ''}>Try again</button></div>`;
+        open.innerHTML = `${felix.felix(72, 'droop')}<h3>${into ? 'The file could not be added' : 'The note could not be made'}</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button>${noAi(job.error) ? '<a class="btn plain" href="#/settings/writing">Set up writing AI</a>' : ''}<button class="btn primary" data-action="upload"${into ? ' data-add="yes"' : ''}>Try again</button></div>`;
       } else {
         toast(job.error || 'The upload failed.', { bad: true });
       }

@@ -2,6 +2,7 @@ const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const md = window.leoMarkdown;
 const leoDoc = window.leoDoc;
 const felix = window.leoChat;
+const noAi = felix.noAi;
 const esc = md.escape;
 const enc = encodeURIComponent;
 const $ = (selector, root = document) => root.querySelector(selector);

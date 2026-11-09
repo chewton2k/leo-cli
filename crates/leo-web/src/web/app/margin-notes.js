@@ -174,7 +174,10 @@ function marginSetStatus(text, brief = false) {
   marginPage.statusToken = token;
   marginPage.brief = Boolean(brief && text);
   const status = $('#margin-status');
-  if (status) status.textContent = text;
+  if (status) {
+    status.textContent = text;
+    if (noAi(text)) status.insertAdjacentHTML('beforeend', ' <a href="#/settings/writing">Set up writing AI</a>');
+  }
   if (!marginPage.brief) return;
   marginPage.statusTimer = setTimeout(() => {
     if (marginPage.s === s && marginPage.statusToken === token && marginPage.status === text) marginSetStatus('');
@@ -1203,7 +1206,7 @@ async function marginRead(s) {
     const along = marginPage.mode === 'along';
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
     if (!along) marginSetStatus('');
-    else if (got?.failed) marginSetStatus('Could not read this change. Check Writing AI and try again.');
+    else if (got?.failed) marginSetStatus(READ_FAILED);
     else marginSetStatus('');
     if (!got?.failed) marginReadingDone(!got?.note);
     if (got?.note) {
@@ -1220,7 +1223,7 @@ async function marginRead(s) {
       const stale = e.status === 409 && !e.data?.why;
       if (stale) marginPage.nextRead = 0;
       if (marginPage.mode !== 'along') marginSetStatus('');
-      else marginSetStatus(paused[e.data?.why] || (stale ? 'This note changed while Felix was reading. He will try again after your next edit.' : 'Could not read this change. Check Writing AI and try again.'));
+      else marginSetStatus(paused[e.data?.why] || (stale ? 'This note changed while Felix was reading. He will try again after your next edit.' : noAi(e.message) ? e.message : READ_FAILED));
     }
   } finally {
     if (s === marginPage.s && marginPage.reading === reading) {
@@ -1241,10 +1244,9 @@ const THROUGH_MOST = 12;
 const THROUGH_STOP_GRACE_MS = 400;
 const THROUGH_STAGGER_MS = 80;
 const THROUGH_STAGGER_MAX_MS = 640;
-const THROUGH_FAILED = 'Could not read through this note. Check your writing AI in Settings.';
+const READ_FAILED = "leo can't write yet: Felix could not read your note just now.";
 const THROUGH_SAYS = {
   full: 'This note has many open margin notes. Resolve some, then read through again.',
-  'no-ai': 'Choose a writing AI in Settings, then read through again.',
   felix: 'Felix is answering in chat. Try again when he’s done.',
   busy: 'Felix is already reading. Try again in a moment.',
   changed: 'This note changed while Felix was reading. Read through again.',
@@ -1307,7 +1309,7 @@ async function marginThroughPart(s, run, part, label) {
       } finally {
         s.doc.glow();
       }
-      return got?.failed ? { say: THROUGH_FAILED } : { notes: got?.notes || [] };
+      return got?.failed ? { say: READ_FAILED } : { notes: got?.notes || [] };
     } catch (e) {
       if (e instanceof Locked) throw e;
       if (marginPage.s !== s) return { gone: true };
@@ -1317,7 +1319,7 @@ async function marginThroughPart(s, run, part, label) {
         await new Promise((resolve) => setTimeout(resolve, READ_PAUSE.regular));
         continue;
       }
-      return { say: THROUGH_SAYS[why] || (e.status === 409 && !why ? THROUGH_SAYS.changed : THROUGH_FAILED) };
+      return { say: noAi(e.message) ? e.message : THROUGH_SAYS[why] || (e.status === 409 && !why ? THROUGH_SAYS.changed : READ_FAILED) };
     }
   }
 }
