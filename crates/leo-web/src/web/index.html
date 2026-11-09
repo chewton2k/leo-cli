@@ -1397,7 +1397,8 @@ body.pane-resizing iframe, body.pane-resizing canvas { pointer-events: none; }
 @media (min-width: 1200px) {
   :root { --chat-w: clamp(520px, 38vw, 760px); }
   body.chat-open { --right: var(--chat-w); padding-right: var(--right); }
-  .chat { box-shadow: none; }
+  .chat { box-shadow: none; padding-left: 8px; }
+  body.chat-open::after { right: var(--right); border-radius: 16px; }
 }
 .chat-resize { display: none; }
 html.page-bar-on { scrollbar-width: none; scrollbar-gutter: auto; }

@@ -605,7 +605,9 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
   the composer, user bubbles, pills, popups and the Chats column) with no
   left border, header rule, footer rule or column rule; a soft shadow shows
-  only where it overlays the note (under 1200 px). The Chats column is closed
+  only where it overlays the note (under 1200 px); docked beside it (1200 px and up), the note's page
+  ends at the panel and an 8 px strip of `--ground` separates them, as the explorer is set apart
+  (2026-11-09, the user's call: the edge was invisible in dark mode). The Chats column is closed
   until opened (`leo-chat-sidebar` still remembers an explicit choice, and closing the list as an overlay keeps it closed until it is opened again, so a resize near the overlay width cannot reopen it;
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
