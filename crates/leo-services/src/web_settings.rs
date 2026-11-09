@@ -125,7 +125,7 @@ fn task_view(
             })
         }
         (Task::Chat, "ollama") if local.ollama.is_empty() => {
-            Some("Ollama has no models yet: run `ollama pull qwen3:8b` on this computer.")
+            Some("Ollama has no models yet. Choose one below.")
         }
         (Task::Transcribe, "parakeet") if !local.speech_ready => {
             Some("Download a local model in Settings → Speech models.")

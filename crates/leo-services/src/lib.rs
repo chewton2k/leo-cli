@@ -10,6 +10,7 @@ pub mod figures;
 pub mod health;
 pub mod import;
 pub mod meaning;
+pub mod ollama;
 pub mod providers;
 pub mod session;
 pub mod speech;

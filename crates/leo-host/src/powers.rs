@@ -125,6 +125,7 @@ pub fn powers() -> leo_web::Powers {
             },
         )),
         speech: Some(std::sync::Arc::new(crate::speech::Speech)),
+        ollama: Some(std::sync::Arc::new(crate::settings::WebSettings)),
         listener: Some(crate::record::listener()),
         regenerator: Some(crate::record::regenerator()),
         calendar_access: Some(std::sync::Arc::new(crate::settings::WebSettings)),

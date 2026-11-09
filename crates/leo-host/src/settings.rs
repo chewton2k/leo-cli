@@ -49,6 +49,33 @@ impl leo_web::SettingsApi for WebSettings {
     }
 }
 
+impl leo_web::ollama::OllamaApi for WebSettings {
+    fn view(&self) -> Value {
+        leo_services::ollama::view(&Config::load())
+    }
+
+    fn pull(
+        &self,
+        model: &str,
+        progress: &mut dyn FnMut(u64, u64, &str),
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<()> {
+        let cfg = Config::load();
+        let url = cfg
+            .provider("ollama")
+            .and_then(|p| p.base_url.as_deref())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Ollama isn't set up in leo. Choose Ollama in Writing AI again.")
+            })?;
+        leo_services::ollama::pull(
+            url,
+            model,
+            &mut |step| progress(step.completed, step.total, &step.status),
+            stop,
+        )
+    }
+}
+
 impl leo_web::CalendarAccess for WebSettings {
     fn fetch(&self, url: &str) -> Result<Vec<u8>> {
         leo_services::web::fetch_public(url, leo_web::CALENDAR_BYTES)

@@ -253,7 +253,8 @@ function taskCard(t) {
   }
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '';
   const usage = t.usage && !plan ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
-  const note = t.note ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
+  const ollama = t.task === 'writing' && t.provider === 'ollama';
+  const note = t.note && !(ollama && state.ollama && !state.ollama.installed) ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
   const privacy = t.task === 'writing' && WRITING_PRIVACY[t.provider] ? `<p class="set-note">${WRITING_PRIVACY[t.provider]}</p>` : '';
   return `<section class="set-card" data-task-card="${t.task}" data-find="writing-provider">
     <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
@@ -261,9 +262,77 @@ function taskCard(t) {
     ${t.custom || t.choices.length > 4
       ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
       : `<div class="set-row column"><span class="set-label">Provider</span>${choiceCards({ label: 'Provider', choices: t.choices.map((c) => providerCard(c)), current: t.provider, field: `data-set="provider" data-task="${t.task}"`, className: 'providers' })}</div>`}
-    ${privacy}${model}${key}${signin}${usage}${note}
+    ${privacy}${model}${key}${signin}${usage}${note}${ollama ? `<div id="ollama-setup">${ollamaSetup(state.ollama, t.model)}</div>` : ''}
     <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test connection</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
+}
+
+function ollamaGB(bytes, unit = 1e9) {
+  const n = (Number(bytes) || 0) / unit;
+  return `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} GB`;
+}
+
+function ollamaSetup(view, current) {
+  if (!view || (view.installed && !view.running)) return '';
+  const where = ON_MAC ? 'this Mac' : 'this computer';
+  if (!view.installed) return `<div class="set-row"><span class="grow">Ollama runs AI models on ${where}. It isn’t installed yet.</span><a class="btn primary sm" href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">Download Ollama</a></div><p class="set-note">Once it’s installed, leo finds it by itself and lists models that fit ${where}. No Terminal needed.</p>`;
+  const pull = view.pull?.state === 'pulling' ? view.pull : null;
+  const percent = pull ? Math.min(100, Math.floor((pull.completed || 0) * 100 / Math.max(1, pull.total || 0))) : 0;
+  const facts = [view.memory_bytes && `${ollamaGB(view.memory_bytes, 1073741824)} of memory`, view.free_disk_bytes && `${ollamaGB(view.free_disk_bytes)} free`].filter(Boolean);
+  const summary = facts.length ? `<p class="hint">${ON_MAC ? 'This Mac' : 'This computer'} has ${facts.join(' and ')}.</p>` : '';
+  const cards = (view.models || []).map((m) => {
+    const here = pull?.model === m.name;
+    const fit = m.recommended ? 'Recommended' : `${m.fits ? 'Fits' : 'Too big for'} ${where}`;
+    const status = here ? `<span class="chip accent">Downloading ${percent}%</span>` : m.name === current ? '<span class="chip accent">In use</span>' : m.pulled ? '<span class="chip">Downloaded</span>' : '';
+    return `<button type="button" class="onboarding-model${here ? ' on' : ''}" data-action="ollama-pull" data-model="${esc(m.name)}"${m.fits ? '' : ' disabled'}><span class="onboarding-model-head"><b>${esc(m.name)}</b><span class="chip">${fit}</span><span class="onboarding-model-state">${status}</span></span><span class="hint">${esc(m.about)}</span><span class="hint">${ollamaGB(m.bytes)} · needs ${esc(m.memory_gb)} GB of memory</span></button>`;
+  }).join('');
+  const progress = pull ? `<div class="onboarding-model-action"><div class="grow onboarding-download"><span class="hint">Downloading ${esc(pull.model)} · ${pull.total ? `${ollamaGB(pull.completed)} of ${ollamaGB(pull.total)}` : 'Starting…'}</span><progress value="${percent}" max="100" aria-label="Downloading ${esc(pull.model)}"></progress></div><button class="btn plain" data-action="ollama-cancel">Cancel</button></div>` : '';
+  const failed = view.pull?.state === 'failed' ? `<p class="set-note warn">${esc(view.pull.error)}</p>` : '';
+  return `${summary}<div class="onboarding-model-list" role="group" aria-label="Ollama models">${cards}</div>${progress}${failed}`;
+}
+
+let ollamaTimer = 0, ollamaGeneration = 0;
+function writingModel() {
+  return state.settings?.tasks?.find((t) => t.task === 'writing')?.model;
+}
+async function loadOllama(mine) {
+  clearTimeout(ollamaTimer);
+  const generation = ++ollamaGeneration;
+  const here = () => generation === ollamaGeneration && mine === seq && state.view === 'settings' && $('#ollama-setup');
+  if (!here()) return;
+  if (appVisible()) {
+    try {
+      const before = state.ollama;
+      const view = await api('/api/writing/ollama');
+      if (!here()) return;
+      state.ollama = view;
+      if (before?.pull?.state === 'pulling' && view.pull?.state === 'done') return await changeSetting({ set: 'model', task: 'writing', value: view.pull.model });
+      if (before && (before.installed !== view.installed || before.running !== view.running)) {
+        const page = await api('/api/settings');
+        if (here()) drawSettings(page);
+        return;
+      }
+      refreshPanel($('#ollama-setup'), ollamaSetup(view, writingModel()));
+    } catch (e) {
+      if (!here()) return;
+    }
+  }
+  const wait = state.ollama?.pull?.state === 'pulling' ? 1000 : state.ollama?.running ? 0 : 5000;
+  if (wait) ollamaTimer = setTimeout(() => loadOllama(mine), wait);
+}
+async function ollamaChange(change) {
+  const mine = seq;
+  const view = await api('/api/writing/ollama', { method: 'POST', body: change });
+  if (mine !== seq || state.view !== 'settings') return;
+  state.ollama = view;
+  refreshPanel($('#ollama-setup'), ollamaSetup(view, writingModel()));
+  loadOllama(mine);
+}
+function ollamaPull(el) {
+  const model = state.ollama?.models?.find((m) => m.name === el.dataset.model);
+  if (!model || state.ollama.pull?.state === 'pulling') return;
+  if (model.pulled) return changeSetting({ set: 'model', task: 'writing', value: model.name });
+  return ollamaChange({ action: 'pull', model: model.name });
 }
 
 const PLAN_STALE_MS = 5 * 60 * 1000;
@@ -852,6 +921,7 @@ function drawSettings(page) {
   refreshPanel(app, settingsFrame(section, `<div class="settings">${content}</div>`));
   restoreSettingsFields(fields, segments);
   activityShown(section);
+  if ($('#ollama-setup')) loadOllama(seq);
 }
 
 async function changeSetting(change) {

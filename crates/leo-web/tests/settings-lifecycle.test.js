@@ -110,3 +110,45 @@ test('the calendar card guides each provider and checks the address before savin
     assert.equal(nodes['#calendar-link'].attrs['aria-invalid'], 'true');
   });
 });
+
+test('Ollama setup guides an install, waits for the app, and lists models that fit', () => {
+  const context = { app: { addEventListener() {} }, document: { addEventListener() {} }, window: {}, ICON: new Proxy({}, {get: () => ''}), esc: text => String(text), choiceCards: () => '', ON_MAC: true };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const missing = context.ollamaSetup({ installed: false, running: false, models: [] });
+  assert.match(missing, /Ollama runs AI models on this Mac\. It isn’t installed yet\./);
+  assert.match(missing, /<a class="btn primary sm" href="https:\/\/ollama\.com\/download" target="_blank"/);
+  assert.match(missing, /lists models that fit this Mac\. No Terminal needed\./);
+  context.ON_MAC = false;
+  assert.match(context.ollamaSetup({ installed: false }), /on this computer\. It isn’t installed yet/);
+  context.ON_MAC = true;
+  assert.equal(context.ollamaSetup({ installed: true, running: false }), '');
+  context.state = { settings: {}, ollama: { installed: false } };
+  const card = context.taskCard({ task: 'writing', provider: 'ollama', note: 'Ollama is not installed on this computer.', choices: [], models: [] });
+  assert.doesNotMatch(card, /Ollama is not installed on this computer/);
+  assert.match(card, /id="ollama-setup"/);
+  context.state.ollama = { installed: true, running: false };
+  assert.match(context.taskCard({ task: 'writing', provider: 'ollama', note: 'Ollama is not running: open the Ollama app on this computer.', choices: [], models: [] }), /open the Ollama app/);
+  const models = [
+    { name: 'qwen3:4b', bytes: 2500000000, memory_gb: 8, about: 'Faster, shorter notes', fits: true, pulled: true },
+    { name: 'qwen3:8b', bytes: 5200000000, memory_gb: 16, about: 'Better notes', fits: true, recommended: true },
+    { name: 'gemma3:27b', bytes: 17000000000, memory_gb: 32, about: 'Best quality, slow', fits: false },
+  ];
+  const running = context.ollamaSetup({ installed: true, running: true, memory_bytes: 17179869184, free_disk_bytes: 48000000000, models }, 'qwen3:4b');
+  assert.match(running, /This Mac has 16 GB of memory and 48 GB free\./);
+  assert.match(running, /data-model="qwen3:4b"><span class="onboarding-model-head"><b>qwen3:4b<\/b><span class="chip">Fits this Mac<\/span><span class="onboarding-model-state"><span class="chip accent">In use<\/span>/);
+  assert.match(running, /data-model="qwen3:8b"><span class="onboarding-model-head"><b>qwen3:8b<\/b><span class="chip">Recommended<\/span>/);
+  assert.match(running, /data-model="gemma3:27b" disabled><span class="onboarding-model-head"><b>gemma3:27b<\/b><span class="chip">Too big for this Mac<\/span>/);
+  assert.match(running, /2\.5 GB · needs 8 GB of memory/);
+  assert.match(running, /17 GB · needs 32 GB of memory/);
+  assert.doesNotMatch(running, /onboarding-download/);
+  const pulling = context.ollamaSetup({ installed: true, running: true, models, pull: { model: 'qwen3:8b', state: 'pulling', completed: 3120000000, total: 5200000000 } });
+  assert.match(pulling, /class="onboarding-model on" data-action="ollama-pull" data-model="qwen3:8b"/);
+  assert.match(pulling, /<span class="chip accent">Downloading 60%<\/span>/);
+  assert.match(pulling, /Downloading qwen3:8b · 3\.1 GB of 5\.2 GB<\/span><progress value="60" max="100"/);
+  assert.match(pulling, /data-action="ollama-cancel">Cancel<\/button>/);
+  assert.doesNotMatch(pulling, /This Mac has/);
+  const failed = context.ollamaSetup({ installed: true, running: true, models, pull: { model: 'qwen3:8b', state: 'failed', error: "There isn't enough free disk space for this model." } });
+  assert.match(failed, /set-note warn">There isn't enough free disk space/);
+  assert.doesNotMatch(failed, /ollama-cancel/);
+});

@@ -1320,6 +1320,16 @@ and their carets intact. `native-recording.test.js` covers native source choice
 and clipboard screenshots; it runs with the recording node tests.
 
 
+`Powers.ollama` implements `OllamaApi::{view,pull}` (leo-host over
+`leo_services::ollama`) behind session-gated GET/POST `/api/writing/ollama`: the view
+(installed, running, memory, free disk, catalog with fit/recommended/pulled) plus
+the current pull. POST `{action:"pull",model}` refuses models not in the catalog,
+TooBig ones and a second concurrent pull (409); `{action:"cancel"}` marks it cancelled
+at once, and a stale pull thread can no longer write. Writing AI with Ollama shows
+the install link (re-checked every 5 s while not running), then the model cards
+(`.onboarding-model` markup); a finished pull is saved as the model through the
+picker's `changeSetting`. Tests: `src/tests/ollama.rs`, `settings-lifecycle.test.js`.
+
 `Powers.dictation` implements `DictationApi::{view,change}` over session-gated
 GET/POST `/api/dictation` (200 KB input, blocking work off async tasks). Desktop
 provides settings, devices and native actions. The existing database owns the

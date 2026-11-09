@@ -133,10 +133,7 @@ pub fn ollama_models(base_url: &str) -> Vec<String> {
     if !crate::health::port_open(base_url) {
         return Vec::new();
     }
-    let root = base_url
-        .trim_end_matches('/')
-        .trim_end_matches("/v1")
-        .replace("://localhost", "://127.0.0.1");
+    let root = crate::ollama::root(base_url);
     let Ok(client) = reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_millis(300))
         .timeout(std::time::Duration::from_millis(1500))

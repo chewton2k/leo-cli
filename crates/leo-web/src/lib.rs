@@ -18,6 +18,7 @@ pub mod graph;
 mod ics;
 mod keeping;
 pub mod margin;
+pub mod ollama;
 mod originals;
 mod progress;
 mod read_cache;
@@ -161,6 +162,7 @@ pub struct Powers {
     pub toolless_chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
+    pub ollama: Option<Arc<dyn ollama::OllamaApi>>,
     pub dictation: Option<Arc<dyn dictation::DictationApi>>,
     pub app_settings: Option<Arc<dyn app_settings::AppApi>>,
     pub importer: Option<Importer>,
@@ -200,6 +202,8 @@ struct AppState {
     toolless_chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     speech: Option<Arc<dyn speech::SpeechApi>>,
+    ollama: Option<Arc<dyn ollama::OllamaApi>>,
+    ollama_pulls: Arc<ollama::Pulls>,
     dictation: Option<Arc<dyn dictation::DictationApi>>,
     app_settings: Option<Arc<dyn app_settings::AppApi>>,
     usage_refreshes: Arc<tokio::sync::Semaphore>,
@@ -266,7 +270,12 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
     let polling = path == "/api/activity"
         || matches!(
             path,
-            "/api/app" | "/api/dictation" | "/api/speech" | "/api/tasks" | "/api/processes"
+            "/api/app"
+                | "/api/dictation"
+                | "/api/speech"
+                | "/api/writing/ollama"
+                | "/api/tasks"
+                | "/api/processes"
         )
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
@@ -641,6 +650,8 @@ pub(crate) async fn start_in(
         chat,
         settings,
         speech: powers.speech,
+        ollama: powers.ollama,
+        ollama_pulls: Default::default(),
         dictation: powers.dictation,
         app_settings: powers.app_settings,
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -961,6 +972,12 @@ fn router(state: AppState) -> Router {
                 .post(speech::change)
                 .layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
+        .route(
+            "/api/writing/ollama",
+            get(ollama::get)
+                .post(ollama::change)
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
         .route("/api/record", get(record::overview).post(record::start))
         .route(
             "/api/record/{id}",
@@ -1055,6 +1072,7 @@ mod activity_tests {
             "/api/app",
             "/api/dictation",
             "/api/speech",
+            "/api/writing/ollama",
             "/api/tasks",
             "/api/processes",
             "/api/activity",

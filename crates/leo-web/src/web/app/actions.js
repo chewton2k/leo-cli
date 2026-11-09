@@ -14,6 +14,8 @@ const actions = {
   'dictation-copy': (el) => dictationChange({action:'copy',id:Number(el.dataset.id)}).then(() => pulse(el)),
   'speech-filter': filterSpeech,
   'speech-model': changeSpeechModel,
+  'ollama-pull': ollamaPull,
+  'ollama-cancel': () => ollamaChange({ action: 'cancel' }),
   back,
   home: () => go('#/'),
   'side-fold': foldSide,
