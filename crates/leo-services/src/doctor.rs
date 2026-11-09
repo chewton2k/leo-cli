@@ -268,7 +268,6 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
     }
     let mut checks = vec![
         health::chain_check(config, health::Chain::Chat, secrets),
-        health::chain_check(config, health::Chain::Transcribe, secrets),
         health::credentials_check(),
     ];
     checks.extend(speech_model_check(config, secrets));
@@ -436,6 +435,12 @@ mod tests {
         );
         let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
         assert_eq!(titles, ["leo", "notes", "AI", "recording"]);
+        let speech = section(&sections, "AI")
+            .checks
+            .iter()
+            .filter(|c| c.what.contains("speech") || c.what.contains("transcription"))
+            .count();
+        assert_eq!(speech, 1);
         assert!(matches!(
             meaning_check(crate::providers::ModelState::Missing).state,
             State::Warn { ref note } if note.contains("leo update")

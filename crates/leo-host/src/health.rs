@@ -19,7 +19,8 @@ pub fn scan(notes: &Path) -> Result<Value> {
     let mut sections:Vec<Value>=sections.into_iter().map(|section| {
         let checks:Vec<Value>=section.checks.into_iter().map(|check| {
             let (state,fix)=match check.state { State::Ready=>("ready",String::new()),State::Missing{fix}=>("missing",fix),State::Warn{note}=>("warn",note) };
-            json!({"name":check.what,"state":state,"fix":fix,"detail":check.detail,"needed_for":check.needed_for})
+            let section=section_of(&check.what);
+            json!({"name":check.what,"state":state,"fix":fix,"detail":check.detail,"needed_for":check.needed_for,"section":section})
         }).collect();
         json!({"title":section.title,"checks":checks})
     }).collect();
@@ -37,4 +38,24 @@ pub fn scan(notes: &Path) -> Result<Value> {
         sections.insert(0, json!({"title":"Felix and Codex","checks":[{"name":"Codex native session","state":"warn","fix":problem,"section":"writing"}]}));
     }
     Ok(json!({"sections":sections}))
+}
+
+fn section_of(what: &str) -> Option<&'static str> {
+    match what {
+        "a chat model" => Some("writing"),
+        "speech model" => Some("models"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::section_of;
+
+    #[test]
+    fn the_writing_and_speech_checks_open_their_settings() {
+        assert_eq!(section_of("a chat model"), Some("writing"));
+        assert_eq!(section_of("speech model"), Some("models"));
+        assert_eq!(section_of("microphone"), None);
+    }
 }

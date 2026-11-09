@@ -225,9 +225,7 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
                 .iter()
                 .find(|name| provider_usable(config, name, store))
                 .cloned(),
-            "leo update   (downloads the speech model; free, private)\n\
-             or: Settings in leo, choose OpenAI, Gemini or xAI, add its key"
-                .to_string(),
+            "Choose and download a speech model in Settings → Speech models.".to_string(),
         ),
     };
 
@@ -294,25 +292,38 @@ pub fn writing(
         }
         (Some(_), None) => WritingState::NotChosen,
     };
-    let other = "or: Settings in leo, choose another way to write";
-    let fix = match state {
-        WritingState::Ready => None,
-        WritingState::NotInstalled => agent.map(|agent| format!("{}\n{other}", agent.install())),
-        WritingState::NotRunning => Some(format!(
-            "open the Ollama app, or run: ollama serve\n{other}"
-        )),
-        WritingState::NoModel => Some(format!("ollama pull qwen3:8b\n{other}")),
-        WritingState::NotChosen => Some(
-            "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-             or: Settings in leo, choose Claude Code or Codex to use the plan you have"
-                .to_string(),
-        ),
-    };
+    let fix = fix_text(state, agent, on_path("ollama"), cfg!(windows));
     Writing {
         provider,
         state,
         fix,
     }
+}
+
+fn fix_text(
+    state: WritingState,
+    agent: Option<crate::ai::provider::agent_cli::Agent>,
+    ollama_installed: bool,
+    windows: bool,
+) -> Option<String> {
+    let name = agent.map_or("it", |agent| agent.kind());
+    Some(match state {
+        WritingState::Ready => return None,
+        WritingState::NotInstalled => format!(
+            "{name} is not installed on this computer. Choose another provider in Writing AI, or install {name}."
+        ),
+        WritingState::NotChosen | WritingState::NotRunning if !ollama_installed => {
+            "Ollama is not installed on this computer. Choose Claude Code or Codex in Writing AI, or install Ollama.".to_string()
+        }
+        WritingState::NotRunning if windows => {
+            "Ollama is installed but not running. Open Ollama from the Start menu.".to_string()
+        }
+        WritingState::NotRunning => {
+            "Ollama is installed but not running. Open the Ollama app.".to_string()
+        }
+        WritingState::NoModel => "Ollama has no models yet. Choose one in Writing AI.".to_string(),
+        WritingState::NotChosen => "No writing AI is ready. Choose one in Writing AI.".to_string(),
+    })
 }
 
 /// Whether one named provider could serve a request right now.
@@ -537,6 +548,47 @@ mod tests {
             }
         }
         assert_eq!(serde_json::json!(WritingState::NoModel), "no_model");
+    }
+
+    #[test]
+    fn writing_fixes_speak_to_the_app_on_every_platform() {
+        use crate::ai::provider::agent_cli::Agent;
+        let mut seen = std::collections::HashSet::new();
+        for windows in [false, true] {
+            for installed in [false, true] {
+                for state in [
+                    WritingState::NotInstalled,
+                    WritingState::NotRunning,
+                    WritingState::NoModel,
+                    WritingState::NotChosen,
+                ] {
+                    for agent in [None, Some(Agent::Codex), Some(Agent::ClaudeCode)] {
+                        let fix = fix_text(state, agent, installed, windows).unwrap();
+                        for banned in ["brew", "leo update", "OpenAI, Gemini or xAI", "ollama pull"]
+                        {
+                            assert!(!fix.contains(banned), "{state:?}: {fix}");
+                        }
+                        if state == WritingState::NotRunning {
+                            seen.insert((installed, fix));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(fix_text(WritingState::Ready, None, true, false), None);
+        assert_eq!(seen.len(), 3);
+        assert!(
+            fix_text(WritingState::NotInstalled, Some(Agent::Codex), true, true)
+                .unwrap()
+                .starts_with("Codex is not installed")
+        );
+        let chain = chain_check(&config_with(vec![], vec![]), Chain::Transcribe, &store());
+        match chain.state {
+            State::Missing { fix } => {
+                assert!(!fix.contains("OpenAI") && !fix.contains("leo update"))
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
