@@ -28,7 +28,7 @@ lighter).
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
   meaning vectors, note connections, calendar feeds, note-task metadata,
-  reading positions. Old caption, graph and meaning JSON files are brought
+  reading positions, recordings whose notes are not written yet. Old caption, graph and meaning JSON files are brought
   in on first open and renamed `*.before-database` (the browser tests seed the
   note connections this way). Writes touch only what changed.
 
@@ -872,6 +872,11 @@ target. Check the page sequence after loading preferences.
   Housekeeper's `pending_recordings` supplies retained native sessions; recovery
   starts in Writing state and supports Finish available, and anything the
   Housekeeper does not list is not found.
+  When no writing AI could write the notes (`long::Structured.writer_failed`, every
+  part failed; a few failed parts stay warnings), the transcript is the note, the job's
+  `done` view carries `writer_failed` (toast with Set up writing AI) and leo.db
+  `writeup_pending` marks the note (GET note `writeup_pending`, a `.set-card` notice
+  under the meta line) until "Use this version" saves a written note (PATCH `written: true`; Undo restores the mark); it is forgotten and swept like `margin_personas`.
   The idle page (2026-11-06) shows Microphone, Screen and Call as one row of
   `.choice-pick` cards with a track diagram each (one waveform, or two for Call)
   over the same `rec-kind` radios; then `noteFields({ id: 'rec' })`, the upload

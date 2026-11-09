@@ -248,6 +248,7 @@ fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_sa
                 seen.store(true, Ordering::Relaxed);
                 Ok(())
             })),
+            writer_failed: false,
         })
     }));
     let id = json_of(start_recording(&state, record::Source::Microphone))["id"]
@@ -257,6 +258,74 @@ fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_sa
     let view = recording_until(&state, |s| s == "done");
     assert_eq!(view.note.as_deref(), Some(id.as_str()));
     assert!(committed.load(Ordering::Relaxed));
+}
+
+#[test]
+fn a_recording_whose_notes_were_not_written_says_so_until_they_are() {
+    let (mut state, _d, _ids) = state_with(&[]);
+    state.regenerator = Some(Arc::new(|_, _| Ok(("Written".into(), "Notes".into()))));
+    state.listener = Some(Arc::new(|input, _| {
+        Ok(record::Recorded {
+            title: "Recording".into(),
+            body: "## Transcript\n\nwhat was said".into(),
+            source: Some(leo_core::recording::Archive {
+                id: input.id,
+                started: chrono::Utc::now(),
+                passages: vec![leo_core::recording::Passage {
+                    start_secs: 0,
+                    end_secs: 5,
+                    text: "what was said".into(),
+                    speaker: String::new(),
+                }],
+                points: vec![],
+                context: String::new(),
+                wants: String::new(),
+                warnings: vec![],
+                trace: vec![],
+                from: String::new(),
+            }),
+            writer_failed: true,
+            ..Default::default()
+        })
+    }));
+    start_recording(&state, record::Source::Microphone);
+    let view = recording_until(&state, |s| s == "done" || s == "failed");
+    assert_eq!(view.state, "done", "{view:?}");
+    assert!(view.writer_failed);
+    let note = view.note.unwrap();
+    let pending = || {
+        run(crate::routes::notes::get_note(
+            State(state.clone()),
+            Path(note.clone()),
+        ))
+        .unwrap()
+        .writeup_pending
+    };
+    assert!(pending());
+    let written = run(crate::routes::sources::regenerate(
+        State(state.clone()),
+        Path(note.clone()),
+        Json(serde_json::from_value(serde_json::json!({})).unwrap()),
+    ));
+    assert_eq!(written.status(), StatusCode::OK);
+    assert!(pending());
+    let _ = run(crate::routes::notes::update_note(
+        State(state.clone()),
+        Path(note.clone()),
+        Json(
+            serde_json::from_value(serde_json::json!({"body": "Written notes", "written": true}))
+                .unwrap(),
+        ),
+    ))
+    .unwrap();
+    assert!(!pending());
+    let _ = run(crate::routes::notes::update_note(
+        State(state.clone()),
+        Path(note.clone()),
+        Json(serde_json::from_value(serde_json::json!({"written": false})).unwrap()),
+    ))
+    .unwrap();
+    assert!(pending());
 }
 
 #[test]

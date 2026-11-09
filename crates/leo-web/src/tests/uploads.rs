@@ -476,6 +476,7 @@ fn background_work_is_listed_until_it_is_done() {
         levels_start: 0,
         note: None,
         error: None,
+        writer_failed: false,
     };
     let tasks = activity_tasks(&imports, Some(&writing), Some((3, 9)));
     let kinds: Vec<&str> = tasks.iter().map(|t| t.kind).collect();

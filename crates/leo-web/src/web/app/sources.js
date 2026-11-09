@@ -149,7 +149,7 @@ async function regenerateSource() {
 async function applyGenerated() {
   const p = generatedPreview;
   const mine = seq;
-  const note = await api(`/api/notes/${enc(p.note)}`, { method: 'PATCH', body: { body: p.body, title: $('#regenerate-title').checked ? p.previous.title : p.title, base: p.base } });
+  const note = await api(`/api/notes/${enc(p.note)}`, { method: 'PATCH', body: { body: p.body, title: $('#regenerate-title').checked ? p.previous.title : p.title, base: p.base, written: true } });
   if (mine !== seq) return;
   closeSheet();
   await showNote(p.note);
@@ -157,7 +157,7 @@ async function applyGenerated() {
     action: 'Undo',
     run: async () => {
       try {
-        await api(`/api/notes/${enc(p.note)}`, { method: 'PATCH', body: { title: p.previous.title, body: p.previous.body, base: note.version } });
+        await api(`/api/notes/${enc(p.note)}`, { method: 'PATCH', body: { title: p.previous.title, body: p.previous.body, base: note.version, written: !p.previous.writeup_pending } });
         await showNote(p.note);
         toast('The previous note is back.');
       } catch (e) {

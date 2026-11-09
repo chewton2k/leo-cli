@@ -610,6 +610,8 @@ pub struct Written {
     pub title: String,
     pub body: String,
     pub problems: Vec<String>,
+    #[serde(default)]
+    pub writer_failed: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -698,6 +700,7 @@ pub fn write_up(
         title: leo_core::filename::with_label(&structured.title, label.as_deref()),
         body,
         problems: structured.problems,
+        writer_failed: structured.writer_failed,
     };
     leo_core::recording::write_json(
         &cached,

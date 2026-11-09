@@ -110,6 +110,7 @@ fn a_note_can_be_pinned_from_the_phone() {
         tags: None,
         pinned: Some(true),
         base: None,
+        written: None,
     };
     let Json(note) = run(update_note(
         State(state.clone()),
@@ -153,6 +154,7 @@ fn edit(
             tags: None,
             pinned: None,
             base,
+            written: None,
         }),
     ))
     .map(|Json(n)| n)

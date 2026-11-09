@@ -536,6 +536,7 @@ fn a_suggested_change_is_applied_only_while_the_text_is_still_there() {
                 tags: None,
                 pinned: None,
                 base: Some(base.into()),
+                written: None,
             }),
         ))
     };

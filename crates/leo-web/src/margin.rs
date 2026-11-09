@@ -694,6 +694,7 @@ pub fn forget_notes(chats: &Path, notes: &[String]) -> usize {
                 c.execute("DELETE FROM margin_modes WHERE note = ?1", [note])?;
                 c.execute("DELETE FROM margin_personas WHERE note = ?1", [note])?;
                 c.execute("DELETE FROM margin_instructions WHERE note = ?1", [note])?;
+                c.execute("DELETE FROM writeup_pending WHERE note = ?1", [note])?;
                 Ok(threads)
             })
             .unwrap_or(0);
@@ -705,7 +706,7 @@ pub fn sweep(chats: &Path, kept: &HashSet<String>, now: DateTime<Utc>) -> usize 
     let held: BTreeSet<String> = db_of(chats)
         .with(|c| {
             let mut query = c.prepare(
-                "SELECT note FROM margin_threads UNION SELECT note FROM margin_modes UNION SELECT note FROM margin_personas UNION SELECT note FROM margin_instructions",
+                "SELECT note FROM margin_threads UNION SELECT note FROM margin_modes UNION SELECT note FROM margin_personas UNION SELECT note FROM margin_instructions UNION SELECT note FROM writeup_pending",
             )?;
             let rows = query.query_map([], |r| r.get(0))?;
             rows.collect()

@@ -205,7 +205,8 @@
       if (view.state === 'done' && before && before.state !== 'done') {
         if (s.container && s.container.isConnected) go(noteHash(view.note), { replace: true });
         else if (noteReady) noteReady();
-        toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
+        if (view.writer_failed) toast('Saved the transcript. The notes were not written.', { action: 'Set up writing AI', run: () => go('#/settings/writing') });
+        else toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
         root.leoMotion?.pulse(root.document.querySelector('.toast'));
       }
       draw();
