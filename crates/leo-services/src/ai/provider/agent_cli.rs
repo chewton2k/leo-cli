@@ -1208,21 +1208,23 @@ impl AgentCli {
                 child.stop();
                 break;
             }
+            if finished.is_some_and(|at: Instant| at.elapsed() >= EXIT_GRACE) {
+                break;
+            }
             match lines.recv_timeout(Duration::from_millis(50)) {
                 Ok(Ok(Some(line))) => {
                     bytes = bytes.saturating_add(line.len());
                     if bytes > MOST_OUTPUT {
-                        heard.exceeded = true;
+                        heard.exceeded = finished.is_none();
                         break;
                     }
-                    if hear(&line, &mut heard, sink) {
+                    if hear(&line, &mut heard, sink) && finished.is_none() {
                         finished = Some(Instant::now());
-                        break;
                     }
                 }
                 Ok(Ok(None)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Ok(Err(_)) => {
-                    heard.exceeded = true;
+                    heard.exceeded = finished.is_none();
                     break;
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -1272,7 +1274,16 @@ impl AgentCli {
         };
         let _ = writer.join();
         let (stderr, exceeded) = if forced {
-            Default::default()
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while !errors.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let stderr = if errors.is_finished() {
+                errors.join().unwrap_or_default().0
+            } else {
+                String::new()
+            };
+            (stderr, false)
         } else {
             if let Some(reader) = reader {
                 let _ = reader.join();
@@ -2213,6 +2224,9 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
 cat >/dev/null
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'
+printf '%s\n' 'model: gpt-lingering' >&2
+sleep 0.2
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":2}}'
 sleep 30"##,
         );
         let cfg = config(ProviderKind::Codex, &bin, None);
@@ -2224,6 +2238,9 @@ sleep 30"##,
             "{:?}",
             started.elapsed()
         );
+        let spent = agent.spent().unwrap();
+        assert_eq!((spent.input, spent.output), (7, 2));
+        assert_eq!(spent.model.as_deref(), Some("gpt-lingering"));
     }
 
     #[cfg(unix)]

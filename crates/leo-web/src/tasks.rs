@@ -13,6 +13,12 @@ pub const MOST_TASKS: usize = 10_000;
 pub const MOST_TITLE: usize = 300;
 pub const MOST_DESCRIPTION: usize = 4_000;
 
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn writing() -> std::sync::MutexGuard<'static, ()> {
+    WRITING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn description_of(text: &str) -> Result<String, &'static str> {
     let text = text.trim();
     if text.chars().count() > MOST_DESCRIPTION {

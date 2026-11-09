@@ -196,6 +196,20 @@ fn a_point_or_stop_during_a_save_waits_for_it_instead_of_failing() {
         });
         (tell, held)
     };
+    let waits = |work: &std::thread::JoinHandle<axum::response::Response>| {
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        while std::time::Instant::now() < until {
+            assert!(!work.is_finished());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    let finishes = |work: &std::thread::JoinHandle<axum::response::Response>| {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !work.is_finished() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(work.is_finished());
+    };
     let (tell, held) = busy_until_told();
     let point = {
         let (state, id) = (state.clone(), id.clone());
@@ -207,18 +221,20 @@ fn a_point_or_stop_during_a_save_waits_for_it_instead_of_failing() {
             ))
         })
     };
-    assert!(!point.is_finished(), "a point waits for the save");
+    waits(&point);
     tell.send(()).unwrap();
     held.join().unwrap();
+    finishes(&point);
     assert_eq!(point.join().unwrap().status(), StatusCode::OK);
     let (tell, held) = busy_until_told();
     let stopped = {
         let state = state.clone();
         std::thread::spawn(move || run(record::stop(State(state), Path(id))))
     };
-    assert!(!stopped.is_finished(), "a stop waits for the save");
+    waits(&stopped);
     tell.send(()).unwrap();
     held.join().unwrap();
+    finishes(&stopped);
     assert_eq!(stopped.join().unwrap().status(), StatusCode::OK);
     let view = recording_until(&state, |s| s == "done");
     assert_eq!(view.points.len(), 1);

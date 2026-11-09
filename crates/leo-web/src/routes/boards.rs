@@ -20,15 +20,14 @@ where
     Option::<T>::deserialize(d).map(Some)
 }
 
-async fn locked(
+async fn blocking(
     state: &AppState,
     work: impl FnOnce(&std::path::Path) -> Response + Send + 'static,
 ) -> Response {
     let chats = state.chats.clone();
-    state
-        .read_store(move |_| Ok(work(&chats)))
+    tokio::task::spawn_blocking(move || work(&chats))
         .await
-        .unwrap_or_else(IntoResponse::into_response)
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 fn not_saved() -> Response {
@@ -47,7 +46,7 @@ fn no_card() -> Response {
 }
 
 pub(crate) async fn list_boards(State(state): State<AppState>) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let all = boards::boards(chats);
         let mut counts: HashMap<String, usize> = HashMap::new();
         for card in boards::all_cards(chats) {
@@ -78,7 +77,7 @@ pub(crate) async fn create_board(
     Json(body): Json<NewBoard>,
 ) -> Response {
     let name = boards::clean_line(&body.name, boards::MOST_NAME);
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         if boards::boards(chats).len() >= boards::MOST_BOARDS {
             return error(
@@ -103,7 +102,7 @@ pub(crate) async fn create_board(
 }
 
 pub(crate) async fn get_board(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let Some(board) = boards::board(chats, &id) else {
             return no_board();
         };
@@ -129,7 +128,7 @@ pub(crate) async fn change_board(
     Path(id): Path<String>,
     Json(change): Json<BoardChange>,
 ) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         let Some(before) = boards::board(chats, &id) else {
             return no_board();
@@ -194,7 +193,7 @@ pub(crate) async fn delete_board(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         let Some(board) = boards::board(chats, &id) else {
             return no_board();
@@ -236,7 +235,7 @@ pub(crate) async fn restore_board(
         Ok(columns) => columns,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         if boards::board(chats, &board.id).is_none()
             && boards::boards(chats).len() >= boards::MOST_BOARDS
@@ -344,7 +343,7 @@ pub(crate) async fn create_card(
         Some(_) => return error(StatusCode::BAD_REQUEST, "That card id is not valid."),
         None => boards::new_id('c'),
     };
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         let Some(board) = boards::board(chats, &board_id) else {
             return no_board();
@@ -412,7 +411,7 @@ pub(crate) async fn change_card(
     Path(id): Path<String>,
     Json(change): Json<CardChange>,
 ) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         let Some(mut card) = boards::card(chats, &id) else {
             return no_card();
@@ -461,7 +460,7 @@ pub(crate) async fn move_card(
     Path(id): Path<String>,
     Json(change): Json<MoveCard>,
 ) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         let Some(mut card) = boards::card(chats, &id) else {
             return no_card();
@@ -510,7 +509,7 @@ pub(crate) async fn move_card(
 }
 
 pub(crate) async fn delete_card(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    locked(&state, move |chats| {
+    blocking(&state, move |chats| {
         let _writing = boards::writing();
         let Some(card) = boards::card(chats, &id) else {
             return no_card();

@@ -434,6 +434,8 @@ is hidden or the capture activity gate is busy.
   `Line`: `DIR`, `id`, `stamp`; shared with boards and cards), written atomically; the newest `updated_at`
   wins; deletes write a tombstone (`deleted`). Rows in the old leo.db `tasks`
   table are not read. Descriptions are optional plain text ≤4,000 characters.
+  One mutex (`tasks::writing`) serialises task writes; task and board file work
+  runs on blocking workers and never holds the notes store lock.
 - Note tasks: checkboxes under Action items (or To do, Next steps, Deadlines) plus
   promoted ones (`note_tasks`, located by text and neighbours, never the wrong
   box). A date change is written into the checkbox (409 with a preview when the

@@ -204,7 +204,10 @@ pub(crate) async fn expire_now(state: &AppState) {
         .map(|job| job.session_id());
     let _ = tokio::task::spawn_blocking(move || {
         let now = Utc::now();
-        crate::tasks::forget_deleted(&chats, keep.trash_days, now);
+        {
+            let _writing = crate::tasks::writing();
+            crate::tasks::forget_deleted(&chats, keep.trash_days, now);
+        }
         expire_uploads(&notes_dir, keep.upload_days, now);
         expire_transcripts(&notes_dir, keep.transcript_days, now, active.as_deref());
         if let Some(housekeeper) = housekeeper {

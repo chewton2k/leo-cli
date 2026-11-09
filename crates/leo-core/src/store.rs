@@ -357,7 +357,7 @@ fn collect_md_paths_at(
         if kind.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_md_paths_at(&path, result, depth + 1)?;
+                let _ = collect_md_paths_at(&path, result, depth + 1);
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             result.push((path, entry.metadata().ok()));
@@ -1761,6 +1761,36 @@ mod tests {
             assert!(loaded.unreadable.iter().any(|(p, _)| p == &locked));
         }
         assert!(binary.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_folder_does_not_hide_edits_in_other_folders() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut store, _d) = temp_store();
+        let locked = store.notes_dir.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let blocked = std::fs::read_dir(&locked).is_err();
+        let folders: Vec<String> = (0..4).map(|i| format!("f{i}")).collect();
+        for folder in &folders {
+            store.create_note("Note", "x", vec![], folder).unwrap();
+        }
+        store.save().unwrap();
+        let changed: Vec<bool> = folders
+            .iter()
+            .map(|folder| {
+                let note = store.notes_dir.join(folder).join("Note.md");
+                std::fs::write(note, "edited elsewhere").unwrap();
+                let changed = store.changed_on_disk();
+                store.fingerprint.set(fingerprint_of(&store.notes_dir));
+                changed
+            })
+            .collect();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if blocked {
+            assert!(changed.iter().all(|c| *c), "{changed:?}");
+        }
     }
 
     #[test]

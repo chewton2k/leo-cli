@@ -180,7 +180,11 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
 
     let (usable, fix) = match chain {
         Chain::Chat => {
-            let writing = writing(config, store, None);
+            let writing = writing(
+                config,
+                store,
+                Some(&crate::config::choice::local_models(config)),
+            );
             let ready = writing.state == WritingState::Ready;
             (
                 writing.provider.filter(|_| ready),
@@ -622,11 +626,15 @@ mod tests {
     }
 
     #[test]
-    fn the_chat_check_does_not_ask_ollama_for_its_models() {
+    fn the_chat_check_is_not_ready_for_ollama_without_a_model() {
         let config = config_with(vec![("ollama", server(&empty_ollama()))], vec!["ollama"]);
         assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
         let check = chain_check(&config, Chain::Chat, &store());
-        assert!(check.state.is_ready(), "{check:?}");
+        assert!(!check.state.is_ready(), "{check:?}");
+        assert!(matches!(
+            check.state,
+            State::Missing { ref fix } if fix.contains("no models")
+        ));
     }
 
     #[test]

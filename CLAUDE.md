@@ -67,10 +67,12 @@ changes and quit never commit or push. Existing repositories/remotes and legacy
 the pre-flight before recording agree, and every gap arrives with what fixes it
 rather than as a failure discovered mid-use.
 `health::writing` is the one writing-AI answer (Ready, NotInstalled,
-NotRunning, NoModel, NotChosen, with its fix): the doctor's chat check,
-`ai::writing_ready` and the tray use its cheap path (no HTTP, never NoModel);
-Settings (`web_settings::describe`'s `writing`) passes the listed local models, so
-an Ollama with no models is NoModel there.
+NotRunning, NoModel, NotChosen, with its fix): `ai::writing_ready` and the
+tray use its cheap path (no HTTP, never NoModel); the doctor's chat check
+(`health::chain_check`), the recording pre-flight (leo-host's
+`Housekeeping::checks`) and Settings (`web_settings::describe`'s `writing`) pass
+the listed local models (`choice::local_models`: one loopback Ollama `/api/tags`
+call with its short timeout), so an Ollama with no models is NoModel there.
 
 Two rules there, both learned from tests that hung:
 
@@ -82,7 +84,8 @@ Two rules there, both learned from tests that hung:
   literal addresses and localhost only. A bogus hostname cost 900 seconds.
 
 Checks must stay cheap enough to run on startup: a key presence check, a PATH
-scan, or a loopback connect with a 300 ms timeout. Never a real request.
+scan, a loopback connect with a 300 ms timeout, or that one loopback model
+list. Never a request that leaves the machine.
 
 ### Data model
 
