@@ -124,12 +124,12 @@ S (hours), M (a day or two), L (a week or more).
 
 ## Mockups
 
-Drawn with the stageshow kit in leo's tokens (accent `#4f46e5`, system font,
-leo's own icons and provider logos). They are proposals, not the app.
+Rendered with leo's own stylesheet and markup copied from the app's templates,
+framed with the stageshow rules. They are proposals, not the app.
 
 **Proposal N1: a Writing AI step at the end of first-run setup.**
 
-![Onboarding step three: leo found Claude Code signed in, Codex needing sign-in, Ollama not installed](mockups/leo-first-run.png)
+![Setup step three: the Settings provider cards with Claude Code selected and ready](mockups/leo-first-run.png)
 
 **Proposal Q2: a failed write-up says so where the user lands.**
 
@@ -137,7 +137,7 @@ leo's own icons and provider logos). They are proposals, not the app.
 
 **Proposal L1: a calendar event starting offers to record the call.**
 
-![A leo calendar day with Design sync now, and a notification: Design sync is starting, click to record the call](mockups/leo-meeting-prompt.png)
+![A notification, Design sync is starting, over the Record page with Call and the event already chosen](mockups/leo-meeting-prompt.png)
 
 ## How confident we are
 
