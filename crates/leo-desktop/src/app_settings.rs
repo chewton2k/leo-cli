@@ -274,6 +274,11 @@ impl leo_web::app_settings::AppApi for AppSettings {
             Some("microphone") => crate::permissions::request_microphone(&self.app)?,
             Some("accessibility") => crate::permissions::request_accessibility(&self.app)?,
             Some("quit") => self.app.exit(0),
+            Some("sign_in") => crate::sign_in::start(
+                value["provider"]
+                    .as_str()
+                    .context("Choose Claude Code or Codex to sign in.")?,
+            )?,
             Some(action @ ("check_updates" | "download_update" | "restart_update")) => {
                 self.updates
                     .get()

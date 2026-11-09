@@ -233,6 +233,55 @@ function providerCard(c) {
   return [c.id, title, about, '', icon];
 }
 
+const SIGN_IN_POLL_MS = 2000, SIGN_IN_WAIT_MS = 120000;
+const SIGN_IN_LATE = 'Still waiting. Finish signing in, then press Check again.';
+const INSTALL_URL = { claude_code: 'https://claude.com/claude-code', codex: 'https://github.com/openai/codex' };
+let signInWait = null;
+function signInLate(id) { return signInWait?.provider === id && signInWait.late; }
+function signInControl(c, action) {
+  if (!INSTALL_URL[c.id]) return '';
+  if (!c.installed) return `<a class="btn plain sm" href="${INSTALL_URL[c.id]}" target="_blank" rel="noopener noreferrer">Install ${providerCard(c)[1]}</a>`;
+  if (signInWait?.provider === c.id && !signInWait.late) return '<button class="btn plain sm" disabled>Waiting for sign-in…</button>';
+  return `<button class="btn plain sm" data-action="${action}" data-provider="${c.id}"${signInLate(c.id) ? ' data-check="1">Check again' : '>Sign in'}</button>`;
+}
+async function signIn(el, here, draw) {
+  const provider = el.dataset.provider, check = el.dataset.check === '1';
+  if (!INSTALL_URL[provider]) return;
+  clearTimeout(signInWait?.timer);
+  const wait = signInWait = { provider, late: false, timer: 0 };
+  const until = Date.now() + (check ? 0 : SIGN_IN_WAIT_MS);
+  const gone = () => { if (signInWait === wait) signInWait = null; };
+  const tick = async () => {
+    if (signInWait !== wait) return;
+    if (!here()) return gone();
+    let view = null;
+    try { view = await api('/api/writing?probe=signin'); } catch (e) {}
+    if (signInWait !== wait) return;
+    if (!here()) return gone();
+    if (view?.candidates?.find((c) => c.id === provider)?.signed_in === true) gone();
+    else if (Date.now() >= until) wait.late = true;
+    else { wait.timer = setTimeout(tick, SIGN_IN_POLL_MS); return; }
+    draw(view);
+  };
+  if (!check) {
+    try { await appChange({ action: 'sign_in', provider }); } catch (e) { gone(); if (here()) draw(null); throw e; }
+    if (signInWait !== wait) return;
+    if (!here()) return gone();
+  }
+  draw(null);
+  wait.timer = setTimeout(tick, check ? 0 : SIGN_IN_POLL_MS);
+}
+function writingSignIn(el) {
+  const mine = seq, provider = el.dataset.provider;
+  return signIn(el, () => mine === seq && state.view === 'settings' && state.section === 'writing' && !!state.settings, (view) => {
+    const found = view?.candidates?.find((c) => c.id === provider);
+    const plan = state.settings.plans?.find((p) => p.provider === provider);
+    if (found && plan) Object.assign(plan, { installed: found.installed, signed_in: found.signed_in });
+    if (view?.writing) state.settings.writing = view.writing;
+    drawSettings(state.settings);
+  });
+}
+
 function taskCard(t) {
   const plan = state.settings?.plans?.find(plan => plan.provider === t.provider);
   const status = plan && plan.installed && plan.signed_in !== true
@@ -252,6 +301,7 @@ function taskCard(t) {
     key = `<div class="set-row column" data-find="writing-key"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
   }
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '';
+  const signInRow = plan && plan.signed_in !== true && INSTALL_URL[plan.provider] ? `<div class="set-row"><span class="grow hint">${signInLate(plan.provider) ? SIGN_IN_LATE : ''}</span>${signInControl({ id: plan.provider, installed: plan.installed }, 'writing-sign-in')}</div>` : '';
   const usage = t.usage && !plan ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
   const ollama = t.task === 'writing' && t.provider === 'ollama';
   const note = t.note && !(ollama && state.ollama && !state.ollama.installed) ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
@@ -262,7 +312,7 @@ function taskCard(t) {
     ${t.custom || t.choices.length > 4
       ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
       : `<div class="set-row column"><span class="set-label">Provider</span>${choiceCards({ label: 'Provider', choices: t.choices.map((c) => providerCard(c)), current: t.provider, field: `data-set="provider" data-task="${t.task}"`, className: 'providers' })}</div>`}
-    ${privacy}${model}${key}${signin}${usage}${note}${ollama ? `<div id="ollama-setup">${ollamaSetup(state.ollama, t.model)}</div>` : ''}
+    ${privacy}${model}${key}${signin}${signInRow}${usage}${note}${ollama ? `<div id="ollama-setup">${ollamaSetup(state.ollama, t.model)}</div>` : ''}
     <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test connection</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
 }

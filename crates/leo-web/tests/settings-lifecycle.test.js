@@ -152,3 +152,49 @@ test('Ollama setup guides an install, waits for the app, and lists models that f
   assert.match(failed, /set-note warn">There isn't enough free disk space/);
   assert.doesNotMatch(failed, /ollama-cancel/);
 });
+
+test('Settings → Writing AI signs in, waits for the probe and turns the status Ready', async () => {
+  const timers = [], calls = [];
+  let clock = 0, signedIn = false;
+  const context = { app: { addEventListener() {} }, document: { addEventListener() {} }, window: {}, ICON: new Proxy({}, { get: () => '' }), esc: (text) => String(text), choiceCards: () => '', ON_MAC: true, seq: 1, Date: { now: () => clock },
+    setTimeout: (fn, ms) => { timers.push([fn, ms]); return timers.length; }, clearTimeout() {},
+    appChange: async (change) => { calls.push(JSON.stringify(change)); },
+    api: async (url) => { calls.push(url); return { writing: { state: signedIn ? 'ready' : 'not_signed_in' }, candidates: [{ id: 'claude_code', installed: true, signed_in: signedIn }] }; } };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const task = { task: 'writing', provider: 'claude_code', choices: [], models: [] };
+  context.state = { view: 'settings', section: 'writing', settings: { writing: { state: 'not_signed_in' }, plans: [{ provider: 'claude_code', installed: true, signed_in: false }] } };
+  let card = '';
+  context.drawSettings = (page) => { card = context.taskCard(task); };
+  assert.match(context.taskCard(task), /data-action="writing-sign-in" data-provider="claude_code">Sign in</);
+  await context.writingSignIn({ dataset: { provider: 'claude_code' } });
+  assert.deepEqual(calls, ['{"action":"sign_in","provider":"claude_code"}']);
+  assert.match(card, /disabled>Waiting for sign-in…/);
+  assert.equal(timers[0][1], 2000);
+  signedIn = true;
+  clock += 2000;
+  await timers.shift()[0]();
+  assert.match(card, /set-status ok">Ready/);
+  assert.doesNotMatch(card, /writing-sign-in|Waiting/);
+  assert.equal(timers.length, 0);
+  Object.assign(context.state.settings.plans[0], { installed: false, signed_in: null });
+  assert.ok(context.taskCard(task).includes('href="https://claude.com/claude-code"'));
+  context.state.settings.plans[0] = { provider: 'codex', installed: false };
+  assert.ok(context.taskCard({ ...task, provider: 'codex' }).includes('<a class="btn plain sm" href="https://github.com/openai/codex" target="_blank" rel="noopener noreferrer">Install Codex</a>'));
+});
+
+test('leaving Settings stops the sign-in check', async () => {
+  const timers = [], calls = [];
+  const context = { app: { addEventListener() {} }, document: { addEventListener() {} }, window: {}, seq: 1, Date: { now: () => 0 }, drawSettings() {},
+    setTimeout: (fn, ms) => { timers.push([fn, ms]); return timers.length; }, clearTimeout() {},
+    appChange: async () => {}, api: async (url) => { calls.push(url); return {}; } };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  context.drawSettings = () => {};
+  context.state = { view: 'settings', section: 'writing', settings: { plans: [] } };
+  await context.writingSignIn({ dataset: { provider: 'codex' } });
+  context.state = { view: 'note' };
+  await timers.shift()[0]();
+  assert.deepEqual(calls, []);
+  assert.equal(timers.length, 0);
+});

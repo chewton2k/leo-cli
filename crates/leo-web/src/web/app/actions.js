@@ -9,6 +9,8 @@ const actions = {
   'onboarding-models': showOnboardingModels,
   'onboarding-writer': pickOnboardingWriter,
   'onboarding-use': onboardingUse,
+  'onboarding-sign-in': onboardingSignIn,
+  'writing-sign-in': writingSignIn,
   'dictation-record': () => dictationChange({action:'record_shortcut'}),
   'dictation-resume': () => dictationChange({action:'resume_shortcut'}),
   'dictation-use-shortcut': useDictationShortcut,

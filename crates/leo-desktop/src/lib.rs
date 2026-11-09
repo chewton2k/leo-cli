@@ -17,6 +17,7 @@ mod settings;
 mod shell_path;
 mod shortcut;
 mod shortcut_events;
+mod sign_in;
 mod tray;
 mod update_window;
 mod updates;

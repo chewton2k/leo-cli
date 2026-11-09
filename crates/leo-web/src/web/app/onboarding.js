@@ -251,9 +251,9 @@ function onboardingWriterReady(c) { return c?.id === 'ollama' ? !!(c.running && 
 function onboardingWriterStatus(c) {
   if (!c) return '';
   const name = providerCard(c)[1], where = ON_MAC ? 'this Mac' : 'this computer';
-  const row = (text, label, ok = false) => `<div class="set-row"><span class="grow">${text}</span><span class="set-status ${ok ? 'ok' : 'missing'}">${label}</span></div>`;
+  const row = (text, label, ok = false) => `<div class="set-row"><span class="grow">${text}</span>${ok ? '' : signInControl(c, 'onboarding-sign-in')}<span class="set-status ${ok ? 'ok' : 'missing'}">${label}</span></div>`;
   if (onboardingWriterReady(c)) return row(c.id === 'ollama' ? `Ollama is running on ${where}.` : `${name} is signed in on ${where}.`, 'Ready', true);
-  if (c.id !== 'ollama') return c.installed ? row(`Sign in to ${name}, then come back.`, 'Sign in needed') : row(`${name} is not installed on ${where}.`, 'Not installed');
+  if (c.id !== 'ollama') return c.installed ? row(signInLate(c.id) ? SIGN_IN_LATE : `Sign in to ${name}, then come back.`, 'Sign in needed') : row(`${name} is not installed on ${where}.`, 'Not installed');
   if (!c.installed) return ollamaSetup({ installed: false }, '');
   if (!c.running) return row('Open Ollama to start it.', 'Not running');
   return row('Choose a model for Ollama to download.', 'No model') + ollamaSetup(onboardingOllama, '');
@@ -275,6 +275,14 @@ function pickOnboardingWriter(el) {
   syncChoiceCards(box, from);
   drawOnboardingWriting();
   if (onboardingWriter === 'ollama') loadOnboardingOllama(onboardingGeneration);
+}
+function onboardingSignIn(el) {
+  const generation = onboardingGeneration, provider = el.dataset.provider;
+  return signIn(el, () => generation === onboardingGeneration && onboardingHere(3), (view) => {
+    const found = view?.candidates?.find((c) => c.id === provider), mine = onboardingWriterCandidate(provider);
+    if (found && mine) Object.assign(mine, found);
+    drawOnboardingWriting();
+  });
 }
 async function loadOnboardingOllama(generation) {
   clearTimeout(onboardingOllamaTimer);

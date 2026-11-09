@@ -116,3 +116,76 @@ test('the dictation hint names the real shortcut and stays hidden without dictat
     assert.equal(el.hidden, !answer);
   }
 });
+
+function clocked(candidates) {
+  const made = setup(candidates), timers = [], { context } = made;
+  let clock = 0;
+  context.Date = { now: () => clock };
+  context.setTimeout = (fn, ms) => { timers.push([fn, ms]); return timers.length; };
+  context.appChange = async (change) => { made.calls.push(['app', JSON.parse(JSON.stringify(change))]); };
+  const next = async (ms = 2000) => { clock += ms; const [fn] = timers.shift(); await fn(); };
+  return { ...made, timers, next, at: (ms) => { clock = ms; } };
+}
+const probes = (calls) => calls.filter((c) => c[0] === '/api/writing?probe=signin').length;
+
+test('Sign in starts a 2 s sign-in check and the row turns Ready when the probe says signed in', async () => {
+  const found = [claude(false), codex(null)];
+  const { context, nodes, calls, timers, next } = clocked(found);
+  await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', context);
+  assert.match(nodes['#onboarding-writer-status'].innerHTML, /data-action="onboarding-sign-in" data-provider="claude_code">Sign in</);
+  await context.onboardingSignIn({ dataset: { provider: 'claude_code' } });
+  assert.deepEqual(calls.find((c) => c[0] === 'app'), ['app', { action: 'sign_in', provider: 'claude_code' }]);
+  assert.match(nodes['#onboarding-writer-status'].innerHTML, /<button class="btn plain sm" disabled>Waiting for sign-in…<\/button>/);
+  await next();
+  assert.equal(probes(calls), 2);
+  assert.equal(timers.length, 1);
+  found[0].signed_in = true;
+  await next();
+  assert.match(nodes['#onboarding-writer-status'].innerHTML, /set-status ok">Ready/);
+  assert.equal(nodes['#onboarding-use'].disabled, false);
+  assert.equal(timers.length, 0);
+});
+
+test('waiting for sign-in gives up after two minutes with Check again, and Check again asks once', async () => {
+  const found = [claude(false)];
+  const { context, nodes, calls, timers, next, at } = clocked(found);
+  await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', context);
+  await context.onboardingSignIn({ dataset: { provider: 'claude_code' } });
+  for (let i = 0; i < 59; i++) await next();
+  assert.ok(timers.every(([, ms]) => ms === 2000));
+  assert.match(nodes['#onboarding-writer-status'].innerHTML, /Waiting for sign-in…/);
+  await next();
+  assert.equal(timers.length, 0);
+  assert.equal(probes(calls), 61);
+  const status = nodes['#onboarding-writer-status'].innerHTML;
+  assert.match(status, /Still waiting\. Finish signing in, then press Check again\./);
+  assert.match(status, /data-provider="claude_code" data-check="1">Check again</);
+  at(500000);
+  await context.onboardingSignIn({ dataset: { provider: 'claude_code', check: '1' } });
+  assert.equal(calls.filter((c) => c[0] === 'app').length, 1);
+  assert.equal(timers[0][1], 0);
+  await next(0);
+  assert.equal(probes(calls), 62);
+  assert.equal(timers.length, 0);
+  assert.match(nodes['#onboarding-writer-status'].innerHTML, /Check again/);
+});
+
+test('closing setup stops the sign-in check', async () => {
+  const { context, calls, timers, next } = clocked([claude(false)]);
+  await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', context);
+  await context.onboardingSignIn({ dataset: { provider: 'claude_code' } });
+  context.here = 0;
+  await next();
+  assert.equal(probes(calls), 1);
+  assert.equal(timers.length, 0);
+});
+
+test('a missing coding app offers its install page', async () => {
+  for (const [c, href, name] of [[{ id: 'claude_code', installed: false }, 'https://claude.com/claude-code', 'Install Claude Code'], [{ id: 'codex', installed: false }, 'https://github.com/openai/codex', 'Install Codex']]) {
+    const { context, nodes } = setup([c]);
+    await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', context);
+    const status = nodes['#onboarding-writer-status'].innerHTML;
+    assert.ok(status.includes(`<a class="btn plain sm" href="${href}" target="_blank" rel="noopener noreferrer">${name}</a>`), status);
+    assert.match(status, /Not installed/);
+  }
+});
