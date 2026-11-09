@@ -183,6 +183,18 @@ jobs:
           - project: webkit
             browser: webkit
             shard: 1
+            shards: 3
+          - project: webkit
+            browser: webkit
+            shard: 2
+            shards: 3
+          - project: webkit
+            browser: webkit
+            shard: 3
+            shards: 3
+          - project: phone
+            browser: chromium
+            shard: 1
             shards: 1
     runs-on: macos-latest
     timeout-minutes: 25
@@ -201,10 +213,14 @@ jobs:
           node-version: '24'
           cache: pnpm
           cache-dependency-path: crates/leo-web/tests/browser/pnpm-lock.yaml
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('crates/leo-web/tests/browser/pnpm-lock.yaml') }}
       - name: Install browser test dependencies
         run: pnpm --dir crates/leo-web/tests/browser install --frozen-lockfile
       - name: Check browser shard coverage
-        if: matrix.project == 'desktop' && matrix.shard == 1
+        if: matrix.shard == 1 && (matrix.project == 'desktop' || matrix.project == 'webkit')
         run: pnpm --dir crates/leo-web/tests/browser run test:shards
       - name: Browser integration tests (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.shards }})
         run: |
@@ -233,7 +249,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -258,34 +274,24 @@ jobs:
       - run: cargo check --workspace --exclude leo-desktop --all-targets --locked
 
   targets:
-    name: build (${{ matrix.target }})
+    name: build (x86_64-apple-darwin)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     concurrency:
-      group: ci-build-${{ matrix.target }}-${{ github.ref }}
+      group: ci-build-x86_64-apple-darwin-${{ github.ref }}
       cancel-in-progress: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
-      - name: Build speech for any recent x64 Windows CPU
-        if: runner.os == 'Windows'
-        shell: bash
-        run: echo "TRANSCRIBE_CMAKE_ARGS=-DGGML_NATIVE=OFF -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_F16C=ON -DGGML_FMA=ON -DGGML_BMI2=ON -DGGML_AVX2=ON" >> "$GITHUB_ENV"
+          targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: x86_64-apple-darwin
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - run: cargo build --release --locked --target x86_64-apple-darwin
 
   ci:
     name: CI passed
