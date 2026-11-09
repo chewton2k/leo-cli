@@ -35,6 +35,7 @@ enigo = "0.6.1"
 handy-keys = "0.3.4"
 tauri-plugin-clipboard-manager = "2.3"
 tauri-plugin-global-shortcut = "2.3"
+tauri-plugin-notification = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "da9c9a8d4eb7f0524a2508988df1a7d9585b4904" }

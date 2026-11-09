@@ -2,6 +2,7 @@
   'use strict';
 
   const KEY = 'leo-chat-v1';
+  const noAi = (text) => typeof text === 'string' && text.startsWith("leo can't write yet: ");
   const MOST_KEPT = 40;
   const MOST_REFS = 8;
   const COMPACT_IDLE_MS = 10 * 60 * 1000;
@@ -1885,7 +1886,8 @@
           ? `<div class="msg-note">${m.quiz.correct === true ? 'Practice answer · correct' : m.quiz.correct === false ? 'Practice answer · not quite' : 'Practice answer'}</div>`
           : '';
         const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
-        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
+        const edit = i === lastPair() ? `<div class="msg-acts"><button class="msg-act" data-chat="edit"${state.busy ? ' disabled' : ''}>Edit</button></div>` : '';
+        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}${edit}</div>`;
       }
       const spoken = grade(m.text).text;
       const shown = m.pending ? held(spoken) : spoken;
@@ -1895,7 +1897,9 @@
       const from = !m.pending && marks.length
         ? `<div class="msg-from">${marks.map((x) => `<button class="cite cite-src" data-chat="open" data-id="${escape(x.s.id)}"${x.lines ? ` data-line="${x.lines}"` : ''}><b>${x.n}</b>${escape(x.s.title)}${x.where ? ` · ${escape(x.where)}` : ''}</button>`).join('')}</div>`
         : '';
-      const error = m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
+      const error = noAi(m.error)
+        ? `<div class="prose"><p>${escape(m.error)}</p></div><div class="msg-acts"><a class="btn primary sm" href="#/settings/writing">Set up writing AI</a></div>`
+        : m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
       const verdict = grade(m.text).verdict;
       const badge = verdict ? `<span class="verdict ${verdict}">${verdict === 'correct' ? 'Correct' : 'Not quite'}</span>` : '';
       const label = m.pending ? null : spentLabel(m.spent);
@@ -1904,6 +1908,8 @@
         ? (m.saved
           ? `<button class="msg-act" data-chat="open" data-id="${escape(m.saved)}">Open the saved note</button>`
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
+          + `<button class="msg-act" data-chat="copy" data-i="${i}"${state.busy ? ' disabled' : ''}>Copy</button>`
+          + (i === lastPair() + 1 ? `<button class="msg-act" data-chat="retry"${state.busy ? ' disabled' : ''}>Retry</button>` : '')
         : '';
       const drew = !m.pending && !m.error && /^\s*(```|~~~)\s*(mermaid|svg)\b/im.test(shown);
       const bigger = drew ? '<button type="button" class="msg-act icon-act" data-action="diagram-expand" data-reply="all" aria-label="See it larger" title="See it larger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>' : '';
@@ -2480,6 +2486,74 @@
       onSaved(made);
     }
 
+    function lastPair() {
+      const n = state.messages.length;
+      const a = state.messages[n - 1];
+      const q = state.messages[n - 2];
+      return a && q && a.role === 'assistant' && !a.pending && q.role === 'user' && !q.next && !q.quiz && !q.steer ? n - 2 : -1;
+    }
+
+    async function copyAnswer(i, button) {
+      const m = state.messages[i];
+      if (!m || m.role !== 'assistant' || m.pending || state.busy) return;
+      try {
+        await root.navigator.clipboard.writeText(linkCitations(grade(m.text || '').text, m.sources).trim());
+        button.textContent = 'Copied';
+        setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+      } catch (e) {
+        notify(`Could not copy: ${e.message || 'the clipboard is not available.'}`);
+      }
+    }
+
+    async function takeBack() {
+      const at = lastPair();
+      if (at < 0 || state.busy || state.preparingSend || !state.id) return null;
+      const id = state.id;
+      const asked = state.messages[at];
+      state.preparingSend = true;
+      try {
+        await upload;
+        const response = await fetch(`/api/chats/${encodeURIComponent(id)}/drop`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 2, total: stored().length }) });
+        if (!response.ok) throw new Error();
+      } catch (e) {
+        notify('Leo could not take back that reply. Try again.');
+        return null;
+      } finally {
+        state.preparingSend = false;
+      }
+      if (state.id !== id) return null;
+      state.messages.splice(at, 2);
+      persist();
+      draw(false);
+      return asked;
+    }
+
+    function bringBack(asked) {
+      const ids = asked.files || [];
+      const back = state.sent.filter((f) => ids.includes(f.id));
+      state.refs = [...(asked.refs || []), ...state.refs].reduce(addRef, []);
+      if (asked.selection) state.selection = asked.selection;
+      state.sent = state.sent.filter((f) => !back.includes(f));
+      state.files = [...state.files, ...back.map((f) => ({ ...(asked.cards || []).find((c) => c.name === f.name), ...f, status: 'ready' }))];
+      drawRefs();
+    }
+
+    async function retryAnswer() {
+      const asked = await takeBack();
+      if (!asked) return;
+      bringBack(asked);
+      send(asked.text);
+    }
+
+    async function editQuestion() {
+      const asked = await takeBack();
+      if (!asked) return;
+      bringBack(asked);
+      input.value = [asked.text, input.value].filter((t) => t.trim()).join('\n\n');
+      fit();
+      input.focus();
+    }
+
     async function startWith(starter) {
       const ready = onNote() || state.refs.length > 0;
       if (!starter.needs || ready) {
@@ -2881,6 +2955,9 @@
       else if (what === 'resume') resume(el.dataset.id);
       else if (what === 'save') saveAnswer(Number(el.dataset.i));
       else if (what === 'add') addAnswer(Number(el.dataset.i), '');
+      else if (what === 'copy') copyAnswer(Number(el.dataset.i), el);
+      else if (what === 'retry') retryAnswer();
+      else if (what === 'edit') editQuestion();
       else if (what === 'add-picked') {
         const picked = state.picked;
         hideAddFloat();
@@ -3195,6 +3272,11 @@
         box.querySelector('summary').textContent = threads.length === 1 ? 'A margin note lost its place' : `${threads.length} margin notes lost their place`;
         box.querySelector('.chat-lost-list').innerHTML = threads.map((t) => `<div class="chat-lost-row"><q>${escape(t.quote)}</q><p>${escape((t.messages[t.messages.length - 1] || {}).text || '')}</p><button type="button" class="msg-act" data-action="margin-lost-open" data-id="${escape(t.id)}">Open in chat</button><button type="button" class="msg-act" data-action="margin-lost-dismiss" data-id="${escape(t.id)}">Dismiss</button></div>`).join('');
       },
+      attachFiles(list) {
+        toggle(true);
+        addFiles(pastedNames([...list]));
+        input.focus();
+      },
       isOpen: () => state.open,
       isBusy: () => Boolean(state.busy || state.preparingSend),
       askNew(text) {
@@ -3233,5 +3315,5 @@
     };
   }
 
-  root.leoChat = { retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
+  root.leoChat = { noAi, retiredPractice, settle, timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, numbered, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, held, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageKinds, usagePeriod, usageRank, usageFold, traceSummary, notFromNotes, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, STARTERS, SURE, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

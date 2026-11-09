@@ -57,6 +57,8 @@ pub(crate) struct UpdateBody {
     pub(crate) tags: Option<Vec<String>>,
     pub(crate) pinned: Option<bool>,
     pub(crate) base: Option<String>,
+    #[serde(default)]
+    pub(crate) written: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -96,6 +98,8 @@ pub(crate) struct NoteResponse {
     pub(crate) tasks: Option<[usize; 2]>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) recorded: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) writeup_pending: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,6 +136,7 @@ impl NoteResponse {
             version: version_of(n),
             tasks: None,
             recorded: false,
+            writeup_pending: false,
             summary: None,
             preview: None,
         }
@@ -269,11 +274,13 @@ pub(crate) async fn get_note(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
+    let chats = state.chats.clone();
     state
         .read_store(move |store| {
             let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
             Ok(Json(NoteResponse {
                 recorded: crate::tools::has_transcript(&store.notes_dir, &note.id),
+                writeup_pending: crate::record::writeup_pending(&chats, &note.id),
                 ..NoteResponse::from_note(note)
             }))
         })
@@ -331,6 +338,7 @@ pub(crate) async fn update_note(
     Json(body): Json<UpdateBody>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
     let margin = Arc::clone(&state.margin);
+    let chats = state.chats.clone();
     state
         .with_store(move |store| {
             let recorded = crate::tools::has_transcript(&store.notes_dir, &id);
@@ -364,6 +372,9 @@ pub(crate) async fn update_note(
                 ..NoteResponse::from_note(note)
             };
             save(store)?;
+            if let Some(written) = body.written {
+                crate::record::set_writeup_pending(&chats, &id, !written);
+            }
             if edited {
                 margin.edited(&id, &resp.version);
             }

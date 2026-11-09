@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -20,9 +20,16 @@ use crate::app_settings::UpdateApi;
 /// a click, and then at most every five minutes (`usage::STALE_AFTER`).
 const REFRESH: Duration = Duration::from_secs(5 * 60);
 
+const OFFER_TITLE_CHARS: usize = 40;
+
 /// A menu command is offered to the page this many times, this far apart.
 const ASK_TRIES: u32 = 10;
 const ASK_GAP: Duration = Duration::from_millis(500);
+
+const OFFER_AT: usize = 4;
+const OFFER_CHECK: Duration = Duration::from_secs(15);
+
+struct TrayMenu(Menu<Wry>);
 
 struct Status {
     speech: MenuItem<Wry>,
@@ -89,8 +96,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 page(app, "settings", "updates");
             }
             "quit" => app.exit(0),
-            _ => {}
+            id => {
+                if let Some(uid) = id.strip_prefix("event:") {
+                    page(app, "event", uid);
+                }
+            }
         });
+    app.manage(TrayMenu(menu.clone()));
     if let Some(icon) = app.default_window_icon().cloned() {
         tray = tray.icon(icon);
     }
@@ -186,10 +198,10 @@ fn popup<M: tauri::menu::ContextMenu + 'static>(tray: &tauri::tray::TrayIcon, me
 }
 
 /// Shows the window and asks the page to go somewhere (`leoFromApp` in
-/// app/events.js). The arguments are fixed words, never user text. The page may
+/// app/events.js). `which` is passed as a JSON string literal. The page may
 /// still be loading (first launch, a reload), so the request is tried for a few
 /// seconds and runs at most once (`__leoAsked` remembers each click's number).
-fn page(app: &AppHandle, what: &'static str, which: &'static str) {
+pub(crate) fn page(app: &AppHandle, what: &'static str, which: &str) {
     static CLICKS: AtomicU64 = AtomicU64::new(0);
     if !crate::update_window::may_open(leo_core::activity::global()) {
         return;
@@ -197,10 +209,11 @@ fn page(app: &AppHandle, what: &'static str, which: &'static str) {
     crate::show(app);
     let click = CLICKS.fetch_add(1, Ordering::Relaxed);
     let app = app.clone();
+    let which = serde_json::to_string(which).unwrap_or_default();
     let script = format!(
         "(() => {{ const done = window.__leoAsked = window.__leoAsked || {{}}; \
          if (done[{click}] || !window.leoFromApp) return; done[{click}] = true; \
-         window.leoFromApp('{what}', '{which}'); }})()"
+         window.leoFromApp('{what}', {which}); }})()"
     );
     let _ = std::thread::Builder::new()
         .name("leo-tray-page".into())
@@ -215,6 +228,61 @@ fn page(app: &AppHandle, what: &'static str, which: &'static str) {
                 std::thread::sleep(ASK_GAP);
             }
         });
+}
+
+pub(crate) fn offer(app: &AppHandle, which: String, title: String, until: SystemTime) {
+    let Some(menu) = app.try_state::<TrayMenu>().map(|held| held.0.clone()) else {
+        return;
+    };
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("leo-tray-event".into())
+        .spawn(move || {
+            let Ok(item) = MenuItem::with_id(
+                &app,
+                format!("event:{which}"),
+                offer_label(&title),
+                true,
+                None::<&str>,
+            ) else {
+                return;
+            };
+            let mut shown = false;
+            loop {
+                let ended = SystemTime::now() >= until;
+                let wanted = !ended && !recording_live(&app);
+                if wanted != shown {
+                    let _ = if wanted {
+                        menu.insert(&item, OFFER_AT)
+                    } else {
+                        menu.remove(&item)
+                    };
+                    shown = wanted;
+                }
+                if ended {
+                    return;
+                }
+                std::thread::sleep(OFFER_CHECK);
+            }
+        });
+}
+
+fn offer_label(title: &str) -> String {
+    let shown: String = if title.chars().count() > OFFER_TITLE_CHARS {
+        title.chars().take(OFFER_TITLE_CHARS).chain(['…']).collect()
+    } else {
+        title.to_string()
+    };
+    format!("Get ready to record {}", shown.replace('&', "&&"))
+}
+
+fn recording_live(app: &AppHandle) -> bool {
+    app.try_state::<crate::Engine>().is_some_and(|engine| {
+        engine.0.lock().ok().is_some_and(|held| {
+            held.as_ref()
+                .is_some_and(|running| running.recording_live())
+        })
+    })
 }
 
 /// Reads the newest dictation off the main thread, so a busy database never
@@ -244,10 +312,16 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
             .unwrap_or_else(|| "no model chosen".into());
         let _ = status.speech.set_text(format!("Speech: {speech}"));
         let writing = leo_services::web_settings::writing_status(clicked);
+        let ready = leo_services::health::writing(
+            &leo_services::config::Config::load(),
+            leo_services::config::secret::default_store().as_ref(),
+            None,
+        )
+        .state;
         let _ = status.writing.set_text(format!("Writing: {}", writing.0));
         let _ = status
             .limits
-            .set_text(plan_use(&writing.0, writing.1.as_deref()));
+            .set_text(plan_use(ready, &writing.0, writing.1.as_deref()));
         let used = app.try_state::<crate::Engine>().and_then(|engine| {
             engine
                 .0
@@ -264,11 +338,18 @@ fn refresh(app: AppHandle, status: Arc<Status>) {
     }
 }
 
-fn plan_use(writing: &str, limits: Option<&str>) -> String {
+fn plan_use(
+    state: leo_services::health::WritingState,
+    writing: &str,
+    limits: Option<&str>,
+) -> String {
     match limits {
         Some(limits) => format!("Plan use: {limits}"),
-        None if writing == "No writing AI chosen" => {
-            "Plan use: choose a writing AI in Settings".into()
+        None if state == leo_services::health::WritingState::NotChosen => {
+            format!(
+                "Plan use: {}no writing AI is chosen.",
+                leo_services::ai::NO_WRITING_AI
+            )
         }
         None if writing.starts_with("Codex") => {
             "Plan use: unavailable; open Codex to refresh its limits".into()
@@ -282,6 +363,25 @@ fn plan_use(writing: &str, limits: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_event_menu_label_escapes_ampersands_and_cuts_long_titles_by_characters() {
+        use super::offer_label;
+        assert_eq!(offer_label("Q&A"), "Get ready to record Q&&A");
+        assert_eq!(
+            offer_label("Design sync"),
+            "Get ready to record Design sync"
+        );
+        let long = "é".repeat(41);
+        assert_eq!(
+            offer_label(&long),
+            format!("Get ready to record {}…", "é".repeat(40))
+        );
+        assert_eq!(
+            offer_label(&"é".repeat(40)),
+            format!("Get ready to record {}", "é".repeat(40))
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn the_menu_flips_the_app_only_when_it_is_away_from_this_desktop() {
@@ -293,16 +393,25 @@ mod tests {
 
     #[test]
     fn limits_explain_the_selected_provider_and_preserve_reported_use() {
-        for (provider, expected) in [
-            ("No writing AI chosen", "choose a writing AI"),
-            ("Codex · model", "open Codex"),
-            ("Claude Code · model", "Claude Code reports limits"),
-            ("OpenAI · model", "this provider has not reported limits"),
-            ("Ollama · model", "this provider has not reported limits"),
+        use leo_services::health::WritingState::{NotChosen, Ready};
+        for (state, provider, expected) in [
+            (NotChosen, "No writing AI chosen", "no writing AI is chosen"),
+            (Ready, "Codex · model", "open Codex"),
+            (Ready, "Claude Code · model", "Claude Code reports limits"),
+            (
+                Ready,
+                "OpenAI · model",
+                "this provider has not reported limits",
+            ),
+            (
+                Ready,
+                "Ollama · model",
+                "this provider has not reported limits",
+            ),
         ] {
-            assert!(super::plan_use(provider, None).contains(expected));
+            assert!(super::plan_use(state, provider, None).contains(expected));
             assert_eq!(
-                super::plan_use(provider, Some("5h 20%")),
+                super::plan_use(state, provider, Some("5h 20%")),
                 "Plan use: 5h 20%"
             );
         }

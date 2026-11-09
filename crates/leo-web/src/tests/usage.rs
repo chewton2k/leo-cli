@@ -122,3 +122,46 @@ async fn only_explicit_authenticated_usage_refresh_polls_and_concurrent_refresh_
         running.stop().await;
     }
 }
+
+#[derive(Default)]
+struct Writing(std::sync::Mutex<Vec<bool>>);
+
+impl SettingsApi for Writing {
+    fn describe(&self, _: &std::path::Path) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+    fn writing(&self, probe: bool) -> serde_json::Value {
+        self.0.lock().unwrap().push(probe);
+        serde_json::json!({"writing": {"state": "not_chosen"}, "candidates": [{"id": "claude_code", "installed": true, "signed_in": probe.then_some(true)}]})
+    }
+    fn apply(&self, _: &serde_json::Value) -> anyhow::Result<String> {
+        anyhow::bail!("Not used")
+    }
+    fn test(&self, _: &str) -> anyhow::Result<String> {
+        anyhow::bail!("Not used")
+    }
+}
+
+#[test]
+fn settings_writing_candidates_probe_sign_in_only_when_asked() {
+    let (mut state, _dir, _) = state_with(&[]);
+    let fake = Arc::new(Writing::default());
+    state.settings = Some(fake.clone());
+    let ask = |query: &[(&str, &str)]| {
+        let query = query
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        json_of(run(crate::routes::settings::writing(
+            State(state.clone()),
+            axum::extract::Query(query),
+        )))
+    };
+    let quiet = ask(&[]);
+    assert!(quiet["candidates"][0]["signed_in"].is_null());
+    assert_eq!(quiet["writing"]["state"], "not_chosen");
+    ask(&[("probe", "yes")]);
+    let probed = ask(&[("probe", "signin")]);
+    assert_eq!(probed["candidates"][0]["signed_in"], true);
+    assert_eq!(*fake.0.lock().unwrap(), [false, false, true]);
+}

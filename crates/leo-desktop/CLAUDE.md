@@ -17,7 +17,8 @@ a test, or leave it unset to see the user's own data.
    `fresh_token()`; the port actually used is remembered. A failure opens
    `dist/index.html?problem=…` instead.
 3. Plugins: single instance (a second launch shows the window), autostart
-   (enabled once, marker `<config>/app-launched`; never in debug builds).
+   (enabled once, marker `<config>/app-launched`; never in debug builds),
+   notification (Rust only; the page gets no notification permission).
 4. Window `main`: the engine's sign-in URL, 1200×800, `--hidden` when started at
    login. macOS: overlay title bar, hidden title, window buttons at (18, 31) in
    the sidebar head; `window.__LEO_APP__ = 'mac'` makes `theme.js` set
@@ -58,10 +59,27 @@ a test, or leave it unset to see the user's own data.
   Page commands are offered for 5 s (the page may still be loading) and run once
   per click (`__leoAsked`); copying runs off the main thread. A speech model that
   is chosen but not on disk reads "(not downloaded)".
+- Calendar events (2026-11-09, `notify.rs`): `AppApi::event_starting` posts
+  "<title> is starting" with the event uid and kind in `extra`; a tap (`on_action`, which
+  2.8.0 reports on macOS and Windows) shows the window and navigates to
+  `#/record?event=<uid>&kind=<call|microphone>` through
+  `leoFromApp('event', '<kind>:<uid>')` (`page` JSON-quotes its argument). `call`
+  when the event's location or description holds an http(s) link
+  (`EventStarting.online`), else `microphone`. The page only opens Record ready;
+  it never starts. macOS asks for notification permission on that first
+  post, never during onboarding. The tray always adds "Get ready to record <title>" (`&` doubled, title cut at 40
+  characters with an ellipsis) under Record a call until start+10 min, hidden while a recording is live
+  (`Running::recording_live`), so a denied or missed notification still has a way in.
 - The window disables Tauri's drag-drop handler (`disable_drag_drop_handler`):
   left on, it swallows the webview's HTML drag events, so moving notes and
   folders and combining notes did nothing in the app (2026-11-02). Dropped
   files reach the page's own handlers (`drag.js`).
+- Sign in (2026-11-09, `sign_in.rs`, AppApi `{action:"sign_in",provider}`, only
+  `claude_code`/`codex`): Codex runs `codex login` quietly (it opens the browser; one at
+  a time, reaped, stopped after 10 min); Claude Code opens a terminal running the resolved
+  `claude`: a private 0700 `.command` file (`#!/bin/zsh -l`, removes itself) opened with
+  `open` on macOS, and on Windows `cmd /c start "" cmd /k claude`, the one intentional
+  visible console. The command lines are pure functions with unit tests.
 - Downloads save to `~/Downloads` under a free name (`links::download_path`)
   and are revealed when done.
 - `window.print` calls `print_page` on macOS; Windows retains its original
@@ -150,7 +168,8 @@ the raw audio, so quiet speech is not lost whole. Text stays
 visible while the final pass runs. With AI writing on, Escape stays registered through the
 polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
-reason. Settings warns when no writing AI is set up (`writing_ready`).
+reason. Settings warns when no writing AI is set up (`writing_ready`, which is
+`health::writing`'s cheap state; the tray's plan-use line reads the same state).
 Shutdown cancels dictation/shortcuts and stops the speech worker before the
 loopback engine finishes.
 
@@ -160,6 +179,12 @@ loopback engine finishes.
 actor; native login/tray failures restore the previous file and cached state.
 First-launch microphone, Accessibility and model completion flags persist
 independently; the page groups both permissions before the model choice.
+`finish_step(3)` is the writing AI step (`writing_done = Some(true)`); any earlier
+step first pins `writing_done` to its computed value, so new setups still see it.
+The page reads `preferences.writing_done` as `writing_done()`.
+`Preferences` ignores unknown keys, so a file from a newer build never resets
+settings; `writing_done()` is true when the key is true, or absent and all three
+older flags are done.
 Permission status checks never open the microphone; requests are explicit.
 A microphone request after a macOS denial opens the Microphone privacy pane,
 since the system shows its dialog only once.

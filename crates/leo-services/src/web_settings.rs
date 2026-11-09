@@ -108,11 +108,11 @@ fn task_view(
         json!({
             "installed": installed,
             "text": if installed {
-                format!("Uses {}, no key needed. If it asks, {}.", agent.plan(), agent.sign_in())
+                format!("Uses {}. Sign in with the Sign in button if leo asks.", agent.plan())
             } else if located {
-                format!("`{bin}` cannot provide the safety controls Leo needs. Update {} and try again: {}.", chosen.map(|c| c.name).unwrap_or(provider.as_str()), agent.install())
+                format!("{} needs an update before leo can use it.", chosen.map(|c| c.name).unwrap_or(provider.as_str()))
             } else {
-                format!("`{bin}` is not installed: {}.", agent.install())
+                format!("{} is not installed on this computer.", chosen.map(|c| c.name).unwrap_or(provider.as_str()))
             },
         })
     });
@@ -125,7 +125,7 @@ fn task_view(
             })
         }
         (Task::Chat, "ollama") if local.ollama.is_empty() => {
-            Some("Ollama has no models yet: run `ollama pull qwen3:8b` on this computer.")
+            Some("Ollama has no models yet. Choose one below.")
         }
         (Task::Transcribe, "parakeet") if !local.speech_ready => {
             Some("Download a local model in Settings → Speech models.")
@@ -172,6 +172,7 @@ pub fn describe(
             task_view(cfg, store, local, usage, Task::Chat),
             task_view(cfg, store, local, usage, Task::Transcribe),
         ],
+        "writing": crate::health::writing(cfg, store, Some(local)),
         "paths": {
             "notes": notes_dir.map(|p| p.display().to_string()),
             "config": Config::config_path().ok().map(|p| p.display().to_string()),
@@ -179,7 +180,7 @@ pub fn describe(
     })
 }
 
-pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
+fn agents(cfg: &Config, probe: bool) -> Vec<(choice::Choice, Agent, bool, Option<bool>)> {
     choice::WRITING
         .iter()
         .filter_map(|choice| {
@@ -187,19 +188,44 @@ pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
             let agent = Agent::of(pc)?;
             let cli = AgentCli::new(choice.provider.to_string(), agent, pc);
             let installed = cli.available();
-            let signed_in = installed
+            let signed_in = (probe && installed)
                 .then(|| agent_cli::signed_in(agent, cli.bin()))
                 .flatten();
-            Some(json!({
+            Some((*choice, agent, installed, signed_in))
+        })
+        .collect()
+}
+
+pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
+    agents(cfg, true)
+        .into_iter()
+        .map(|(choice, agent, installed, signed_in)| {
+            json!({
                 "provider": choice.provider,
                 "name": choice.name,
                 "installed": installed,
                 "signed_in": signed_in,
                 "signin": agent.sign_in(),
                 "limits": usage.get(choice.provider),
-            }))
+            })
         })
         .collect()
+}
+
+pub fn candidates(cfg: &Config, local: &Local, probe: bool) -> Vec<Value> {
+    let mut found: Vec<Value> = agents(cfg, probe)
+        .into_iter()
+        .map(|(choice, _, installed, signed_in)| {
+            json!({"id": choice.provider, "installed": installed, "signed_in": signed_in})
+        })
+        .collect();
+    found.push(json!({
+        "id": "ollama",
+        "installed": local.ollama_running || crate::health::on_path("ollama"),
+        "running": local.ollama_running,
+        "models": local.ollama,
+    }));
+    found
 }
 
 fn open(path: &Path) -> Result<DocumentMut> {
@@ -237,6 +263,21 @@ pub fn apply(
             };
             let mut doc = open(config_path)?;
             choice::write_choice(&mut doc, task, chosen.provider);
+            if task == Task::Chat && chosen.provider == "ollama" {
+                let installed = |m: &str| local.ollama.iter().any(|o| o == m);
+                let asked = change.get("model").and_then(Value::as_str);
+                let set = Config::load_from(config_path)
+                    .provider("ollama")
+                    .and_then(|p| p.model.clone());
+                let model = match asked.filter(|m| installed(m)) {
+                    Some(model) => Some(model),
+                    None if set.as_deref().is_some_and(installed) => None,
+                    None => local.ollama.first().map(String::as_str),
+                };
+                if let Some(model) = model {
+                    choice::write_model(&mut doc, "ollama", model);
+                }
+            }
             edit::save_document(config_path, &doc)?;
             Ok(format!(
                 "{} now uses {}.",
@@ -368,11 +409,15 @@ mod tests {
         let page = view(&path, &MemoryStore::default());
         let writing = &page["tasks"][0];
         assert!(writing["key"].is_null());
+        assert_eq!(page["writing"]["state"], "not_installed");
+        assert_eq!(page["writing"]["provider"], "codex");
         assert_eq!(writing["signin"]["installed"], false);
-        assert!(writing["signin"]["text"]
-            .as_str()
-            .unwrap()
-            .contains("npm install -g @openai/codex"));
+        let text = writing["signin"]["text"].as_str().unwrap();
+        assert!(
+            text.ends_with(" is not installed on this computer."),
+            "{text}"
+        );
+        assert!(!text.contains("npm"));
     }
 
     #[cfg(unix)]
@@ -428,6 +473,42 @@ mod tests {
                 assert!(plan["signed_in"].is_null());
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidates_ask_for_sign_in_only_when_probed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let mut cfg = Config::default();
+        for name in ["codex", "claude_code"] {
+            let bin = dir.path().join(name);
+            std::fs::write(&bin, format!("#!/bin/sh\ntouch '{}'\nprintf '%s\\n' 'Logged in using ChatGPT' '{{\"loggedIn\":true}}'\n", ran.display())).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            cfg.providers.get_mut(name).unwrap().bin = Some(bin.to_string_lossy().into());
+        }
+        let local = Local {
+            ollama_running: true,
+            ollama: vec!["qwen3:4b".into()],
+            ..Local::default()
+        };
+        let quiet = candidates(&cfg, &local, false);
+        assert!(!ran.exists());
+        assert_eq!(quiet.len(), 3);
+        for found in &quiet[..2] {
+            assert_eq!(found["installed"], true);
+            assert!(found["signed_in"].is_null());
+        }
+        assert_eq!(
+            quiet[2],
+            json!({"id":"ollama","installed":true,"running":true,"models":["qwen3:4b"]})
+        );
+        let probed = candidates(&cfg, &local, true);
+        assert!(ran.exists());
+        let ids: Vec<_> = probed.iter().map(|found| found["id"].clone()).collect();
+        assert_eq!(ids, [json!("codex"), json!("claude_code"), json!("ollama")]);
+        assert_eq!(probed[0]["signed_in"], true);
     }
 
     #[cfg(unix)]
@@ -591,6 +672,42 @@ mod tests {
             text.contains("[transcribe]"),
             "the rest of the file is kept"
         );
+    }
+
+    #[test]
+    fn choosing_ollama_uses_an_installed_model() {
+        let (_d, path) = setup("[chat]\nchain = [\"claude_code\"]\n[providers.ollama]\nmodel = \"qwen3:8b\"\n[transcribe]\nchain = []\n");
+        let store = MemoryStore::default();
+        let model = || {
+            Config::load_from(&path)
+                .provider("ollama")
+                .unwrap()
+                .model
+                .clone()
+        };
+        let choose = |extra: Value, models: &[&str]| {
+            let mut change = json!({"set": "provider", "task": "writing", "value": "ollama"});
+            if let Some(m) = extra.as_str() {
+                change["model"] = json!(m);
+            }
+            let local = Local {
+                ollama_running: true,
+                ollama: models.iter().map(|m| m.to_string()).collect(),
+                speech_ready: false,
+            };
+            apply(&change, &path, &store, &local).unwrap();
+        };
+        choose(Value::Null, &[]);
+        assert_eq!(model().as_deref(), Some("qwen3:8b"));
+        choose(Value::Null, &["qwen3:4b", "gemma3:4b"]);
+        assert_eq!(model().as_deref(), Some("qwen3:4b"));
+        assert_eq!(Config::load_from(&path).chat.chain, ["ollama"]);
+        choose(Value::Null, &["gemma3:4b", "qwen3:4b"]);
+        assert_eq!(model().as_deref(), Some("qwen3:4b"));
+        choose(json!("gemma3:4b"), &["qwen3:4b", "gemma3:4b"]);
+        assert_eq!(model().as_deref(), Some("gemma3:4b"));
+        choose(json!("made-up"), &["qwen3:4b", "gemma3:4b"]);
+        assert_eq!(model().as_deref(), Some("gemma3:4b"));
     }
 
     #[test]

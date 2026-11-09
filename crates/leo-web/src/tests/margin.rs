@@ -696,7 +696,10 @@ async fn a_missing_or_failing_ai_stays_silent_and_leaves_one_line() {
     let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
     assert_eq!((status, &read["note"]), (200, &serde_json::Value::Null));
     let (_, settings) = engine.get("/api/margin").await;
-    assert_eq!(settings["problem"], margin::PROBLEM);
+    assert_eq!(
+        settings["problem"],
+        "Your writing AI didn't answer just now (unavailable). Try again in a moment."
+    );
     assert!(!settings.to_string().contains("secret provider detail"));
     fails.store(false, Ordering::SeqCst);
     let (other, other_version) = engine.note("Fine", PASSAGE).await;
@@ -1042,7 +1045,10 @@ async fn health_shows_a_failed_read_through_its_route() {
     assert_eq!(read["failed"], true, "the page keeps its baseline");
     let (_, view) = engine.get("/api/health").await;
     assert_eq!(view["sections"][0]["title"], "Felix");
-    assert_eq!(view["sections"][0]["checks"][0]["detail"], margin::PROBLEM);
+    assert_eq!(
+        view["sections"][0]["checks"][0]["detail"],
+        "Your writing AI didn't answer just now (unavailable). Try again in a moment."
+    );
     engine.stop().await;
 }
 
@@ -1558,9 +1564,13 @@ async fn a_full_note_and_a_missing_ai_say_why() {
     let (id, version) = engine.plain(PASSAGE).await;
     let (status, why) = engine.analyze(&id, &version, &[PASSAGE], None).await;
     assert_eq!((status, why["why"].as_str()), (503, Some("no-ai")));
+    assert!(why["error"]
+        .as_str()
+        .unwrap()
+        .starts_with(leo_core::NO_WRITING_AI));
     assert_eq!(
         engine.get("/api/margin").await.1["problem"].as_str(),
-        Some(margin::PROBLEM)
+        Some(crate::no_writer().as_str())
     );
     engine.stop().await;
 }
@@ -1684,6 +1694,74 @@ async fn a_persona_shapes_the_system_prompt_and_reader_leaves_it_alone() {
             .0,
         400
     );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_note_keeps_its_own_instructions_and_every_margin_prompt_carries_them() {
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::clone(&seen);
+    let writer: Writer = Arc::new(move |system, _, _| {
+        kept.lock().unwrap().push(system.to_string());
+        Ok("{}".to_string())
+    });
+    let heard = Arc::clone(&seen);
+    let streamer: crate::chat::Streamer = Arc::new(move |system, _, _, _, _, _| {
+        heard.lock().unwrap().push(system.to_string());
+        Ok(crate::chat::Reply::from("Sourced.".to_string()))
+    });
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        toolless_chat: Some(streamer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Told", PASSAGE).await;
+    let path = format!("/api/notes/{id}/margin");
+    assert_eq!(engine.get(&path).await.1["instructions"], "");
+    let (status, set) = engine
+        .post(
+            &path,
+            serde_json::json!({ "instructions": "  Check every claim has a source.  " }),
+        )
+        .await;
+    assert_eq!(
+        (status, &set),
+        (
+            200,
+            &serde_json::json!({ "instructions": "Check every claim has a source." })
+        )
+    );
+    assert_eq!(
+        engine.get(&path).await.1["instructions"],
+        "Check every claim has a source."
+    );
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    let (status, _) = engine
+        .post(
+            &format!("{path}/threads"),
+            serde_json::json!({ "version": version, "quote": PASSAGE, "question": "Why?" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let systems = seen.lock().unwrap().clone();
+    assert_eq!(systems.len(), 3);
+    for system in &systems {
+        assert!(system.contains("Instruction: Check every claim has a source."));
+    }
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "instructions": "a\u{7}b" }))
+            .await
+            .0,
+        400
+    );
+    let (status, set) = engine
+        .post(&path, serde_json::json!({ "instructions": " " }))
+        .await;
+    assert_eq!((status, set["instructions"].as_str()), (200, Some("")));
+    assert_eq!(engine.get(&path).await.1["instructions"], "");
     engine.stop().await;
 }
 

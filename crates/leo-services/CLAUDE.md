@@ -27,6 +27,8 @@ invisible.
 `chat_outcome`, `chat_streaming`, `quick_outcome`, `open_session`, ...); nothing
 above `ai/` knows about providers.
 
+A writer failure a person can see starts with `leo_core::NO_WRITING_AI` ("leo can't write yet: ") only when setup can fix it (writing AI not ready, sign-in, key or model missing, not installed), so the page can add a Set up writing AI link; a rate limit, timeout or outage reads "Your writing AI didn't answer just now (busy|timed out|unavailable). Try again in a moment." with no prefix and no provider body: services use `ai::writing_error(&err)` (reads `health::writing`, offline) and leo-web uses `leo_core::writing_said` / `crate::no_writer()`; never write a per-site wording.
+
 ### The note prompts
 
 `ai/chat.rs` builds every chat prompt as `Prompt { system, user }`: rules in
@@ -148,6 +150,16 @@ keeps filesystem/native work outside application mutexes.
 key controls. Calendar secrets still use the private credentials file by default
 or the optional keychain with `LEO_USE_KEYCHAIN=1`; tests use MemoryStore.
 
+`ollama.rs` (2026-11-09) helps the user download an Ollama model they pick; leo
+never picks or pulls one by itself. `ollama_models.json` is the vendored catalog
+(name, download bytes, memory in decimal GB, one line). `machine()` reads total memory
+(macOS `hw.memsize`, Windows `GlobalMemoryStatusEx` through kernel32, else unknown)
+and free disk in the home folder, where Ollama keeps models. `fit` is TooBig when
+memory needed exceeds total memory by more than 10% (an "8 GB" laptop reports under 8 GiB) or size + 2 GB exceeds free disk; unknown values
+never block. `recommended` is the largest fitting entry, and none while memory is
+unknown. `pull` streams loopback `POST /api/pull` NDJSON as `Progress` and says disk
+and memory errors in one plain sentence (`plain_error`).
+
 `config/choice.rs` keeps writing model/effort choices and the single local
 speech entry. The full speech catalog reaches the page through `SpeechApi`,
 implemented in leo-host. `web_settings.rs` owns writing
@@ -190,7 +202,8 @@ age past `STALE_AFTER`, a window past its reset reads 0%); the Usage action in
 Settings asks Codex; doctor adds `<name> limits` with
 reset times. Never `--bare` (it skips the
 OAuth login). Usable = program on PATH (`locate`, `.cmd` on Windows); failures
-are retryable and name the sign-in step; settings shows a sign-in fact row,
+are retryable and name the sign-in step; `health::writing` is SignInNeeded only from
+the last sign-in probe's result (`agent_cli::last_signed_in`, ten minutes), never a new probe; settings shows a sign-in fact row,
 no key row; doctor's "answers" probe is the sign-in check.
 
 An override that names a provider with no `[providers]` block is ignored with a
@@ -505,12 +518,15 @@ and state updates after acquiring their state lock, so cancel wins stale work.
 language-aware filler rules (on by default), with Unicode-safe punctuation and
 capitalization, then writes clock times only when marked (`230 pm` → `2:30 pm`;
 an AM radio dial like `1050 AM` is the accepted casualty): a bare `230` may be
-a quantity, so context is left to the AI step. `polish.rs` is the optional AI writing step (`Writing`: off
+a quantity, so context is left to the AI step. With fillers on it also drops a
+"you know" between commas or at a clause edge and "scratch that" with the sentence before
+it, never "like". `polish.rs` is the optional AI writing step (`Writing`: off
 by default, `quick` = `ai::quick_outcome`, the cheapest model and effort on the
 user's plan, 12 s, or `selected` = the Writing AI choice, 30 s): a cleanup
 prompt (2026-11-03, the user's call) that removes fillers and verbal tics,
-reformats into paragraphs/lists and writes times like 2:30 from context, and
-treats the dictation as text, never instructions. Replies are only
+reformats into paragraphs/lists and writes times like 2:30 from context, is told
+only the frontmost app's name (desktop reads it at keypress, never window titles or
+screen text) to match its tone, and treats the dictation as text, never instructions. Replies are only
 unwrapped (code fence, `<dictation>` tags), never run through `clean_reply`,
 which would drop dictated "Sure…" or "Let me know…" lines. A reply must keep
 70% of the dictation's words (characters for unspaced scripts) and add at most

@@ -47,8 +47,27 @@ pub fn writer(
                 ..Default::default()
             });
         usage.record(purpose, spent.as_ref(), started.elapsed(), result.is_err());
-        result.map(|outcome| outcome.value)
+        result.map(|outcome| outcome.value).map_err(said)
     })
+}
+
+pub fn said(e: anyhow::Error) -> anyhow::Error {
+    let said = leo_services::ai::writing_error(&e);
+    leo_core::diag::warn(format!(
+        "the writing AI failed: {} ({})",
+        logged(&said),
+        logged(&e.to_string())
+    ));
+    anyhow::anyhow!(said)
+}
+
+fn logged(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect()
 }
 
 pub fn spent_of(answered: Answered) -> leo_web::Spent {
@@ -84,19 +103,22 @@ impl leo_web::Conversation for Talk {
         text: &str,
         exchange: leo_web::Exchange<'_>,
     ) -> anyhow::Result<leo_web::Reply> {
-        let (text, answered) = self.0.say(
-            text,
-            Turn {
-                tail: exchange.tail,
-                max_tokens: exchange.max_tokens,
-                most_calls: exchange.most_calls,
-                sink: exchange.piece,
-                restart: exchange.restart,
-                call: exchange.call,
-                stopped: exchange.stopped,
-                tools_done: exchange.tools_done,
-            },
-        )?;
+        let (text, answered) = self
+            .0
+            .say(
+                text,
+                Turn {
+                    tail: exchange.tail,
+                    max_tokens: exchange.max_tokens,
+                    most_calls: exchange.most_calls,
+                    sink: exchange.piece,
+                    restart: exchange.restart,
+                    call: exchange.call,
+                    stopped: exchange.stopped,
+                    tools_done: exchange.tools_done,
+                },
+            )
+            .map_err(said)?;
         Ok(leo_web::Reply {
             text,
             spent: answered.map(spent_of),
@@ -168,5 +190,13 @@ mod route_tests {
         assert_eq!(route_of(Purpose::Summary), Route::Quick);
         assert_eq!(route_of(Purpose::OtherWriting), Route::Full);
         assert_eq!(route_of(Purpose::Answer), Route::Full);
+    }
+
+    #[test]
+    fn the_log_keeps_one_short_line_never_the_whole_body() {
+        let body = format!("openai returned 429: {}\nprompt text", "x".repeat(500));
+        let line = logged(&body);
+        assert_eq!(line.chars().count(), 200);
+        assert!(!line.contains("prompt text"));
     }
 }

@@ -11,10 +11,17 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+pub struct EventStarting {
+    pub uid: String,
+    pub title: String,
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub online: bool,
+}
 pub trait AppApi: Send + Sync {
     fn view(&self) -> Result<Value>;
     fn change(&self, value: Value) -> Result<Value>;
     fn health(&self, notes: &Path) -> Result<Value>;
+    fn event_starting(&self, _event: EventStarting) {}
 }
 fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error":message}))).into_response()
@@ -31,6 +38,15 @@ async fn call(
             "These settings are available in the Leo app. Reopen Leo and try again.",
         );
     };
+    if change.as_ref().is_some_and(|change| {
+        change["action"] == "sign_in"
+            && !matches!(change["provider"].as_str(), Some("claude_code" | "codex"))
+    }) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Choose Claude Code or Codex to sign in.",
+        );
+    }
     match tokio::task::spawn_blocking(move || {
         if let Some(notes) = notes {
             let mut view = api.health(&notes)?;
@@ -90,13 +106,18 @@ pub(crate) async fn health(State(state): State<AppState>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    struct Fake;
+    #[derive(Default)]
+    struct Fake(std::sync::Mutex<Vec<serde_json::Value>>);
     impl AppApi for Fake {
         fn view(&self) -> anyhow::Result<serde_json::Value> {
             Ok(serde_json::json!({"automatic_updates":true,"install_on_quit":true}))
         }
         fn change(&self, value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-            anyhow::ensure!(value["action"] == "check_updates", "Choose an app setting.");
+            anyhow::ensure!(
+                value["action"] == "check_updates" || value["action"] == "sign_in",
+                "Choose an app setting."
+            );
+            self.0.lock().unwrap().push(value);
             self.view()
         }
         fn health(&self, _notes: &std::path::Path) -> anyhow::Result<serde_json::Value> {
@@ -105,7 +126,7 @@ mod tests {
     }
     #[tokio::test]
     async fn a_margin_problem_shows_one_line_in_health() {
-        let api = Some(std::sync::Arc::new(Fake) as std::sync::Arc<dyn AppApi>);
+        let api = Some(std::sync::Arc::new(Fake::default()) as std::sync::Arc<dyn AppApi>);
         let response = call(
             api,
             None,
@@ -126,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn app_changes_and_health_are_json_and_validate_actions() {
-        let api = Some(std::sync::Arc::new(Fake) as std::sync::Arc<dyn AppApi>);
+        let api = Some(std::sync::Arc::new(Fake::default()) as std::sync::Arc<dyn AppApi>);
         assert_eq!(
             call(api.clone(), None, None, None).await.status(),
             axum::http::StatusCode::OK
@@ -158,6 +179,40 @@ mod tests {
                 .await
                 .status(),
             axum::http::StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_in_reaches_the_app_only_for_claude_code_or_codex() {
+        let fake = std::sync::Arc::new(Fake::default());
+        let api = Some(fake.clone() as std::sync::Arc<dyn AppApi>);
+        for provider in ["claude_code", "codex"] {
+            let asked = serde_json::json!({"action":"sign_in","provider":provider});
+            assert_eq!(
+                call(api.clone(), Some(asked), None, None).await.status(),
+                axum::http::StatusCode::OK
+            );
+        }
+        for asked in [
+            serde_json::json!({"action":"sign_in","provider":"ollama"}),
+            serde_json::json!({"action":"sign_in","provider":"codex; rm -rf ~"}),
+            serde_json::json!({"action":"sign_in"}),
+        ] {
+            assert_eq!(
+                call(api.clone(), Some(asked), None, None).await.status(),
+                axum::http::StatusCode::BAD_REQUEST
+            );
+        }
+        let seen: Vec<_> = fake
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|v| v["provider"].clone())
+            .collect();
+        assert_eq!(
+            seen,
+            [serde_json::json!("claude_code"), serde_json::json!("codex")]
         );
     }
 }

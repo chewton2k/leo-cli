@@ -799,7 +799,7 @@ mod tests {
             .unwrap_err();
         let message = error.to_string();
         assert!(
-            message.starts_with("OpenRouter rejected the key stored in leo (401). Choose a supported AI for writing in Settings."),
+            message.starts_with("OpenRouter rejected the key stored in leo (401). Choose another writing AI in Settings."),
             "{message}"
         );
         assert!(message.contains("User not found."), "{message}");

@@ -10,13 +10,14 @@ use tauri::AppHandle;
 use tauri_plugin_autostart::ManagerExt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Preferences {
     pub open_at_login: bool,
     pub show_tray: bool,
     pub automatic_updates: bool,
     pub install_on_quit: bool,
     pub onboarding: [bool; 3],
+    pub writing_done: Option<bool>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -26,13 +27,22 @@ impl Default for Preferences {
             automatic_updates: true,
             install_on_quit: true,
             onboarding: [false; 3],
+            writing_done: None,
         }
     }
 }
 impl Preferences {
+    pub fn writing_done(&self) -> bool {
+        self.writing_done
+            .unwrap_or_else(|| self.onboarding.iter().all(|done| *done))
+    }
     pub fn finish_step(&mut self, step: usize) -> Result<()> {
-        ensure!(step < 3, "Choose a setup step.");
-        self.onboarding[step] = true;
+        ensure!(step < 4, "Choose a setup step.");
+        let done = self.writing_done();
+        self.writing_done = Some(step == 3 || done);
+        if step < 3 {
+            self.onboarding[step] = true;
+        }
         Ok(())
     }
     pub fn load(path: &Path) -> Result<Self> {
@@ -231,6 +241,8 @@ impl AppSettings {
 impl leo_web::app_settings::AppApi for AppSettings {
     fn view(&self) -> Result<Value> {
         let preferences = self.preferences();
+        let mut preferences_view = serde_json::to_value(&preferences)?;
+        preferences_view["writing_done"] = preferences.writing_done().into();
         let permissions = self.permission_view();
         let updates = self
             .updates
@@ -238,7 +250,7 @@ impl leo_web::app_settings::AppApi for AppSettings {
             .map(|u| u.view())
             .unwrap_or(json!({"state":"idle"}));
         Ok(
-            json!({"preferences":preferences,"problem":self.preferences.problem(),"permissions":permissions,"updates":updates,"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"unsigned":cfg!(target_os="macos") && option_env!("LEO_APP_SIGNED")!=Some("1"),"paths":{"notes":leo_core::paths::data_dir()?.join("notes"),"models":leo_services::config::choice::models_dir().join("speech")}}),
+            json!({"preferences":preferences_view,"problem":self.preferences.problem(),"permissions":permissions,"updates":updates,"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"unsigned":cfg!(target_os="macos") && option_env!("LEO_APP_SIGNED")!=Some("1"),"paths":{"notes":leo_core::paths::data_dir()?.join("notes"),"models":leo_services::config::choice::models_dir().join("speech")}}),
         )
     }
     fn change(&self, value: Value) -> Result<Value> {
@@ -262,6 +274,11 @@ impl leo_web::app_settings::AppApi for AppSettings {
             Some("microphone") => crate::permissions::request_microphone(&self.app)?,
             Some("accessibility") => crate::permissions::request_accessibility(&self.app)?,
             Some("quit") => self.app.exit(0),
+            Some("sign_in") => crate::sign_in::start(
+                value["provider"]
+                    .as_str()
+                    .context("Choose Claude Code or Codex to sign in.")?,
+            )?,
             Some(action @ ("check_updates" | "download_update" | "restart_update")) => {
                 self.updates
                     .get()
@@ -271,6 +288,9 @@ impl leo_web::app_settings::AppApi for AppSettings {
             _ => anyhow::bail!("Choose an action in Settings."),
         }
         self.view()
+    }
+    fn event_starting(&self, event: leo_web::app_settings::EventStarting) {
+        crate::notify::starting(&self.app, event);
     }
     fn health(&self, notes: &Path) -> Result<Value> {
         use leo_web::dictation::DictationApi;
@@ -352,11 +372,23 @@ mod tests {
         preferences.finish_step(0).unwrap();
         preferences.finish_step(2).unwrap();
         assert_eq!(preferences.onboarding, [true, true, true]);
-        assert!(preferences.finish_step(3).is_err());
+        assert!(!preferences.writing_done());
+        preferences.finish_step(3).unwrap();
+        assert_eq!(preferences.writing_done, Some(true));
+        assert!(preferences.finish_step(4).is_err());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app-settings.json");
         preferences.save(&path).unwrap();
         assert_eq!(Preferences::load(&path).unwrap(), preferences);
-        assert!(serde_json::from_str::<Preferences>(r#"{"unknown":true}"#).is_err());
+    }
+    #[test]
+    fn newer_files_load_and_writing_done_follows_old_setup() {
+        let load = |json: &str| serde_json::from_str::<Preferences>(json).unwrap();
+        assert!(load(r#"{"onboarding":[true,true,true]}"#).writing_done());
+        assert!(!load(r#"{"onboarding":[true,true,false]}"#).writing_done());
+        assert!(!load(r#"{"onboarding":[true,true,true],"writing_done":false}"#).writing_done());
+        assert!(load(r#"{"writing_done":true}"#).writing_done());
+        let newer = load(r#"{"automatic_updates":false,"from_a_newer_build":1}"#);
+        assert!(!newer.automatic_updates);
     }
 }

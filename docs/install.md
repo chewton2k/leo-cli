@@ -5,7 +5,25 @@ is not supported.
 
 ## Install
 
-### With the installer
+### From a download (easiest)
+
+Download Leo from [Releases](https://github.com/chewton2k/leo-cli/releases/latest):
+
+| Platform | File |
+|---|---|
+| macOS, Apple silicon | [`leo-aarch64-apple-darwin.dmg`](https://github.com/chewton2k/leo-cli/releases/latest/download/leo-aarch64-apple-darwin.dmg) |
+| macOS, Intel | [`leo-x86_64-apple-darwin.dmg`](https://github.com/chewton2k/leo-cli/releases/latest/download/leo-x86_64-apple-darwin.dmg) |
+| Windows x64 | [`leo-x86_64-pc-windows-msvc-setup.exe`](https://github.com/chewton2k/leo-cli/releases/latest/download/leo-x86_64-pc-windows-msvc-setup.exe) |
+
+On macOS, open the `.dmg` and drag Leo into Applications. Leo uses a stable
+self-signed certificate and is not notarized, so on macOS 15 the first launch of
+a browser download is blocked: open System Settings → Privacy & Security and
+choose **Open Anyway**.
+
+On Windows, run the `-setup.exe`. If SmartScreen says "Windows protected your
+PC", choose **More info**, then **Run anyway**.
+
+### From a terminal
 
 macOS, in Terminal:
 
@@ -24,21 +42,6 @@ The macOS installer puts Leo in `/Applications`; Windows uses
 app, so app updates update it too. `LEO_INSTALL_DIR` chooses the terminal
 command's folder; `LEO_INSTALL_SKIP_PATH=1` leaves your shell or user PATH
 unchanged.
-
-### From a download
-
-Download Leo from [Releases](https://github.com/chewton2k/leo-cli/releases/latest):
-
-| Platform | File |
-|---|---|
-| macOS, Apple silicon | [`leo-aarch64-apple-darwin.dmg`](https://github.com/chewton2k/leo-cli/releases/latest/download/leo-aarch64-apple-darwin.dmg) |
-| macOS, Intel | [`leo-x86_64-apple-darwin.dmg`](https://github.com/chewton2k/leo-cli/releases/latest/download/leo-x86_64-apple-darwin.dmg) |
-| Windows x64 | [`leo-x86_64-pc-windows-msvc-setup.exe`](https://github.com/chewton2k/leo-cli/releases/latest/download/leo-x86_64-pc-windows-msvc-setup.exe) |
-
-On macOS, drag Leo into Applications. Leo uses a stable self-signed certificate
-and is not notarized, so on macOS 15 the first launch of a browser download is
-blocked: open System Settings → Privacy & Security and choose **Open Anyway**.
-Windows may show a SmartScreen prompt.
 
 ## First launch
 

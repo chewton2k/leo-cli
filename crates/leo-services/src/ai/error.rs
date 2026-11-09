@@ -117,7 +117,7 @@ pub fn classify_status_with_key(status: u16, provider: &str, body: &str) -> Prov
             "openai" | "gemini" | "xai" | "anthropic" | "openrouter"
         ) =>
         {
-            " Choose a supported AI for writing in Settings.".into()
+            " Choose another writing AI in Settings.".into()
         }
         None => String::new(),
     };
@@ -209,7 +209,7 @@ mod tests {
             assert!(!matches!(error, ProviderError::Retryable(_)));
             assert!(error
                 .message()
-                .contains("Choose a supported AI for writing in Settings."));
+                .contains("Choose another writing AI in Settings."));
             assert!(!error.message().contains("key row"));
         }
     }

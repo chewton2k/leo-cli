@@ -79,6 +79,11 @@ changes and quit never commit or push. Existing repositories/remotes and legacy
 `health.rs` answers "can leo do X here?" in one place, so the doctor scan and
 the pre-flight before recording agree, and every gap arrives with what fixes it
 rather than as a failure discovered mid-use.
+`health::writing` is the one writing-AI answer (Ready, NotInstalled,
+NotRunning, NoModel, NotChosen, with its fix): the doctor's chat check,
+`ai::writing_ready` and the tray use its cheap path (no HTTP, never NoModel);
+Settings (`web_settings::describe`'s `writing`) passes the listed local models, so
+an Ollama with no models is NoModel there.
 
 Two rules there, both learned from tests that hung:
 
@@ -256,7 +261,10 @@ Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.
 Health uses local doctor checks without microphone or AI requests. First-launch
 setup groups microphone and macOS Accessibility on one page with live checkmarks,
-then offers a speech model; existing completion flags remain compatible.
+then offers a speech model (Download and use finishes the step), then a writing AI
+from what is on this computer (`GET /api/writing?probe=signin`, the only place
+setup runs the sign-in check; Use saves the provider as Settings does); existing
+completion flags remain compatible.
 Desktop navigation uses an icon rail beside a folder-and-note explorer. Folder
 labels expand the tree; individual note rows open their notes.
 

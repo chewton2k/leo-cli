@@ -18,6 +18,7 @@ pub mod graph;
 mod ics;
 mod keeping;
 pub mod margin;
+pub mod ollama;
 mod originals;
 mod progress;
 mod read_cache;
@@ -61,9 +62,9 @@ use crate::routes::assets::{
 use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
-    add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat, get_chat,
-    get_review, list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
-    steer_answer,
+    add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat,
+    drop_last_messages, get_chat, get_review, list_chat_files, list_chats, mark_reviewed, put_chat,
+    remove_chat_file, steer_answer,
 };
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
@@ -87,6 +88,9 @@ pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
     fn refresh_usage(&self, _claude: bool) -> Option<String> {
         None
+    }
+    fn writing(&self, _probe: bool) -> serde_json::Value {
+        serde_json::Value::Null
     }
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
@@ -161,6 +165,7 @@ pub struct Powers {
     pub toolless_chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
+    pub ollama: Option<Arc<dyn ollama::OllamaApi>>,
     pub dictation: Option<Arc<dyn dictation::DictationApi>>,
     pub app_settings: Option<Arc<dyn app_settings::AppApi>>,
     pub importer: Option<Importer>,
@@ -174,6 +179,10 @@ pub struct Powers {
     pub converse: Option<chat::Converser>,
     pub seer: Option<captions::Seer>,
     pub meaning: Option<vectors::Meaning>,
+}
+
+pub(crate) fn no_writer() -> String {
+    format!("{}no writing AI is chosen.", leo_core::NO_WRITING_AI)
 }
 
 #[derive(Clone)]
@@ -200,6 +209,8 @@ struct AppState {
     toolless_chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     speech: Option<Arc<dyn speech::SpeechApi>>,
+    ollama: Option<Arc<dyn ollama::OllamaApi>>,
+    ollama_pulls: Arc<ollama::Pulls>,
     dictation: Option<Arc<dyn dictation::DictationApi>>,
     app_settings: Option<Arc<dyn app_settings::AppApi>>,
     usage_refreshes: Arc<tokio::sync::Semaphore>,
@@ -266,7 +277,13 @@ fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
     let polling = path == "/api/activity"
         || matches!(
             path,
-            "/api/app" | "/api/dictation" | "/api/speech" | "/api/tasks" | "/api/processes"
+            "/api/app"
+                | "/api/dictation"
+                | "/api/speech"
+                | "/api/writing"
+                | "/api/writing/ollama"
+                | "/api/tasks"
+                | "/api/processes"
         )
         || path.starts_with("/api/record/")
         || path.starts_with("/api/import/");
@@ -494,6 +511,7 @@ struct Background {
     graph: tokio::task::JoinHandle<()>,
     idle: tokio::task::JoinHandle<()>,
     expiry: tokio::task::JoinHandle<()>,
+    calendar: tokio::task::JoinHandle<()>,
 }
 
 impl Background {
@@ -501,6 +519,7 @@ impl Background {
         self.graph.abort();
         self.idle.abort();
         self.expiry.abort();
+        self.calendar.abort();
     }
 }
 
@@ -541,6 +560,10 @@ impl Running {
     /// bar: "12 AI requests · 340k tokens (210k cached)".
     pub fn usage_line(&self) -> String {
         self.state.usage.line()
+    }
+
+    pub fn recording_live(&self) -> bool {
+        record::live(&self.state.recording)
     }
 
     pub async fn stop(self) {
@@ -641,6 +664,8 @@ pub(crate) async fn start_in(
         chat,
         settings,
         speech: powers.speech,
+        ollama: powers.ollama,
+        ollama_pulls: Default::default(),
         dictation: powers.dictation,
         app_settings: powers.app_settings,
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -687,6 +712,7 @@ pub(crate) async fn start_in(
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
         expiry,
+        calendar: tokio::spawn(calendar::offer_to_record(state.clone())),
     };
     let app = router(state.clone()).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
@@ -752,7 +778,12 @@ fn router(state: AppState) -> Router {
             get(get_note).patch(update_note).delete(delete_note),
         )
         .route("/api/notes/{id}/toggle", post(toggle_checkbox))
-        .route("/api/calendar", get(calendar::get).post(calendar::add))
+        .route(
+            "/api/calendar",
+            get(calendar::get)
+                .post(calendar::add)
+                .patch(calendar::change),
+        )
         .route("/api/calendar/refresh", post(calendar::refresh_now))
         .route(
             "/api/calendar/{id}",
@@ -914,6 +945,7 @@ fn router(state: AppState) -> Router {
             post(routes::housekeeping::preview_keep),
         )
         .route("/api/export", get(export_zip))
+        .route("/api/chats/{id}/drop", post(drop_last_messages))
         .route(
             "/api/chats/{id}",
             get(get_chat)
@@ -924,6 +956,7 @@ fn router(state: AppState) -> Router {
         .route("/api/settings", get(get_settings).post(change_setting))
         .route("/api/settings/test", post(test_setting))
         .route("/api/settings/usage", post(routes::settings::refresh_usage))
+        .route("/api/writing", get(routes::settings::writing))
         .route("/api/processes", get(routes::processes::list))
         .route(
             "/api/import",
@@ -959,6 +992,12 @@ fn router(state: AppState) -> Router {
             "/api/speech",
             get(speech::get)
                 .post(speech::change)
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
+            "/api/writing/ollama",
+            get(ollama::get)
+                .post(ollama::change)
                 .layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route("/api/record", get(record::overview).post(record::start))
@@ -1055,6 +1094,8 @@ mod activity_tests {
             "/api/app",
             "/api/dictation",
             "/api/speech",
+            "/api/writing",
+            "/api/writing/ollama",
             "/api/tasks",
             "/api/processes",
             "/api/activity",

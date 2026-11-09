@@ -610,12 +610,21 @@ pub struct Written {
     pub title: String,
     pub body: String,
     pub problems: Vec<String>,
+    #[serde(default)]
+    pub writer_failed: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Prepared {
     key: String,
     written: Written,
+}
+
+fn reusable(bytes: &[u8], key: &str) -> Option<Written> {
+    serde_json::from_slice::<Prepared>(bytes)
+        .ok()
+        .filter(|prepared| prepared.key == key && !prepared.written.writer_failed)
+        .map(|prepared| prepared.written)
 }
 
 pub fn write_up(
@@ -642,12 +651,11 @@ pub fn write_up(
         ))?),
     );
     let cached = dir.join("prepared.json");
-    if let Ok(bytes) = std::fs::read(&cached) {
-        if let Ok(prepared) = serde_json::from_slice::<Prepared>(&bytes) {
-            if prepared.key == key {
-                return Ok(prepared.written);
-            }
-        }
+    if let Some(written) = std::fs::read(&cached)
+        .ok()
+        .and_then(|bytes| reusable(&bytes, &key))
+    {
+        return Ok(written);
     }
 
     let fallback = session
@@ -698,6 +706,7 @@ pub fn write_up(
         title: leo_core::filename::with_label(&structured.title, label.as_deref()),
         body,
         problems: structured.problems,
+        writer_failed: structured.writer_failed,
     };
     leo_core::recording::write_json(
         &cached,
@@ -716,6 +725,25 @@ pub fn write_up(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cached_write_up_is_reused_only_when_the_writer_succeeded() {
+        let cached = |failed| {
+            serde_json::to_vec(&Prepared {
+                key: "k".into(),
+                written: Written {
+                    title: "T".into(),
+                    body: "B".into(),
+                    problems: Vec::new(),
+                    writer_failed: failed,
+                },
+            })
+            .unwrap()
+        };
+        assert_eq!(reusable(&cached(false), "k").unwrap().body, "B");
+        assert!(reusable(&cached(false), "other").is_none());
+        assert!(reusable(&cached(true), "k").is_none());
+    }
 
     #[test]
     #[ignore]

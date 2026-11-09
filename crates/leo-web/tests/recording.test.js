@@ -121,3 +121,131 @@ test('an interrupted recording says when it started, what it was and where it go
   assert.equal(L.pendingLine({ source: 'microphone', directory: 'cs162' }), 'Microphone · cs162');
   assert.equal(L.pendingLine({ source: 'nativecall', directory: '' }), 'Call · Top level');
 });
+
+test('a recording saved without written notes says so where the user lands', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
+  const start = source.indexOf('    function accept(view)');
+  const end = source.indexOf('    async function start(', start);
+  const finish = (view) => {
+    const went = [];
+    const toasts = [];
+    const accept = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return accept;})()`, {
+      s: { view: { id: 'r1', state: 'writing', warnings: [] }, container: { isConnected: true } },
+      api: () => Promise.resolve(), feedFromServer: () => {}, draw: () => {}, pill: () => {}, noteReady: null,
+      go: (hash) => went.push(hash), noteHash: (id) => `#/n/${id}`, toast: (text, opts) => toasts.push({ text, ...opts }), root: {},
+    });
+    accept({ id: 'r1', state: 'done', note: 'n1', warnings: [], ...view });
+    return { went, toasts };
+  };
+  const failed = finish({ writer_failed: true });
+  assert.deepEqual(failed.went, ['#/n/n1']);
+  assert.equal(failed.toasts.length, 1);
+  assert.equal(failed.toasts[0].text, 'Saved the transcript. The notes were not written.');
+  assert.equal(failed.toasts[0].action, 'Set up writing AI');
+  failed.toasts[0].run();
+  assert.equal(failed.went.at(-1), '#/settings/writing');
+  assert.equal(finish({}).toasts[0].text, 'Your recording is now a note.');
+});
+
+test('a note whose recording was not written up offers both ways forward', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/web/app/core.js'), 'utf8');
+  const start = source.indexOf('${note.writeup_pending');
+  const end = source.indexOf(" : ''}", start) + 6;
+  const notice = (note) => require('node:vm').runInNewContext(`\`${source.slice(start, end)}\``, { note });
+  const html = notice({ writeup_pending: true });
+  assert.match(html, /<div class="set-card writeup-pending"><h3>These notes are not written up yet<\/h3><p class="set-note">No writing AI was ready, so leo kept the transcript as it is\.<\/p>/);
+  assert.match(html, /<a class="btn primary sm" href="#\/settings\/writing">Set up writing AI<\/a>/);
+  assert.match(html, /<button type="button" class="btn plain sm" data-action="note-sources">Write the notes<\/button>/);
+  assert.equal(notice({}), '');
+});
+
+const recordingSource = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
+const piece = (from, to, name, scope) => {
+  const start = recordingSource.indexOf(`    function ${from}(`);
+  const end = recordingSource.indexOf(`    function ${to}(`, start);
+  return require('node:vm').runInNewContext(`(function(){${recordingSource.slice(start, end)} return ${name};})()`, scope);
+};
+const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const icons = new Proxy({}, { get: () => '' });
+
+function idle(checks, platform, denied = false) {
+  return piece('drawIdle', 'drawLive', 'drawIdle', {
+    s: { overview: { available: true, checks }, calendar: null, event: null },
+    esc, icons, whenOf: L.whenOf, pendingLine: L.pendingLine, noteFields: () => '', kindChoices: () => '',
+    preflight: L.preflight, tipWords: L.tipWords, HEADSET: L.HEADSET, desktopNow: () => ({ platform }), micDenied: () => denied,
+  })([], '');
+}
+
+test('each missing piece is said above Start in a quiet line, and Start stays enabled', () => {
+  const html = idle({ speech: false, writing: false, headset: true }, 'macos');
+  assert.match(html, /<p class="set-note">No speech model yet\. The audio is kept and written up once you choose one\. <a href="#\/settings\/models">Choose a speech model<\/a><\/p>/);
+  assert.match(html, /<p class="set-note">No writing AI is ready, so you.ll get a transcript\. <a href="#\/settings\/writing">Set up writing AI<\/a><\/p>/);
+  assert.match(html, /<p class="set-note" id="rec-headset" hidden>Your sound output is a headset, so leo can.t record only what this computer plays\. Switch to other speakers or headphones first\.<\/p>/);
+  assert.ok(html.indexOf('set-note') < html.indexOf('rec-start'));
+  assert.doesNotMatch(html, /warn/);
+  assert.doesNotMatch(html, /rec-go"[^>]*disabled/);
+  const ready = idle({ speech: true, writing: true, headset: false }, 'macos');
+  assert.doesNotMatch(ready, /set-note|rec-headset/);
+});
+
+test('a denied microphone is said above Start with a way to the system settings, and Start stays enabled', () => {
+  const html = idle({}, 'macos', true);
+  assert.match(html, /<p class="set-note">leo can’t hear: microphone access is off\. <button class="btn plain sm" data-action="app-command" data-app-action="microphone">Open System Settings<\/button><\/p>/);
+  assert.ok(html.indexOf('microphone access is off') < html.indexOf('rec-start'));
+  assert.doesNotMatch(html, /rec-go"[^>]*disabled/);
+  assert.doesNotMatch(idle({}, 'macos'), /microphone access is off/);
+});
+
+test('the idle tip says system tray on Windows', () => {
+  assert.match(idle({}, 'windows'), /Open leo from the system tray to return\./);
+  assert.match(idle({}, 'macos'), /Open leo from the menu bar to return\./);
+  assert.match(idle({}, undefined), /menu bar/);
+});
+
+test('a denied microphone is said plainly with a way to the system settings', () => {
+  assert.equal(L.hearingWords('sound', 'microphone', false, true), 'leo can’t hear: microphone access is off.');
+  assert.equal(L.hearingWords('sound', 'screen', false, true), 'Hearing sound');
+  assert.equal(L.hearingWords('sound', 'microphone', false, false), 'Hearing sound');
+  const live = (denied) => piece('drawLive', 'drawWriting', 'drawLive', {
+    s: { view: { state: 'recording', source: 'microphone', points: [], warnings: [], secs: 3, transcript: '' }, wave: [], showHeard: true, wantsDraft: null, wantsState: '' },
+    esc, icons, clock: L.clock, stateWord: L.stateWord, hearing: L.hearing, hearingWords: L.hearingWords, WAVE_STEP_MS: 60, micDenied: () => denied, desktopNow: () => ({ platform: 'macos' }),
+  })();
+  const html = live(true);
+  assert.match(html, /leo can’t hear: microphone access is off\./);
+  assert.match(html, /<button class="btn plain sm" data-action="app-command" data-app-action="microphone">Open System Settings<\/button>/);
+  assert.doesNotMatch(live(false), /Open System Settings/);
+});
+
+test('choosing Call fills an empty want and never overwrites typed text', () => {
+  const pick = (kind, typed) => {
+    const wants = { value: typed };
+    const headset = { hidden: true };
+    const box = { querySelector: (at) => ({ 'input[name="rec-kind"]:checked': { value: kind }, '#rec-headset': headset, '#rec-wants': wants })[at] };
+    piece('pickKind', 'idleForm', 'pickKind', { MEETING_WANTS: L.MEETING_WANTS })(box, true);
+    return { wants: wants.value, headset: headset.hidden };
+  };
+  assert.deepEqual(pick('call', ''), { wants: L.MEETING_WANTS, headset: false });
+  assert.deepEqual(pick('call', '  '), { wants: L.MEETING_WANTS, headset: false });
+  assert.equal(pick('call', 'only the exam').wants, 'only the exam');
+  assert.deepEqual(pick('microphone', ''), { wants: '', headset: true });
+});
+
+test('a meeting prompt preselects Call and its event and fills the meeting wording without starting', () => {
+  const ask = (asked, typed = '', s = { calendar: { events: [{ id: 'standup@1', title: 'Standup', start: '2026-11-09T09:00:00Z', end: '2026-11-09T09:15:00Z' }, { id: 'sync@2', title: 'Design sync', start: '2026-11-09T15:00:00Z', end: '2026-11-09T16:00:00Z' }] }, event: null, eventChosen: false }) => {
+    let picked = 'microphone';
+    const radios = ['microphone', 'screen', 'call'].map((value) => ({ value, disabled: false, get checked() { return picked === value; }, set checked(on) { if (on) picked = value; } }));
+    const fields = { '#rec-title': { value: '' }, '#rec-wants': { value: typed }, '#rec-headset': { hidden: true }, '.rec-idle': {} };
+    const box = { querySelector: (at) => at === 'input[name="rec-kind"]:checked' ? radios.find((r) => r.checked) : fields[at] || radios.find((r) => at === `input[name="rec-kind"][value="${r.value}"]`) || null };
+    piece('chooseEvent', 'idleForm', 'preselect', { s, MEETING_WANTS: L.MEETING_WANTS, eventNow: () => -1 })(box, asked);
+    return { kind: radios.find((r) => r.checked).value, event: s.event, chosen: s.eventChosen, title: fields['#rec-title'].value, wants: fields['#rec-wants'].value };
+  };
+  assert.deepEqual(ask({ event: 'sync@2', kind: 'call' }), { kind: 'call', event: 1, chosen: true, title: 'Design sync', wants: L.MEETING_WANTS });
+  assert.equal(ask({ event: 'sync@2', kind: 'call' }, 'only the decisions').wants, 'only the decisions');
+  assert.deepEqual(ask({ event: 'gone@3', kind: 'call' }), { kind: 'call', event: null, chosen: false, title: '', wants: L.MEETING_WANTS });
+  assert.equal(ask({ event: 'sync@2', kind: 'call' }, '', { calendar: { events: [{ id: 'sync@2', title: 'Design sync' }] }, event: null, eventChosen: true }).event, 0, 'the prompt wins over an earlier choice');
+  assert.deepEqual(ask({ event: 'sync@2', kind: 'microphone' }), { kind: 'microphone', event: 1, chosen: true, title: 'Design sync', wants: '' });
+  assert.equal(ask({ kind: '"] , x' }).kind, 'microphone');
+  assert.equal(ask({}).kind, 'microphone');
+  const body = recordingSource.slice(recordingSource.indexOf('    function preselect('), recordingSource.indexOf('    function idleForm('));
+  assert.doesNotMatch(body, /begin|start\(|rec-start|click/, 'the prompt never presses Start');
+});

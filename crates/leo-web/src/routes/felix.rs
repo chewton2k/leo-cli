@@ -187,6 +187,37 @@ pub(crate) async fn put_chat(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct DropBody {
+    pub(crate) count: usize,
+    pub(crate) total: usize,
+}
+
+pub(crate) async fn drop_last_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<DropBody>,
+) -> StatusCode {
+    if !chats::valid_id(&id) {
+        return StatusCode::BAD_REQUEST;
+    }
+    let dir = state.chats.clone();
+    let warm = Arc::clone(&state.warm);
+    match tokio::task::spawn_blocking(move || {
+        let dropped = chats::drop_last(&dir, &id, body.count, body.total);
+        if matches!(dropped, Ok(Some(_))) {
+            warm.forget(&id);
+        }
+        dropped
+    })
+    .await
+    {
+        Ok(Ok(Some(_))) => StatusCode::NO_CONTENT,
+        Ok(Ok(None)) => StatusCode::CONFLICT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 const MOST_BACKGROUND: usize = 8;
 
 struct BusyGuard {
@@ -448,7 +479,7 @@ pub(crate) async fn mark_quiz(
     let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "Choose a writing AI in Settings to mark answers."})),
+            Json(serde_json::json!({"error": crate::no_writer()})),
         )
             .into_response();
     };
@@ -1168,6 +1199,10 @@ fn counted(spent: &mut Option<chat::Spent>, more: Option<chat::Spent>) {
     }
 }
 
+fn writer_said(e: anyhow::Error) -> anyhow::Error {
+    anyhow::anyhow!(leo_core::writing_said(&e.to_string()))
+}
+
 fn answer(
     state: &AppState,
     streamer: &chat::Streamer,
@@ -1539,7 +1574,7 @@ fn native_answer(
         started.elapsed(),
         outcome.is_err(),
     );
-    let reply = outcome?;
+    let reply = outcome.map_err(writer_said)?;
     if let Some(e) = failure {
         return Err(e);
     }
@@ -1622,7 +1657,7 @@ fn text_answer(
         if outcome.is_err() && stopped() {
             return Ok(spent);
         }
-        let reply = outcome?;
+        let reply = outcome.map_err(writer_said)?;
         counted(&mut spent, reply.spent);
         if desk.reply_closed() {
             return Ok(spent);
@@ -1780,7 +1815,7 @@ pub(crate) async fn chat_reply(
     let Some(streamer) = state.chat.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "This copy of leo has no AI for writing." })),
+            Json(serde_json::json!({ "error": crate::no_writer() })),
         )
             .into_response();
     };

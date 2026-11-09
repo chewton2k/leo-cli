@@ -45,6 +45,7 @@ pub(crate) struct StatusBody {
 pub(crate) struct ModeBody {
     mode: Option<String>,
     persona: Option<String>,
+    instructions: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -62,6 +63,7 @@ pub(crate) struct PrefsBody {
 struct ReadFacts {
     along: bool,
     voice: String,
+    instructions: String,
     cap: u32,
     gap: u32,
     quotes: Vec<String>,
@@ -70,7 +72,7 @@ struct ReadFacts {
 enum Pass {
     Saved(Vec<Thread>),
     Silent,
-    Failed,
+    Failed(String),
     Refused(Response),
 }
 
@@ -93,9 +95,9 @@ fn silent() -> Response {
     Json(serde_json::json!({ "note": null })).into_response()
 }
 
-fn failed(state: &AppState) -> Response {
-    state.margin.set_problem(Some(margin::PROBLEM.into()));
-    Json(serde_json::json!({ "note": null, "failed": true })).into_response()
+fn failed(state: &AppState, error: String) -> Response {
+    state.margin.set_problem(Some(error.clone()));
+    Json(serde_json::json!({ "note": null, "failed": true, "error": error })).into_response()
 }
 
 async fn open_note(state: &AppState, id: &str) -> Result<Open, Box<Response>> {
@@ -139,6 +141,7 @@ pub(crate) async fn note_margin(State(state): State<AppState>, Path(id): Path<St
         serde_json::json!({
             "mode": margin::mode_of(&chats, &id, note.created),
             "persona": margin::persona_of(&chats, &id),
+            "instructions": margin::instructions_of(&chats, &id),
             "threads": margin::open_on(&chats, &id),
         })
     })
@@ -157,19 +160,24 @@ pub(crate) async fn set_note_mode(
     if let Err(refused) = open_note(&state, &id).await {
         return *refused;
     }
-    if (body.mode.is_none() && body.persona.is_none())
+    if (body.mode.is_none() && body.persona.is_none() && body.instructions.is_none())
         || body.mode.as_deref().is_some_and(|m| !margin::valid_mode(m))
+        || body
+            .instructions
+            .as_deref()
+            .is_some_and(|t| t.chars().any(|c| c.is_control() && c != '\n'))
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let chats = state.chats.clone();
     let (mode, persona) = (body.mode.clone(), body.persona.clone());
+    let instructions = body.instructions.clone();
     let done = blocking(move || {
         if persona
             .as_deref()
             .is_some_and(|p| !margin::persona_known(&margin::prefs(&chats), p))
         {
-            return StatusCode::BAD_REQUEST;
+            return (StatusCode::BAD_REQUEST, None);
         }
         let saved = mode
             .as_deref()
@@ -177,15 +185,18 @@ pub(crate) async fn set_note_mode(
             && persona
                 .as_deref()
                 .is_none_or(|p| margin::set_persona(&chats, &id, p));
-        if saved {
-            StatusCode::OK
+        let kept = instructions
+            .as_deref()
+            .map(|t| margin::set_instructions(&chats, &id, t));
+        if saved && kept.as_ref().is_none_or(Option::is_some) {
+            (StatusCode::OK, kept.flatten())
         } else {
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, None)
         }
     })
     .await;
     match done {
-        Ok(StatusCode::OK) => {
+        Ok((StatusCode::OK, kept)) => {
             let mut view = serde_json::Map::new();
             if let Some(mode) = body.mode {
                 view.insert("mode".into(), mode.into());
@@ -193,9 +204,12 @@ pub(crate) async fn set_note_mode(
             if let Some(persona) = body.persona {
                 view.insert("persona".into(), persona.into());
             }
+            if let Some(kept) = kept {
+                view.insert("instructions".into(), kept.into());
+            }
             Json(view).into_response()
         }
-        Ok(code) => code.into_response(),
+        Ok((code, _)) => code.into_response(),
         Err(refused) => *refused,
     }
 }
@@ -393,6 +407,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
             ReadFacts {
                 along: margin::mode_of(&held, &id, created) == "along",
                 voice: margin::voice_of(&prefs, &margin::persona_of(&held, &id)),
+                instructions: margin::instructions_of(&held, &id),
                 cap: prefs.cap,
                 gap: prefs.gap,
                 quotes: margin::open_on(&held, &id)
@@ -443,14 +458,14 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     }
     let Some(writer) = state.toolless.clone() else {
         if through {
-            state.margin.set_problem(Some(margin::PROBLEM.into()));
+            state.margin.set_problem(Some(crate::no_writer()));
             return Pass::Refused(said(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "no-ai",
-                "Choose a writing AI in Settings, then read through again.",
+                &crate::no_writer(),
             ));
         }
-        return Pass::Failed;
+        return Pass::Failed(crate::no_writer());
     };
     let gap = if through {
         Duration::ZERO
@@ -501,7 +516,10 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     } else {
         (margin::READ_SYSTEM, "changed_text", margin::READ_TOKENS)
     };
-    let system = margin::voiced(system, &facts.voice, false);
+    let system = margin::instructed(
+        &margin::voiced(system, &facts.voice, false),
+        &facts.instructions,
+    );
     let user = margin::read_prompt(&note.title, &blocks, tag);
     let answer = tokio::time::timeout(
         margin::READ_LIMIT,
@@ -518,9 +536,12 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     };
     let reply = match answer {
         Ok(Ok(Ok(reply))) => reply,
-        _ => {
+        other => {
             forget(state);
-            return Pass::Failed;
+            return Pass::Failed(match other {
+                Ok(Ok(Err(e))) => leo_core::writing_said(&e.to_string()),
+                _ => margin::PROBLEM.into(),
+            });
         }
     };
     let most = body
@@ -539,7 +560,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     };
     let Some(founds) = founds else {
         forget(state);
-        return Pass::Failed;
+        return Pass::Failed(margin::PROBLEM.into());
     };
     state.margin.set_problem(None);
     let now = match open_note(state, &id).await {
@@ -590,7 +611,7 @@ pub(crate) async fn read(
             Json(serde_json::json!({ "note": saved.remove(0) })).into_response()
         }
         Pass::Silent => silent(),
-        Pass::Failed => failed(&state),
+        Pass::Failed(error) => failed(&state, error),
         Pass::Refused(refused) => refused,
     }
 }
@@ -603,9 +624,9 @@ pub(crate) async fn analyze(
     match pass(&state, id, body, true).await {
         Pass::Saved(saved) => Json(serde_json::json!({ "notes": saved })).into_response(),
         Pass::Silent => Json(serde_json::json!({ "notes": [] })).into_response(),
-        Pass::Failed => {
-            state.margin.set_problem(Some(margin::PROBLEM.into()));
-            Json(serde_json::json!({ "notes": [], "failed": true })).into_response()
+        Pass::Failed(error) => {
+            state.margin.set_problem(Some(error.clone()));
+            Json(serde_json::json!({ "notes": [], "failed": true, "error": error })).into_response()
         }
         Pass::Refused(refused) => refused,
     }
@@ -654,7 +675,7 @@ async fn answered(
         return Err(Box::new(said(
             StatusCode::SERVICE_UNAVAILABLE,
             "no-ai",
-            "Choose a writing AI in Settings, then ask again.",
+            &crate::no_writer(),
         )));
     };
     let Some(foreground) = state.work.foreground() else {
@@ -673,8 +694,9 @@ async fn answered(
         let _foreground = foreground;
         let prefs = margin::prefs(&chats);
         let voice = margin::voice_of(&prefs, &margin::persona_of(&chats, &held));
+        let said = margin::instructions_of(&chats, &held);
         let reply = streamer(
-            &margin::voiced(margin::REPLY_SYSTEM, &voice, asked),
+            &margin::instructed(&margin::voiced(margin::REPLY_SYSTEM, &voice, asked), &said),
             &user,
             margin::REPLY_TOKENS,
             &mut |_| {},

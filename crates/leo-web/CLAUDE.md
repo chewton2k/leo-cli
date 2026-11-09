@@ -28,7 +28,7 @@ lighter).
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
   meaning vectors, note connections, calendar feeds, note-task metadata,
-  reading positions. Old caption, graph and meaning JSON files are brought
+  reading positions, recordings whose notes are not written yet. Old caption, graph and meaning JSON files are brought
   in on first open and renamed `*.before-database` (the browser tests seed the
   note connections this way). Writes touch only what changed.
 
@@ -203,7 +203,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   "n more" when that tab went back into the overflow; it pulses on landing.
 - Opening a note (2026-11-08, the user's pick): the title wipes in left to right (`clip-path`, `OPEN_MS`, `EASE_OUT`)
   only when `swap` reports a new page; nothing glides over from the explorer. Enter or Tab in the title goes to the body
-  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, then the persona button, then the Felix mode button).
+  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, then the Felix mode button, then the persona button).
 - Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
 - Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
   and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
@@ -653,6 +653,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   buttons with number, note and line; copy, Save and Add to note still drop every `.cite`. `cite()` numbers
   only when given `marks`: quiz cards and file chips keep their look. The prompt (`BASE`, `REPLY_STYLE`):
   one cite per bullet, short plain sentences, no bold except a closing "Next:" line.
+- Copy, Retry and Edit (2026-11-09): every answer has Copy (Markdown, citations as links); the last answer has Retry and the last question Edit, both off while a reply streams. They take the last pair back with POST `/api/chats/{id}/drop` `{count, total}` (`chats::drop_last`, 409 unless the saved chat has `total` messages), then resend or put the text in the composer.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
@@ -691,10 +692,17 @@ target. Check the page sequence after loading preferences.
   engine). Per note in `margin_personas` (forgotten and swept with the note, not exported), else
   `Prefs.default_persona`, else Reader; a deleted persona falls back the same way. `margin::voiced` puts the
   style after the prompt's first paragraph, so the note-is-not-instructions and format rules come last; asks
-  and replies are told to answer directly first. Page: `#margin-persona` beside the mode menu (rows of icon,
+  and replies are told to answer directly first. Page: `#margin-persona` ("Felix as Reader") before the mode menu, whose
+  label drops "Felix:" ("Reads along", "When you ask") (2026-11-09) (rows of icon,
   name, short line; New persona opens Settings → Felix with the form started), Settings → Felix → Who reads
   your notes (icon tiles, one line for the chosen one, See details shows the real instruction text, New/Edit/
   Delete in place).
+- Note instructions (2026-11-09, the user's call): `margin_instructions` holds one text per note (trimmed, at most
+  `MOST_INSTRUCTIONS` 500 characters, control characters refused, empty deletes the row; forgotten and swept with the
+  note, not exported), read by GET and saved by POST `/api/notes/{id}/margin` (`instructions`). `margin::instructed` adds
+  it after the prompt's first paragraph for read-along, Read through, asks and replies. The persona menu's
+  Instructions for this note… opens `#margin-instructions` under the meta line (shown while the note has some); Enter or
+  blur saves, Escape restores, and the margin status says Instructions saved/removed.
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
   sends changed blocks after a pause (fast 2 s, regular 4 s, slow 8 s). Silence is the normal answer:
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
@@ -733,11 +741,14 @@ target. Check the page sequence after loading preferences.
   take an hour of writing at least, and a day's worst case is about 90k input
   tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
   bounded when parsed.
-- A failed or missing AI shows a fixed, actionable status above the note and leaves `margin::PROBLEM`
-  (fixed text, no provider detail) in Settings → Felix and Health until a read works.
-- Selection: Ask Felix (⌘⇧E) opens a draft in the margin and asks at once, POST
+- A failed or missing AI shows an actionable status above the note and leaves the same line in Settings → Felix and
+  Health until a read works: the writer's own sentence (`leo_core::writing_said`, no provider detail), `no_writer()`
+  when none is set, or `margin::PROBLEM` (no prefix) for a timeout or an unreadable reply; the failed response carries it as `error`.
+- Selection: ⌘⇧E opens a draft in the margin and asks at once, POST
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
-  only Felix's message is stored). The draft shows dots (`.margin-pending`, filled from
+  only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this
+  passage…", 2026-11-09): Enter sends the typed question (empty Enter asks generally), Escape or blur closes it;
+  when the margin cannot take the passage the pill goes to the chat as before. The draft shows dots (`.margin-pending`, filled from
   `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
   (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
   leaves the thread closed when it lands, and a closed failure toasts. An open failure
@@ -863,6 +874,11 @@ target. Check the page sequence after loading preferences.
   Housekeeper's `pending_recordings` supplies retained native sessions; recovery
   starts in Writing state and supports Finish available, and anything the
   Housekeeper does not list is not found.
+  When no writing AI could write the notes (`long::Structured.writer_failed`, every
+  part failed; a few failed parts stay warnings), the transcript is the note, the job's
+  `done` view carries `writer_failed` (toast with Set up writing AI) and leo.db
+  `writeup_pending` marks the note (GET note `writeup_pending`, a `.set-card` notice
+  under the meta line) until "Use this version" saves a written note (PATCH `written: true`; Undo restores the mark); it is forgotten and swept like `margin_personas`.
   The idle page (2026-11-06) shows Microphone, Screen and Call as one row of
   `.choice-pick` cards with a track diagram each (one waveform, or two for Call)
   over the same `rec-kind` radios; then `noteFields({ id: 'rec' })`, the upload
@@ -872,12 +888,15 @@ target. Check the page sequence after loading preferences.
   calendar hint as one linked line, and the "keeps recording if you close the window"
   tip under Start.
 
+- Record warns before Start (`/api/record` `checks` from `Housekeeper::checks`: `speech`, `writing`, `headset`, each cheap, never opening the microphone): quiet `.set-note` lines with links above Start, which stays enabled; the headset line shows only for Call. A denied microphone (`desktopApp.permissions`, passed to recording.js as `deps.desktop`) says so in the live card with Open System Settings; Call fills an empty "What do you want" with `MEETING_WANTS`.
+
 - Screenshots (the user's call): paste a PNG/JPEG/GIF/WebP into Your notes while
   recording instead of a browser screen picker. The existing snapshot endpoint
   timestamps and retains it, derives MIME from bytes and optionally reads its
   text through the writer. Late encoding/responses cannot attach to another
   recording; ordinary text paste stays normal.
 
+- Share (2026-11-09): the note's share button opens a `popupMenu`: Copy as Markdown (`# Title`, blank line, body; clipboard), Save .md file (a Blob `a[download]`, which the desktop's `on_download` saves to Downloads; no route) and Export as PDF (below).
 - PDF export (Share → PDF, or the browser's print): print CSS hides every
   fixed overlay (dock, tasks, source pane, toasts, chat, FABs…), zeroes the
   layout variables and the scrollbar gutter, and uses fixed `@page` margins
@@ -901,6 +920,21 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   leo.db with ETag / Last-Modified; `ics::read` expands repeats, EXDATE and
   moved instances, all-day items are dates. GET `/api/schedule?from&to&live`
   (≤43 days); the page refreshes every 2.5 min while visible.
+
+- Offer to record (2026-11-09, item L1): `calendar::offer_to_record`, a 60 s
+  background task (stops with the engine; only when `Powers.app_settings` is
+  set) over the cached expansions, never fetching. A timed event is offered once
+  when start−2 min ≤ now < start+10 min (UTC instants) and no recording is live
+  (`record::live`); leo.db `calendar_prompted(uid, start)` dedupes (rows older
+  than 2 days pruned) and `AppApi::event_starting(EventStarting {uid, title,
+  start, online})` (default no-op) tells the app. Settings → Calendar's switch "Offer to
+  record when an event starts" is `offer` in calendars.json (absent = on; PATCH
+  `/api/calendar {offer}`). `#/record?event=<uid>&kind=call|microphone` preselects that kind and
+  event (`preselect` in recording.js; the meeting wording is filled only for
+  call) and never presses Start. `online` is an http(s) link in the event's
+  location or description. The 60 s tick first refreshes a stale cached feed
+  (`catch_up`, under the same `Busy` guard as the routes), so a leo kept in the
+  menu bar offers current meetings.
 
 - Standalone tasks are files: `<notes>/.leo/tasks/<id>.json`
   (`tasks::tasks_dir`), one JSON line each, written atomically. The reader
@@ -1276,6 +1310,10 @@ Selection endpoints on list markers stay within the edited item's source range.
 Programmatic insertion commits source-selection mode first and retains the
 existing append behavior, so picture insertion never uses a detached textarea.
 
+Sign in and Install (2026-11-09): onboarding's writing status row and Settings → Writing AI's card offer
+Sign in (POST `/api/app` `sign_in`, provider checked in `app_settings::call`) or an Install link (`INSTALL_URL`);
+after Sign in, `signIn` polls `/api/writing?probe=signin` every 3 s for at most 2 minutes, then offers Check again
+(one probe), and stops when the view closes.
 Writing AI shows detected Codex/Claude accounts with bounded CLI sign-in checks,
 5-hour/7-day meters, reset times and the age of saved usage. Detection never
 changes the chosen provider; unknown or absent limits are stated explicitly.
@@ -1306,6 +1344,18 @@ and their carets intact. `native-recording.test.js` covers native source choice
 and clipboard screenshots; it runs with the recording node tests.
 
 
+`Powers.ollama` implements `OllamaApi::{view,pull}` (leo-host over
+`leo_services::ollama`) behind session-gated GET/POST `/api/writing/ollama`: the view
+(installed, running, memory, free disk, catalog with fit/recommended/pulled) plus
+the current pull. POST `{action:"pull",model}` refuses models not in the catalog,
+TooBig ones and a second concurrent pull (409); `{action:"cancel"}` marks it cancelled
+at once, and a stale pull thread can no longer write. Writing AI with Ollama shows
+the install link (re-checked every 5 s while not running), then the model cards
+(`.onboarding-model` markup); a finished pull is saved as the model through the
+picker's `changeSetting`; in setup a finished pull or a clicked downloaded card is only picked and
+Use sends it as `model` with the provider. Choosing Ollama keeps an installed configured model, else
+saves the sent or first installed one. Tests: `src/tests/ollama.rs`, `settings-lifecycle.test.js`, `onboarding.test.js`.
+
 `Powers.dictation` implements `DictationApi::{view,change}` over session-gated
 GET/POST `/api/dictation` (200 KB input, blocking work off async tasks). Desktop
 provides settings, devices and native actions. The existing database owns the
@@ -1317,6 +1367,7 @@ history only; fields, drafts, focus and caret survive. There is no Save button
 700 ms after typing stops, in order (`saveDictation` chains saves so the last
 wins), with a brief "Saved" in the card header. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
+A Recent dictations row edits in place (`{action:"edit",id,text}` updates the `dictations` row and sets its `edited` flag; unknown id refused); the new words in a fix are offered as up to three chips that append to Custom words (≤200). leo never watches other apps: corrections come only from this list.
 
 Settings look (2026-11-02, the user's call, stageshow's craft rules; redone
 2026-11-04): group labels in sentence case, no "Settings" title in the section
@@ -1395,8 +1446,8 @@ Settings navigation stays between sections; its phone strip recentres only when
 the section changes.
 First-launch setup
 (`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a
-two-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
-with an Access → Speech model stepper. The Access page lists Microphone and macOS
+three-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
+with an Access → Speech model → Writing AI stepper. The Access page lists Microphone and macOS
 Accessibility with icons; each row turns its button into an Allowed checkmark as
 soon as the 1 s poll sees it. Continue needs only the microphone, or a microphone
 state the system cannot report (Windows often says `unknown`; `unavailable` in
@@ -1404,8 +1455,11 @@ test sessions); Accessibility is optional. A denied microphone shows Open System
 Settings (macOS ignores a second request). Skip setup finishes all three flags.
 The model page shows the catalog as selectable cards (Recommended, or All, with
 the Settings rating meters), preselecting the in-use or first recommended model,
-with one action bar: Download · size, a progress bar with Cancel, or Use and
-finish. Download polling updates chips and the bar in place so a click is never
+with one action bar: Download and use · size (uses the model and finishes when the
+download ends), a progress bar with Cancel, or Use and finish. Writing AI shows the
+Settings provider cards preselected (signed-in Claude Code, Codex, Ollama with a model),
+a status row, Skip for now and Use <Name> (Ready, or installed with sign-in unknown), plus the dictation shortcut hint
+(`dictateHint`, also under the empty home's ask field). Download polling updates chips and the bar in place so a click is never
 lost to a replaced button. Back returns to Access. The existing three completion
 flags remain compatible, and late responses cannot dismiss another sheet or page.
 Speech models show In use, every Downloaded file and filtered All models cards.

@@ -134,7 +134,10 @@ pub(crate) async fn regenerate(
         Ok(Ok((title, body))) => {
             Json(serde_json::json!({"title": title, "body": body, "base": base})).into_response()
         }
-        Ok(Err(e)) => error(StatusCode::BAD_GATEWAY, e),
+        Ok(Err(e)) => error(
+            StatusCode::BAD_GATEWAY,
+            leo_core::writing_said(&e.to_string()),
+        ),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Could not regenerate this note",

@@ -21,7 +21,8 @@ pub fn powers() -> leo_web::Powers {
                 piece,
                 restart,
                 stopped,
-            )?;
+            )
+            .map_err(crate::felix::said)?;
             Ok(leo_web::Reply {
                 text,
                 spent: answered.map(crate::felix::spent_of),
@@ -44,7 +45,8 @@ pub fn powers() -> leo_web::Powers {
                 piece,
                 restart,
                 stopped,
-            )?;
+            )
+            .map_err(crate::felix::said)?;
             Ok(leo_web::Reply {
                 text,
                 spent: answered.map(crate::felix::spent_of),
@@ -67,7 +69,8 @@ pub fn powers() -> leo_web::Powers {
                 piece,
                 restart,
                 stopped,
-            )?;
+            )
+            .map_err(crate::felix::said)?;
             Ok(leo_web::Reply {
                 text,
                 spent: answered.map(crate::felix::spent_of),
@@ -125,6 +128,7 @@ pub fn powers() -> leo_web::Powers {
             },
         )),
         speech: Some(std::sync::Arc::new(crate::speech::Speech)),
+        ollama: Some(std::sync::Arc::new(crate::settings::WebSettings)),
         listener: Some(crate::record::listener()),
         regenerator: Some(crate::record::regenerator()),
         calendar_access: Some(std::sync::Arc::new(crate::settings::WebSettings)),

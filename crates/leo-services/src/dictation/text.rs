@@ -329,6 +329,36 @@ fn remove_filler_matches(text: &str, pattern: &Regex) -> String {
     kept
 }
 
+static YOU_KNOW_BETWEEN: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i),\s*you know\s*,").unwrap());
+static YOU_KNOW_OPENING: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(^|[.!?]\s+)you know,\s*(\p{L})").unwrap());
+static YOU_KNOW_CLOSING: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i),\s*you know([.!?]|$)").unwrap());
+static SCRATCH_THAT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(?:^|[.!?]\s+)scratch that(?:[.!?,]\s*|$)").unwrap());
+
+fn remove_spoken_asides(text: &str) -> String {
+    let mut text = text.to_string();
+    while let Some(found) = SCRATCH_THAT.find(&text) {
+        let head = text.get(..found.start()).unwrap_or_default();
+        let kept = head
+            .rfind(['.', '!', '?'])
+            .and_then(|at| head.get(..=at))
+            .unwrap_or_default();
+        let tail = text.get(found.end()..).unwrap_or_default();
+        text = match (kept.is_empty(), tail.is_empty()) {
+            (false, false) => format!("{kept} {tail}"),
+            (false, true) => kept.to_string(),
+            _ => tail.to_string(),
+        };
+    }
+    let text = YOU_KNOW_BETWEEN.replace_all(&text, ",");
+    let text = YOU_KNOW_OPENING.replace_all(&text, |caps: &regex::Captures| {
+        format!("{}{}", &caps[1], caps[2].to_uppercase())
+    });
+    YOU_KNOW_CLOSING.replace_all(&text, "$1").into_owned()
+}
+
 pub fn remove_filler_words(
     text: &str,
     language: &OutputLanguageEvidence,
@@ -361,7 +391,7 @@ pub fn remove_filler_words(
         filtered = remove_filler_matches(&filtered, pattern);
     }
 
-    filtered
+    remove_spoken_asides(&filtered)
 }
 
 static CLOCK_TIME_PATTERN: Lazy<Regex> = Lazy::new(|| {
@@ -803,5 +833,41 @@ mod tests {
         let custom_words = vec!["你号".to_string()];
         let result = apply_custom_words(text, &custom_words, 1.0);
         assert_eq!(result, text);
+    }
+
+    #[test]
+    fn spoken_asides_are_removed_only_where_they_are_asides() {
+        let en = OutputLanguageEvidence::UserSelected("en".into());
+        let clean = |text: &str| remove_filler_words(text, &en, &None, true);
+        assert_eq!(
+            clean("We ship Tuesday, you know, maybe Wednesday"),
+            "We ship Tuesday, maybe Wednesday"
+        );
+        assert_eq!(clean("You know, we ship Tuesday."), "We ship Tuesday.");
+        assert_eq!(clean("It was late, you know."), "It was late.");
+        assert_eq!(
+            clean("Lunch at noon. Scratch that. Lunch at one."),
+            "Lunch at one."
+        );
+        assert_eq!(
+            clean("Hi. Lunch at noon. scratch that, lunch at one."),
+            "Hi. lunch at one."
+        );
+        assert_eq!(clean("Lunch at noon. Scratch that"), "");
+        for kept in [
+            "I like it",
+            "do you know the way",
+            "Do you know, Sam?",
+            "Please scratch that itch.",
+            "I need to scratch that.",
+            "Scratch that itch for me.",
+            "you know what I mean",
+        ] {
+            assert_eq!(clean(kept), kept);
+        }
+        assert_eq!(
+            remove_filler_words("Lunch. Scratch that. Dinner.", &en, &None, false),
+            "Lunch. Scratch that. Dinner."
+        );
     }
 }

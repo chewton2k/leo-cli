@@ -7,6 +7,7 @@ mod felix;
 mod housekeeping;
 mod margin;
 mod notes;
+mod ollama;
 mod passages;
 mod pictures;
 mod recording;
@@ -89,6 +90,8 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         chat: None,
         settings: None,
         speech: None,
+        ollama: None,
+        ollama_pulls: Default::default(),
         dictation: None,
         app_settings: None,
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),

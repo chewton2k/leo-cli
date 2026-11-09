@@ -2,6 +2,7 @@ const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const md = window.leoMarkdown;
 const leoDoc = window.leoDoc;
 const felix = window.leoChat;
+const noAi = felix.noAi;
 const esc = md.escape;
 const enc = encodeURIComponent;
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -76,7 +77,7 @@ const ICON = {
   logoClaude: '<svg viewBox="0 0 24 24" fill="#D97757" stroke="none" aria-hidden="true"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>',
 };
 
-const recorder = window.leoRecording.create({ encodePicture: async (file) => base64((await pictureFor(file)).blob), api, esc, toast, go: (hash, opts) => go(hash, opts), noteHash: (id) => noteHash(id), felix, icons: ICON, noteFields: (options) => noteFields(options), noteReady: () => showLatest().catch(() => {}) });
+const recorder = window.leoRecording.create({ encodePicture: async (file) => base64((await pictureFor(file)).blob), api, esc, toast, go: (hash, opts) => go(hash, opts), noteHash: (id) => noteHash(id), felix, icons: ICON, noteFields: (options) => noteFields(options), desktop: () => desktopApp, noteReady: () => showLatest().catch(() => {}) });
 const chat = felix.create({
   render: (text, options) => md.render(text, options),
   escape: md.escape,
@@ -698,8 +699,38 @@ async function showWorkspace(dir = null) {
   document.body.classList.remove('on-note');
   chrome({});
   swap('workspace', () => {
-    app.innerHTML = `<section class="workspace-empty">${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    app.innerHTML = `<section class="workspace-empty"><label class="quick-bar home-ask">${ICON.search}<input id="home-ask" placeholder="Ask Felix, search, or jot something…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Ask Felix, search, or jot something"><kbd>${quickLabel}</kbd></label><p class="hint home-dictate" hidden></p>${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    wireHomeAsk();
+    dictateHint($('.home-dictate'));
     scrollToTop();
+  });
+}
+
+const SHORTCUT_KEYS = { option: ['⌥', 'Alt'], opt: ['⌥', 'Alt'], alt: ['⌥', 'Alt'], ctrl: ['⌃', 'Ctrl'], control: ['⌃', 'Ctrl'], cmd: ['⌘', 'Win'], command: ['⌘', 'Win'], meta: ['⌘', 'Win'], super: ['⌘', 'Win'], shift: ['⇧', 'Shift'] };
+function shortcutText(keys) {
+  return keys.split('+').map((key) => SHORTCUT_KEYS[key.trim().toLowerCase()]?.[ON_MAC ? 0 : 1] || key.trim().replace(/^./, (c) => c.toUpperCase())).join(ON_MAC ? '' : '+');
+}
+async function dictateHint(el) {
+  try {
+    const keys = (await api('/api/dictation'))?.settings?.shortcut;
+    if (keys && el?.isConnected) { el.textContent = `Press ${shortcutText(keys)} anywhere to dictate.`; el.hidden = false; }
+  } catch (e) {}
+}
+
+function wireHomeAsk() {
+  const field = $('#home-ask');
+  const open = () => {
+    quickLeo();
+    const input = $('#quick-input');
+    input.value = field.value;
+    if (input.value) input.dispatchEvent(new Event('input'));
+  };
+  field.addEventListener('click', open);
+  field.addEventListener('input', open);
+  field.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    open();
   });
 }
 
@@ -785,7 +816,7 @@ function noteActions(id, recorded = false) {
       ${id ? `<button type="button" data-action="note-tasks" aria-label="Show tasks">${ICON.calendar}</button>` : ''}
       <button type="button" data-action="note-picture" aria-label="Add picture">${ICON.image}</button>
       <button type="button" data-action="move" aria-label="Move to folder">${ICON.move}</button>
-      <button type="button" data-action="share" aria-label="Export as PDF">${ICON.share}</button>
+      <button type="button" data-action="share" aria-label="Share" aria-haspopup="menu" aria-expanded="false">${ICON.share}</button>
       <button type="button" data-action="delete" class="danger" aria-label="Move to trash">${ICON.trash}</button>
     </nav>`;
 }
@@ -816,7 +847,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<div class="note-layout"><div class="note-columns"><aside class="note-outline" aria-label="Note outline" hidden><details class="source-more"><summary aria-label="Headings in this note" title="Headings in this note"><span class="outline-icon">${ICON.list}</span>${ICON.chevron}</summary><nav aria-label="Headings"></nav></details></aside><article class="note">
     <header class="note-head"><div class="note-context">${where}</div><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
-    <div class="note-meta"><span id="save-state">${when}</span><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">Felix: when you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-persona" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-persona-menu" disabled><span id="margin-persona-icon" class="margin-mode-icon" aria-hidden="true">${ICON.book}</span><span id="margin-persona-label">Reader</span>${ICON.chevron}</button><div id="margin-persona-menu" class="margin-mode-menu margin-persona-menu" role="menu" aria-label="Who reads this note" hidden></div></div><span aria-hidden="true">·</span><button type="button" id="margin-through" class="margin-mode margin-through" aria-disabled="true" title="Felix reads the whole note and leaves margin notes. The text goes to your writing AI."><span id="margin-through-icon" class="margin-mode-icon" aria-hidden="true">${ICON.readThrough}</span><span id="margin-through-label">Read through</span></button><span id="margin-status" role="status" class="hint"></span></div></header>
+    <div class="note-meta"><span id="save-state">${when}</span><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-persona" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-persona-menu" disabled><span id="margin-persona-icon" class="margin-mode-icon" aria-hidden="true">${ICON.book}</span><span id="margin-persona-label">Felix as Reader</span>${ICON.chevron}</button><div id="margin-persona-menu" class="margin-mode-menu margin-persona-menu" role="menu" aria-label="Who reads this note" hidden></div></div><span aria-hidden="true">·</span><div class="margin-mode-wrap"><button type="button" id="margin-mode" class="margin-mode" aria-haspopup="menu" aria-expanded="false" aria-controls="margin-mode-menu" disabled><span id="margin-mode-icon" class="margin-mode-icon" aria-hidden="true">${ICON.pen}</span><span id="margin-mode-label">When you ask</span>${ICON.chevron}</button><div id="margin-mode-menu" class="margin-mode-menu" role="menu" aria-label="Note reading mode" hidden><button type="button" role="menuitemradio" aria-checked="false" data-margin-mode="along">Reads along<small>Reads changes after a pause.</small></button><button type="button" role="menuitemradio" aria-checked="true" data-margin-mode="ask">When you ask<small>Reads nothing until you ask.</small></button></div></div><span aria-hidden="true">·</span><button type="button" id="margin-through" class="margin-mode margin-through" aria-disabled="true" title="Felix reads the whole note and leaves margin notes. The text goes to your writing AI."><span id="margin-through-icon" class="margin-mode-icon" aria-hidden="true">${ICON.readThrough}</span><span id="margin-through-label">Read through</span></button><span id="margin-status" role="status" class="hint"></span></div><label id="margin-instructions" class="field margin-instructions" hidden>${ICON.pen}<input maxlength="500" placeholder="Instructions for this note, e.g. check that each claim has a source" aria-label="Instructions for this note" autocomplete="off"></label>${note.writeup_pending ? '<div class="set-card writeup-pending"><h3>These notes are not written up yet</h3><p class="set-note">No writing AI was ready, so leo kept the transcript as it is.</p><div class="buttons"><a class="btn primary sm" href="#/settings/writing">Set up writing AI</a><button type="button" class="btn plain sm" data-action="note-sources">Write the notes</button></div></div>' : ''}</header>
     <div class="prose doc" id="doc"></div>
     <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article></div></div>`;
@@ -924,7 +955,9 @@ async function showSearch(query) {
 const SEARCH_MOST = 300;
 const SEARCH_STEP = 60;
 
-async function showRecord(dir) {
+async function showRecord(arg) {
+  const [dir] = arg.split('?');
+  const asked = new URLSearchParams(location.hash.split('?')[1] || '');
   const mine = ++seq;
   state = { view: 'record', dir: '' };
   chrome({ showBack: true });
@@ -938,7 +971,7 @@ async function showRecord(dir) {
     if (e instanceof Locked) throw e;
   }
   if (mine !== seq) return;
-  await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean) });
+  await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean), event: asked.get('event'), kind: asked.get('kind') });
 }
 
 window.addEventListener('beforeprint', () => {

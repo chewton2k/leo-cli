@@ -556,6 +556,48 @@ async function pinCard(el) {
   }
 }
 
+async function noteMarkdown() {
+  const s = await ready();
+  if (!s) {
+    toast('Write something first.');
+    return null;
+  }
+  const { title, body } = snapshot(s);
+  return { title, text: `# ${title}\n\n${body}`.trimEnd() + '\n' };
+}
+
+async function copyMarkdown() {
+  const note = await noteMarkdown();
+  if (!note) return;
+  try {
+    await navigator.clipboard.writeText(note.text);
+    toast('Copied as Markdown');
+  } catch (e) {
+    toast(`Could not copy: ${e.message || 'the clipboard is not available.'}`, { bad: true });
+  }
+}
+
+async function saveMarkdown() {
+  const note = await noteMarkdown();
+  if (!note) return;
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([note.text], { type: 'text/markdown' }));
+  link.download = `${note.title.replace(/[\\/:*?"<>|]+/g, '-') || 'Untitled'}.md`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function shareMenu(owner) {
+  popupMenu(owner, {
+    label: 'Share',
+    rows: [
+      { text: 'Copy as Markdown', icon: ICON.note, run: copyMarkdown },
+      { text: 'Save .md file', icon: ICON.download, run: saveMarkdown },
+      { text: 'Export as PDF', icon: ICON.share, run: share },
+    ],
+  });
+}
+
 async function share() {
   const mine = seq;
   const s = await ready();

@@ -13,7 +13,8 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS dictations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
-    text TEXT NOT NULL
+    text TEXT NOT NULL,
+    edited INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS interviews (
     id TEXT PRIMARY KEY,
@@ -107,6 +108,11 @@ CREATE TABLE IF NOT EXISTS calendar_feeds (
     problem TEXT,
     body BLOB
 );
+CREATE TABLE IF NOT EXISTS calendar_prompted (
+    uid TEXT NOT NULL,
+    start TEXT NOT NULL,
+    PRIMARY KEY (uid, start)
+);
 CREATE TABLE IF NOT EXISTS reading (
     note TEXT PRIMARY KEY,
     anchor TEXT NOT NULL,
@@ -137,6 +143,13 @@ CREATE TABLE IF NOT EXISTS margin_modes (
 CREATE TABLE IF NOT EXISTS margin_personas (
     note TEXT PRIMARY KEY,
     persona TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS margin_instructions (
+    note TEXT PRIMARY KEY,
+    text TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS writeup_pending (
+    note TEXT PRIMARY KEY
 );
 CREATE TABLE IF NOT EXISTS margin_state (
     key TEXT PRIMARY KEY,
@@ -195,6 +208,16 @@ impl Db {
         )?;
         if !has_piece {
             tx.execute_batch("ALTER TABLE vectors ADD COLUMN piece TEXT NOT NULL DEFAULT '';")?;
+        }
+        let has_edited: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('dictations') WHERE name = 'edited')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_edited {
+            tx.execute_batch(
+                "ALTER TABLE dictations ADD COLUMN edited INTEGER NOT NULL DEFAULT 0;",
+            )?;
         }
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;

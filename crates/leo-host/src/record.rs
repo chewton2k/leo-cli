@@ -129,6 +129,7 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
     Ok(Recorded {
         title: written.title,
         body: written.body,
+        writer_failed: written.writer_failed,
         source: Some(source),
         commit: Some(Arc::new(move |notes, note| {
             leo_services::session::Session::open(&dir)?.commit(notes, note)
@@ -344,6 +345,7 @@ fn finish_tracks(
     Ok(Recorded {
         title,
         body,
+        writer_failed: written.writer_failed,
         source: Some(source),
         commit: Some(Arc::new(move |notes, note| {
             leo_core::recording::save(notes, note, &committed)?;

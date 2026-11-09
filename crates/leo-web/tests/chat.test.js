@@ -868,3 +868,162 @@ test('a streamed list marker waits until it has text', () => {
   assert.equal(C.held('Steps\n3 apples'), 'Steps\n3 apples');
   assert.equal(C.held('Pay 5'), 'Pay 5');
 });
+
+function answers(messages, { busy = null, send = () => {}, clipboard = null, fetchOk = true } = {}) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/chat.js'), 'utf8');
+  const cut = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+  const code = `${cut('    function bubble(m, i) {', '    function onNote()')}\n${cut('    function lastPair()', '    async function startWith(')}`;
+  const calls = [];
+  const input = { value: '', focus() { calls.push('focus'); } };
+  const context = {
+    ...C, state: { messages, busy, preparingSend: false, id: 'chat-12345678', refs: [], sent: [], files: [], selection: null }, drawRefs() {}, escape: esc, render: (t) => `<p>${esc(t)}</p>`, input,
+    root: { navigator: { clipboard } }, upload: Promise.resolve(), openTraces: new Set(), working: new Map(), tick() {}, workingFor: () => '', writer: () => '', writerOf: () => '',
+    stepChevron: '', MOST_REPLY_STEPS: 64, clipped: (t) => t, stored: () => messages.filter((m) => !m.pending), fit() {}, persist() {}, draw() {}, send,
+    notify: (text) => calls.push(`notify:${text}`), setTimeout: () => 0,
+    fetch: async (url, init) => { calls.push(['fetch', url, JSON.parse(init.body)]); return { ok: fetchOk }; },
+  };
+  vm.createContext(context);
+  for (let tries = 0; tries < 40; tries++) {
+    try { vm.runInContext(`${code}\n;globalThis.__bubble = bubble; globalThis.__fns = { copyAnswer, takeBack, retryAnswer, editQuestion, lastPair };`, context); break; }
+    catch (e) { if (!(e instanceof ReferenceError)) throw e; context[e.message.split(' ')[0]] = () => ''; }
+  }
+  return { context, calls, input, html: () => messages.map((m, i) => context.__bubble(m, i)), ...context.__fns };
+}
+
+const pair = () => [{ role: 'user', text: 'What is a heap?' }, { role: 'assistant', text: '[n1] A heap keeps the minimum on top.', sources: [{ n: 1, id: 'a', title: 'Heaps' }] }];
+
+test('every answer offers Copy, the last one Retry, and the last question Edit', () => {
+  const { html } = answers([...pair(), ...pair()]);
+  const [q1, a1, q2, a2] = html();
+  assert.doesNotMatch(q1, /data-chat="edit"/);
+  assert.match(q2, /data-chat="edit"/);
+  assert.match(a1, /data-chat="copy"/);
+  assert.doesNotMatch(a1, /data-chat="retry"/);
+  assert.match(a2, /data-chat="copy"[^>]*>Copy<\/button><button class="msg-act" data-chat="retry">Retry<\/button>/);
+  assert.doesNotMatch(a2, /disabled/);
+});
+
+test('Copy, Retry and Edit are disabled while Felix is working', () => {
+  const [q, a] = answers(pair(), { busy: {} }).html();
+  assert.match(q, /data-chat="edit" disabled/);
+  assert.match(a, /data-chat="copy" data-i="1" disabled/);
+  assert.match(a, /data-chat="retry" disabled/);
+  const pending = answers([...pair(), { role: 'user', text: 'More' }, { role: 'assistant', text: '', pending: true }]).html();
+  assert.doesNotMatch(pending.join(''), /data-chat="retry"|data-chat="edit"/);
+});
+
+test('a writer failure shows the sentence in Felix\u2019s voice with a Set up writing AI button, and other errors keep their look', () => {
+  const sentence = "leo can't write yet: no writing AI is ready (Ollama isn't running).";
+  const [, said, , other] = answers([...pair(), { role: 'user', text: 'Hi' }, { role: 'assistant', text: '', error: 'Felix finished without an answer. Try again.' }]).html();
+  assert.doesNotMatch(said, /Set up writing AI/);
+  assert.match(other, /<div class="msg-error">Felix finished without an answer\. Try again\.<\/div>/);
+  assert.doesNotMatch(other, /Set up writing AI/);
+  const [, failed] = answers([{ role: 'user', text: 'Quiz me' }, { role: 'assistant', text: '', error: sentence }]).html();
+  assert.match(failed, /<div class="prose"><p>leo can&#39;t write yet|<div class="prose"><p>leo can't write yet/);
+  assert.match(failed, /<a class="btn primary sm" href="#\/settings\/writing">Set up writing AI<\/a>/);
+  assert.doesNotMatch(failed, /msg-error/);
+  assert.equal(C.noAi(sentence), true);
+  assert.equal(C.noAi('Stopped.'), false);
+  assert.equal(C.noAi(undefined), false);
+});
+
+test('a failed upload shows the writer sentence with the setup link, and other errors stay as they were', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const sentence = "leo can't write yet: no writing AI is chosen.";
+  for (const [error, link] of [[sentence, true], ['The file is empty.', false]]) {
+    const open = { innerHTML: '' };
+    const context = {
+      api: async () => ({ state: 'failed', error }), enc: encodeURIComponent, esc, noAi: C.noAi, felix: { felix: () => '' },
+      $: (sel) => (sel === '.upload-working' ? open : null), setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+    };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/uploads.js'), 'utf8'), context);
+    context.watchUpload('job', '');
+    await new Promise(setImmediate);
+    assert.ok(open.innerHTML.includes(`<p class="upload-error">${esc(error)}</p>`));
+    assert.equal(open.innerHTML.includes('<a class="btn plain" href="#/settings/writing">Set up writing AI</a>'), link);
+  }
+});
+
+test('Copy writes the answer as Markdown without citation marks or the grading marker', async () => {
+  let written = null;
+  const box = answers(pair(), { clipboard: { writeText: async (t) => { written = t; } } });
+  const button = { textContent: 'Copy' };
+  await box.copyAnswer(1, button);
+  assert.equal(written, C.linkCitations(C.grade(pair()[1].text).text, pair()[1].sources).trim());
+  assert.equal(button.textContent, 'Copied');
+  const busy = answers(pair(), { busy: {}, clipboard: { writeText: async () => { throw new Error('no'); } } });
+  await busy.copyAnswer(1, button);
+  assert.equal(busy.calls.length, 0, 'nothing happens while streaming');
+  const refused = answers(pair(), { clipboard: { writeText: async () => { throw new Error('Denied'); } } });
+  await refused.copyAnswer(1, { textContent: 'Copy' });
+  assert.deepEqual(refused.calls, ['notify:Could not copy: Denied']);
+});
+
+test('Retry drops the last pair on the server and sends the question again', async () => {
+  const sent = [];
+  const messages = [...pair(), ...pair()];
+  const box = answers(messages, { send: (t) => sent.push(t) });
+  await box.retryAnswer();
+  assert.deepEqual(box.calls, [['fetch', '/api/chats/chat-12345678/drop', { count: 2, total: 4 }]]);
+  assert.equal(messages.length, 2);
+  assert.deepEqual(sent, ['What is a heap?']);
+});
+
+test('Edit puts the question back in the composer and drops the pair', async () => {
+  const messages = pair();
+  const box = answers(messages);
+  box.input.value = 'draft';
+  await box.editQuestion();
+  assert.equal(messages.length, 0);
+  assert.equal(box.input.value, 'What is a heap?\n\ndraft');
+  assert.deepEqual(box.calls.at(-1), 'focus');
+});
+
+const withAttachments = () => [{
+  role: 'user', text: 'Compare these', refs: [{ id: 'n1', title: 'Heaps' }], selection: { note: 'n2', title: 'Trees', from: 1, to: 2, text: 'a tree' },
+  files: ['d1'], docs: ['Notes.pdf'], cards: [{ name: 'Notes.pdf', excerpt: 'Lecture one' }],
+}, pair()[1]];
+
+test('Retry and Edit keep a question\u2019s notes, passage and documents', async () => {
+  for (const [name, again] of [['retryAnswer', true], ['editQuestion', false]]) {
+    const sent = [], messages = withAttachments();
+    const box = answers(messages, { send: (t) => sent.push(t) });
+    assert.ok(box.context.state.sent.push({ id: 'd1', name: 'Notes.pdf' }) && box.lastPair() === 0);
+    box.context.state.refs = [{ id: 'n3', title: 'Other' }];
+    await box[name]();
+    const { state } = box.context;
+    assert.deepEqual(state.refs.map((r) => r.id), ['n1', 'n3']);
+    assert.equal(state.selection.note, 'n2');
+    assert.equal(state.sent.length, 0);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.files)), [{ name: 'Notes.pdf', excerpt: 'Lecture one', id: 'd1', status: 'ready' }]);
+    assert.deepEqual(sent, again ? ['Compare these'] : []);
+    assert.equal(box.input.value, again ? '' : 'Compare these');
+  }
+});
+
+test('a quiz, next or steer question still has no Retry or Edit', () => {
+  for (const extra of [{ quiz: {} }, { next: true }, { steer: true }]) {
+    assert.equal(answers([{ ...pair()[0], ...extra }, pair()[1]]).lastPair(), -1);
+  }
+});
+
+test('a refused or busy take-back keeps the chat as it is', async () => {
+  const sent = [];
+  const messages = pair();
+  const refused = answers(messages, { fetchOk: false, send: (t) => sent.push(t) });
+  await refused.retryAnswer();
+  assert.equal(messages.length, 2);
+  assert.deepEqual(sent, []);
+  assert.match(refused.calls.at(-1), /^notify:/);
+  const busy = answers(messages, { busy: {}, send: (t) => sent.push(t) });
+  await busy.editQuestion();
+  await busy.retryAnswer();
+  assert.deepEqual(busy.calls, []);
+  assert.equal(messages.length, 2);
+});

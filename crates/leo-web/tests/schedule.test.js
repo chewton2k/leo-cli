@@ -80,6 +80,10 @@ test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   assert.deepEqual(rows.map((r) => r.kind), ['task', 'ask', 'search', 'note'], 'every other choice stays one arrow away');
   assert.deepEqual(top('buy milk', []), { kind: 'task', title: 'buy milk', date: null, time: null }, 'a short thing to do is a task');
   assert.equal(top('pick up John from the airport', []).kind, 'task');
+  assert.equal(top('call mom tomorrow', []).kind, 'task');
+  assert.equal(top('Make a table comparing the 3 lectures', []).kind, 'ask', 'a long request goes to Felix');
+  assert.equal(top('summarize chapter 3', []).kind, 'ask');
+  assert.equal(top('make a table', []).kind, 'ask', 'a study word goes to Felix even when short');
   assert.equal(top('I keep mixing up the two proofs and want to get them straight before Friday somehow', []).kind, 'task', 'a date still means a reminder');
   assert.equal(top('so I was thinking about the project and how the parts fit together overall', []).kind, 'ask', 'Felix works out anything longer');
   const folders = ['Classes/CS 161', 'Work'];

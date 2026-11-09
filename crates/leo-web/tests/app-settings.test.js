@@ -97,14 +97,54 @@ test('Updates renders ready, busy and release notes safely with independent defa
   assert.ok(html.includes('your notes stay') && html.includes('title="/notes"'));
 });
 
-test('a native quit confirmation explains both ways to quit without navigating', async () => {
-  const messages = [];
-  const window = {};
+function tail(extra) {
   const events = fs.readFileSync(path.join(__dirname, '../src/web/app/events.js'), 'utf8');
-  vm.runInNewContext(events.slice(events.indexOf('const APP_SETTINGS =')), { window, toast: text => messages.push(text), go: () => assert.fail('Quit must keep the current page') });
+  const window = {};
+  const messages = [];
+  const calls = [];
+  const scope = { window, toast: (text, options) => messages.push([text, options]), go: (hash) => calls.push(hash), location: { hash: '#/' }, setTimeout, ...extra };
+  vm.runInNewContext(events.slice(events.indexOf('const APP_SETTINGS =')) + '\nwindow.warnUnsaved = warnUnsaved;', scope);
+  return { window, messages, calls };
+}
+test('a native quit confirmation explains both ways to quit without navigating', async () => {
+  const { window, messages } = tail({ go: () => assert.fail('Quit must keep the current page'), api: async () => ({ job: null }) });
   await window.leoFromApp('quit', '');
   assert.equal(messages.length, 1);
-  assert.ok(messages[0].includes('⌘Q again') && messages[0].includes('Quit again') && messages[0].includes('3 seconds'));
+  assert.ok(messages[0][0].includes('⌘Q again') && messages[0][0].includes('Quit again') && messages[0][0].includes('3 seconds'));
+});
+test('quitting says what is lost while a recording is live or its note is being written', async () => {
+  const text = async (api) => { const { window, messages } = tail({ api }); await window.leoFromApp('quit', ''); return messages[0][0]; };
+  assert.equal(await text(async () => ({ job: { state: 'writing' } })), 'Press ⌘Q again to quit. A note is still being written; you can recover it from Record next time.');
+  for (const state of ['starting', 'recording', 'paused']) assert.equal(await text(async () => ({ job: { state } })), 'Press ⌘Q again to quit. The recording stops and you can recover it from Record next time.');
+  for (const job of [null, { state: 'done' }, { state: 'failed' }]) assert.ok((await text(async () => ({ job }))).includes('within 3 seconds'));
+});
+test('a failed or slow recording check keeps the usual quit text', async () => {
+  const usual = async (api) => { const { window, messages } = tail({ api }); await window.leoFromApp('quit', ''); return messages[0][0].includes('within 3 seconds'); };
+  assert.ok(await usual(async () => { throw new Error('offline'); }));
+  assert.ok(await usual(() => new Promise((resolve) => setTimeout(() => resolve({ job: { state: 'writing' } }), 1000))));
+});
+test('unsaved recordings are announced once with a way to Record, never on the Record page', async () => {
+  const run = async (pending, hash = '#/') => {
+    const { window, messages, calls } = tail({ api: async () => ({ pending }), location: { hash } });
+    await window.warnUnsaved();
+    return { messages, calls };
+  };
+  assert.equal((await run([])).messages.length, 0);
+  assert.equal((await run([{ id: 'a' }], '#/record')).messages.length, 0);
+  assert.equal((await run([{ id: 'a' }], '#/record/Lectures')).messages.length, 0);
+  const one = await run([{ id: 'a' }]);
+  assert.equal(one.messages[0][0], "1 recording wasn't saved");
+  assert.equal(one.messages[0][1].action, 'Open Record');
+  one.messages[0][1].run();
+  assert.deepEqual(one.calls, ['#/record']);
+  assert.equal((await run([{ id: 'a' }, { id: 'b' }, { id: 'c' }])).messages[0][0], "3 recordings weren't saved");
+  const { window, messages } = tail({ api: async () => { throw new Error('offline'); } });
+  await window.warnUnsaved();
+  assert.equal(messages.length, 0);
+});
+test('the export text matches what the zip holds', () => {
+  const keeping = fs.readFileSync(path.join(__dirname, '../src/web/app/keeping.js'), 'utf8');
+  assert.ok(keeping.includes('Your notes and tasks, plus the parts you choose below: uploads with recording transcripts, chats with margin notes, and trash. Settings and keys are never included.'));
 });
 
 test('the downloading update shows a percent and a bar', () => {
@@ -135,4 +175,16 @@ test('Health loads in shape', () => {
   const html = value.healthCards(null);
   assert.ok(html.includes('Checking…') && html.includes('activity-spin'));
   assert.ok(html.includes('class="skeleton"'));
+});
+test('the microphone fix button opens the system settings when access is denied', () => {
+  const { value } = context();
+  value.ICON = new Proxy({}, { get: () => '' });
+  const view = { sections: [{ checks: [{ name: 'microphone', state: 'missing', action: 'microphone' }] }] };
+  const button = (permissions, platform) => {
+    vm.runInContext(`desktopApp = ${JSON.stringify({ platform, permissions })}`, value);
+    return value.healthCards(view);
+  };
+  assert.match(button({ microphone: 'ask' }, 'macos'), />Allow access<\/button>/);
+  assert.match(button({ microphone: 'denied' }, 'macos'), />Open System Settings<\/button>/);
+  assert.match(button({ microphone: 'denied' }, 'windows'), />Open Settings<\/button>/);
 });

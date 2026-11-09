@@ -335,6 +335,7 @@ window.addEventListener('afterprint', () => {
 reopenLastPlace();
 route();
 checkActivity();
+warnUnsaved();
 
 document.addEventListener('paste', (e) => {
   if (e.defaultPrevented) return;
@@ -361,9 +362,28 @@ document.addEventListener('paste', (e) => {
 // Record starts a lecture (microphone) or a call right away, like pressing
 // Start on the Record page; one already running is just shown.
 const APP_SETTINGS = ['general', 'updates'];
+const QUIT_TEXT = 'Press ⌘Q again or choose Quit again within 3 seconds to quit Leo.';
+async function quitText() {
+  try {
+    const { job } = await Promise.race([api('/api/record'), new Promise((_, no) => setTimeout(no, 300))]);
+    if (job && ['starting', 'recording', 'paused'].includes(job.state)) return 'Press ⌘Q again to quit. The recording stops and you can recover it from Record next time.';
+    if (job && job.state === 'writing') return 'Press ⌘Q again to quit. A note is still being written; you can recover it from Record next time.';
+  } catch (e) {}
+  return QUIT_TEXT;
+}
+async function warnUnsaved() {
+  try {
+    const n = ((await api('/api/record')).pending || []).length;
+    if (n && !/^#\/record/.test(location.hash)) toast(n === 1 ? "1 recording wasn't saved" : `${n} recordings weren't saved`, { action: 'Open Record', run: () => go('#/record') });
+  } catch (e) {}
+}
 window.leoFromApp = async (what, which) => {
-  if (what === 'quit') return toast('Press ⌘Q again or choose Quit again within 3 seconds to quit Leo.');
+  if (what === 'quit') return toast(await quitText());
   if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
+  if (what === 'event') {
+    const [kind, ...uid] = String(which).split(':');
+    return go(`#/record?event=${encodeURIComponent(uid.join(':'))}&kind=${kind === 'microphone' ? 'microphone' : 'call'}`);
+  }
   if (what !== 'record' || !['microphone', 'call'].includes(which)) return;
   if (recorder.active()) return go('#/record');
   if (state.view !== 'record') go('#/record');

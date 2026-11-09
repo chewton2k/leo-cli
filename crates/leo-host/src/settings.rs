@@ -27,6 +27,16 @@ impl leo_web::SettingsApi for WebSettings {
         page
     }
 
+    fn writing(&self, probe: bool) -> Value {
+        let cfg = Config::load();
+        let store = default_store();
+        let local = choice::local_models(&cfg);
+        serde_json::json!({
+            "writing": leo_services::health::writing(&cfg, store.as_ref(), Some(&local)),
+            "candidates": leo_services::web_settings::candidates(&cfg, &local, probe),
+        })
+    }
+
     fn refresh_usage(&self, claude: bool) -> Option<String> {
         let cfg = Config::load();
         leo_services::usage::refresh_codex(&cfg);
@@ -46,6 +56,33 @@ impl leo_web::SettingsApi for WebSettings {
     fn test(&self, task: &str) -> Result<String> {
         let store = default_store();
         leo_services::web_settings::test(&Config::load(), store.as_ref(), task)
+    }
+}
+
+impl leo_web::ollama::OllamaApi for WebSettings {
+    fn view(&self) -> Value {
+        leo_services::ollama::view(&Config::load())
+    }
+
+    fn pull(
+        &self,
+        model: &str,
+        progress: &mut dyn FnMut(u64, u64, &str),
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<()> {
+        let cfg = Config::load();
+        let url = cfg
+            .provider("ollama")
+            .and_then(|p| p.base_url.as_deref())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Ollama isn't set up in leo. Choose Ollama in Writing AI again.")
+            })?;
+        leo_services::ollama::pull(
+            url,
+            model,
+            &mut |step| progress(step.completed, step.total, &step.status),
+            stop,
+        )
     }
 }
 

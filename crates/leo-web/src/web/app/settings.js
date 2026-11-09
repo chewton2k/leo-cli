@@ -1,3 +1,8 @@
+const WRITING_PRIVACY = {
+  claude_code: 'Notes and transcripts you send go to Anthropic through Claude Code.',
+  codex: 'Notes and transcripts you send go to OpenAI through Codex.',
+  ollama: 'Ollama runs on this computer; nothing leaves it.',
+};
 const TASK_TITLE = { writing: 'AI for writing', speech: 'AI for speech' };
 const TASK_USE = {
   writing: 'Turns recordings into notes, powers Felix and note connections.',
@@ -29,7 +34,54 @@ async function showSettings(section) {
   if (section === 'dictation') pollDictation(mine, ++dictationGeneration);
 }
 
-const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
+const CALENDAR_PROVIDERS = {
+  google: ['https://calendar.google.com/calendar/r/settings', 'Google Calendar settings', 'Under <b>Settings for my calendars</b>, pick the calendar.', 'In <b>Integrate calendar</b>, copy <b>Secret address in iCal format</b>.'],
+  outlook: ['https://outlook.live.com/calendar/0/options/calendar/SharedCalendars', 'Outlook calendar settings', 'Under <b>Shared calendars</b> and <b>Publish a calendar</b>, pick the calendar and choose <b>Publish</b>.', 'Copy the <b>ICS</b> link.'],
+  apple: ['https://www.icloud.com/calendar', 'iCloud Calendar', 'Share the calendar as a <b>Public Calendar</b>.', 'Copy the link, which starts with <b>webcal://</b>.'],
+};
+
+function calendarSteps(provider) {
+  const [url, name, second, third] = CALENDAR_PROVIDERS[provider] || CALENDAR_PROVIDERS.google;
+  return `<ol class="cal-steps">
+        <li>Open <a href="${url}" target="_blank" rel="noopener noreferrer">${name}</a>.</li>
+        <li>${second}</li>
+        <li>${third}</li>
+      </ol>`;
+}
+
+function calendarAddressError(link, provider) {
+  if (!/^(https|webcal):\/\//i.test(link)) return 'Paste the calendar address that starts with https:// or webcal://.';
+  const share = link.includes('calendar.google.com/calendar/u/') || (link.includes('?cid=') && !link.includes('.ics'));
+  return provider === 'google' && share ? 'That is the share link. Paste the secret address that ends in .ics.' : '';
+}
+
+function showCalendarError(message) {
+  const box = $('#calendar-link'), note = $('#calendar-error');
+  if (box) box.setAttribute('aria-invalid', String(Boolean(message)));
+  if (note) note.textContent = message;
+}
+
+document.addEventListener('change', (e) => {
+  const field = e.target.closest?.('[data-cal-provider]');
+  const steps = field && $('.cal-steps');
+  if (!steps) return;
+  state.calendarProvider = field.value;
+  steps.outerHTML = calendarSteps(field.value);
+  showCalendarError('');
+});
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'calendar-link') showCalendarError('');
+});
+document.addEventListener('change', async (e) => {
+  const field = e.target;
+  if (!field.matches?.('[data-cal-offer]')) return;
+  try {
+    state.calendar = await api('/api/calendar', { method: 'PATCH', body: { offer: field.checked } });
+  } catch (error) {
+    field.checked = !field.checked;
+    fail(error);
+  }
+});
 
 function calendarCard(cal) {
   if (!cal) return '';
@@ -44,13 +96,11 @@ function calendarCard(cal) {
     </div>`)
     .join('');
   const open = !count || state.calendarAdding;
-  const form = `<ol class="cal-steps">
-        <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a>.</li>
-        <li>Under <b>Settings for my calendars</b>, pick the calendar.</li>
-        <li>In <b>Integrate calendar</b>, copy <b>Secret address in iCal format</b>.</li>
-      </ol>
-      <div class="cal-add"><input id="calendar-link" class="set-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste the address here"><button class="btn primary sm" data-action="calendar-add">Connect</button></div>
-      <p class="set-note">Outlook or Apple Calendar work too: paste the calendar’s published ICS link.</p>`;
+  const provider = state.calendarProvider || 'google';
+  const form = `<div class="set-row"><span class="set-label">Connect a calendar</span>${segmented({ label: 'Connect a calendar', field: 'data-cal-provider', current: provider, choices: [['google', 'Google'], ['outlook', 'Outlook'], ['apple', 'Apple']] })}</div>
+      ${calendarSteps(provider)}
+      <div class="cal-add"><input id="calendar-link" class="set-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste the address here" aria-describedby="calendar-error"><button class="btn primary sm" data-action="calendar-add">Connect</button></div>
+      <p class="set-note warn" id="calendar-error" role="alert"></p>`;
   const adder = open
     ? `<div class="cal-form">${count ? '<div class="cal-form-head"><span>Add another calendar</span><button class="btn plain sm" data-action="calendar-cancel">Cancel</button></div>' : ''}${form}</div>`
     : `<button class="set-advanced cal-more" data-action="calendar-more">${ICON.plus}<span class="grow">Add another calendar</span>${ICON.chevron}</button>`;
@@ -58,6 +108,7 @@ function calendarCard(cal) {
     <header><h3>Calendar</h3>${chip}</header>
     <p class="hint">Recordings are named after the class or meeting you are in, and the AI gets its description and who was invited. leo only reads your calendar.</p>
     ${rows}
+    ${count ? `<label class="set-row" data-find="calendar-offer"><span class="grow">Offer to record when an event starts</span>${settingsSwitch('data-cal-offer', cal.offer !== false)}</label>` : ''}
     ${adder}
   </section>`;
 }
@@ -65,6 +116,9 @@ function calendarCard(cal) {
 async function addCalendar() {
   const box = $('#calendar-link');
   if (!box || !box.value.trim()) throw Object.assign(new Error('Paste your calendar’s secret address first.'), { shown: true });
+  const bad = calendarAddressError(box.value.trim(), state.calendarProvider || 'google');
+  showCalendarError(bad);
+  if (bad) return;
   const button = $('[data-action="calendar-add"]');
   if (button) {
     button.disabled = true;
@@ -190,11 +244,60 @@ function providerCard(c) {
   return [c.id, title, about, '', icon];
 }
 
+const SIGN_IN_POLL_MS = 3000, SIGN_IN_WAIT_MS = 120000;
+const SIGN_IN_LATE = 'Still waiting. Finish signing in, then press Check again.';
+const INSTALL_URL = { claude_code: 'https://claude.com/claude-code', codex: 'https://github.com/openai/codex' };
+let signInWait = null;
+function signInLate(id) { return signInWait?.provider === id && signInWait.late; }
+function signInControl(c, action) {
+  if (!INSTALL_URL[c.id]) return '';
+  if (!c.installed) return `<a class="btn plain sm" href="${INSTALL_URL[c.id]}" target="_blank" rel="noopener noreferrer">Install ${providerCard(c)[1]}</a>`;
+  if (signInWait?.provider === c.id && !signInWait.late) return '<button class="btn plain sm" disabled>Waiting for sign-in…</button>';
+  return `<button class="btn plain sm" data-action="${action}" data-provider="${c.id}"${signInLate(c.id) ? ' data-check="1">Check again' : '>Sign in'}</button>`;
+}
+async function signIn(el, here, draw) {
+  const provider = el.dataset.provider, check = el.dataset.check === '1';
+  if (!INSTALL_URL[provider]) return;
+  clearTimeout(signInWait?.timer);
+  const wait = signInWait = { provider, late: false, timer: 0 };
+  const until = Date.now() + (check ? 0 : SIGN_IN_WAIT_MS);
+  const gone = () => { if (signInWait === wait) signInWait = null; };
+  const tick = async () => {
+    if (signInWait !== wait) return;
+    if (!here()) return gone();
+    let view = null;
+    try { view = await api('/api/writing?probe=signin'); } catch (e) {}
+    if (signInWait !== wait) return;
+    if (!here()) return gone();
+    if (view?.candidates?.find((c) => c.id === provider)?.signed_in === true) gone();
+    else if (Date.now() >= until) wait.late = true;
+    else { wait.timer = setTimeout(tick, SIGN_IN_POLL_MS); return; }
+    draw(view);
+  };
+  if (!check) {
+    try { await appChange({ action: 'sign_in', provider }); } catch (e) { gone(); if (here()) draw(null); throw e; }
+    if (signInWait !== wait) return;
+    if (!here()) return gone();
+  }
+  draw(null);
+  wait.timer = setTimeout(tick, check ? 0 : SIGN_IN_POLL_MS);
+}
+function writingSignIn(el) {
+  const mine = seq, provider = el.dataset.provider;
+  return signIn(el, () => mine === seq && state.view === 'settings' && state.section === 'writing' && !!state.settings, (view) => {
+    const found = view?.candidates?.find((c) => c.id === provider);
+    const plan = state.settings.plans?.find((p) => p.provider === provider);
+    if (found && plan) Object.assign(plan, { installed: found.installed, signed_in: found.signed_in });
+    if (view?.writing) state.settings.writing = view.writing;
+    drawSettings(state.settings);
+  });
+}
+
 function taskCard(t) {
   const plan = state.settings?.plans?.find(plan => plan.provider === t.provider);
   const status = plan && plan.installed && plan.signed_in !== true
     ? `<span class="set-status missing">${plan.signed_in === false ? 'Sign in needed' : 'Sign-in unknown'}</span>`
-    : t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
+    : state.settings?.writing?.state === 'ready' ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
   const providers = t.choices.map((c) => settingsOption(c.id, c.label, t.provider)).join('') + (t.custom ? settingsOption(t.provider, `${t.provider} (from config.toml)`, t.provider) : '');
   let model = '';
   if (t.fixed_model) {
@@ -209,17 +312,97 @@ function taskCard(t) {
     key = `<div class="set-row column" data-find="writing-key"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
   }
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '';
+  const signInRow = plan && plan.signed_in !== true && INSTALL_URL[plan.provider] ? `<div class="set-row"><span class="grow hint">${signInLate(plan.provider) ? SIGN_IN_LATE : ''}</span>${signInControl({ id: plan.provider, installed: plan.installed }, 'writing-sign-in')}</div>` : '';
   const usage = t.usage && !plan ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
-  const note = t.note ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
+  const ollama = t.task === 'writing' && t.provider === 'ollama';
+  const note = t.note && !(ollama && state.ollama && !state.ollama.installed) ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
+  const privacy = t.task === 'writing' && WRITING_PRIVACY[t.provider] ? `<p class="set-note">${WRITING_PRIVACY[t.provider]}</p>` : '';
   return `<section class="set-card" data-task-card="${t.task}" data-find="writing-provider">
     <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
     <p class="hint">${TASK_USE[t.task]}</p>
     ${t.custom || t.choices.length > 4
       ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
       : `<div class="set-row column"><span class="set-label">Provider</span>${choiceCards({ label: 'Provider', choices: t.choices.map((c) => providerCard(c)), current: t.provider, field: `data-set="provider" data-task="${t.task}"`, className: 'providers' })}</div>`}
-    ${model}${key}${signin}${usage}${note}
+    ${privacy}${model}${key}${signin}${signInRow}${usage}${note}${ollama ? `<div id="ollama-setup">${ollamaSetup(state.ollama, t.model)}</div>` : ''}
     <div class="set-test" data-find="writing-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test connection</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
+}
+
+function ollamaGB(bytes, unit = 1e9) {
+  const n = (Number(bytes) || 0) / unit;
+  return `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} GB`;
+}
+
+function ollamaSetup(view, current, picked = ollamaSelected) {
+  if (!view || (view.installed && !view.running)) return '';
+  const where = ON_MAC ? 'this Mac' : 'this computer';
+  if (!view.installed) return `<div class="set-row"><span class="grow">Ollama runs AI models on ${where}. It isn’t installed yet.</span><a class="btn primary sm" href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">Download Ollama</a></div><p class="set-note">Once it’s installed, leo finds it by itself and lists models that fit ${where}. No Terminal needed.</p>`;
+  const pull = view.pull?.state === 'pulling' ? view.pull : null;
+  const percent = pull ? Math.min(100, Math.floor((pull.completed || 0) * 100 / Math.max(1, pull.total || 0))) : 0;
+  const facts = [view.memory_bytes && `${ollamaGB(view.memory_bytes, 1073741824)} of memory`, view.free_disk_bytes && `${ollamaGB(view.free_disk_bytes)} free`].filter(Boolean);
+  const summary = facts.length ? `<p class="hint">${ON_MAC ? 'This Mac' : 'This computer'} has ${facts.join(' and ')}.</p>` : '';
+  const cards = (view.models || []).map((m) => {
+    const here = pull?.model === m.name, on = here || m.name === picked;
+    const fit = m.recommended ? 'Recommended' : `${m.fits ? 'Fits' : 'Too big for'} ${where}`;
+    const status = here ? `<span class="chip accent">Downloading ${percent}%</span>` : m.name === current ? '<span class="chip accent">In use</span>' : m.pulled ? '<span class="chip">Downloaded</span>' : '';
+    return `<button type="button" class="onboarding-model${on ? ' on' : ''}" data-action="ollama-pick" data-model="${esc(m.name)}" aria-pressed="${on}"${m.fits ? '' : ' disabled'}><span class="onboarding-model-head"><b>${esc(m.name)}</b><span class="chip">${fit}</span><span class="onboarding-model-state">${status}</span></span><span class="hint">${esc(m.about)}</span><span class="hint">${ollamaGB(m.bytes)} · needs ${esc(m.memory_gb)} GB of memory</span></button>`;
+  }).join('');
+  const progress = pull ? `<div class="onboarding-model-action"><div class="grow onboarding-download"><span class="hint">Downloading ${esc(pull.model)} · ${pull.total ? `${ollamaGB(pull.completed)} of ${ollamaGB(pull.total)}` : 'Starting…'}</span><progress value="${percent}" max="100" aria-label="Downloading ${esc(pull.model)}"></progress></div><button class="btn plain" data-action="ollama-cancel">Cancel</button></div>` : '';
+  const choice = !pull && (view.models || []).find((m) => m.name === picked && m.fits && (!m.pulled || m.name !== current));
+  const choose = choice ? `<div class="onboarding-model-action"><span class="grow hint">${esc(choice.name)} ${choice.pulled ? 'is ready on this computer.' : 'downloads once, then works offline.'}</span><button class="btn primary" data-action="ollama-pull" data-model="${esc(choice.name)}">${choice.pulled ? 'Use' : `Download · ${ollamaGB(choice.bytes)}`}</button></div>` : '';
+  const failed = view.pull?.state === 'failed' ? `<p class="set-note warn">${esc(view.pull.error)}</p>` : '';
+  return `${summary}<div class="onboarding-model-list" role="group" aria-label="Ollama models">${cards}</div>${progress}${choose}${failed}`;
+}
+
+let ollamaTimer = 0, ollamaGeneration = 0;
+function writingModel() {
+  return state.settings?.tasks?.find((t) => t.task === 'writing')?.model;
+}
+async function loadOllama(mine) {
+  clearTimeout(ollamaTimer);
+  const generation = ++ollamaGeneration;
+  const here = () => generation === ollamaGeneration && mine === seq && state.view === 'settings' && $('#ollama-setup');
+  if (!here()) return;
+  if (appVisible()) {
+    try {
+      const before = state.ollama;
+      const view = await api('/api/writing/ollama');
+      if (!here()) return;
+      state.ollama = view;
+      if (before?.pull?.state === 'pulling' && view.pull?.state === 'done') return await changeSetting({ set: 'model', task: 'writing', value: view.pull.model });
+      if (before && (before.installed !== view.installed || before.running !== view.running)) {
+        const page = await api('/api/settings');
+        if (here()) drawSettings(page);
+        return;
+      }
+      refreshPanel($('#ollama-setup'), ollamaSetup(view, writingModel()));
+    } catch (e) {
+      if (!here()) return;
+    }
+  }
+  const wait = state.ollama?.pull?.state === 'pulling' ? 1000 : state.ollama?.running ? 0 : 5000;
+  if (wait) ollamaTimer = setTimeout(() => loadOllama(mine), wait);
+}
+async function ollamaChange(change) {
+  const mine = seq, setup = onboardingHere(3) ? onboardingGeneration : null;
+  const view = await api('/api/writing/ollama', { method: 'POST', body: change });
+  if (setup !== null) return onboardingOllamaHere(setup) && showOnboardingOllama(view, setup);
+  if (mine !== seq || state.view !== 'settings') return;
+  state.ollama = view;
+  refreshPanel($('#ollama-setup'), ollamaSetup(view, writingModel()));
+  loadOllama(mine);
+}
+let ollamaSelected = '';
+function ollamaPick(el) {
+  ollamaSelected = el.dataset.model;
+  if (onboardingHere(3)) return drawOnboardingWriting();
+  refreshPanel($('#ollama-setup'), ollamaSetup(state.ollama, writingModel()));
+}
+function ollamaPull(el) {
+  const model = state.ollama?.models?.find((m) => m.name === el.dataset.model);
+  if (!model || state.ollama.pull?.state === 'pulling') return;
+  if (model.pulled) return onboardingHere(3) ? pickOnboardingOllama(model.name) : changeSetting({ set: 'model', task: 'writing', value: model.name });
+  return ollamaChange({ action: 'pull', model: model.name });
 }
 
 const PLAN_STALE_MS = 5 * 60 * 1000;
@@ -808,6 +991,7 @@ function drawSettings(page) {
   refreshPanel(app, settingsFrame(section, `<div class="settings">${content}</div>`));
   restoreSettingsFields(fields, segments);
   activityShown(section);
+  if ($('#ollama-setup')) loadOllama(seq);
 }
 
 async function changeSetting(change) {

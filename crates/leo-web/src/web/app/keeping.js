@@ -119,7 +119,7 @@ function drawKeeping() {
     ${keepCard()}
     ${keepDrafts()}
     <section class="set-card store-export" data-find="keeping-export">
-      <div class="set-row"><span class="keep-text">Export notes<span class="hint keep-about">A zip of your notes and a tasks.json of your tasks. Speech models and settings are not included.</span></span><a class="btn plain sm" id="export-link" download href="${exportHref()}">Download zip</a></div>
+      <div class="set-row"><span class="keep-text">Export notes<span class="hint keep-about">Your notes and tasks, plus the parts you choose below: uploads with recording transcripts, chats with margin notes, and trash. Settings and keys are never included.</span></span><a class="btn plain sm" id="export-link" download href="${exportHref()}">Download zip</a></div>
       <div class="store-export-parts">
         <label class="set-row"><span class="grow">Uploaded files</span>${settingsSwitch('data-export="uploads"', true)}</label>
         <label class="set-row"><span class="grow">Chats</span>${settingsSwitch('data-export="chats"', true)}</label>

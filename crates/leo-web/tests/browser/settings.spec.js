@@ -403,17 +403,25 @@ test('setup groups permissions with live checkmarks, then offers speech models a
   const sheets = read('app/sheets.js').split('const QUICK_PLACES')[0];
   const settings = read('app/settings.js');
   const speechHelpers = settings.slice(settings.indexOf('function speechBytes('), settings.indexOf('function speechModelRow('));
-  const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
+  const writingHelpers = settings.slice(settings.indexOf('function providerCard('), settings.indexOf('function taskCard(')) + settings.slice(settings.indexOf('function ollamaGB('), settings.indexOf('let ollamaTimer'));
+  const core = read('app/core.js');
+  const dictateHelper = core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('function wireHomeAsk('));
+  const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector), ON_MAC=true;
     let seq=0,state={view:'folder'};
-    const LEAVE_MS=180, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
+    const LEAVE_MS=180, stillMotion=()=>true, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     window.errors=[]; const fail=e=>window.errors.push(e.message);
     let native, pending=null, rejectStep=null;
-    const calls=[], speechCalls=[];
+    const calls=[], speechCalls=[], settingCalls=[];
     const model=(id,name,recommended,extra={})=>({id,name,description:name+' runs on this computer.',languages:['en'],size:200*1048576,recommended,speed:8,accuracy:94,accuracy_measured:true,benchmark_language:'en',streaming:true,...extra});
     let speech;
     ${speechHelpers}
+    ${writingHelpers}
+    ${dictateHelper}
     async function api(url,options={}) {
+      if(url==='/api/writing?probe=signin') return {writing:{state:'not_chosen'},candidates:[{id:'codex',installed:false,signed_in:null},{id:'claude_code',installed:true,signed_in:true},{id:'ollama',installed:false,running:false,models:[]}]};
+      if(url==='/api/dictation') return {settings:{shortcut:'⌥Space'}};
+      if(url==='/api/settings') { settingCalls.push(options.body); return {}; }
       if(url==='/api/speech') {
         if(options.body) { speechCalls.push(options.body); if(options.body.action==='download') speech.models.find(m=>m.id===options.body.id).progress={state:'downloading',bytes:0,total:200*1048576}; }
         return structuredClone(speech);
@@ -425,7 +433,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
         if(change.action==='finish_step') {
           if(pending) await pending;
           if(change.step===rejectStep) throw new Error('Setup could not be saved. Try again.');
-          native.preferences.onboarding[change.step]=true;
+          if(change.step===3) native.preferences.writing_done=true; else native.preferences.onboarding[change.step]=true;
         }
       }
       return structuredClone(native);
@@ -438,18 +446,18 @@ test('setup groups permissions with live checkmarks, then offers speech models a
     document.addEventListener('click',event=>{
       const el=event.target.closest('[data-action]'); if(!el) return;
       if(el.dataset.action==='app-command') appChange({action:el.dataset.appAction}).catch(fail);
-      const run={'onboarding-next':finishOnboarding,'onboarding-skip':skipOnboarding,'onboarding-back':onboardingBack,'onboarding-pick':pickOnboardingModel,'onboarding-models':showOnboardingModels,'onboarding-model':onboardingModel}[el.dataset.action];
+      const run={'onboarding-next':finishOnboarding,'onboarding-skip':skipOnboarding,'onboarding-back':onboardingBack,'onboarding-pick':pickOnboardingModel,'onboarding-models':showOnboardingModels,'onboarding-model':onboardingModel,'onboarding-writer':pickOnboardingWriter,'onboarding-use':onboardingUse}[el.dataset.action];
       if(run) Promise.resolve(run(el)).catch(fail);
     });
     window.audit={
       start(platform='macos',flags=[false,false,false]) {
-        closeSheet(true); calls.length=0; speechCalls.length=0; rejectStep=null; onboardingChoice=''; onboardingAll=false;
+        closeSheet(true); calls.length=0; speechCalls.length=0; settingCalls.length=0; rejectStep=null; onboardingChoice=''; onboardingAll=false;
         speech={models:[model('base','Base English',true),model('small','Small English',true,{verified:true,downloaded:true}),model('large','Large multilingual',false,{languages:['en','fr']})]};
-        native={platform,preferences:{onboarding:flags},permissions:{microphone:'not_requested',accessibility:false},updates:{}};
+        native={platform,preferences:{onboarding:flags,writing_done:flags.every(Boolean)},permissions:{microphone:'not_requested',accessibility:false},updates:{}};
         desktopApp=structuredClone(native); maybeOnboarding(true);
       },
       grant:async (permission,value)=>{native.permissions[permission]=value; await pollAppStatus(appPollGeneration);},
-      calls:()=>calls, speechCalls:()=>speechCalls, flags:()=>native.preferences.onboarding,
+      calls:()=>calls, speechCalls:()=>speechCalls, settingCalls:()=>settingCalls, flags:()=>native.preferences.onboarding, writingDone:()=>native.preferences.writing_done,
       progress:bytes=>{speech.models[0].progress={state:'downloading',bytes,total:200*1048576};},
       reject:step=>{rejectStep=step;},
       hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});},
@@ -467,7 +475,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
     await page.goto('http://127.0.0.1:'+server.address().port);
     for(const [theme,order] of [['light',['microphone','accessibility']],['dark',['accessibility','microphone']]]) {
       await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;audit.start();},theme);
-      await expect(page.getByRole('list',{name:/^Setup, step \d of 2$/})).toBeVisible();
+      await expect(page.getByRole('list',{name:/^Setup, step \d of 3$/})).toBeVisible();
       await expect(page.locator('[aria-current="step"]')).toContainText('Access');
       await expect(page.getByRole('button',{name:'Allow microphone',exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
@@ -505,7 +513,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
       await expect(cards).toHaveCount(2);
       await expect(cards.first()).toHaveAttribute('aria-pressed','true');
       await expect(cards.first().locator('meter')).toHaveCount(2);
-      await expect(page.getByRole('button',{name:'Download · 200 MB'})).toBeVisible();
+      await expect(page.getByRole('button',{name:'Download and use · 200 MB'})).toBeVisible();
       await page.getByRole('button',{name:'All 3',exact:true}).click();
       await expect(cards).toHaveCount(3);
       await page.getByRole('button',{name:'Recommended',exact:true}).click();
@@ -515,7 +523,7 @@ test('setup groups permissions with live checkmarks, then offers speech models a
       await expect(cards.first()).toHaveAttribute('aria-pressed','false');
       await expect(page.getByRole('button',{name:'Use and finish'})).toBeVisible();
       await cards.first().click();
-      await page.getByRole('button',{name:'Download · 200 MB'}).click();
+      await page.getByRole('button',{name:'Download and use · 200 MB'}).click();
       await expect(page.locator('#onboarding-model-progress progress')).toBeVisible();
       const cancel = page.getByRole('button',{name:'Cancel',exact:true});
       const cancelHandle = await cancel.elementHandle();
@@ -532,8 +540,23 @@ test('setup groups permissions with live checkmarks, then offers speech models a
       await next.click();
       await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
       await page.getByRole('button',{name:'Skip for now'}).click();
-      await expect(page.locator('.scrim')).toHaveCount(0);
+      await expect(page.getByRole('heading',{name:'Choose who writes your notes'})).toBeVisible();
+      await expect(page.locator('[aria-current="step"]')).toContainText('Writing AI');
       expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,true]);
+      const writers = page.locator('#onboarding-writing .choice-pick');
+      await expect(writers).toHaveCount(3);
+      await expect(writers.first()).toHaveAttribute('aria-pressed','true');
+      await expect(page.locator('#onboarding-writer-status')).toContainText('Claude Code is signed in on this Mac.');
+      await expect(page.locator('.onboarding-dictate')).toHaveText('Press ⌥Space anywhere to dictate.');
+      await writers.nth(1).click();
+      await expect(page.locator('#onboarding-writer-status')).toContainText('Not installed');
+      await expect(page.getByRole('button',{name:'Use Codex'})).toBeDisabled();
+      await writers.first().click();
+      if(theme==='light') await page.getByRole('button',{name:'Use Claude Code'}).click();
+      else await page.getByRole('button',{name:'Skip for now'}).click();
+      await expect(page.locator('.scrim')).toHaveCount(0);
+      expect(await page.evaluate(()=>audit.writingDone())).toBe(true);
+      expect(await page.evaluate(()=>audit.settingCalls())).toEqual(theme==='light'?[{set:'provider',task:'writing',value:'claude_code'}]:[]);
       expect(await page.evaluate(()=>audit.speechCalls().map(c=>c.action+':'+c.id))).toEqual(['download:base']);
     }
     // A denied microphone cannot be asked again, so the button goes to System Settings.

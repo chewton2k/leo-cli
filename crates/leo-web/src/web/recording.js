@@ -54,8 +54,9 @@
     return quietMs < 6000 ? 'quiet' : 'silent';
   }
 
-  function hearingWords(state, source, paused) {
+  function hearingWords(state, source, paused, denied) {
     if (paused) return 'Paused: nothing is being recorded';
+    if (denied && source !== 'screen') return 'leo can\u2019t hear: microphone access is off.';
     if (state === 'sound') return 'Hearing sound';
     if (state === 'waiting' || state === 'quiet') return 'Listening…';
     if (source === 'screen') return 'No sound for a while: is something playing on the computer?';
@@ -77,6 +78,18 @@
 
   const MEETING_WANTS = 'Meeting notes: what was discussed, the decisions made, open questions, and action items with owners and due dates when they were said.';
   const SOON_MS = 15 * 60 * 1000;
+
+  const HEADSET = 'Your sound output is a headset, so leo can\u2019t record only what this computer plays. Switch to other speakers or headphones first.';
+
+  function preflight(checks) {
+    const c = checks || {};
+    return [
+      c.speech === false && { text: 'No speech model yet. The audio is kept and written up once you choose one.', href: '#/settings/models', link: 'Choose a speech model' },
+      c.writing === false && { text: 'No writing AI is ready, so you\u2019ll get a transcript.', href: '#/settings/writing', link: 'Set up writing AI' },
+    ].filter(Boolean);
+  }
+
+  const tipWords = (platform) => `Keeps recording if you close the window. Open leo from the ${platform === 'windows' ? 'system tray' : 'menu bar'} to return.`;
 
   function eventNow(events, now = Date.now()) {
     return (events || []).findIndex((e) => Date.parse(e.start) - SOON_MS <= now && now <= Date.parse(e.end));
@@ -161,6 +174,9 @@
       follow: true,
     };
 
+    const desktopNow = () => (deps.desktop && deps.desktop()) || null;
+    const micDenied = (source) => source !== 'screen' && desktopNow()?.permissions?.microphone === 'denied';
+
     const shown = (message) => Object.assign(new Error(message), { shown: true });
 
 
@@ -205,7 +221,8 @@
       if (view.state === 'done' && before && before.state !== 'done') {
         if (s.container && s.container.isConnected) go(noteHash(view.note), { replace: true });
         else if (noteReady) noteReady();
-        toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
+        if (view.writer_failed) toast('Saved the transcript. The notes were not written.', { action: 'Set up writing AI', run: () => go('#/settings/writing') });
+        else toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
         root.leoMotion?.pulse(root.document.querySelector('.toast'));
       }
       draw();
@@ -303,7 +320,7 @@
         ctx.fill();
       }
       const state = hearing(s.wave.slice(-200), WAVE_STEP_MS);
-      const words = hearingWords(state, s.view.source, paused);
+      const words = hearingWords(state, s.view.source, paused, micDenied(s.view.source));
       const label = root.document.getElementById('rec-hear');
       if (label && s.heard !== `${state}:${words}`) {
         s.heard = `${state}:${words}`;
@@ -353,7 +370,10 @@
         ? `<div class="field">${icons.calendar}<span class="select-control"><select id="rec-event" aria-label="Calendar event"><option value="">No calendar event</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></div>
           ${picked ? '<p class="hint rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
         : '';
-      const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes.</p>' : '';
+      const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes or meetings.</p>' : '';
+      const gaps = preflight(ov.checks).map((g) => `<p class="set-note">${esc(g.text)} <a href="${g.href}">${esc(g.link)}</a></p>`).join('')
+        + (micDenied('microphone') ? '<p class="set-note">leo can’t hear: microphone access is off. <button class="btn plain sm" data-action="app-command" data-app-action="microphone">' + (desktopNow()?.platform === 'windows' ? 'Open Settings' : 'Open System Settings') + '</button></p>' : '')
+        + (ov.checks && ov.checks.headset ? `<p class="set-note" id="rec-headset" hidden>${esc(HEADSET)}</p>` : '');
       const recover = pending.length
         ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><div class="rec-recover-row">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">${esc(pendingLine(p))}</span></span></div><button type="button" class="btn plain sm" data-action="rec-recover" data-id="${esc(p.id)}">Recover</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
         : '';
@@ -364,10 +384,11 @@
           ${kindChoices()}
           ${noteFields({ id: 'rec', folders, here, most: 4000, before: event })}
           ${connect}
+          ${gaps}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
             <span class="rec-start-label">Start recording</span>
-            <p class="hint rec-tip">Keeps recording if you close the window. Open leo from the menu bar to return.</p>
+            <p class="hint rec-tip">${esc(tipWords(desktopNow()?.platform))}</p>
           </div>
         </section>
       </div>`;
@@ -388,7 +409,7 @@
         <section class="set-card rec-live-card">
           <div class="rec-live-top"><span class="rec-state"><span class="rec-dot"></span><span id="rec-word">${esc(stateWord(v))}</span></span><span class="rec-meta">${kind}</span></div>
           <div class="rec-clock"><span id="rec-time">${clock(v.secs)}</span></div>
-          <div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused))}</p>
+          <div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused, micDenied(v.source)))}</p>${micDenied(v.source) ? `<button class="btn plain sm" data-action="app-command" data-app-action="microphone">${(desktopNow()?.platform === 'windows' ? 'Open Settings' : 'Open System Settings')}</button>` : ''}
           ${controls}
           ${warnings}
         </section>
@@ -456,7 +477,7 @@
 
     const IDLE_FIELDS = ['#rec-dir', '#rec-title', '#rec-wants'];
 
-    function chooseEvent(box, index) {
+    function chooseEvent(box, index, fill = true) {
       const events = (s.calendar && s.calendar.events) || [];
       const before = s.event !== null ? events[s.event] : null;
       const e = index !== null ? events[index] : null;
@@ -464,8 +485,31 @@
       const title = box.querySelector('#rec-title');
       const wants = box.querySelector('#rec-wants');
       if (title && (!title.value.trim() || (before && title.value === before.title))) title.value = e ? e.title : '';
-      if (wants && e && !wants.value.trim()) wants.value = MEETING_WANTS;
+      if (wants && e && fill && !wants.value.trim()) wants.value = MEETING_WANTS;
       else if (wants && !e && wants.value === MEETING_WANTS) wants.value = '';
+    }
+
+    function pickKind(box, fill) {
+      const picked = box.querySelector('input[name="rec-kind"]:checked');
+      const call = Boolean(picked) && picked.value === 'call';
+      const headset = box.querySelector('#rec-headset');
+      if (headset) headset.hidden = !picked || picked.value === 'microphone';
+      const wants = box.querySelector('#rec-wants');
+      if (fill && call && wants && !wants.value.trim()) wants.value = MEETING_WANTS;
+    }
+
+    function preselect(box, asked) {
+      if (!box || !box.querySelector('.rec-idle')) return;
+      const events = (s.calendar && s.calendar.events) || [];
+      const wanted = asked.event ? events.findIndex((e) => e.id === asked.event) : -1;
+      const at = wanted >= 0 ? wanted : s.eventChosen ? -1 : eventNow(events);
+      if (wanted >= 0) s.eventChosen = true;
+      if (at >= 0) chooseEvent(box, at, asked.kind !== 'microphone');
+      const kind = ['microphone', 'screen', 'call'].includes(asked.kind) && box.querySelector(`input[name="rec-kind"][value="${asked.kind}"]`);
+      if (kind && !kind.disabled) {
+        kind.checked = true;
+        pickKind(box, true);
+      }
     }
 
     function idleForm(box) {
@@ -574,6 +618,8 @@
         });
       }
       if (form) restoreIdleForm(box, form);
+      pickKind(box, false);
+      box.querySelectorAll('input[name="rec-kind"]').forEach((radio) => radio.addEventListener('change', () => pickKind(box, true)));
       const event=box.querySelector('#rec-event');
       if (event) {
         event.addEventListener('change', () => {
@@ -684,10 +730,7 @@
         pill();
         await refresh();
         s.calendar = await api('/api/calendar').catch(() => null);
-        if (!s.eventChosen && s.container && s.container.querySelector('.rec-idle')) {
-          const now = eventNow(s.calendar && s.calendar.events);
-          if (now >= 0) chooseEvent(s.container, now);
-        }
+        preselect(s.container, options);
         draw();
         pill();
       },
@@ -751,5 +794,5 @@
     };
   }
 
-  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, stateWord, failureOf, pendingLine, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, stateWord, failureOf, pendingLine, loudness, hearing, hearingWords, preflight, tipWords, HEADSET, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

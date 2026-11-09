@@ -417,6 +417,24 @@ pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<
     })
 }
 
+pub fn drop_last(dir: &Path, id: &str, count: usize, total: usize) -> Result<Option<Chat>> {
+    anyhow::ensure!(valid_id(id), "that is not a chat id");
+    db_of(dir).with(|c| {
+        let tx = c.transaction()?;
+        let Some(mut chat) = load_in(&tx, id)? else {
+            return Ok(None);
+        };
+        if count == 0 || count > total || chat.messages.len() != total {
+            return Ok(None);
+        }
+        chat.messages.truncate(total - count);
+        chat.about = about_of(&chat.messages);
+        write_in(&tx, &chat)?;
+        tx.commit()?;
+        Ok(Some(chat))
+    })
+}
+
 pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
     let json = serde_json::to_string(&memory).unwrap_or_default();
     db_of(dir)
@@ -888,5 +906,29 @@ mod tests {
         assert!(chat.title.ends_with('…'));
         assert!(save(&dir, "../outside", saving(vec![]), at(0)).is_err());
         assert_eq!(list(&dir).len(), 1);
+    }
+
+    #[test]
+    fn dropping_the_last_pair_keeps_the_rest_and_refuses_a_stale_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("chats");
+        let id = "chat-drop-1234";
+        let messages: Vec<_> = ["q1", "a1", "q2", "a2"]
+            .iter()
+            .enumerate()
+            .map(|(i, t)| said(if i % 2 == 0 { "user" } else { "assistant" }, t))
+            .collect();
+        save(&dir, id, saving(messages), at(0)).unwrap();
+        assert!(drop_last(&dir, id, 2, 3).unwrap().is_none());
+        assert!(drop_last(&dir, id, 0, 4).unwrap().is_none());
+        assert!(drop_last(&dir, id, 5, 4).unwrap().is_none());
+        assert!(drop_last(&dir, "chat-nothing-12", 2, 4).unwrap().is_none());
+        assert!(drop_last(&dir, "../x", 2, 4).is_err());
+        assert_eq!(load(&dir, id).unwrap().messages.len(), 4);
+        let kept = drop_last(&dir, id, 2, 4).unwrap().unwrap();
+        assert_eq!(kept.messages.len(), 2);
+        assert_eq!(load(&dir, id).unwrap().messages, kept.messages);
+        assert_eq!(kept.messages[1]["text"], "a1");
+        assert!(drop_last(&dir, id, 2, 4).unwrap().is_none());
     }
 }

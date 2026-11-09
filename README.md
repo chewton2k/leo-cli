@@ -15,6 +15,12 @@ are plain files in a folder you own.
 
 ## Install
 
+Download the [macOS `.dmg` or Windows `-setup.exe`](https://github.com/chewton2k/leo-cli/releases/latest)
+and open it. The [install guide](docs/install.md) covers the first launch,
+updates, uninstalling and moving from the old terminal version.
+
+Or install from a terminal.
+
 macOS:
 
 ```sh
@@ -26,10 +32,6 @@ Windows, in PowerShell:
 ```powershell
 irm https://github.com/chewton2k/leo-cli/releases/latest/download/install.ps1 | iex
 ```
-
-Or download the [macOS `.dmg` or Windows `-setup.exe`](https://github.com/chewton2k/leo-cli/releases/latest).
-The [install guide](docs/install.md) covers the first launch on macOS, updates,
-uninstalling and moving from the old terminal version.
 
 ## What it does
 

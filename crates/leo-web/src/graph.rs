@@ -1069,7 +1069,7 @@ impl Graphs {
             }
             let Some(_) = self.writer else {
                 job.state = "failed";
-                job.message = Some("This copy of leo has no AI for writing.".to_string());
+                job.message = Some(crate::no_writer());
                 return;
             };
             *job = Job {

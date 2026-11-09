@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const kit = require('../src/web/margin.js');
+require('../src/web/chat.js');
+const FAILED = "Felix could not read your note just now. Try again in a moment.";
 
 function harness() {
   let settle;
@@ -17,7 +19,7 @@ function harness() {
     setTimeout: (fn, delay) => { const id = ++next; fn.delay = delay; timers.set(id, fn); return id; },
     clearTimeout: (id) => timers.delete(id), cancelAnimationFrame() {},
     $: () => null, svg: (paths) => paths, ICON: { book: '' }, stillMotion: () => false, fail: (e) => { throw e; }, ON_MAC: true, MOTION_MS: 180, POP_FROM: .95,
-    esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '', settingsSwitch: () => '',
+    noAi: globalThis.leoChat.noAi, esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '', settingsSwitch: () => '',
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/margin-notes.js'), 'utf8'), context);
@@ -56,8 +58,17 @@ test('read completion distinguishes silence from failure without losing failed b
     await pending;
     assert.equal(h.state.reading, false);
     assert.equal(h.state.baseline.length, failed ? 0 : 1);
-    assert.equal(h.state.status, failed ? 'Could not read this change. Check Writing AI and try again.' : '');
+    assert.equal(h.state.status, failed ? FAILED : 'Felix read it; nothing to add.');
   }
+});
+
+test('a read that leaves a margin note says nothing about having read', async () => {
+  const h = harness();
+  const pending = h.context.marginRead(h.state.s);
+  await new Promise(setImmediate);
+  h.settle().resolve({ note: { id: 't1', messages: [] } });
+  await pending;
+  assert.equal(h.state.status, '');
 });
 
 test('mode updates retain confirmed state after failure and ignore departed notes', async () => {
@@ -80,7 +91,7 @@ test('mode updates retain confirmed state after failure and ignore departed note
 });
 
 test('refused reads keep pending changes and show a safe pause reason', async () => {
-  for (const [why, status] of [['daily', 'Paused for today: daily limit reached'], ['felix', 'Paused while Felix answers'], ['unknown', 'Could not read this change. Check Writing AI and try again.']]) {
+  for (const [why, status] of [['daily', 'Paused for today: daily limit reached'], ['felix', 'Paused while Felix answers'], ['unknown', FAILED]]) {
     const h = harness();
     const pending = h.context.marginRead(h.state.s);
     await new Promise(setImmediate);
@@ -156,10 +167,11 @@ test('the dots wait 200 ms, then mark the last changed block, and only while tha
   }
 });
 
-test('silence fades the reading dots and leaves no status', async () => {
+test('silence fades the reading dots and says Felix read it, for a moment', async () => {
   const h = harness();
   const el = await finish(h, { note: null });
-  assert.equal(h.state.status, '');
+  assert.equal(h.state.status, 'Felix read it; nothing to add.');
+  assert.equal(h.state.brief, true);
   assert.equal(h.state.readingAt, null);
   assert.equal(h.state.readingEl, null);
   assert.equal(el.leaving, true);
@@ -224,9 +236,9 @@ test('a new edit clears a brief status but not a failure', () => {
 test('a new edit leaves a failure status alone', () => {
   const h = harness();
   h.state.loaded = true;
-  h.context.marginSetStatus('Could not read this change. Check Writing AI and try again.');
+  h.context.marginSetStatus(FAILED);
   h.context.marginEdited(h.state.s);
-  assert.equal(h.state.status, 'Could not read this change. Check Writing AI and try again.');
+  assert.equal(h.state.status, FAILED);
 });
 
 test('When you ask says how to ask, with the real shortcut and no promise of automatic reading', () => {
@@ -397,4 +409,150 @@ test('a read-through in When you ask mode never changes the mode', async () => {
   assert.equal(h.state.mode, 'ask');
   assert.equal(h.state.status, 'Nothing to add this time');
   assert.equal(h.timers.size, 1);
+});
+
+function passages(room = true) {
+  const fake = () => {
+    const on = {};
+    const node = {
+      hidden: false, dataset: {}, style: {}, value: '', offsetWidth: 200, offsetHeight: 30, focused: false,
+      addEventListener: (kind, fn) => { on[kind] = fn; },
+      fire: (kind, extra = {}) => { const e = { stopped: false, preventDefault() {}, stopPropagation() { e.stopped = true; }, ...extra }; on[kind]?.(e); return e; },
+      focus() { node.focused = true; },
+      querySelector: () => node.child || (node.child = fake()),
+    };
+    return node;
+  };
+  const picked = { text: 'offices were built for supervision', from: 1, to: 1 };
+  const s = { note: { id: 'n' }, doc: { selection: () => picked, selectionBox: () => ({ x: 100, y: 100 }) }, title: { textContent: 'Essay' } };
+  const asked = [];
+  const attached = [];
+  const context = {
+    document: { createElement: fake, body: { appendChild() {} }, addEventListener() {} },
+    window: { addEventListener() {}, innerHeight: 800 }, ICON: { chat: '' }, state: { view: 'note', session: s },
+    $: () => ({ getBoundingClientRect: () => ({ left: 0, right: 600 }) }), toast() {}, cleanTitle: (t) => t,
+    marginBeside: () => (room ? { prefix: '', suffix: '' } : null), marginAsk: (...args) => (room ? asked.push(args) > 0 : false),
+    chat: { attachSelection: (x) => attached.push(x) },
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/passages.js'), 'utf8'), context);
+  const pill = vm.runInContext('askFloat', context);
+  const field = vm.runInContext('askField', context);
+  return { pill, field, input: field.child, asked, attached, s, picked };
+}
+
+test('Ask Felix opens a question field: a typed question asks it, an empty Enter asks generally, Escape asks nothing', () => {
+  for (const [typed, question] of [['  Why supervision?  ', 'Why supervision?'], ['', '']]) {
+    const p = passages();
+    p.pill.fire('click');
+    assert.equal(p.field.hidden, false);
+    assert.equal(p.pill.hidden, true);
+    assert.equal(p.input.focused, true);
+    p.input.value = typed;
+    p.field.fire('submit');
+    assert.equal(p.field.hidden, true);
+    assert.equal(p.asked.length, 1);
+    assert.equal(p.asked[0][0], p.s);
+    assert.equal(p.asked[0][1], p.picked);
+    assert.equal(p.asked[0][2], question);
+  }
+  const p = passages();
+  p.pill.fire('click');
+  p.input.value = 'never sent';
+  assert.equal(p.input.fire('keydown', { key: 'Escape' }).stopped, true);
+  assert.equal(p.field.hidden, true);
+  p.field.fire('submit');
+  assert.equal(p.asked.length, 0);
+});
+
+test('without room in the margin Ask Felix goes straight to the chat with no field', () => {
+  const p = passages(false);
+  p.pill.fire('click');
+  assert.equal(p.field.hidden, true);
+  assert.equal(p.attached.length, 1);
+  assert.equal(p.attached[0].text, p.picked.text);
+});
+
+test('the persona chip names Felix once and the mode chip follows it without a prefix', () => {
+  const h = harness();
+  const fake = () => ({ dataset: { ready: '1' }, textContent: '', title: '', innerHTML: '', setAttribute(k, v) { this[k] = v; }, querySelectorAll: () => [] });
+  const els = Object.fromEntries(['mode', 'mode-menu', 'mode-label', 'persona', 'persona-menu', 'persona-icon', 'persona-label'].map((id) => [`#margin-${id}`, fake()]));
+  els['#margin-mode-icon'] = { dataset: {}, innerHTML: '' };
+  h.context.$ = (sel) => els[sel] || null;
+  h.context.marginThroughControl = () => {};
+  h.context.iconSwap = (icon, paint) => paint();
+  vm.runInContext("marginPrefs = { personas: [{ id: 'reader', name: 'Reader', icon: 'book', details: 'Plain.' }, { id: 'critic', name: 'Critic', icon: 'target', details: 'Hard.' }] }", h.context);
+  for (const [mode, persona, label, name, tip] of [['along', 'critic', 'Reads along', 'Felix as Critic', /^Felix reads changes/], ['ask', 'reader', 'When you ask', 'Felix as Reader', /^Select a passage/]]) {
+    Object.assign(h.state, { mode, persona });
+    h.context.marginControl();
+    assert.equal(els['#margin-mode-label'].textContent, label);
+    assert.equal(els['#margin-persona-label'].textContent, name);
+    assert.match(els['#margin-mode'].title, tip);
+  }
+  assert.match(els['#margin-persona-menu'].innerHTML, /Instructions for this note…/);
+  const core = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
+  assert.ok(core.indexOf('id="margin-persona"') < core.indexOf('id="margin-mode"'));
+  assert.match(core, /<span id="margin-persona-label">Felix as Reader<\/span>/);
+  assert.match(core, /<span id="margin-mode-label">When you ask<\/span>/);
+});
+
+test('note instructions show the saved text, save once on Enter and say so', async () => {
+  const h = harness();
+  const on = {};
+  const input = { value: '', addEventListener: (kind, fn) => { on[kind] = fn; }, focus() { h.context.document.activeElement = input; }, blur() { h.context.document.activeElement = null; on.blur(); } };
+  const box = { hidden: true, dataset: {} };
+  h.context.$ = (sel) => (sel === '#margin-instructions' ? box : sel === 'input' ? input : null);
+  const sent = [];
+  h.context.api = async (url, options) => { sent.push(options.body); return { instructions: options.body.instructions }; };
+  h.state.instructions = 'Check sources.';
+  h.context.marginInstructions();
+  assert.equal(box.hidden, false);
+  assert.equal(input.value, 'Check sources.');
+  h.context.marginInstructions(true);
+  input.value = '  Keep it short.  ';
+  on.keydown({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  await new Promise(setImmediate);
+  assert.equal(JSON.stringify(sent), '[{"instructions":"Keep it short."}]');
+  assert.equal(h.state.instructions, 'Keep it short.');
+  assert.equal(h.state.status, 'Instructions saved.');
+  input.value = '';
+  on.blur();
+  await new Promise(setImmediate);
+  assert.equal(box.hidden, true);
+  assert.equal(h.state.status, 'Instructions removed.');
+});
+
+test('a writer failure shows the server sentence and a Set up writing AI link in the status line', async () => {
+  const sentence = "leo can't write yet: no writing AI is ready (Ollama isn't running).";
+  const h = harness();
+  const pending = h.context.marginRead(h.state.s);
+  await new Promise(setImmediate);
+  h.settle().reject(Object.assign(new Error(sentence), { status: 503, data: { why: 'no-ai' } }));
+  await pending;
+  assert.equal(h.state.status, sentence);
+  const status = { textContent: '', html: '', insertAdjacentHTML(where, html) { this.html = html; } };
+  h.context.$ = (sel) => (sel === '#margin-status' ? status : null);
+  h.context.marginSetStatus(sentence);
+  assert.equal(status.textContent, sentence);
+  assert.match(status.html, /<a href="#\/settings\/writing">Set up writing AI<\/a>/);
+  status.html = '';
+  h.context.marginSetStatus('Paused after a recent comment');
+  assert.equal(status.html, '');
+});
+
+test('read through shows the server sentence for a missing writing AI and passes other errors through unchanged', async () => {
+  const sentence = "leo can't write yet: no writing AI is chosen.";
+  for (const [message, say] of [[sentence, sentence], ['private provider detail', FAILED]]) {
+    const h = harness();
+    h.context.marginThroughControl = () => {};
+    h.context.marginSetStatus = (text) => { h.state.status = text; };
+    const run = { started: Date.now(), stop: false, added: [] };
+    const part = { blocks: ['A changed paragraph long enough to read.'], from: 0, to: 1 };
+    h.state.s.doc.glow = () => {};
+    h.state.s.doc.source = () => 'A changed paragraph long enough to read.';
+    const pending = h.context.marginThroughPart(h.state.s, run, part, 'Reading through…');
+    await new Promise(setImmediate);
+    h.settle().reject(Object.assign(new Error(message), { status: 503, data: { why: 'no-ai' } }));
+    assert.equal((await pending).say, say);
+  }
 });

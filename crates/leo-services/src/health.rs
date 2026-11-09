@@ -211,12 +211,29 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
         Chain::Transcribe => &config.transcribe.chain,
     };
 
-    let usable: Vec<&String> = names
-        .iter()
-        .filter(|name| provider_usable(config, name, store))
-        .collect();
+    let (usable, fix) = match chain {
+        Chain::Chat => {
+            let writing = writing(
+                config,
+                store,
+                Some(&crate::config::choice::local_models(config)),
+            );
+            let ready = writing.state == WritingState::Ready;
+            (
+                writing.provider.filter(|_| ready),
+                writing.fix.unwrap_or_default(),
+            )
+        }
+        Chain::Transcribe => (
+            names
+                .iter()
+                .find(|name| provider_usable(config, name, store))
+                .cloned(),
+            "Choose and download a speech model in Settings → Speech models.".to_string(),
+        ),
+    };
 
-    match usable.first() {
+    match usable {
         Some(first) => Check::ready(
             chain.label(),
             chain.needed_for(),
@@ -225,28 +242,7 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
         None => Check {
             what: chain.label().to_string(),
             needed_for: chain.needed_for().to_string(),
-            state: State::Missing {
-                fix: match chain {
-                    Chain::Chat => match names
-                        .first()
-                        .and_then(|n| config.provider(n))
-                        .and_then(crate::ai::provider::agent_cli::Agent::of)
-                    {
-                        Some(agent) => format!(
-                            "{}\nor: Settings in leo, choose another way to write",
-                            agent.install()
-                        ),
-                        None => "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-                         or: Settings in leo, choose Claude Code or Codex to use the plan you have"
-                            .to_string(),
-                    },
-                    Chain::Transcribe => {
-                        "leo update   (downloads the speech model; free, private)\n\
-                         or: Settings in leo, choose OpenAI, Gemini or xAI, add its key"
-                            .to_string()
-                    }
-                },
-            },
+            state: State::Missing { fix },
             detail: if names.is_empty() {
                 Some("no providers configured".to_string())
             } else {
@@ -254,6 +250,95 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
             },
         },
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WritingState {
+    Ready,
+    NotInstalled,
+    NotRunning,
+    NoModel,
+    NotChosen,
+    SignInNeeded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Writing {
+    pub provider: Option<String>,
+    pub state: WritingState,
+    pub fix: Option<String>,
+}
+
+pub fn writing(
+    config: &Config,
+    store: &dyn SecretStore,
+    models: Option<&crate::config::choice::Local>,
+) -> Writing {
+    let names = &config.chat.chain;
+    let usable = names
+        .iter()
+        .find(|name| provider_usable(config, name, store));
+    let provider = usable.or(names.first()).cloned();
+    let pc = provider.as_deref().and_then(|name| config.provider(name));
+    let agent = pc.and_then(crate::ai::provider::agent_cli::Agent::of);
+    let state = match (pc, usable) {
+        (None, _) => WritingState::NotChosen,
+        (Some(pc), Some(name))
+            if agent.is_some_and(|agent| {
+                crate::ai::provider::agent_cli::last_signed_in(
+                    crate::ai::provider::agent_cli::AgentCli::new(name.clone(), agent, pc).bin(),
+                ) == Some(false)
+            }) =>
+        {
+            WritingState::SignInNeeded
+        }
+        (Some(_), Some(name)) => match models.filter(|_| name == "ollama") {
+            Some(local) if !local.ollama_running => WritingState::NotRunning,
+            Some(local) if local.ollama.is_empty() => WritingState::NoModel,
+            _ => WritingState::Ready,
+        },
+        (Some(_), None) if agent.is_some() => WritingState::NotInstalled,
+        (Some(pc), None)
+            if pc.key_env.is_none() && pc.base_url.as_deref().is_some_and(is_loopback) =>
+        {
+            WritingState::NotRunning
+        }
+        (Some(_), None) => WritingState::NotChosen,
+    };
+    let fix = fix_text(state, agent, on_path("ollama"), cfg!(windows));
+    Writing {
+        provider,
+        state,
+        fix,
+    }
+}
+
+fn fix_text(
+    state: WritingState,
+    agent: Option<crate::ai::provider::agent_cli::Agent>,
+    ollama_installed: bool,
+    windows: bool,
+) -> Option<String> {
+    let name = agent.map_or("it", |agent| agent.kind());
+    Some(match state {
+        WritingState::Ready => return None,
+        WritingState::NotInstalled => format!(
+            "{name} is not installed on this computer. Choose another provider in Writing AI, or install {name}."
+        ),
+        WritingState::NotChosen | WritingState::NotRunning if !ollama_installed => {
+            "Ollama is not installed on this computer. Choose Claude Code or Codex in Writing AI, or install Ollama.".to_string()
+        }
+        WritingState::NotRunning if windows => {
+            "Ollama is installed but not running. Open Ollama from the Start menu.".to_string()
+        }
+        WritingState::NotRunning => {
+            "Ollama is installed but not running. Open the Ollama app.".to_string()
+        }
+        WritingState::NoModel => "Ollama has no models yet. Choose one in Writing AI.".to_string(),
+        WritingState::SignInNeeded => format!("{name} needs you to sign in. Open Writing AI."),
+        WritingState::NotChosen => "No writing AI is ready. Choose one in Writing AI.".to_string(),
+    })
 }
 
 /// Whether one named provider could serve a request right now.
@@ -433,6 +518,196 @@ mod tests {
         let check = chain_check(&config, Chain::Chat, &store());
         assert!(check.state.is_ready());
         assert_eq!(check.detail.as_deref(), Some("using working"));
+    }
+
+    fn server(url: &str) -> ProviderConfig {
+        ProviderConfig {
+            kind: Some(crate::config::provider::ProviderKind::Openai),
+            base_url: Some(url.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn writing_says_what_is_missing_for_each_kind_of_provider() {
+        for (providers, chain, state) in [
+            (vec![], vec![], WritingState::NotChosen),
+            (vec![], vec!["gone"], WritingState::NotChosen),
+            (
+                vec![("cli", missing())],
+                vec!["cli"],
+                WritingState::NotInstalled,
+            ),
+            (vec![("cli", installed())], vec!["cli"], WritingState::Ready),
+            (
+                vec![("local", server("http://127.0.0.1:1/v1"))],
+                vec!["local"],
+                WritingState::NotRunning,
+            ),
+            (
+                vec![("remote", server("https://example.invalid/v1"))],
+                vec!["remote"],
+                WritingState::Ready,
+            ),
+        ] {
+            let config = config_with(providers, chain);
+            let local = crate::config::choice::Local::default();
+            for models in [None, Some(&local)] {
+                let writing = writing(&config, &store(), models);
+                assert_eq!(writing.state, state, "{writing:?}");
+                assert_eq!(writing.fix.is_none(), state == WritingState::Ready);
+                assert_eq!(
+                    chain_check(&config, Chain::Chat, &store()).state.is_ready(),
+                    state == WritingState::Ready
+                );
+            }
+        }
+        assert_eq!(serde_json::json!(WritingState::NoModel), "no_model");
+    }
+
+    #[test]
+    fn writing_fixes_speak_to_the_app_on_every_platform() {
+        use crate::ai::provider::agent_cli::Agent;
+        let mut seen = std::collections::HashSet::new();
+        for windows in [false, true] {
+            for installed in [false, true] {
+                for state in [
+                    WritingState::NotInstalled,
+                    WritingState::NotRunning,
+                    WritingState::NoModel,
+                    WritingState::NotChosen,
+                ] {
+                    for agent in [None, Some(Agent::Codex), Some(Agent::ClaudeCode)] {
+                        let fix = fix_text(state, agent, installed, windows).unwrap();
+                        for banned in ["brew", "leo update", "OpenAI, Gemini or xAI", "ollama pull"]
+                        {
+                            assert!(!fix.contains(banned), "{state:?}: {fix}");
+                        }
+                        if state == WritingState::NotRunning {
+                            seen.insert((installed, fix));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(fix_text(WritingState::Ready, None, true, false), None);
+        assert_eq!(seen.len(), 3);
+        assert!(
+            fix_text(WritingState::NotInstalled, Some(Agent::Codex), true, true)
+                .unwrap()
+                .starts_with("Codex is not installed")
+        );
+        let chain = chain_check(&config_with(vec![], vec![]), Chain::Transcribe, &store());
+        match chain.state {
+            State::Missing { fix } => {
+                assert!(!fix.contains("OpenAI") && !fix.contains("leo update"))
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn ollama_without_models_is_no_model_only_when_its_models_were_listed() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}/v1",
+            listener.local_addr().unwrap().port()
+        );
+        let config = config_with(vec![("ollama", server(&url))], vec!["ollama"]);
+        let local = |running: bool, models: &[&str]| crate::config::choice::Local {
+            ollama_running: running,
+            ollama: models.iter().map(|m| m.to_string()).collect(),
+            speech_ready: false,
+        };
+
+        assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
+        listener.set_nonblocking(true).unwrap();
+        while let Ok((mut stream, _)) = listener.accept() {
+            stream.set_nonblocking(false).unwrap();
+            let mut sent = Vec::new();
+            stream.read_to_end(&mut sent).unwrap();
+            assert!(sent.is_empty(), "the cheap path sent a request");
+        }
+
+        for (models, state) in [
+            (local(true, &[]), WritingState::NoModel),
+            (local(false, &[]), WritingState::NotRunning),
+            (local(true, &["qwen3:8b"]), WritingState::Ready),
+        ] {
+            assert_eq!(writing(&config, &store(), Some(&models)).state, state);
+        }
+    }
+
+    fn empty_ollama() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}/v1",
+            listener.local_addr().unwrap().port()
+        );
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut buffer = [0u8; 8192];
+                if stream.read(&mut buffer).unwrap_or(0) > 0 {
+                    let body = "{\"models\":[]}";
+                    let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                }
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn the_chat_check_is_not_ready_for_ollama_without_a_model() {
+        let config = config_with(vec![("ollama", server(&empty_ollama()))], vec!["ollama"]);
+        assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
+        let check = chain_check(&config, Chain::Chat, &store());
+        assert!(!check.state.is_ready(), "{check:?}");
+        assert!(matches!(
+            check.state,
+            State::Missing { ref fix } if fix.contains("no models")
+        ));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_signed_out_cli_reads_only_the_last_sign_in_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let bin = dir.path().join("claude");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\ntouch '{}'\nprintf '{{\"loggedIn\": false}}'\n",
+                ran.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = config_with(vec![("cli", cli(bin.to_str().unwrap()))], vec!["cli"]);
+
+        assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
+        assert!(!ran.exists(), "the cheap path ran the program");
+
+        assert_eq!(
+            crate::ai::provider::agent_cli::signed_in(
+                crate::ai::provider::agent_cli::Agent::ClaudeCode,
+                bin.to_str().unwrap()
+            ),
+            Some(false)
+        );
+        std::fs::remove_file(&ran).unwrap();
+
+        let found = writing(&config, &store(), None);
+        assert_eq!(found.state, WritingState::SignInNeeded);
+        assert_eq!(
+            found.fix.as_deref(),
+            Some("Claude Code needs you to sign in. Open Writing AI.")
+        );
+        assert!(!chain_check(&config, Chain::Chat, &store()).state.is_ready());
+        assert!(!ran.exists(), "the cheap path ran the program");
     }
 
     /// Screen capture does not go through the microphone, so a silent mic must

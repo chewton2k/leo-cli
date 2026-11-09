@@ -46,6 +46,7 @@ pub struct Structured {
     pub title: String,
     pub body: String,
     pub problems: Vec<String>,
+    pub writer_failed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +147,7 @@ pub fn structure_recording(
                 },
                 body: points_kept(body, points),
                 problems,
+                writer_failed: false,
             },
             Ok(_) => Structured {
                 title: fallback_title.to_string(),
@@ -153,13 +155,16 @@ pub fn structure_recording(
                 problems: vec![
                     "the AI returned an empty note, so the transcript was saved as it is".into(),
                 ],
+                writer_failed: true,
             },
             Err(e) => Structured {
                 title: fallback_title.to_string(),
                 body: raw(points, "Transcript", &text),
                 problems: vec![format!(
-                    "the notes could not be written ({e}), so the transcript was saved as it is"
+                    "{} The transcript was saved as it is.",
+                    super::writing_error(&e)
                 )],
+                writer_failed: true,
             },
         };
     }
@@ -178,24 +183,25 @@ pub fn structure_recording(
                     return;
                 };
                 let own = points_for(points, &groups, i);
-                let prompt = chat::build_part_prompt(
-                    &g.text,
-                    &own,
-                    i + 1,
-                    groups.len(),
-                    &span(g),
-                );
+                let prompt = chat::build_part_prompt(&g.text, &own, i + 1, groups.len(), &span(g));
                 let outcome = match chat_fn(prompt, super::STRUCTURE_MAX_TOKENS) {
                     Ok(reply) if !chat::clean_reply(&reply).trim().is_empty() => {
                         (chat::clean_reply(&reply), None)
                     }
                     Ok(_) => (
                         raw(&own, "Transcript", &g.text),
-                        Some(format!("part {} came back empty; its transcript is included instead", i + 1)),
+                        Some(format!(
+                            "part {} came back empty; its transcript is included instead",
+                            i + 1
+                        )),
                     ),
                     Err(e) => (
                         raw(&own, "Transcript", &g.text),
-                        Some(format!("part {} could not be written ({e}); its transcript is included instead", i + 1)),
+                        Some(format!(
+                            "{} Part {}'s transcript is included instead.",
+                            super::writing_error(&e),
+                            i + 1
+                        )),
                     ),
                 };
                 if let Ok(mut slot) = results[i].lock() {
@@ -207,19 +213,23 @@ pub fn structure_recording(
         }
     });
     let mut sections = Vec::with_capacity(groups.len());
+    let mut failed = 0;
     for (i, (g, slot)) in groups.iter().zip(results).enumerate() {
         let (notes, problem) = slot.into_inner().ok().flatten().unwrap_or_else(|| {
+            failed += 1;
             (
                 raw(&points_for(points, &groups, i), "Transcript", &g.text),
                 None,
             )
         });
         if let Some(p) = problem {
+            failed += 1;
             problems.push(p);
         }
         sections.push(format!("*{}*\n\n{}", span(g), notes.trim()));
     }
 
+    let writer_failed = failed == groups.len();
     let joined = sections.join("\n\n---\n\n");
     if let Some(_existing) = existing {
         progress(total, total);
@@ -229,6 +239,7 @@ pub fn structure_recording(
             title: fallback_title.to_string(),
             body: points_kept(body, points),
             problems,
+            writer_failed,
         };
     }
 
@@ -263,7 +274,10 @@ pub fn structure_recording(
             )
         }
         Err(e) => {
-            problems.push(format!("the title and summary could not be written ({e})"));
+            problems.push(format!(
+                "{} The title and summary were not written.",
+                super::writing_error(&e)
+            ));
             (fallback_title.to_string(), String::new())
         }
     };
@@ -279,6 +293,7 @@ pub fn structure_recording(
         title,
         body: points_kept(body, points),
         problems,
+        writer_failed,
     }
 }
 
@@ -509,6 +524,7 @@ mod tests {
         assert_eq!(s.title, "Graphs");
         assert!(s.body.contains("## BFS"));
         assert!(s.problems.is_empty());
+        assert!(!s.writer_failed);
     }
 
     #[test]
@@ -532,6 +548,7 @@ mod tests {
         assert!(s.body.contains("w0 w1"), "{}", s.body);
         assert!(s.body.contains("- exam\n"), "{}", s.body);
         assert_eq!(s.problems.len(), 1);
+        assert!(s.writer_failed);
     }
 
     #[test]
@@ -591,6 +608,10 @@ mod tests {
             "the failed part fell back to its transcript"
         );
         assert_eq!(s.problems.len(), 1);
+        assert!(
+            !s.writer_failed,
+            "one failed part is a warning, not a failed write-up"
+        );
         let last = *steps.lock().unwrap().last().unwrap();
         assert_eq!(last.0, last.1);
         for w in ["p0w0", "p39w999"] {
@@ -686,5 +707,14 @@ mod tests {
             groups(&parts, TEST.words).len()
         );
         assert!(s.body.starts_with("## Recording (Sep 29)"));
+    }
+
+    #[test]
+    fn a_long_recording_with_every_part_failed_is_a_failed_write_up() {
+        let parts: Vec<Part> = (0..20).map(|i| part(i, 1000, &format!("p{i}w"))).collect();
+        let chat = |_: Prompt, _: u32| -> Result<String> { anyhow::bail!("no writer") };
+        let s = structure_recording(&parts, &[], None, "R", &chat, &|_, _| {}, TEST);
+        assert!(s.writer_failed);
+        assert!(s.body.contains("p0w0"), "the transcript was kept");
     }
 }

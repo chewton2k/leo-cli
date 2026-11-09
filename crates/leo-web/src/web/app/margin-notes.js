@@ -35,7 +35,7 @@ let personaDetails = false;
 const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -83,7 +83,7 @@ function marginLeave() {
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
   chat.setLost([]);
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -137,11 +137,13 @@ async function marginLoad(s, current = () => true, id = s.note.id) {
   marginPage.mode = view.mode;
   marginPage.persona = view.persona || 'reader';
   marginPage.saved = marginPage.persona;
+  marginPage.instructions = view.instructions || '';
   marginPage.threads = view.threads || [];
   marginPage.loaded = true;
   cancelAnimationFrame(marginPage.frame);
   marginDraw();
   marginControl();
+  marginInstructions();
 }
 
 async function marginCreated(s, note) {
@@ -172,7 +174,10 @@ function marginSetStatus(text, brief = false) {
   marginPage.statusToken = token;
   marginPage.brief = Boolean(brief && text);
   const status = $('#margin-status');
-  if (status) status.textContent = text;
+  if (status) {
+    status.textContent = text;
+    if (noAi(text)) status.insertAdjacentHTML('beforeend', ' <a href="#/settings/writing">Set up writing AI</a>');
+  }
   if (!marginPage.brief) return;
   marginPage.statusTimer = setTimeout(() => {
     if (marginPage.s === s && marginPage.statusToken === token && marginPage.status === text) marginSetStatus('');
@@ -288,8 +293,8 @@ function marginControl() {
     else paint();
   }
   marginThroughControl();
-  $('#margin-mode-label').textContent = along ? 'Felix: reads along' : 'Felix: when you ask';
-  button.title = along ? 'Reads changes after a pause. The text goes to your writing AI.' : `Select a passage, then choose Ask Felix or press ${marginAskKeys()}.`;
+  $('#margin-mode-label').textContent = along ? 'Reads along' : 'When you ask';
+  button.title = along ? 'Felix reads changes after a pause. The text goes to your writing AI.' : `Select a passage, then choose Ask Felix or press ${marginAskKeys()}.`;
   for (const option of menu.querySelectorAll('[data-margin-mode]')) {
     option.setAttribute('aria-checked', String(option.dataset.marginMode === marginPage.mode));
     option.disabled = marginPage.changing;
@@ -307,6 +312,11 @@ function marginPersonaControl() {
     menu.addEventListener('click', (e) => {
       const option = e.target.closest('[data-margin-persona]');
       if (!option) return;
+      if (option.dataset.marginPersona === 'instructions') {
+        marginPersonaMenu(false);
+        if (!marginPage.s?.note.id) return toast('Felix can read this note once it has been saved.');
+        return marginInstructions(true);
+      }
       if (option.dataset.marginPersona !== 'new') return marginChangePersona(option.dataset.marginPersona).catch(fail);
       marginPersonaMenu(false);
       personaStartNew = marginPage.s?.note.id || '';
@@ -318,14 +328,57 @@ function marginPersonaControl() {
   button.disabled = !now;
   if (!now) return;
   $('#margin-persona-icon').innerHTML = PERSONA_ICON[now.icon] || PERSONA_ICON.book;
-  $('#margin-persona-label').textContent = now.name;
+  $('#margin-persona-label').textContent = `Felix as ${now.name}`;
   button.title = `${now.name} reads this note. Shapes margin notes and replies.`;
   button.setAttribute('aria-label', `Who reads this note: ${now.name}`);
   const key = JSON.stringify([list, now.id]);
   if (menu.dataset.key === key) return;
   menu.dataset.key = key;
   menu.innerHTML = list.map((p) => `<button type="button" role="menuitemradio" aria-checked="${p.id === now.id}" data-margin-persona="${esc(p.id)}" title="${esc(p.details)}"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON[p.icon] || PERSONA_ICON.book}</span><span class="persona-words"><b>${esc(p.name)}</b><small>${esc(p.line || p.details)}</small></span></button>`).join('')
-    + `<hr><button type="button" role="menuitem" data-margin-persona="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span class="persona-words"><b>New persona</b></span></button>`;
+    + `<hr><button type="button" role="menuitem" data-margin-persona="new"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.plus}</span><span class="persona-words"><b>New persona</b></span></button>`
+    + `<button type="button" role="menuitem" data-margin-persona="instructions"><span class="persona-icon" aria-hidden="true">${PERSONA_ICON.pen}</span><span class="persona-words"><b>Instructions for this note…</b></span></button>`;
+}
+
+function marginInstructions(open = false) {
+  const box = $('#margin-instructions');
+  const s = marginPage.s;
+  if (!box || !s) return;
+  const input = $('input', box);
+  if (!box.dataset.ready) {
+    box.dataset.ready = '1';
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') input.value = marginPage.instructions;
+      input.blur();
+    });
+    input.addEventListener('blur', () => marginSaveInstructions(s, box, input).catch(fail));
+  }
+  if (document.activeElement === input) return;
+  input.value = marginPage.instructions;
+  box.hidden = !open && !marginPage.instructions;
+  if (open) input.focus({ preventScroll: true });
+}
+
+async function marginSaveInstructions(s, box, input) {
+  const text = input.value.trim();
+  if (marginPage.s !== s) return;
+  if (text !== marginPage.instructions) {
+    try {
+      const done = await api(`/api/notes/${enc(s.note.id)}/margin`, { method: 'POST', body: { instructions: text } });
+      if (marginPage.s !== s) return;
+      marginPage.instructions = done.instructions ?? text;
+      marginSetStatus(marginPage.instructions ? 'Instructions saved.' : 'Instructions removed.', true);
+    } catch (e) {
+      if (marginPage.s !== s) return;
+      if (e instanceof Locked) throw e;
+      return marginSetStatus('Could not save these instructions. Try again.');
+    }
+  }
+  if (document.activeElement === input) return;
+  input.value = marginPage.instructions;
+  box.hidden = !marginPage.instructions;
 }
 
 async function marginChangePersona(id, picked = true) {
@@ -1055,10 +1108,14 @@ async function marginAdd(t) {
   }
 }
 
-function marginAsk(s, picked) {
+function marginBeside(s, picked) {
   const size = [...picked.text.trim()].length;
-  if (!marginPage.layer || chat.isOpen() || size < LEAST_ASKED || [...picked.text].length > MOST_ASKED) return false;
-  const beside = marginKit.around(s.doc.source(), picked.text, picked.from);
+  if (!marginPage.layer || chat.isOpen() || size < LEAST_ASKED || [...picked.text].length > MOST_ASKED) return null;
+  return marginKit.around(s.doc.source(), picked.text, picked.from);
+}
+
+function marginAsk(s, picked, question = '') {
+  const beside = marginBeside(s, picked);
   if (!beside) return false;
   if (marginPage.thinking.has('draft')) {
     toast('Felix is still answering the last one.');
@@ -1069,7 +1126,7 @@ function marginAsk(s, picked) {
   marginPage.draft = draft;
   marginOpen('draft', true);
   if (!marginPage.els.get('draft')) return false;
-  marginAskOn(s, draft, '').catch(fail);
+  marginAskOn(s, draft, question).catch(fail);
   return true;
 }
 
@@ -1149,8 +1206,8 @@ async function marginRead(s) {
     const along = marginPage.mode === 'along';
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
     if (!along) marginSetStatus('');
-    else if (got?.failed) marginSetStatus('Could not read this change. Check Writing AI and try again.');
-    else marginSetStatus('');
+    else if (got?.failed) marginSetStatus(got.error || READ_FAILED);
+    else marginSetStatus(got?.note ? '' : 'Felix read it; nothing to add.', true);
     if (!got?.failed) marginReadingDone(!got?.note);
     if (got?.note) {
       marginPage.threads.push(got.note);
@@ -1166,7 +1223,7 @@ async function marginRead(s) {
       const stale = e.status === 409 && !e.data?.why;
       if (stale) marginPage.nextRead = 0;
       if (marginPage.mode !== 'along') marginSetStatus('');
-      else marginSetStatus(paused[e.data?.why] || (stale ? 'This note changed while Felix was reading. He will try again after your next edit.' : 'Could not read this change. Check Writing AI and try again.'));
+      else marginSetStatus(paused[e.data?.why] || (stale ? 'This note changed while Felix was reading. He will try again after your next edit.' : noAi(e.message) ? e.message : READ_FAILED));
     }
   } finally {
     if (s === marginPage.s && marginPage.reading === reading) {
@@ -1187,10 +1244,9 @@ const THROUGH_MOST = 12;
 const THROUGH_STOP_GRACE_MS = 400;
 const THROUGH_STAGGER_MS = 80;
 const THROUGH_STAGGER_MAX_MS = 640;
-const THROUGH_FAILED = 'Could not read through this note. Check your writing AI in Settings.';
+const READ_FAILED = "Felix could not read your note just now. Try again in a moment.";
 const THROUGH_SAYS = {
   full: 'This note has many open margin notes. Resolve some, then read through again.',
-  'no-ai': 'Choose a writing AI in Settings, then read through again.',
   felix: 'Felix is answering in chat. Try again when he’s done.',
   busy: 'Felix is already reading. Try again in a moment.',
   changed: 'This note changed while Felix was reading. Read through again.',
@@ -1253,7 +1309,7 @@ async function marginThroughPart(s, run, part, label) {
       } finally {
         s.doc.glow();
       }
-      return got?.failed ? { say: THROUGH_FAILED } : { notes: got?.notes || [] };
+      return got?.failed ? { say: got.error || READ_FAILED } : { notes: got?.notes || [] };
     } catch (e) {
       if (e instanceof Locked) throw e;
       if (marginPage.s !== s) return { gone: true };
@@ -1263,7 +1319,7 @@ async function marginThroughPart(s, run, part, label) {
         await new Promise((resolve) => setTimeout(resolve, READ_PAUSE.regular));
         continue;
       }
-      return { say: THROUGH_SAYS[why] || (e.status === 409 && !why ? THROUGH_SAYS.changed : THROUGH_FAILED) };
+      return { say: noAi(e.message) ? e.message : THROUGH_SAYS[why] || (e.status === 409 && !why ? THROUGH_SAYS.changed : READ_FAILED) };
     }
   }
 }

@@ -44,6 +44,20 @@ async fn settings_page(state: AppState, note: Option<String>) -> Response {
     }
 }
 
+pub(crate) async fn writing(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let Some(settings) = state.settings.clone() else {
+        return no_settings();
+    };
+    let probe = query.get("probe").is_some_and(|asked| asked == "signin");
+    match tokio::task::spawn_blocking(move || settings.writing(probe)).await {
+        Ok(view) => Json(view).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 pub(crate) async fn refresh_usage(
     State(state): State<AppState>,
     body: axum::body::Bytes,

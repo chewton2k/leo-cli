@@ -48,7 +48,27 @@ pub struct Pending {
     pub started: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Checks {
+    pub speech: bool,
+    pub writing: bool,
+    pub headset: bool,
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Checks {
+            speech: true,
+            writing: true,
+            headset: false,
+        }
+    }
+}
+
 pub trait Housekeeper: Send + Sync {
+    fn checks(&self) -> Checks {
+        Checks::default()
+    }
     fn pending_recordings(&self) -> anyhow::Result<Vec<Pending>> {
         Ok(Vec::new())
     }
@@ -106,6 +126,7 @@ pub struct Recorded {
     pub body: String,
     pub source: Option<leo_core::recording::Archive>,
     pub commit: Option<Commit>,
+    pub writer_failed: bool,
 }
 
 pub type Listener = Arc<dyn Fn(Listening, &mut dyn FnMut(Heard)) -> Result<Recorded> + Send + Sync>;
@@ -127,6 +148,7 @@ pub struct RecordView {
     pub levels_start: u64,
     pub note: Option<String>,
     pub error: Option<String>,
+    pub writer_failed: bool,
 }
 
 impl RecordView {
@@ -208,6 +230,12 @@ impl RecordJob {
 
 pub(crate) type Recordings = Arc<Mutex<Option<RecordJob>>>;
 
+pub(crate) fn live(recordings: &Recordings) -> bool {
+    recordings
+        .lock()
+        .is_ok_and(|held| held.as_ref().is_some_and(RecordJob::live))
+}
+
 fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
@@ -254,12 +282,17 @@ fn keep_tail(text: String) -> String {
 
 pub(crate) async fn overview(State(state): State<AppState>) -> Response {
     let mut pending = Vec::new();
+    let mut checks = Checks::default();
     if let Some(housekeeper) = state.housekeeper.clone() {
-        if let Ok(Ok(saved)) =
-            tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await
+        if let Ok((saved, ready)) = tokio::task::spawn_blocking(move || {
+            (housekeeper.pending_recordings(), housekeeper.checks())
+        })
+        .await
         {
+            checks = ready;
             pending.extend(
                 saved
+                    .unwrap_or_default()
                     .into_iter()
                     .map(|p| serde_json::to_value(p).unwrap_or_default()),
             );
@@ -275,6 +308,7 @@ pub(crate) async fn overview(State(state): State<AppState>) -> Response {
         "local": true,
         "job": job,
         "pending": pending,
+        "checks": checks,
     }))
     .into_response()
 }
@@ -368,6 +402,7 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
                 levels_start: 0,
                 note: None,
                 error: None,
+                writer_failed: false,
             },
             stop: Arc::clone(&stop),
             finish_now: finish_now.clone(),
@@ -480,6 +515,7 @@ fn run(
     });
     let title = title.unwrap_or(recorded.title);
     let body = recorded.body;
+    let writer_failed = recorded.writer_failed;
     let source = recorded.source;
     let commit = recorded.commit;
     if let Some(source) = &source {
@@ -521,6 +557,9 @@ fn run(
     });
     let mut warning = None;
     if let Ok((note, notes)) = &made {
+        if writer_failed {
+            set_writeup_pending(&state.chats, note, true);
+        }
         if let Some(commit) = &commit {
             if let Err(e) = commit(notes, note) {
                 warning = Some(format!(
@@ -536,6 +575,7 @@ fn run(
             }
             job.view.state = "done";
             job.view.note = Some(note);
+            job.view.writer_failed = writer_failed;
         }
         Err(_) => {
             job.view.state = "failed";
@@ -545,6 +585,27 @@ fn run(
             );
         }
     });
+}
+
+pub(crate) fn writeup_pending(chats: &std::path::Path, note: &str) -> bool {
+    crate::db::for_chats(chats)
+        .with(|c| {
+            c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM writeup_pending WHERE note = ?1)",
+                [note],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn set_writeup_pending(chats: &std::path::Path, note: &str, pending: bool) {
+    let sql = if pending {
+        "INSERT OR IGNORE INTO writeup_pending (note) VALUES (?1)"
+    } else {
+        "DELETE FROM writeup_pending WHERE note = ?1"
+    };
+    let _ = crate::db::for_chats(chats).with(|c| c.execute(sql, [note]));
 }
 
 pub(crate) async fn status(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -775,6 +836,7 @@ mod tests {
             levels_start: 0,
             note: None,
             error: None,
+            writer_failed: false,
         }
     }
 

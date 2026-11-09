@@ -159,7 +159,8 @@ document.addEventListener('drop', (e) => {
     uploadSheet(files, dirOf(target)).catch(fail);
   } else if (FILE_VIEWS.includes(state.view)) {
     e.preventDefault();
-    uploadSheet(files, undefined, { add: state.view === 'note' }).catch(fail);
+    if (state.view === 'note') uploadSheet(files, undefined, { add: true }).catch(fail);
+    else dropChoice(files);
   }
 });
 

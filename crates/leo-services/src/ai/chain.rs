@@ -93,7 +93,7 @@ fn run_chat_chain_with(
     on_restart: &mut dyn FnMut(),
 ) -> Result<ChainOutcome<String>> {
     if providers.is_empty() {
-        bail!("no AI for writing is chosen — open Settings in leo and pick one under writing");
+        bail!("{}no writing AI is chosen.", super::NO_WRITING_AI);
     }
 
     let mut skipped: Vec<String> = Vec::new();
@@ -144,13 +144,15 @@ fn run_chat_chain_with(
     }
 
     match last_error {
-        Some(msg) if skipped.is_empty() => bail!("every chat provider failed. Last error: {msg}"),
+        Some(msg) if skipped.is_empty() => bail!("{}", leo_core::writing_said(&msg)),
         Some(msg) => bail!(
-            "chat chain exhausted — some providers were unavailable and the rest failed:\n  {}\nLast error: {msg}",
+            "{}\nAlso unavailable:\n  {}",
+            leo_core::writing_said(&msg),
             skipped.join("\n  ")
         ),
         None => bail!(
-            "no chat provider is available:\n  {}",
+            "{}no writing AI is ready.\n  {}",
+            super::NO_WRITING_AI,
             skipped.join("\n  ")
         ),
     }
@@ -422,7 +424,9 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("b 429"), "got: {msg}");
+        assert!(msg.contains("(busy)"), "got: {msg}");
+        assert!(!msg.starts_with(crate::ai::NO_WRITING_AI), "got: {msg}");
+        assert!(!msg.contains("every chat provider failed"), "got: {msg}");
     }
 
     #[test]
@@ -437,7 +441,7 @@ mod tests {
         .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("ollama has no key"), "got: {msg}");
-        assert!(msg.contains("openrouter 429"), "got: {msg}");
+        assert!(msg.contains("(busy)"), "got: {msg}");
     }
 
     #[test]
@@ -454,7 +458,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("ollama has no key"), "got: {msg}");
         assert!(msg.contains("claude has no key"), "got: {msg}");
-        assert!(msg.contains("openrouter 429"), "got: {msg}");
+        assert!(msg.contains("(busy)"), "got: {msg}");
     }
 
     #[test]
