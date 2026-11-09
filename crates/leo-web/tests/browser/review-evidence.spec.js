@@ -1,6 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const path = require('node:path');
+const { token } = require('./sign-in');
 
 const EVIDENCE_ROOT = process.env.LEO_EVIDENCE_DIR || path.join(__dirname, 'test-results', 'review-evidence');
 let OUT = EVIDENCE_ROOT;
@@ -14,7 +15,6 @@ const EDIT = ' Probably fine.';
 
 let counter = 0;
 const unique = () => `${Date.now().toString(36)}${counter++}`;
-const token = () => fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
 
 function manifest() {
   try {
@@ -60,6 +60,8 @@ async function settle(page) {
     new Promise((done) => setTimeout(done, 2500)),
   ]));
 }
+
+const frame = (page) => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
 
 async function signedIn(browser, baseURL, options = {}) {
   const context = await browser.newContext({ baseURL, ...options });
@@ -151,7 +153,7 @@ test('R1 the real Felix @ picker scrolls on its own at both ends and in the midd
   await list.evaluate((el) => { el.scrollTop = 0; });
   let before = await positions(page);
   await page.mouse.wheel(0, 70);
-  await page.waitForTimeout(250);
+  await expect.poll(async () => (await positions(page)).list, { message: 'the wheel scrolls the picker' }).toBeGreaterThan(before.list);
   let after = await positions(page);
   log.middle = { before, after };
   expect(after.list, 'wheel in the middle moves the picker').toBeGreaterThan(before.list);
@@ -192,7 +194,8 @@ test('R1 the real Felix @ picker scrolls on its own at both ends and in the midd
   before = await positions(page);
   const count = await rows.count();
   for (let i = 0; i < count - 1; i++) await page.keyboard.press('ArrowDown');
-  await page.waitForTimeout(200);
+  await expect(rows.last()).toHaveClass(/\bon\b/);
+  await frame(page);
   after = await positions(page);
   const active = await page.evaluate(() => {
     const list = document.querySelector('#chat-pick .chat-pick-list');
@@ -315,7 +318,7 @@ test('R2/R14 a real edit in Reads along pauses, shows Reading, then reveals the 
   read.mark('reading');
   await still(page, 'r2-reading');
   await installSampler(page);
-  await page.waitForTimeout(400);
+  await expect.poll(() => page.evaluate(() => window.__ink.some((sample) => sample.waiting)), { message: 'the sampler saw the reading dots' }).toBe(true);
   const clip = await page.locator('#doc .blk').last().boundingBox();
   read.release();
   const frames = [];
@@ -564,7 +567,8 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
 
   await watch();
   await button.click();
-  await page.waitForTimeout(600);
+  await settle(page);
+  await frame(page);
   const opening = await read();
   await still(page, 'r15-menu-open');
   expect(distinct(opening), 'opening passes through animated frames').toBeGreaterThanOrEqual(3);
@@ -572,7 +576,9 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
 
   await watch();
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(600);
+  await expect(page.locator('#margin-mode-menu')).toBeHidden();
+  await settle(page);
+  await frame(page);
   const closing = await read();
   const afterClose = closing.filter((f) => f.shown);
   expect(afterClose.length, 'the menu stays drawn for at least two frames while it closes').toBeGreaterThanOrEqual(2);
@@ -633,12 +639,15 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
   await expect(button).toHaveAttribute('aria-expanded', 'true');
   expect(await page.getByRole('menu', { name: 'Note reading mode' }).count()).toBe(1);
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
+  await expect(page.locator('#margin-mode-menu')).toBeHidden();
+  await settle(page);
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await watch();
   await button.click();
-  await page.waitForTimeout(300);
+  await expect(page.locator('#margin-mode-menu')).toBeVisible();
+  await settle(page);
+  await frame(page);
   const reduced = await read();
   const between = reduced.filter((f) => f.shown && f.opacity > 0.01 && f.opacity < 0.99);
   expect(between, 'Reduced Motion shows the menu at once').toEqual([]);
@@ -652,7 +661,8 @@ test('R15 the mode dropdown opens and closes with an interruptible animation and
     await settle(page);
     await still(page, `r15-menu-${width}-${scheme}`);
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
+    await expect(page.locator('#margin-mode-menu')).toBeHidden();
+    await settle(page);
   }
   await page.emulateMedia({ colorScheme: 'light' });
   record('R15', { ...env(page), opening: distinct(opening), closing: distinct(closing), maxOpacityJump: jump, reversals, reducedIntermediateFrames: between.length });
@@ -857,7 +867,8 @@ test('R17 the loaded explorer keeps its rows and never flashes Opening notes dur
   await expect(theme.nth(0)).toHaveAttribute('aria-pressed', 'true');
   await createNote(page, `Cached row late ${tag}`, 'Arrives while Settings is open.', dir);
   await page.evaluate(() => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('leo-visibility')); document.dispatchEvent(new Event('visibilitychange')); });
-  await page.waitForTimeout(2500);
+  await expect(page.locator('#side .side-note', { hasText: `Cached row late ${tag}` })).toBeVisible({ timeout: 10000 });
+  await frame(page);
   const flash = await page.evaluate(() => { window.__flash.on = false; return window.__flash; });
   await still(page, 'r17-explorer-after-settings');
   expect(flash.opening, `Opening notes appeared in ${flash.opening} frames`).toBe(0);

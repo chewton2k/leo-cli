@@ -1,10 +1,7 @@
 const { test, expect } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
+const { signIn } = require('./sign-in');
 test.beforeEach(async ({ page }) => {
-  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-  await page.goto('/?token=' + token);
-  await expect(page.locator('#app')).not.toBeEmpty();
+  await signIn(page);
 });
 async function note(page, title) {
   return (await page.request.post('/api/notes', { data: { title, body: 'Original paragraph.' } })).json();
@@ -83,6 +80,7 @@ test('chat history retains its delete control through confirmation and handles f
       const sample = () => {
         window.deleteWidths.push(el.getBoundingClientRect().width);
         if (performance.now() - started < 400) requestAnimationFrame(sample);
+        else window.deleteSampled = true;
       };
       sample();
     }, { once: true });
@@ -91,7 +89,7 @@ test('chat history retains its delete control through confirmation and handles f
   expect(await button.evaluate(el => el === window.retainedDelete)).toBe(true);
   await expect(button).toHaveClass(/sure/);
   await expect(button).toBeFocused();
-  await page.waitForTimeout(450);
+  await page.waitForFunction(() => window.deleteSampled);
   const widths = await page.evaluate(() => window.deleteWidths);
   expect(new Set(widths.map(value => Math.round(value))).size).toBeGreaterThan(2);
   expect(Math.max(...widths) - Math.min(...widths)).toBeGreaterThan(8);
@@ -165,11 +163,15 @@ for (const layout of ['desktop', 'compact', 'source']) test(`Chats history ${lay
   const reversal = await close.evaluate(el => {
     const history = document.querySelector('#chat-history');
     el.focus({ preventScroll: true });
-    const before = history.getBoundingClientRect().x;
+    const before = Number(getComputedStyle(history).opacity);
     el.click();
-    return { before, after: history.getBoundingClientRect().x };
+    const run = history.getAnimations().find(motion => motion.transitionProperty === 'opacity');
+    return { before, from: run ? Number(run.effect.getKeyframes()[0].opacity) : null };
   });
-  expect(Math.abs(reversal.after - reversal.before), 'reverse preserves position in the same browser turn').toBeLessThan(3);
+  expect(reversal.before, 'the frozen frame is mid-way').toBeGreaterThan(0.02);
+  expect(reversal.before).toBeLessThan(0.98);
+  expect(reversal.from, 'reverse starts a transition from the frame it interrupted').not.toBeNull();
+  expect(Math.abs(reversal.from - reversal.before), 'reverse preserves position in the same browser turn').toBeLessThan(0.03);
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await page.evaluate(() => { for (const run of historyMotion) run.finish(); });
   await expect(history).toBeHidden();

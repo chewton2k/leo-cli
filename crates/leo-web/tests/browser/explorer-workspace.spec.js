@@ -1,6 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
+const { signIn } = require('./sign-in');
 
 let counter = 0;
 const name = () => `Explorer ${Date.now()} ${counter++}`;
@@ -31,9 +30,7 @@ async function folders(page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-  await page.goto(`/?token=${token}`);
-  await expect(page.locator('#app')).not.toBeEmpty();
+  await signIn(page);
 });
 
 test('workspace and legacy folder links reveal folders without a library or a created file', async ({ page }) => {

@@ -366,8 +366,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.locator('html')).toHaveAttribute('data-text-size','medium');
       await expect(page.locator('html')).toHaveAttribute('data-felix-letters','own');
       await page.getByRole('link',{name:'Calendar',exact:true}).click();
-      await page.waitForTimeout(400);
-      expect(await page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);
+      await expect.poll(()=>page.evaluate(()=>{const pill=document.querySelector('.settings-nav-pill').getBoundingClientRect(),on=document.querySelector('.settings-link.on').getBoundingClientRect();return Math.abs(pill.top-on.top);})).toBeLessThan(2);
       await expect(page.locator('#calendar-link')).toBeVisible();
       await page.getByRole('link',{name:'Health',exact:true}).click();
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();

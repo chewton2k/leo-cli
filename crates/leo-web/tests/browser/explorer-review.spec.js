@@ -1,6 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
+const { signIn } = require('./sign-in');
 
 let counter = 0;
 const name = () => `Review ${Date.now()} ${counter++}`;
@@ -44,9 +43,7 @@ async function folders(page) {
 const noteDir = async (page, id) => (await (await page.request.get(`/api/notes/${id}`)).json()).directory;
 
 test.beforeEach(async ({ page }) => {
-  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-  await page.goto(`/?token=${token}`);
-  await expect(page.locator('#app')).not.toBeEmpty();
+  await signIn(page);
 });
 
 test('desktop breadcrumb folder click unfolds a hidden explorer', async ({ page }) => {

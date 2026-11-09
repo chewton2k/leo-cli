@@ -1071,7 +1071,8 @@ test('the heading rail keeps clear of the note text and its preview shows at eve
       for (let i = 0; i < 3; i++) {
         await ticks.nth(i).hover();
         await expect(ticks.nth(i)).toHaveAttribute('data-distance', '0');
-        await page.waitForTimeout(320);
+        await expect(page.locator('.outline-preview')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.getAnimations().filter((run) => run.playState === 'running' && run.effect && run.effect.getComputedTiming().iterations !== Infinity).length)).toBe(0);
         const seen = await page.evaluate(() => {
           const text = document.querySelector('#doc').getBoundingClientRect();
           const bars = [...document.querySelectorAll('.outline-ticks [data-tick]')].map((span) => { const r = span.getBoundingClientRect(); return r.left + parseFloat(getComputedStyle(span, '::after').width) * (r.width / span.offsetWidth); });
@@ -1093,6 +1094,8 @@ test('dragging down through the note never highlights the empty space or the pag
     const page = await context.newPage();
     await page.setViewportSize({ width: 1100, height: 800 });
     await page.goto(url);
+    await expect(page.locator('#doc .blk').first()).toBeVisible();
+    await expect(page.locator('.related-row')).toBeVisible();
     const first = await page.locator('#doc .blk').first().boundingBox();
     const row = await page.locator('.related-row').boundingBox();
     await page.mouse.move(first.x + 4, first.y + first.height / 2);
@@ -1112,11 +1115,12 @@ test('dragging down through the note never highlights the empty space or the pag
     expect(chrome.slice(0, 4)).toEqual(['none', 'none', 'none', 'none']);
     await page.locator('.related-head').click({ position: { x: 8, y: 4 } });
     expect(await page.evaluate(() => getSelection().toString())).toBe('');
-    await page.mouse.move(first.x + 4, first.y + first.height / 2);
+    const again = await page.locator('#doc .blk').first().boundingBox();
+    await page.mouse.move(again.x + 4, again.y + again.height / 2);
     await page.mouse.down();
-    await page.mouse.move(first.x + 200, first.y + first.height / 2, { steps: 4 });
+    await page.mouse.move(again.x + 200, again.y + again.height / 2, { steps: 4 });
     await page.mouse.up();
-    expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+    await expect.poll(() => page.evaluate(() => getSelection().toString())).not.toBe('');
     await page.locator('.related-head').click({ position: { x: 8, y: 4 } });
     expect(await page.evaluate(() => getSelection().toString())).toBe('');
   }, { body: 'First paragraph of the note.\n\nSecond paragraph of the note.\n\n\n', related: true });
