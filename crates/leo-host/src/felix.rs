@@ -52,8 +52,22 @@ pub fn writer(
 }
 
 pub fn said(e: anyhow::Error) -> anyhow::Error {
-    leo_core::diag::warn(format!("the writing AI failed: {e}"));
-    anyhow::anyhow!(leo_services::ai::writing_error(&e))
+    let said = leo_services::ai::writing_error(&e);
+    leo_core::diag::warn(format!(
+        "the writing AI failed: {} ({})",
+        logged(&said),
+        logged(&e.to_string())
+    ));
+    anyhow::anyhow!(said)
+}
+
+fn logged(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect()
 }
 
 pub fn spent_of(answered: Answered) -> leo_web::Spent {
@@ -176,5 +190,13 @@ mod route_tests {
         assert_eq!(route_of(Purpose::Summary), Route::Quick);
         assert_eq!(route_of(Purpose::OtherWriting), Route::Full);
         assert_eq!(route_of(Purpose::Answer), Route::Full);
+    }
+
+    #[test]
+    fn the_log_keeps_one_short_line_never_the_whole_body() {
+        let body = format!("openai returned 429: {}\nprompt text", "x".repeat(500));
+        let line = logged(&body);
+        assert_eq!(line.chars().count(), 200);
+        assert!(!line.contains("prompt text"));
     }
 }

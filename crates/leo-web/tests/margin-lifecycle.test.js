@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const kit = require('../src/web/margin.js');
 require('../src/web/chat.js');
-const FAILED = "leo can't write yet: Felix could not read your note just now.";
+const FAILED = "Felix could not read your note just now. Try again in a moment.";
 
 function harness() {
   let settle;

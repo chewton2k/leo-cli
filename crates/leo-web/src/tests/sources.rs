@@ -84,7 +84,8 @@ fn retained_sources_are_editable_with_conflict_protection_and_regeneration_is_a_
     ));
     assert_eq!(failed.status(), StatusCode::BAD_GATEWAY);
     let said = json_of(failed)["error"].as_str().unwrap().to_string();
-    assert!(said.starts_with(leo_core::NO_WRITING_AI), "{said}");
+    assert!(!said.starts_with(leo_core::NO_WRITING_AI), "{said}");
+    assert!(said.contains("didn't answer just now"), "{said}");
     store_now(&state, |store| {
         assert_eq!(store.find_note(&id).unwrap().body, "Existing note");
         Ok(())

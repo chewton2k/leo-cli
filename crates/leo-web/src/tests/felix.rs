@@ -209,7 +209,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
          _: u32,
          _: &mut dyn FnMut(&str),
          _: &mut dyn FnMut(),
-         _: &dyn Fn() -> bool| { anyhow::bail!("no AI for writing is chosen") },
+         _: &dyn Fn() -> bool| { anyhow::bail!("no writing AI is chosen") },
     ));
     let status = run(async {
         chat_reply(State(with.clone()), Json(ask("   ")))
@@ -226,7 +226,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
     });
     let line = text.lines().last().unwrap();
     assert!(line.contains(leo_core::NO_WRITING_AI), "{text}");
-    assert!(line.contains("no AI for writing is chosen"), "{text}");
+    assert!(line.contains("no writing AI is chosen"), "{text}");
 }
 
 fn chat_lines(state: &AppState, question: &str) -> Vec<serde_json::Value> {

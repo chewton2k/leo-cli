@@ -741,8 +741,9 @@ target. Check the page sequence after loading preferences.
   take an hour of writing at least, and a day's worst case is about 90k input
   tokens, three Felix answers (31.8k each). CLIs ignore `max_tokens`, so output is
   bounded when parsed.
-- A failed or missing AI shows a fixed, actionable status above the note and leaves `margin::PROBLEM`
-  (fixed text, no provider detail) in Settings → Felix and Health until a read works.
+- A failed or missing AI shows an actionable status above the note and leaves the same line in Settings → Felix and
+  Health until a read works: the writer's own sentence (`leo_core::writing_said`, no provider detail), `no_writer()`
+  when none is set, or `margin::PROBLEM` (no prefix) for a timeout or an unreadable reply; the failed response carries it as `error`.
 - Selection: ⌘⇧E opens a draft in the margin and asks at once, POST
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
   only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this

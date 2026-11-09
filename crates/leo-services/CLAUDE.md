@@ -27,7 +27,7 @@ invisible.
 `chat_outcome`, `chat_streaming`, `quick_outcome`, `open_session`, ...); nothing
 above `ai/` knows about providers.
 
-Every writer failure a person can see starts with `leo_core::NO_WRITING_AI` ("leo can't write yet: "), so the page can add a Set up writing AI link: services use `ai::writing_error(&err)` (reads `health::writing`, offline) and leo-web uses `leo_core::writing_said` / `crate::no_writer()`; never write a per-site wording.
+A writer failure a person can see starts with `leo_core::NO_WRITING_AI` ("leo can't write yet: ") only when setup can fix it (writing AI not ready, sign-in, key or model missing, not installed), so the page can add a Set up writing AI link; a rate limit, timeout or outage reads "Your writing AI didn't answer just now (busy|timed out|unavailable). Try again in a moment." with no prefix and no provider body: services use `ai::writing_error(&err)` (reads `health::writing`, offline) and leo-web uses `leo_core::writing_said` / `crate::no_writer()`; never write a per-site wording.
 
 ### The note prompts
 

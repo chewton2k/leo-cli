@@ -1164,15 +1164,15 @@ impl Reads {
     }
 }
 
-pub const PROBLEM: &str = "leo can't write yet: Felix could not read your note just now.";
+pub const PROBLEM: &str = "Felix could not read your note just now. Try again in a moment.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_problem_line_starts_with_the_shared_prefix() {
-        assert!(PROBLEM.starts_with(leo_core::NO_WRITING_AI));
+    fn the_generic_problem_line_has_no_setup_prefix() {
+        assert!(!PROBLEM.starts_with(leo_core::NO_WRITING_AI));
     }
 
     #[test]

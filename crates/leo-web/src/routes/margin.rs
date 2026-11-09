@@ -72,7 +72,7 @@ struct ReadFacts {
 enum Pass {
     Saved(Vec<Thread>),
     Silent,
-    Failed,
+    Failed(String),
     Refused(Response),
 }
 
@@ -95,9 +95,9 @@ fn silent() -> Response {
     Json(serde_json::json!({ "note": null })).into_response()
 }
 
-fn failed(state: &AppState) -> Response {
-    state.margin.set_problem(Some(margin::PROBLEM.into()));
-    Json(serde_json::json!({ "note": null, "failed": true })).into_response()
+fn failed(state: &AppState, error: String) -> Response {
+    state.margin.set_problem(Some(error.clone()));
+    Json(serde_json::json!({ "note": null, "failed": true, "error": error })).into_response()
 }
 
 async fn open_note(state: &AppState, id: &str) -> Result<Open, Box<Response>> {
@@ -458,14 +458,14 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     }
     let Some(writer) = state.toolless.clone() else {
         if through {
-            state.margin.set_problem(Some(margin::PROBLEM.into()));
+            state.margin.set_problem(Some(crate::no_writer()));
             return Pass::Refused(said(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "no-ai",
                 &crate::no_writer(),
             ));
         }
-        return Pass::Failed;
+        return Pass::Failed(crate::no_writer());
     };
     let gap = if through {
         Duration::ZERO
@@ -536,9 +536,12 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     };
     let reply = match answer {
         Ok(Ok(Ok(reply))) => reply,
-        _ => {
+        other => {
             forget(state);
-            return Pass::Failed;
+            return Pass::Failed(match other {
+                Ok(Ok(Err(e))) => leo_core::writing_said(&e.to_string()),
+                _ => margin::PROBLEM.into(),
+            });
         }
     };
     let most = body
@@ -557,7 +560,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     };
     let Some(founds) = founds else {
         forget(state);
-        return Pass::Failed;
+        return Pass::Failed(margin::PROBLEM.into());
     };
     state.margin.set_problem(None);
     let now = match open_note(state, &id).await {
@@ -608,7 +611,7 @@ pub(crate) async fn read(
             Json(serde_json::json!({ "note": saved.remove(0) })).into_response()
         }
         Pass::Silent => silent(),
-        Pass::Failed => failed(&state),
+        Pass::Failed(error) => failed(&state, error),
         Pass::Refused(refused) => refused,
     }
 }
@@ -621,9 +624,9 @@ pub(crate) async fn analyze(
     match pass(&state, id, body, true).await {
         Pass::Saved(saved) => Json(serde_json::json!({ "notes": saved })).into_response(),
         Pass::Silent => Json(serde_json::json!({ "notes": [] })).into_response(),
-        Pass::Failed => {
-            state.margin.set_problem(Some(margin::PROBLEM.into()));
-            Json(serde_json::json!({ "notes": [], "failed": true })).into_response()
+        Pass::Failed(error) => {
+            state.margin.set_problem(Some(error.clone()));
+            Json(serde_json::json!({ "notes": [], "failed": true, "error": error })).into_response()
         }
         Pass::Refused(refused) => refused,
     }

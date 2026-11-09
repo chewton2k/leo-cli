@@ -424,8 +424,18 @@ mod tests {
             super::why(SignInNeeded, Some("Codex"), "x"),
             "leo can't write yet: Codex needs you to sign in."
         );
-        let said = super::why(Ready, None, "boom\nsecond line");
-        assert_eq!(said, "leo can't write yet: boom.");
+        assert_eq!(
+            super::why(Ready, None, "openai returned 429: slow down\nsecond line"),
+            "Your writing AI didn't answer just now (busy). Try again in a moment."
+        );
+        assert_eq!(
+            super::why(Ready, None, "claude: request timed out"),
+            "Your writing AI didn't answer just now (timed out). Try again in a moment."
+        );
+        assert_eq!(
+            super::why(Ready, None, "openai rejected the key stored in leo (401)."),
+            "leo can't write yet: openai rejected the key stored in leo (401)."
+        );
     }
 
     #[test]

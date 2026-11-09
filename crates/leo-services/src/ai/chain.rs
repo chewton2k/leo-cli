@@ -424,8 +424,8 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("b 429"), "got: {msg}");
-        assert!(msg.starts_with(crate::ai::NO_WRITING_AI), "got: {msg}");
+        assert!(msg.contains("(busy)"), "got: {msg}");
+        assert!(!msg.starts_with(crate::ai::NO_WRITING_AI), "got: {msg}");
         assert!(!msg.contains("every chat provider failed"), "got: {msg}");
     }
 
@@ -441,7 +441,7 @@ mod tests {
         .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("ollama has no key"), "got: {msg}");
-        assert!(msg.contains("openrouter 429"), "got: {msg}");
+        assert!(msg.contains("(busy)"), "got: {msg}");
     }
 
     #[test]
@@ -458,7 +458,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("ollama has no key"), "got: {msg}");
         assert!(msg.contains("claude has no key"), "got: {msg}");
-        assert!(msg.contains("openrouter 429"), "got: {msg}");
+        assert!(msg.contains("(busy)"), "got: {msg}");
     }
 
     #[test]

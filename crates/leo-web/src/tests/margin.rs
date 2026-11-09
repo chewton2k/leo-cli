@@ -696,7 +696,10 @@ async fn a_missing_or_failing_ai_stays_silent_and_leaves_one_line() {
     let (status, read) = engine.read(&id, &version, &[PASSAGE]).await;
     assert_eq!((status, &read["note"]), (200, &serde_json::Value::Null));
     let (_, settings) = engine.get("/api/margin").await;
-    assert_eq!(settings["problem"], margin::PROBLEM);
+    assert_eq!(
+        settings["problem"],
+        "Your writing AI didn't answer just now (unavailable). Try again in a moment."
+    );
     assert!(!settings.to_string().contains("secret provider detail"));
     fails.store(false, Ordering::SeqCst);
     let (other, other_version) = engine.note("Fine", PASSAGE).await;
@@ -1042,7 +1045,10 @@ async fn health_shows_a_failed_read_through_its_route() {
     assert_eq!(read["failed"], true, "the page keeps its baseline");
     let (_, view) = engine.get("/api/health").await;
     assert_eq!(view["sections"][0]["title"], "Felix");
-    assert_eq!(view["sections"][0]["checks"][0]["detail"], margin::PROBLEM);
+    assert_eq!(
+        view["sections"][0]["checks"][0]["detail"],
+        "Your writing AI didn't answer just now (unavailable). Try again in a moment."
+    );
     engine.stop().await;
 }
 
@@ -1564,7 +1570,7 @@ async fn a_full_note_and_a_missing_ai_say_why() {
         .starts_with(leo_core::NO_WRITING_AI));
     assert_eq!(
         engine.get("/api/margin").await.1["problem"].as_str(),
-        Some(margin::PROBLEM)
+        Some(crate::no_writer().as_str())
     );
     engine.stop().await;
 }

@@ -1206,7 +1206,7 @@ async function marginRead(s) {
     const along = marginPage.mode === 'along';
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
     if (!along) marginSetStatus('');
-    else if (got?.failed) marginSetStatus(READ_FAILED);
+    else if (got?.failed) marginSetStatus(got.error || READ_FAILED);
     else marginSetStatus('');
     if (!got?.failed) marginReadingDone(!got?.note);
     if (got?.note) {
@@ -1244,7 +1244,7 @@ const THROUGH_MOST = 12;
 const THROUGH_STOP_GRACE_MS = 400;
 const THROUGH_STAGGER_MS = 80;
 const THROUGH_STAGGER_MAX_MS = 640;
-const READ_FAILED = "leo can't write yet: Felix could not read your note just now.";
+const READ_FAILED = "Felix could not read your note just now. Try again in a moment.";
 const THROUGH_SAYS = {
   full: 'This note has many open margin notes. Resolve some, then read through again.',
   felix: 'Felix is answering in chat. Try again when he’s done.',
@@ -1309,7 +1309,7 @@ async function marginThroughPart(s, run, part, label) {
       } finally {
         s.doc.glow();
       }
-      return got?.failed ? { say: READ_FAILED } : { notes: got?.notes || [] };
+      return got?.failed ? { say: got.error || READ_FAILED } : { notes: got?.notes || [] };
     } catch (e) {
       if (e instanceof Locked) throw e;
       if (marginPage.s !== s) return { gone: true };
