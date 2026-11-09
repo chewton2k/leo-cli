@@ -49,6 +49,56 @@ pub fn elevated_target() -> bool {
     }
 }
 
+pub fn frontmost_app() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let app = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        if app.processIdentifier() as u32 == std::process::id() {
+            return None;
+        }
+        Some(app.localizedName()?.to_string()).filter(|name| !name.trim().is_empty())
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::{
+            core::PWSTR,
+            Win32::{
+                Foundation::CloseHandle,
+                System::Threading::{
+                    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+                    PROCESS_QUERY_LIMITED_INFORMATION,
+                },
+                UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+            },
+        };
+        let mut pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
+        if pid == 0 || pid == std::process::id() {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut path = [0u16; 1024];
+        let mut size = path.len() as u32;
+        let found = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(path.as_mut_ptr()),
+            &mut size,
+        );
+        let _ = CloseHandle(process);
+        found.ok()?;
+        let path = String::from_utf16_lossy(path.get(..size as usize)?);
+        std::path::Path::new(&path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        None
+    }
+}
+
 pub fn focused_point() -> Option<(f64, f64)> {
     #[cfg(target_os = "macos")]
     unsafe {

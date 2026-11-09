@@ -333,6 +333,9 @@ impl Dictation {
     ) -> Result<Finish> {
         let _awake = leo_services::session::awake::Awake::recording();
         let _reservation = engine().dictation();
+        let app = (settings.writing != Writing::Off)
+            .then(crate::permissions::frontmost_app)
+            .flatten();
         let selected = library()?.selected()?;
         let live = selected.streaming && selected.live;
         if !live {
@@ -498,6 +501,7 @@ impl Dictation {
                 &text,
                 settings.writing,
                 language,
+                app.as_deref(),
                 Arc::new(move || !this.generation.current(id)),
             ) {
                 Ok(polished) => polished,

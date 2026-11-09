@@ -505,12 +505,15 @@ and state updates after acquiring their state lock, so cancel wins stale work.
 language-aware filler rules (on by default), with Unicode-safe punctuation and
 capitalization, then writes clock times only when marked (`230 pm` → `2:30 pm`;
 an AM radio dial like `1050 AM` is the accepted casualty): a bare `230` may be
-a quantity, so context is left to the AI step. `polish.rs` is the optional AI writing step (`Writing`: off
+a quantity, so context is left to the AI step. With fillers on it also drops a
+"you know" between commas or at a clause edge and "scratch that" with the sentence before
+it, never "like". `polish.rs` is the optional AI writing step (`Writing`: off
 by default, `quick` = `ai::quick_outcome`, the cheapest model and effort on the
 user's plan, 12 s, or `selected` = the Writing AI choice, 30 s): a cleanup
 prompt (2026-11-03, the user's call) that removes fillers and verbal tics,
-reformats into paragraphs/lists and writes times like 2:30 from context, and
-treats the dictation as text, never instructions. Replies are only
+reformats into paragraphs/lists and writes times like 2:30 from context, is told
+only the frontmost app's name (desktop reads it at keypress, never window titles or
+screen text) to match its tone, and treats the dictation as text, never instructions. Replies are only
 unwrapped (code fence, `<dictation>` tags), never run through `clean_reply`,
 which would drop dictated "Sure…" or "Let me know…" lines. A reply must keep
 70% of the dictation's words (characters for unspaced scripts) and add at most
