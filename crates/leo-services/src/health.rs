@@ -213,7 +213,11 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
 
     let (usable, fix) = match chain {
         Chain::Chat => {
-            let writing = writing(config, store, None);
+            let writing = writing(
+                config,
+                store,
+                Some(&crate::config::choice::local_models(config)),
+            );
             let ready = writing.state == WritingState::Ready;
             (
                 writing.provider.filter(|_| ready),
@@ -633,6 +637,37 @@ mod tests {
         ] {
             assert_eq!(writing(&config, &store(), Some(&models)).state, state);
         }
+    }
+
+    fn empty_ollama() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}/v1",
+            listener.local_addr().unwrap().port()
+        );
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut buffer = [0u8; 8192];
+                if stream.read(&mut buffer).unwrap_or(0) > 0 {
+                    let body = "{\"models\":[]}";
+                    let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                }
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn the_chat_check_is_not_ready_for_ollama_without_a_model() {
+        let config = config_with(vec![("ollama", server(&empty_ollama()))], vec!["ollama"]);
+        assert_eq!(writing(&config, &store(), None).state, WritingState::Ready);
+        let check = chain_check(&config, Chain::Chat, &store());
+        assert!(!check.state.is_ready(), "{check:?}");
+        assert!(matches!(
+            check.state,
+            State::Missing { ref fix } if fix.contains("no models")
+        ));
     }
 
     #[test]

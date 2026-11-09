@@ -111,16 +111,23 @@ fn expire_browser_audio(root: &Path, before: std::time::SystemTime) -> usize {
         .count()
 }
 
+fn writing_ready(
+    config: &leo_services::config::Config,
+    store: &dyn leo_services::config::secret::SecretStore,
+) -> bool {
+    let local = leo_services::config::choice::local_models(config);
+    leo_services::health::writing(config, store, Some(&local)).state
+        == leo_services::health::WritingState::Ready
+}
+
 impl Housekeeper for Housekeeping {
     fn checks(&self) -> leo_web::record::Checks {
-        let writing = leo_services::health::writing(
-            &leo_services::config::Config::load(),
-            leo_services::config::secret::default_store().as_ref(),
-            None,
-        );
         leo_web::record::Checks {
             speech: leo_services::speech::library::library().is_ok_and(|l| l.selected().is_ok()),
-            writing: writing.state == leo_services::health::WritingState::Ready,
+            writing: writing_ready(
+                &leo_services::config::Config::load(),
+                leo_services::config::secret::default_store().as_ref(),
+            ),
             headset: session::mic::output_is_headset(),
         }
     }
@@ -194,6 +201,37 @@ mod tests {
         assert_eq!(expire_browser_audio(&browser, later), 1);
         assert!(!browser.join("left-behind").exists());
         assert_eq!(expire_browser_audio(&tmp.path().join("absent"), later), 0);
+    }
+
+    #[test]
+    fn ollama_without_a_model_is_not_ready_to_record() {
+        use leo_services::config::{provider::ProviderConfig, secret::MemoryStore, Config};
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}/v1",
+            listener.local_addr().unwrap().port()
+        );
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut buffer = [0u8; 8192];
+                if stream.read(&mut buffer).unwrap_or(0) > 0 {
+                    let body = "{\"models\":[]}";
+                    let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                }
+            }
+        });
+        let mut config = Config::default();
+        config.chat.chain = vec!["ollama".into()];
+        config.providers.insert(
+            "ollama".into(),
+            ProviderConfig {
+                kind: Some(leo_services::config::provider::ProviderKind::Openai),
+                base_url: Some(url),
+                ..Default::default()
+            },
+        );
+        assert!(!writing_ready(&config, &MemoryStore::default()));
     }
 
     #[test]

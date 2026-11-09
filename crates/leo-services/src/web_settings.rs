@@ -108,11 +108,11 @@ fn task_view(
         json!({
             "installed": installed,
             "text": if installed {
-                format!("Uses {}, no key needed. If it asks, {}.", agent.plan(), agent.sign_in())
+                format!("Uses {}. Sign in with the Sign in button if leo asks.", agent.plan())
             } else if located {
-                format!("`{bin}` cannot provide the safety controls Leo needs. Update {} and try again: {}.", chosen.map(|c| c.name).unwrap_or(provider.as_str()), agent.install())
+                format!("{} needs an update before leo can use it.", chosen.map(|c| c.name).unwrap_or(provider.as_str()))
             } else {
-                format!("`{bin}` is not installed: {}.", agent.install())
+                format!("{} is not installed on this computer.", chosen.map(|c| c.name).unwrap_or(provider.as_str()))
             },
         })
     });
@@ -412,10 +412,12 @@ mod tests {
         assert_eq!(page["writing"]["state"], "not_installed");
         assert_eq!(page["writing"]["provider"], "codex");
         assert_eq!(writing["signin"]["installed"], false);
-        assert!(writing["signin"]["text"]
-            .as_str()
-            .unwrap()
-            .contains("npm install -g @openai/codex"));
+        let text = writing["signin"]["text"].as_str().unwrap();
+        assert!(
+            text.ends_with(" is not installed on this computer."),
+            "{text}"
+        );
+        assert!(!text.contains("npm"));
     }
 
     #[cfg(unix)]

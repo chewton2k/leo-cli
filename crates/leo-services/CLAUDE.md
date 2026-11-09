@@ -152,10 +152,10 @@ or the optional keychain with `LEO_USE_KEYCHAIN=1`; tests use MemoryStore.
 
 `ollama.rs` (2026-11-09) helps the user download an Ollama model they pick; leo
 never picks or pulls one by itself. `ollama_models.json` is the vendored catalog
-(name, download bytes, memory in GiB, one line). `machine()` reads total memory
+(name, download bytes, memory in decimal GB, one line). `machine()` reads total memory
 (macOS `hw.memsize`, Windows `GlobalMemoryStatusEx` through kernel32, else unknown)
 and free disk in the home folder, where Ollama keeps models. `fit` is TooBig when
-memory needed exceeds total memory or size + 2 GB exceeds free disk; unknown values
+memory needed exceeds total memory by more than 10% (an "8 GB" laptop reports under 8 GiB) or size + 2 GB exceeds free disk; unknown values
 never block. `recommended` is the largest fitting entry, and none while memory is
 unknown. `pull` streams loopback `POST /api/pull` NDJSON as `Progress` and says disk
 and memory errors in one plain sentence (`plain_error`).

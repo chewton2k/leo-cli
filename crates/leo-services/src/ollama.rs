@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 
+#[cfg(test)]
 const GIB: u64 = 1 << 30;
+const MEMORY_SHARE: u64 = 900_000_000;
 const DISK_SPARE: u64 = 2_000_000_000;
 const STOPPED: &str =
     "Ollama stopped answering. Check that the Ollama app is open, then try again.";
@@ -52,7 +54,7 @@ pub fn catalog() -> &'static [Entry] {
 pub fn fit(entry: &Entry, machine: &Machine) -> Fit {
     let memory = machine
         .memory_bytes
-        .is_some_and(|total| entry.memory_gb * GIB > total);
+        .is_some_and(|total| entry.memory_gb * MEMORY_SHARE > total);
     let disk = machine
         .free_disk_bytes
         .is_some_and(|free| entry.bytes + DISK_SPARE > free);
@@ -234,11 +236,20 @@ mod tests {
     #[test]
     fn the_catalog_parses_smallest_first() {
         let names: Vec<_> = catalog().iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["qwen3:4b", "qwen3:8b", "gemma3:12b", "gemma3:27b"]);
+        assert_eq!(
+            names,
+            [
+                "qwen3:1.7b",
+                "qwen3:4b",
+                "qwen3:8b",
+                "gemma3:12b",
+                "gemma3:27b"
+            ]
+        );
         assert!(catalog().windows(2).all(|w| w[0].bytes < w[1].bytes));
         assert!(catalog()
             .iter()
-            .all(|e| !e.about.is_empty() && e.memory_gb >= 8));
+            .all(|e| !e.about.is_empty() && e.memory_gb >= 4));
     }
 
     #[test]
@@ -247,11 +258,16 @@ mod tests {
         let room = model.bytes + DISK_SPARE;
         assert_eq!(fit(model, &with(16, room)), Fit::Fits);
         assert_eq!(fit(model, &with(16, room - 1)), Fit::TooBig);
-        let short = Machine {
-            memory_bytes: Some(16 * GIB - 1),
+        let memory = |bytes: u64| Machine {
+            memory_bytes: Some(bytes),
             free_disk_bytes: Some(room),
         };
-        assert_eq!(fit(model, &short), Fit::TooBig);
+        assert_eq!(fit(model, &memory(14_400_000_000)), Fit::Fits);
+        assert_eq!(fit(model, &memory(14_399_999_999)), Fit::TooBig);
+        let eight = entry("qwen3:4b");
+        assert_eq!(fit(eight, &memory(GIB * 78 / 10)), Fit::Fits);
+        assert_eq!(fit(eight, &memory(6 * GIB)), Fit::TooBig);
+        assert_eq!(fit(entry("qwen3:1.7b"), &memory(6 * GIB)), Fit::Fits);
         for entry in catalog() {
             assert_eq!(fit(entry, &Machine::default()), Fit::Fits);
         }
@@ -276,7 +292,11 @@ mod tests {
             name(with(64, 100_000_000_000)).as_deref(),
             Some("gemma3:27b")
         );
-        assert_eq!(name(with(4, 100_000_000_000)), None);
+        assert_eq!(
+            name(with(4, 100_000_000_000)).as_deref(),
+            Some("qwen3:1.7b")
+        );
+        assert_eq!(name(with(2, 100_000_000_000)), None);
         assert_eq!(name(Machine::default()), None);
     }
 
