@@ -65,11 +65,8 @@ pub fn write_chain(doc: &mut DocumentMut, task: Task, chain: &[String]) {
 /// a truncated config: the new text lands in a sibling file first, then
 /// replaces the original in one rename.
 pub fn save_document(path: &std::path::Path, doc: &DocumentMut) -> Result<()> {
-    let tmp = path.with_extension("toml.new");
-    std::fs::write(&tmp, doc.to_string())
-        .with_context(|| format!("could not write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("could not replace {}", path.display()))?;
-    Ok(())
+    leo_core::paths::write_atomic(path, doc.to_string())
+        .with_context(|| format!("could not replace {}", path.display()))
 }
 
 #[cfg(test)]

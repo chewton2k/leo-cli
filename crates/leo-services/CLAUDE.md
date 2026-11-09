@@ -68,7 +68,7 @@ written. `transcriber::Transcriber` transcribes each `.wav` into `.txt`
 recording, gives up after `attempts_after_stop` (writes `.err`, keeps audio)
 unless the error is a rate limit. `Session::assemble` stitches segment texts in
 order. `recover_parts` seals a crash's `.part.wav` and clears `.err` for retry.
-`ai::long::structure_recording` groups parts into ~`WORDS_PER_PART` words, one
+`ai::long::structure_recording` groups parts by a `words_per_group` limit (`long::groups`), one
 request per group plus a title/summary request; every failure falls back to
 the raw transcript, so it cannot fail. `Session::finish` deletes the folder
 unless a segment failed (then `saved: true` keeps the audio). Unfinished
@@ -81,7 +81,7 @@ The live transcript, for catalog models marked fast enough, shows finished segme
 and once that is `SETTLE_AFTER_SECS` (12) long it settles at `live::quietest`
 between 6 s and end − 2 s, so the unsettled end is rewritten rather than glued.
 Only while the transcription backlog is at most one segment. Typed points go to
-the worker via `Job::add_point` and are saved in the manifest. Recording needs
+the recorder through `Controls.points` (`recorder::points_of`) and are saved in the manifest. Recording needs
 only speech AI and a microphone; the writing AI is optional. `LEO_NO_MICROPHONE`
 turns the device off (tests, e2e, CI).
 

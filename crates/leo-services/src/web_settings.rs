@@ -254,6 +254,10 @@ pub fn apply(
     store: &dyn SecretStore,
     local: &Local,
 ) -> Result<String> {
+    static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _saving = SAVING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match text(change, "set")? {
         "provider" => {
             let task = task_named(text(change, "task")?).context("no such task")?;

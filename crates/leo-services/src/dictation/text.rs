@@ -1,6 +1,5 @@
-use natural::phonetics::soundex;
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 use strsim::levenshtein;
 
 fn build_ngram(words: &[&str]) -> String {
@@ -49,6 +48,34 @@ fn build_custom_word_match_keys(word: &str, word_index: usize) -> Vec<CustomWord
 
 fn is_supported_fuzzy_key(key: &str) -> bool {
     !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+fn soundex_code(word: &str) -> Vec<char> {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return Vec::new();
+    };
+    let mut code: Vec<char> = std::iter::once(first)
+        .chain(chars.map(|c| match c {
+            'b' | 'f' | 'p' | 'v' => '1',
+            'c' | 'g' | 'j' | 'k' | 'q' | 's' | 'x' | 'z' => '2',
+            'd' | 't' => '3',
+            'l' => '4',
+            'm' | 'n' => '5',
+            'r' => '6',
+            'h' | 'w' => '9',
+            _ => '0',
+        }))
+        .filter(|c| *c != '9')
+        .collect();
+    code.dedup();
+    code.retain(|c| *c != '0');
+    code.resize(4, '0');
+    code
+}
+
+fn soundex(word1: &str, word2: &str) -> bool {
+    soundex_code(word1) == soundex_code(word2)
 }
 
 fn supports_soundex(key: &str) -> bool {
@@ -248,7 +275,7 @@ fn gated_filler_words_for_language(lang: &str) -> &'static [&'static str] {
     }
 }
 
-static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
+static MULTI_SPACE_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s{2,}").unwrap());
 
 fn collapse_stutters(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -329,13 +356,14 @@ fn remove_filler_matches(text: &str, pattern: &Regex) -> String {
     kept
 }
 
-static YOU_KNOW_BETWEEN: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i),\s*you know\s*,").unwrap());
-static YOU_KNOW_OPENING: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(^|[.!?]\s+)you know,\s*(\p{L})").unwrap());
-static YOU_KNOW_CLOSING: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i),\s*you know([.!?]|$)").unwrap());
-static SCRATCH_THAT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(?:^|[.!?]\s+)scratch that(?:[.!?,]\s*|$)").unwrap());
+static YOU_KNOW_BETWEEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i),\s*you know\s*,").unwrap());
+static YOU_KNOW_OPENING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(^|[.!?]\s+)you know,\s*(\p{L})").unwrap());
+static YOU_KNOW_CLOSING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i),\s*you know([.!?]|$)").unwrap());
+static SCRATCH_THAT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:^|[.!?]\s+)scratch that(?:[.!?,]\s*|$)").unwrap());
 
 fn remove_spoken_asides(text: &str) -> String {
     let mut text = text.to_string();
@@ -359,6 +387,58 @@ fn remove_spoken_asides(text: &str) -> String {
     YOU_KNOW_CLOSING.replace_all(&text, "$1").into_owned()
 }
 
+type Patterns = std::sync::Arc<[Regex]>;
+
+fn filler_pattern(word: &str) -> Result<Regex, regex::Error> {
+    Regex::new(&format!(r"(?i)\b{}\b[,.]?", regex::escape(word)))
+}
+
+fn filler_patterns(
+    language: &OutputLanguageEvidence,
+    custom_filler_words: &Option<Vec<String>>,
+) -> Patterns {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static DEFAULTS: LazyLock<Mutex<HashMap<&'static str, Patterns>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    static CUSTOM: Mutex<Option<(Vec<String>, Patterns)>> = Mutex::new(None);
+    match custom_filler_words {
+        Some(words) => {
+            let mut cached = CUSTOM.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((known, patterns)) = cached.as_ref() {
+                if known == words {
+                    return patterns.clone();
+                }
+            }
+            let patterns: Patterns = words
+                .iter()
+                .filter_map(|word| filler_pattern(word).ok())
+                .collect();
+            *cached = Some((words.clone(), patterns.clone()));
+            patterns
+        }
+        None => {
+            let gated = language
+                .language()
+                .map(gated_filler_words_for_language)
+                .unwrap_or_default();
+            let key = gated.first().copied().unwrap_or("");
+            DEFAULTS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entry(key)
+                .or_insert_with(|| {
+                    UNIVERSAL_FILLER_WORDS
+                        .iter()
+                        .chain(gated)
+                        .map(|word| filler_pattern(word).unwrap())
+                        .collect()
+                })
+                .clone()
+        }
+    }
+}
+
 pub fn remove_filler_words(
     text: &str,
     language: &OutputLanguageEvidence,
@@ -369,32 +449,17 @@ pub fn remove_filler_words(
         return text.to_string();
     }
 
-    let patterns: Vec<Regex> = match custom_filler_words {
-        Some(words) => words
-            .iter()
-            .filter_map(|word| Regex::new(&format!(r"(?i)\b{}\b[,.]?", regex::escape(word))).ok())
-            .collect(),
-        None => UNIVERSAL_FILLER_WORDS
-            .iter()
-            .chain(
-                language
-                    .language()
-                    .map(gated_filler_words_for_language)
-                    .unwrap_or_default(),
-            )
-            .map(|word| Regex::new(&format!(r"(?i)\b{}\b[,.]?", regex::escape(word))).unwrap())
-            .collect(),
-    };
+    let patterns = filler_patterns(language, custom_filler_words);
 
     let mut filtered = text.to_string();
-    for pattern in &patterns {
+    for pattern in patterns.iter() {
         filtered = remove_filler_matches(&filtered, pattern);
     }
 
     remove_spoken_asides(&filtered)
 }
 
-static CLOCK_TIME_PATTERN: Lazy<Regex> = Lazy::new(|| {
+static CLOCK_TIME_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(1[0-2]|0?[1-9])[:.]?([0-5]\d)(\s?)([ap]\.?\s?m\b\.?)").unwrap()
 });
 
@@ -430,6 +495,44 @@ pub fn clean(text: &str, settings: &super::settings::Settings, language: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn soundex_codes_match_the_natural_crate_it_replaced() {
+        let golden = [
+            ("robert", "r163"),
+            ("rupert", "r163"),
+            ("rubin", "r150"),
+            ("ashcraft", "a261"),
+            ("ashcroft", "a261"),
+            ("tymczak", "t522"),
+            ("pfister", "p123"),
+            ("honeyman", "h555"),
+            ("Robert", "R163"),
+            ("ROBERT", "R000"),
+            ("jackson", "j250"),
+            ("smith", "s530"),
+            ("schmidt", "s253"),
+            ("a", "a000"),
+            ("bhb", "b100"),
+            ("lloyd", "l430"),
+            ("felix", "f420"),
+            ("anthropic", "a536"),
+            ("kubernetes", "k165"),
+            ("whisper", "w216"),
+            ("thequickbrown", "t221"),
+        ];
+        for (word, code) in golden {
+            assert_eq!(
+                soundex_code(word).iter().collect::<String>(),
+                code,
+                "{word}"
+            );
+        }
+        assert!(soundex("robert", "rupert"));
+        assert!(soundex("whisper", "wisper"));
+        assert!(!soundex("robert", "Robert"));
+        assert!(!soundex("leo", "leon"));
+    }
 
     fn filter_transcription_output(
         text: &str,

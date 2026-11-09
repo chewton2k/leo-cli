@@ -434,7 +434,10 @@ impl Library {
         self.folders()?;
         let target = self.model_path(id)?;
         let mut tmp = tempfile::NamedTempFile::new_in(&self.models)?;
-        tokio::runtime::Runtime::new()?.block_on(async {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
             #[cfg(not(test))]
             let client = crate::web::model_client(DOWNLOAD_TIMEOUT)?;
             #[cfg(test)]
@@ -453,7 +456,7 @@ impl Library {
                     hash.update(&chunk);
                     progress(bytes, model.file().size);
                 }
-                ensure!(bytes == model.file().size && format!("{:x}", hash.finalize()).eq_ignore_ascii_case(&model.file().sha256),
+                ensure!(bytes == model.file().size && crate::providers::hex(&hash.finalize()).eq_ignore_ascii_case(&model.file().sha256),
                     "The model download was damaged. Try downloading it again.");
                 Ok::<(), anyhow::Error>(())
             };

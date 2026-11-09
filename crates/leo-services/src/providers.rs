@@ -1,20 +1,18 @@
-//! Everything that touches AI providers from outside the chains: describing a
-//! credential, storing and removing keys, testing one provider, and opening the
-//! config file. The CLI and the TUI's profile screen both call these, so there
-//! is one implementation of each.
+//! Everything that touches AI providers from outside the chains: testing one
+//! provider and reporting the state of the downloaded models. Settings and the
+//! doctor both call these, so there is one implementation of each.
 
 use anyhow::Result;
 
 use crate::ai;
-use crate::config::{self, secret::SecretStore, Config};
+use crate::config::{self, Config};
 
 /// Build the single transcription provider named by `name`, regardless of
-/// whether it appears in the `[transcribe]` chain — `leo model test <name>`
-/// must work for a provider a user is still setting up.
-pub fn build_one_transcriber(
+/// whether it appears in the `[transcribe]` chain, so Settings can test a
+/// provider a user is still setting up.
+fn build_one_transcriber(
     name: &str,
     pc: &config::provider::ProviderConfig,
-    _store: &dyn SecretStore,
 ) -> Option<Box<dyn ai::provider::TranscribeProvider>> {
     use config::provider::ProviderKind;
     match pc.kind {
@@ -60,7 +58,7 @@ pub fn test_provider(name: &str) -> Result<String> {
         ));
     }
     match pc.kind {
-        Some(_) => match build_one_transcriber(name, pc, &store) {
+        Some(_) => match build_one_transcriber(name, pc) {
             Some(p) if p.available() => Ok(format!("{name} is reachable")),
             Some(p) => anyhow::bail!("{}", p.unavailable_reason()),
             None => anyhow::bail!("provider '{name}' could not be built"),
@@ -87,10 +85,15 @@ pub fn model_state(path: &std::path::Path, sha256: &str) -> ModelState {
 }
 
 pub fn files_state(dir: &std::path::Path, manifest: &[(String, String)]) -> ModelState {
-    let states: Vec<ModelState> = manifest
-        .iter()
-        .map(|(name, sha)| model_state(&dir.join(name), sha))
-        .collect();
+    worst_state(
+        manifest
+            .iter()
+            .map(|(name, sha)| model_state(&dir.join(name), sha)),
+    )
+}
+
+pub fn worst_state(states: impl IntoIterator<Item = ModelState>) -> ModelState {
+    let states: Vec<ModelState> = states.into_iter().collect();
     if states.contains(&ModelState::Damaged) {
         ModelState::Damaged
     } else if states.contains(&ModelState::Missing) {
@@ -107,16 +110,24 @@ pub fn speech_model_state() -> ModelState {
     }
 }
 
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn sha256_of(path: &std::path::Path) -> Result<String> {
     use sha2::{Digest, Sha256};
+    use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(hex(&hasher.finalize()))
 }
 
 pub fn download_speech_model() -> Result<std::path::PathBuf> {
@@ -185,6 +196,10 @@ pub fn download_verified(
     ])
     .arg(partial.path())
     .arg(url);
+    if !url.starts_with("file://") {
+        curl.args(["--proto", "=https", "--proto-redir", "=https"]);
+    }
+    curl.args(["--max-filesize", "1073741824"]);
     if quiet {
         curl.arg("-sS")
             .stdin(std::process::Stdio::null())

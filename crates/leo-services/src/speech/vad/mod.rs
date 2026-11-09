@@ -188,7 +188,7 @@ mod tests {
     fn silero_ignores_silence_and_keeps_the_pinned_model() {
         let digest = <sha2::Sha256 as sha2::Digest>::digest(silero::MODEL);
         assert_eq!(
-            format!("{digest:x}"),
+            crate::providers::hex(&digest),
             "0d871a800c420fdd5d1b17a3aea4296d1c39608f0ff4a9295eb76457eb1c88e6"
         );
         let mut vad = SileroVad::new(SILERO_VAD_THRESHOLD).unwrap();

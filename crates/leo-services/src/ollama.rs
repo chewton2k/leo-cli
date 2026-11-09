@@ -194,7 +194,7 @@ pub fn pull(
     }
     let response = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_millis(300))
-        .timeout(Duration::from_secs(300))
+        .timeout(None::<Duration>)
         .build()?
         .post(format!("{}/api/pull", root(base_url)))
         .json(&json!({ "model": model, "stream": true }))
@@ -373,5 +373,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("isn't running"));
+    }
+
+    #[test]
+    fn a_slow_trickle_is_cut_by_the_total_client_timeout() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf);
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n");
+            for _ in 0..10 {
+                if socket.write_all(b"0123456789").is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let response = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .unwrap()
+            .get(format!("http://{addr}/"))
+            .send()
+            .unwrap();
+        assert!(response.bytes().is_err());
     }
 }

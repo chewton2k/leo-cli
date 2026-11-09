@@ -10,7 +10,7 @@ fn fixture() -> (tempfile::TempDir, Library) {
     data.models.retain(|m| m.id == "parakeet-tdt-0.6b-v3");
     let file = data.models[0].files.get_mut("Q8_0").unwrap();
     file.size = 5;
-    file.sha256 = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"model"));
+    file.sha256 = crate::providers::hex(&<sha2::Sha256 as sha2::Digest>::digest(b"model"));
     let library = Library::with_catalog(
         dir.path().join("models"),
         dir.path().join("config"),
@@ -105,7 +105,7 @@ fn a_verified_model_is_not_hashed_again_after_a_restart() {
         data.models.retain(|m| m.id == "parakeet-tdt-0.6b-v3");
         let file = data.models[0].files.get_mut("Q8_0").unwrap();
         file.size = 5;
-        file.sha256 = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"model"));
+        file.sha256 = crate::providers::hex(&<sha2::Sha256 as sha2::Digest>::digest(b"model"));
         Library::with_catalog(
             dir.path().join("models"),
             dir.path().join("config"),
