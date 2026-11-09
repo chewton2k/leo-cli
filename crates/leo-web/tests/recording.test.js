@@ -158,3 +158,66 @@ test('a note whose recording was not written up offers both ways forward', () =>
   assert.match(html, /<button type="button" class="btn plain sm" data-action="note-sources">Write the notes<\/button>/);
   assert.equal(notice({}), '');
 });
+
+const recordingSource = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
+const piece = (from, to, name, scope) => {
+  const start = recordingSource.indexOf(`    function ${from}(`);
+  const end = recordingSource.indexOf(`    function ${to}(`, start);
+  return require('node:vm').runInNewContext(`(function(){${recordingSource.slice(start, end)} return ${name};})()`, scope);
+};
+const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const icons = new Proxy({}, { get: () => '' });
+
+function idle(checks, platform) {
+  return piece('drawIdle', 'drawLive', 'drawIdle', {
+    s: { overview: { available: true, checks }, calendar: null, event: null },
+    esc, icons, whenOf: L.whenOf, pendingLine: L.pendingLine, noteFields: () => '', kindChoices: () => '',
+    preflight: L.preflight, tipWords: L.tipWords, HEADSET: L.HEADSET, desktopNow: () => ({ platform }),
+  })([], '');
+}
+
+test('each missing piece is said above Start in a quiet line, and Start stays enabled', () => {
+  const html = idle({ speech: false, writing: false, headset: true }, 'macos');
+  assert.match(html, /<p class="set-note">No speech model yet\. The audio is kept and written up once you choose one\. <a href="#\/settings\/models">Choose a speech model<\/a><\/p>/);
+  assert.match(html, /<p class="set-note">No writing AI is ready, so you.ll get a transcript\. <a href="#\/settings\/writing">Set up writing AI<\/a><\/p>/);
+  assert.match(html, /<p class="set-note" id="rec-headset" hidden>Your sound output is a headset, so leo can.t record only what this computer plays\. Switch to other speakers or headphones first\.<\/p>/);
+  assert.ok(html.indexOf('set-note') < html.indexOf('rec-start'));
+  assert.doesNotMatch(html, /warn/);
+  assert.doesNotMatch(html, /rec-go"[^>]*disabled/);
+  const ready = idle({ speech: true, writing: true, headset: false }, 'macos');
+  assert.doesNotMatch(ready, /set-note|rec-headset/);
+});
+
+test('the idle tip says system tray on Windows', () => {
+  assert.match(idle({}, 'windows'), /Open leo from the system tray to return\./);
+  assert.match(idle({}, 'macos'), /Open leo from the menu bar to return\./);
+  assert.match(idle({}, undefined), /menu bar/);
+});
+
+test('a denied microphone is said plainly with a way to the system settings', () => {
+  assert.equal(L.hearingWords('sound', 'microphone', false, true), 'leo can’t hear: microphone access is off.');
+  assert.equal(L.hearingWords('sound', 'screen', false, true), 'Hearing sound');
+  assert.equal(L.hearingWords('sound', 'microphone', false, false), 'Hearing sound');
+  const live = (denied) => piece('drawLive', 'drawWriting', 'drawLive', {
+    s: { view: { state: 'recording', source: 'microphone', points: [], warnings: [], secs: 3, transcript: '' }, wave: [], showHeard: true, wantsDraft: null, wantsState: '' },
+    esc, icons, clock: L.clock, stateWord: L.stateWord, hearing: L.hearing, hearingWords: L.hearingWords, WAVE_STEP_MS: 60, micDenied: () => denied,
+  })();
+  const html = live(true);
+  assert.match(html, /leo can’t hear: microphone access is off\./);
+  assert.match(html, /<button class="btn plain sm" data-action="app-command" data-app-action="microphone">Open System Settings<\/button>/);
+  assert.doesNotMatch(live(false), /Open System Settings/);
+});
+
+test('choosing Call fills an empty want and never overwrites typed text', () => {
+  const pick = (kind, typed) => {
+    const wants = { value: typed };
+    const headset = { hidden: true };
+    const box = { querySelector: (at) => ({ 'input[name="rec-kind"]:checked': { value: kind }, '#rec-headset': headset, '#rec-wants': wants })[at] };
+    piece('pickKind', 'idleForm', 'pickKind', { MEETING_WANTS: L.MEETING_WANTS })(box, true);
+    return { wants: wants.value, headset: headset.hidden };
+  };
+  assert.deepEqual(pick('call', ''), { wants: L.MEETING_WANTS, headset: false });
+  assert.deepEqual(pick('call', '  '), { wants: L.MEETING_WANTS, headset: false });
+  assert.equal(pick('call', 'only the exam').wants, 'only the exam');
+  assert.deepEqual(pick('microphone', ''), { wants: '', headset: true });
+});

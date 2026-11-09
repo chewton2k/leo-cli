@@ -48,7 +48,27 @@ pub struct Pending {
     pub started: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Checks {
+    pub speech: bool,
+    pub writing: bool,
+    pub headset: bool,
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Checks {
+            speech: true,
+            writing: true,
+            headset: false,
+        }
+    }
+}
+
 pub trait Housekeeper: Send + Sync {
+    fn checks(&self) -> Checks {
+        Checks::default()
+    }
     fn pending_recordings(&self) -> anyhow::Result<Vec<Pending>> {
         Ok(Vec::new())
     }
@@ -256,12 +276,17 @@ fn keep_tail(text: String) -> String {
 
 pub(crate) async fn overview(State(state): State<AppState>) -> Response {
     let mut pending = Vec::new();
+    let mut checks = Checks::default();
     if let Some(housekeeper) = state.housekeeper.clone() {
-        if let Ok(Ok(saved)) =
-            tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await
+        if let Ok((saved, ready)) = tokio::task::spawn_blocking(move || {
+            (housekeeper.pending_recordings(), housekeeper.checks())
+        })
+        .await
         {
+            checks = ready;
             pending.extend(
                 saved
+                    .unwrap_or_default()
                     .into_iter()
                     .map(|p| serde_json::to_value(p).unwrap_or_default()),
             );
@@ -277,6 +302,7 @@ pub(crate) async fn overview(State(state): State<AppState>) -> Response {
         "local": true,
         "job": job,
         "pending": pending,
+        "checks": checks,
     }))
     .into_response()
 }

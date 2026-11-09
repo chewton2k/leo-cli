@@ -112,6 +112,18 @@ fn expire_browser_audio(root: &Path, before: std::time::SystemTime) -> usize {
 }
 
 impl Housekeeper for Housekeeping {
+    fn checks(&self) -> leo_web::record::Checks {
+        let writing = leo_services::health::writing(
+            &leo_services::config::Config::load(),
+            leo_services::config::secret::default_store().as_ref(),
+            None,
+        );
+        leo_web::record::Checks {
+            speech: leo_services::speech::library::library().is_ok_and(|l| l.selected().is_ok()),
+            writing: writing.state == leo_services::health::WritingState::Ready,
+            headset: session::mic::output_is_headset(),
+        }
+    }
     fn pending_recordings(&self) -> Result<Vec<leo_web::record::Pending>> {
         crate::record::pending()
     }

@@ -386,6 +386,30 @@ fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
 }
 
 #[test]
+fn the_overview_says_what_would_stop_a_recording_from_being_written_up() {
+    struct Gaps;
+    impl crate::record::Housekeeper for Gaps {
+        fn checks(&self) -> record::Checks {
+            record::Checks {
+                speech: false,
+                writing: false,
+                headset: true,
+            }
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    let ready = json_of(run(record::overview(State(state.clone()))));
+    assert_eq!(ready["checks"]["speech"], true);
+    assert_eq!(ready["checks"]["writing"], true);
+    assert_eq!(ready["checks"]["headset"], false);
+    state.housekeeper = Some(Arc::new(Gaps));
+    let gaps = json_of(run(record::overview(State(state))));
+    assert_eq!(gaps["checks"]["speech"], false);
+    assert_eq!(gaps["checks"]["writing"], false);
+    assert_eq!(gaps["checks"]["headset"], true);
+}
+
+#[test]
 fn native_recordings_can_be_recovered_without_reopening_capture() {
     struct Kept;
     impl crate::record::Housekeeper for Kept {

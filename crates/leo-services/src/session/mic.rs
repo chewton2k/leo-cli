@@ -77,6 +77,24 @@ fn device_name(device: &cpal::Device) -> String {
         .unwrap_or_default()
 }
 
+fn headset_blocks(windows: bool, output_takes_input: bool, has_loopback: bool) -> bool {
+    !windows && output_takes_input && !has_loopback
+}
+
+pub fn output_is_headset() -> bool {
+    if disabled() || screen_device().is_some() || !records_what_plays() {
+        return false;
+    }
+    let host = cpal::default_host();
+    host.default_output_device().is_some_and(|output| {
+        headset_blocks(
+            cfg!(windows),
+            output.supports_input(),
+            named(&host, DEFAULT_SCREEN_DEVICE).is_some(),
+        )
+    })
+}
+
 fn find_device(screen: bool) -> Result<cpal::Device> {
     let host = cpal::default_host();
     if !screen {
@@ -93,17 +111,17 @@ fn find_device(screen: bool) -> Result<cpal::Device> {
         let output = host.default_output_device().ok_or_else(|| {
             anyhow!("No speakers or headphones found to record what the computer plays.")
         })?;
-        if cfg!(windows) || !output.supports_input() {
-            return Ok(output);
+        let loopback = named(&host, DEFAULT_SCREEN_DEVICE);
+        if headset_blocks(cfg!(windows), output.supports_input(), loopback.is_some()) {
+            bail!(
+                "{} is a microphone and speakers in one, so leo cannot record only what it plays.\n  \
+                 Switch the sound output to other speakers or headphones, then try again.",
+                device_name(&output)
+            );
         }
-        if let Some(device) = named(&host, DEFAULT_SCREEN_DEVICE) {
-            return Ok(device);
-        }
-        bail!(
-            "{} is a microphone and speakers in one, so leo cannot record only what it plays.\n  \
-             Switch the sound output to other speakers or headphones, then try again.",
-            device_name(&output)
-        );
+        return Ok(loopback
+            .filter(|_| !cfg!(windows) && output.supports_input())
+            .unwrap_or(output));
     }
     if let Some(device) = named(&host, DEFAULT_SCREEN_DEVICE) {
         return Ok(device);
@@ -498,6 +516,22 @@ pub fn microphones() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_headset_without_a_loopback_device_off_windows_blocks_recording() {
+        for windows in [false, true] {
+            for input in [false, true] {
+                for loopback in [false, true] {
+                    assert_eq!(
+                        headset_blocks(windows, input, loopback),
+                        !windows && input && !loopback
+                    );
+                }
+            }
+        }
+        assert!(headset_blocks(false, true, false));
+        assert!(!headset_blocks(true, true, false));
+    }
 
     #[test]
     fn a_full_audio_queue_can_be_stopped_without_dropping_the_receiver() {
