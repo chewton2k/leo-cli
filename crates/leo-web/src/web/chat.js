@@ -1954,7 +1954,7 @@
       const taken = fixedSteps(parts.flatMap((part) => part.steps || []));
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
       const prose = (text) => `<div class="prose">${cite(render(text, { rows: true }), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
-      const now = m.pending && taken.length ? stepRuns(taken).at(-1) : null;
+      const now = m.pending && taken.length ? stepRuns(taken.some((s) => s && !s.failed) ? taken.filter((s) => s && !s.failed) : taken).at(-1) : null;
       const trace = now
         ? `<div class="msg-status" role="status">${stepLine({ ...now.step, found: [] }, true, now.times)}</div>`
         : !m.pending && taken.length
