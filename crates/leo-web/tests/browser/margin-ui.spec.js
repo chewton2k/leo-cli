@@ -85,7 +85,7 @@ test('a note keeps its own persona, and a persona made in Settings joins the not
   await form.getByLabel('What should he look for?').fill('Check each claim against its evidence.');
   await form.getByRole('button', { name: 'Save' }).click();
   await expect(page).toHaveURL(new RegExp(`#/n/${note.id}`));
-  await expect(button).toHaveText('Lab review');
+  await expect(button).toHaveText('Felix as Lab review');
   await button.click();
   await expect(menu.getByRole('menuitemradio')).toHaveText([/Reader/, /Critic/, /Encourager/, /Lab review/]);
   await expect(menu.getByRole('menuitemradio', { name: /Lab review/ })).toHaveAttribute('title', 'Check each claim against its evidence.');

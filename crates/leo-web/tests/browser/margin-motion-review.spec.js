@@ -32,6 +32,7 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     window.errors=[];
     const fail=error=>window.errors.push(error.message||String(error));
     const toast=()=>{};
+    const noAi=()=>false;
     const cleanTitle=text=>text;
     const requestId=()=>'r1';
     const felix={felix:(size,cls)=>'<span class="felix '+cls+'" data-mascot></span>'};
