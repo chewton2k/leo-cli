@@ -1424,8 +1424,8 @@ Settings navigation stays between sections; its phone strip recentres only when
 the section changes.
 First-launch setup
 (`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a
-two-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
-with an Access → Speech model stepper. The Access page lists Microphone and macOS
+three-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
+with an Access → Speech model → Writing AI stepper. The Access page lists Microphone and macOS
 Accessibility with icons; each row turns its button into an Allowed checkmark as
 soon as the 1 s poll sees it. Continue needs only the microphone, or a microphone
 state the system cannot report (Windows often says `unknown`; `unavailable` in
@@ -1433,8 +1433,11 @@ test sessions); Accessibility is optional. A denied microphone shows Open System
 Settings (macOS ignores a second request). Skip setup finishes all three flags.
 The model page shows the catalog as selectable cards (Recommended, or All, with
 the Settings rating meters), preselecting the in-use or first recommended model,
-with one action bar: Download · size, a progress bar with Cancel, or Use and
-finish. Download polling updates chips and the bar in place so a click is never
+with one action bar: Download and use · size (uses the model and finishes when the
+download ends), a progress bar with Cancel, or Use and finish. Writing AI shows the
+Settings provider cards preselected (signed-in Claude Code, Codex, Ollama with a model),
+a status row, Skip for now and Use <Name> (Ready only), plus the dictation shortcut hint
+(`dictateHint`, also under the empty home's ask field). Download polling updates chips and the bar in place so a click is never
 lost to a replaced button. Back returns to Access. The existing three completion
 flags remain compatible, and late responses cannot dismiss another sheet or page.
 Speech models show In use, every Downloaded file and filtered All models cards.

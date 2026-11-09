@@ -27,6 +27,16 @@ impl leo_web::SettingsApi for WebSettings {
         page
     }
 
+    fn writing(&self, probe: bool) -> Value {
+        let cfg = Config::load();
+        let store = default_store();
+        let local = choice::local_models(&cfg);
+        serde_json::json!({
+            "writing": leo_services::health::writing(&cfg, store.as_ref(), Some(&local)),
+            "candidates": leo_services::web_settings::candidates(&cfg, &local, probe),
+        })
+    }
+
     fn refresh_usage(&self, claude: bool) -> Option<String> {
         let cfg = Config::load();
         leo_services::usage::refresh_codex(&cfg);

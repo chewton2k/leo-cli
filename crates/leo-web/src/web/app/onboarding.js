@@ -1,6 +1,6 @@
 function nextOnboarding(preferences) {
   const done = preferences.onboarding || [false, false, false];
-  return !done[0] || !done[1] ? 0 : !done[2] ? 2 : -1;
+  return !done[0] || !done[1] ? 0 : !done[2] ? 2 : preferences.writing_done === false ? 3 : -1;
 }
 let onboardingShown = false;
 let onboardingGeneration = 0;
@@ -9,11 +9,17 @@ let onboardingChoice = '';
 let onboardingFinishing = false;
 let onboardingBusy = false;
 let onboardingAll = false;
+let onboardingAutoUse = '';
+let onboardingWriting = null;
+let onboardingWriter = '';
+let onboardingOllama = null;
+let onboardingOllamaTimer = 0;
 const ONBOARDING_POLL_MS = 1000;
-const ONBOARDING_STEPS = [['access', 'Access'], ['model', 'Speech model']];
+const ONBOARDING_STEPS = [['access', 'Access'], ['model', 'Speech model'], ['writing', 'Writing AI']];
+const ONBOARDING_WRITERS = ['claude_code', 'codex', 'ollama'];
 function onboardingHere(step) { return document.querySelector(`[data-onboarding-step="${step}"]`); }
 function onboardingStepper(step) {
-  const at = step === 0 ? 0 : 1;
+  const at = [0, 0, 1, 2][step];
   return `<ol class="onboarding-steps" aria-label="Setup, step ${at + 1} of ${ONBOARDING_STEPS.length}">${ONBOARDING_STEPS.map(([id, label], index) => `<li class="${index < at ? 'done' : index === at ? 'on' : ''}"${index === at ? ' aria-current="step"' : ''}><span class="onboarding-step-dot">${index < at ? ICON.check : index + 1}</span>${label}</li>`).join('')}</ol>`;
 }
 // What each permission row shows. A denied microphone cannot be asked again on
@@ -43,16 +49,19 @@ function maybeOnboarding(force = false, only = null) {
   const step = only ?? nextOnboarding(desktopApp.preferences);
   if (step < 0) return;
   onboardingShown = true;
-  const permissions = step === 0;
-  const title = permissions ? 'Allow access' : 'Choose a speech model';
-  const description = permissions ? 'leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
+  const permissions = step === 0, writing = step === 3;
+  const title = permissions ? 'Allow access' : writing ? 'Choose who writes your notes' : 'Choose a speech model';
+  const description = permissions ? 'leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : writing ? 'Notes and Felix use this AI. leo found these on this computer. You can change it later in Settings.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
   const foot = permissions
     ? `<button class="btn plain" data-action="onboarding-skip">Skip setup</button><button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="0" disabled>Continue</button>`
+    : writing ? `<button class="btn plain" data-action="onboarding-next" data-step="3">Skip for now</button><button class="btn primary" id="onboarding-use" data-action="onboarding-use" disabled>Use writing AI</button>`
     : `<button class="btn plain" data-action="onboarding-back">Back</button><button class="btn plain" data-action="onboarding-next" data-step="2">Skip for now</button>`;
-  const body = permissions ? onboardingPermissionsPage() : '<div id="onboarding-models" class="onboarding-models"><p class="hint">Opening the model library…</p></div>';
-  sheet(`<div class="onboarding" data-onboarding-step="${step}">${onboardingStepper(step)}<h3>${title}</h3><p>${description}</p>${body}<p class="hint onboarding-later">${permissions ? 'You can finish anything you skip in Settings → Health.' : 'You can choose a model later in Settings → Speech models.'}</p><div class="buttons onboarding-foot">${foot}</div></div>`, { modal: true });
+  const body = permissions ? onboardingPermissionsPage() : writing ? '<section id="onboarding-writing" class="set-card onboarding-card"><p class="hint">Looking for writing AIs on this computer…</p></section>' : '<div id="onboarding-models" class="onboarding-models"><p class="hint">Opening the model library…</p></div>';
+  const later = permissions ? 'You can finish anything you skip in Settings → Health.' : writing ? 'You can choose a writing AI later in Settings → Writing AI.' : 'You can choose a model later in Settings → Speech models.';
+  sheet(`<div class="onboarding" data-onboarding-step="${step}">${onboardingStepper(step)}<h3>${title}</h3><p>${description}</p>${body}<p class="hint onboarding-later">${later}</p>${writing ? '<p class="hint onboarding-dictate" hidden></p>' : ''}<div class="buttons onboarding-foot">${foot}</div></div>`, { modal: true });
   updateOnboardingPermissions();
   if (step === 2) loadOnboardingModels(++onboardingGeneration);
+  if (writing) { loadOnboardingWriting(++onboardingGeneration); dictateHint($('.onboarding-dictate')); }
 }
 function updateOnboardingPermissions() {
   if (!desktopApp) return;
@@ -84,7 +93,7 @@ async function finishOnboarding(el) {
   onboardingFinishing = true;
   updateOnboardingPermissions();
   try {
-    for (const index of step < 0 ? [0, 1, 2] : step < 2 ? [0, 1] : [2]) {
+    for (const index of step < 0 ? [0, 1, 2, 3] : step < 2 ? [0, 1] : [step]) {
       await appChange({ action: 'finish_step', step: index });
       if (generation !== onboardingGeneration || !onboardingHere(step < 0 ? 0 : step)) return;
     }
@@ -108,6 +117,11 @@ async function loadOnboardingModels(generation) {
     if (!models.some((model) => model.id === onboardingChoice)) onboardingChoice = (models.find((model) => model.in_use) || models.find((model) => model.recommended) || models[0])?.id || '';
     drawOnboardingModels();
     if (models.some((model) => model.progress?.state === 'downloading')) setTimeout(() => loadOnboardingModels(generation), 700);
+    else if (onboardingAutoUse) {
+      const ready = onboardingAutoUse === onboardingChoice && models.find((model) => model.id === onboardingAutoUse)?.verified;
+      onboardingAutoUse = '';
+      if (ready) await onboardingModel({ dataset: { verb: 'use' } });
+    }
   } catch (e) {
     if (generation !== onboardingGeneration || !onboardingHere(2)) return;
     const box = $('#onboarding-models');
@@ -178,7 +192,7 @@ function drawOnboardingProgress() {
   box.dataset.model = '';
   const error = progress?.error && progress.state !== 'cancelled' ? `<p class="set-note warn">${esc(progress.error)}</p>` : '';
   const verb = model.verified ? 'use' : 'download';
-  const label = model.verified ? 'Use and finish' : model.downloaded ? 'Download again' : `Download · ${speechBytes(model.size)}`;
+  const label = model.verified ? 'Use and finish' : `Download and use · ${speechBytes(model.size)}`;
   box.innerHTML = `<span class="grow hint">${model.verified ? `${esc(model.name)} is ready on this computer.` : `${esc(model.name)} downloads once, then works offline.`}</span><button class="btn primary" data-action="onboarding-model" data-verb="${verb}"${busy}>${label}</button>${error}`;
 }
 function pickOnboardingModel(el) {
@@ -200,6 +214,7 @@ async function onboardingModel(el) {
   if (!model || onboardingBusy) return;
   const generation = ++onboardingGeneration;
   const verb = el.dataset.verb;
+  onboardingAutoUse = verb === 'download' ? model.id : '';
   onboardingBusy = true;
   drawOnboardingProgress();
   try {
@@ -213,4 +228,78 @@ async function onboardingModel(el) {
     onboardingBusy = false;
     if (onboardingHere(2)) drawOnboardingProgress();
   }
+}
+async function loadOnboardingWriting(generation) {
+  try {
+    const view = await api('/api/writing?probe=signin');
+    if (generation !== onboardingGeneration || !onboardingHere(3)) return;
+    onboardingWriting = view;
+    const candidates = view.candidates || [];
+    onboardingWriter = ONBOARDING_WRITERS.find((id) => onboardingWriterReady(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterCandidate(id)) || '';
+    const box = $('#onboarding-writing');
+    if (box) box.innerHTML = `${choiceCards({ label: 'Writing AI', choices: ONBOARDING_WRITERS.filter((id) => candidates.some((c) => c.id === id)).map((id) => providerCard({ id })), current: onboardingWriter, action: 'onboarding-writer', key: 'writer', className: 'providers' })}<div id="onboarding-writer-status" role="status"></div>`;
+    drawOnboardingWriting();
+    if (onboardingWriter === 'ollama') loadOnboardingOllama(generation);
+  } catch (e) {
+    if (generation !== onboardingGeneration || !onboardingHere(3)) return;
+    const box = $('#onboarding-writing');
+    if (box) box.innerHTML = '<p class="set-note warn">leo could not look for writing AIs. Skip for now and choose one in Settings → Writing AI.</p>';
+  }
+}
+function onboardingWriterCandidate(id) { return onboardingWriting?.candidates?.find((c) => c.id === id); }
+function onboardingWriterReady(c) { return c?.id === 'ollama' ? !!(c.running && c.models?.length) : c?.signed_in === true; }
+function onboardingWriterStatus(c) {
+  if (!c) return '';
+  const name = providerCard(c)[1], where = ON_MAC ? 'this Mac' : 'this computer';
+  const row = (text, label, ok = false) => `<div class="set-row"><span class="grow">${text}</span><span class="set-status ${ok ? 'ok' : 'missing'}">${label}</span></div>`;
+  if (onboardingWriterReady(c)) return row(c.id === 'ollama' ? `Ollama is running on ${where}.` : `${name} is signed in on ${where}.`, 'Ready', true);
+  if (c.id !== 'ollama') return c.installed ? row(`Sign in to ${name}, then come back.`, 'Sign in needed') : row(`${name} is not installed on ${where}.`, 'Not installed');
+  if (!c.installed) return ollamaSetup({ installed: false }, '');
+  if (!c.running) return row('Open Ollama to start it.', 'Not running');
+  return row('Choose a model for Ollama to download.', 'No model') + ollamaSetup(onboardingOllama, '');
+}
+function drawOnboardingWriting() {
+  const c = onboardingWriterCandidate(onboardingWriter);
+  refreshPanel($('#onboarding-writer-status'), onboardingWriterStatus(c));
+  const use = $('#onboarding-use');
+  if (!use) return;
+  use.textContent = c ? `Use ${providerCard(c)[1]}` : 'Use writing AI';
+  use.disabled = !onboardingWriterReady(c) || onboardingBusy;
+}
+function pickOnboardingWriter(el) {
+  if (!onboardingHere(3) || el.dataset.writer === onboardingWriter) return;
+  const box = el.closest('.choice-cards'), picks = [...box.querySelectorAll('.choice-pick')];
+  const from = picks.findIndex((pick) => pick.classList.contains('on'));
+  onboardingWriter = el.dataset.writer;
+  for (const pick of picks) { pick.classList.toggle('on', pick === el); pick.setAttribute('aria-pressed', String(pick === el)); }
+  syncChoiceCards(box, from);
+  drawOnboardingWriting();
+  if (onboardingWriter === 'ollama') loadOnboardingOllama(onboardingGeneration);
+}
+async function loadOnboardingOllama(generation) {
+  clearTimeout(onboardingOllamaTimer);
+  const here = () => generation === onboardingGeneration && onboardingHere(3) && onboardingWriter === 'ollama';
+  try {
+    const view = await api('/api/writing/ollama');
+    if (!here()) return;
+    state.ollama = onboardingOllama = view;
+    Object.assign(onboardingWriterCandidate('ollama'), { installed: view.installed, running: view.running, models: view.pulled || [] });
+    drawOnboardingWriting();
+  } catch (e) {
+    if (!here()) return;
+  }
+  if (!onboardingWriterReady(onboardingWriterCandidate('ollama'))) onboardingOllamaTimer = setTimeout(() => loadOnboardingOllama(generation), onboardingOllama?.pull?.state === 'pulling' ? 1000 : 5000);
+}
+async function onboardingUse() {
+  const c = onboardingWriterCandidate(onboardingWriter);
+  if (!onboardingWriterReady(c) || onboardingBusy || !onboardingHere(3)) return;
+  onboardingBusy = true;
+  drawOnboardingWriting();
+  try {
+    await api('/api/settings', { method: 'POST', body: { set: 'provider', task: 'writing', value: c.id } });
+  } finally {
+    onboardingBusy = false;
+    drawOnboardingWriting();
+  }
+  if (onboardingHere(3)) await finishOnboarding({ dataset: { step: '3' } });
 }

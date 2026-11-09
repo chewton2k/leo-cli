@@ -180,7 +180,7 @@ pub fn describe(
     })
 }
 
-pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
+fn agents(cfg: &Config, probe: bool) -> Vec<(choice::Choice, Agent, bool, Option<bool>)> {
     choice::WRITING
         .iter()
         .filter_map(|choice| {
@@ -188,19 +188,44 @@ pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
             let agent = Agent::of(pc)?;
             let cli = AgentCli::new(choice.provider.to_string(), agent, pc);
             let installed = cli.available();
-            let signed_in = installed
+            let signed_in = (probe && installed)
                 .then(|| agent_cli::signed_in(agent, cli.bin()))
                 .flatten();
-            Some(json!({
+            Some((*choice, agent, installed, signed_in))
+        })
+        .collect()
+}
+
+pub fn coding_plans(cfg: &Config, usage: &crate::usage::Seen) -> Vec<Value> {
+    agents(cfg, true)
+        .into_iter()
+        .map(|(choice, agent, installed, signed_in)| {
+            json!({
                 "provider": choice.provider,
                 "name": choice.name,
                 "installed": installed,
                 "signed_in": signed_in,
                 "signin": agent.sign_in(),
                 "limits": usage.get(choice.provider),
-            }))
+            })
         })
         .collect()
+}
+
+pub fn candidates(cfg: &Config, local: &Local, probe: bool) -> Vec<Value> {
+    let mut found: Vec<Value> = agents(cfg, probe)
+        .into_iter()
+        .map(|(choice, _, installed, signed_in)| {
+            json!({"id": choice.provider, "installed": installed, "signed_in": signed_in})
+        })
+        .collect();
+    found.push(json!({
+        "id": "ollama",
+        "installed": local.ollama_running || crate::health::on_path("ollama"),
+        "running": local.ollama_running,
+        "models": local.ollama,
+    }));
+    found
 }
 
 fn open(path: &Path) -> Result<DocumentMut> {
@@ -431,6 +456,42 @@ mod tests {
                 assert!(plan["signed_in"].is_null());
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidates_ask_for_sign_in_only_when_probed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let mut cfg = Config::default();
+        for name in ["codex", "claude_code"] {
+            let bin = dir.path().join(name);
+            std::fs::write(&bin, format!("#!/bin/sh\ntouch '{}'\nprintf '%s\\n' 'Logged in using ChatGPT' '{{\"loggedIn\":true}}'\n", ran.display())).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            cfg.providers.get_mut(name).unwrap().bin = Some(bin.to_string_lossy().into());
+        }
+        let local = Local {
+            ollama_running: true,
+            ollama: vec!["qwen3:4b".into()],
+            ..Local::default()
+        };
+        let quiet = candidates(&cfg, &local, false);
+        assert!(!ran.exists());
+        assert_eq!(quiet.len(), 3);
+        for found in &quiet[..2] {
+            assert_eq!(found["installed"], true);
+            assert!(found["signed_in"].is_null());
+        }
+        assert_eq!(
+            quiet[2],
+            json!({"id":"ollama","installed":true,"running":true,"models":["qwen3:4b"]})
+        );
+        let probed = candidates(&cfg, &local, true);
+        assert!(ran.exists());
+        let ids: Vec<_> = probed.iter().map(|found| found["id"].clone()).collect();
+        assert_eq!(ids, [json!("codex"), json!("claude_code"), json!("ollama")]);
+        assert_eq!(probed[0]["signed_in"], true);
     }
 
     #[cfg(unix)]

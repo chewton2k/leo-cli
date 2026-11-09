@@ -161,6 +161,9 @@ loopback engine finishes.
 actor; native login/tray failures restore the previous file and cached state.
 First-launch microphone, Accessibility and model completion flags persist
 independently; the page groups both permissions before the model choice.
+`finish_step(3)` is the writing AI step (`writing_done = Some(true)`); any earlier
+step first pins `writing_done` to its computed value, so new setups still see it.
+The page reads `preferences.writing_done` as `writing_done()`.
 `Preferences` ignores unknown keys, so a file from a newer build never resets
 settings; `writing_done()` is true when the key is true, or absent and all three
 older flags are done.

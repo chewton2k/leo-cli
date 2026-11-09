@@ -37,8 +37,12 @@ impl Preferences {
             .unwrap_or_else(|| self.onboarding.iter().all(|done| *done))
     }
     pub fn finish_step(&mut self, step: usize) -> Result<()> {
-        ensure!(step < 3, "Choose a setup step.");
-        self.onboarding[step] = true;
+        ensure!(step < 4, "Choose a setup step.");
+        let done = self.writing_done();
+        self.writing_done = Some(step == 3 || done);
+        if step < 3 {
+            self.onboarding[step] = true;
+        }
         Ok(())
     }
     pub fn load(path: &Path) -> Result<Self> {
@@ -237,6 +241,8 @@ impl AppSettings {
 impl leo_web::app_settings::AppApi for AppSettings {
     fn view(&self) -> Result<Value> {
         let preferences = self.preferences();
+        let mut preferences_view = serde_json::to_value(&preferences)?;
+        preferences_view["writing_done"] = preferences.writing_done().into();
         let permissions = self.permission_view();
         let updates = self
             .updates
@@ -244,7 +250,7 @@ impl leo_web::app_settings::AppApi for AppSettings {
             .map(|u| u.view())
             .unwrap_or(json!({"state":"idle"}));
         Ok(
-            json!({"preferences":preferences,"problem":self.preferences.problem(),"permissions":permissions,"updates":updates,"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"unsigned":cfg!(target_os="macos") && option_env!("LEO_APP_SIGNED")!=Some("1"),"paths":{"notes":leo_core::paths::data_dir()?.join("notes"),"models":leo_services::config::choice::models_dir().join("speech")}}),
+            json!({"preferences":preferences_view,"problem":self.preferences.problem(),"permissions":permissions,"updates":updates,"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"unsigned":cfg!(target_os="macos") && option_env!("LEO_APP_SIGNED")!=Some("1"),"paths":{"notes":leo_core::paths::data_dir()?.join("notes"),"models":leo_services::config::choice::models_dir().join("speech")}}),
         )
     }
     fn change(&self, value: Value) -> Result<Value> {
@@ -358,7 +364,10 @@ mod tests {
         preferences.finish_step(0).unwrap();
         preferences.finish_step(2).unwrap();
         assert_eq!(preferences.onboarding, [true, true, true]);
-        assert!(preferences.finish_step(3).is_err());
+        assert!(!preferences.writing_done());
+        preferences.finish_step(3).unwrap();
+        assert_eq!(preferences.writing_done, Some(true));
+        assert!(preferences.finish_step(4).is_err());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app-settings.json");
         preferences.save(&path).unwrap();

@@ -261,7 +261,10 @@ Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.
 Health uses local doctor checks without microphone or AI requests. First-launch
 setup groups microphone and macOS Accessibility on one page with live checkmarks,
-then offers a speech model; existing completion flags remain compatible.
+then offers a speech model (Download and use finishes the step), then a writing AI
+from what is on this computer (`GET /api/writing?probe=signin`, the only place
+setup runs the sign-in check; Use saves the provider as Settings does); existing
+completion flags remain compatible.
 Desktop navigation uses an icon rail beside a folder-and-note explorer. Folder
 labels expand the tree; individual note rows open their notes.
 
