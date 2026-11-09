@@ -5105,7 +5105,8 @@ test('the Tasks panel stays usable beside a long note on short and tall screens'
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await panel.locator('[data-action="tasks-fold"]').first().click();
   await expect(panel.locator('.tasks-pill')).toBeVisible();
-  await panel.locator('.tasks-pill').click();
+  const pill = await panel.locator('.tasks-pill').boundingBox();
+  await page.mouse.click(pill.x + pill.width / 2, pill.y + pill.height / 2);
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(panel.locator('.tasks-body')).toBeVisible();
