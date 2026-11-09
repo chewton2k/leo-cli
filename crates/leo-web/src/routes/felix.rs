@@ -1270,6 +1270,13 @@ fn answer(
                     }
                 }
             }
+        } else if let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) {
+            let reply = said.borrow().clone();
+            if let Some(diagram) =
+                crate::drawing::drawn(&writer, &reply).filter(|_| !tx.is_closed())
+            {
+                send(serde_json::json!({ "t": format!("\n\n{diagram}") }));
+            }
         }
         spent
     };
