@@ -39,7 +39,7 @@ function onboardingCanContinue() {
   return microphone === 'allowed' || microphone === 'unavailable' || microphone === 'unknown';
 }
 function onboardingPermissionRow(permission, icon, name, why) {
-  return `<div class="set-row onboarding-permission" data-onboarding-permission="${permission}"><span class="onboarding-icon">${icon}</span><div class="grow"><strong>${name}</strong><p class="hint">${why}</p><p class="hint onboarding-denied" hidden>leo is turned off in System Settings. Turn it on there, then come back.</p></div><div class="onboarding-permission-action"><button class="btn plain sm" data-action="app-command" data-app-action="${permission}">Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}</button><span role="status" class="set-status" hidden></span></div></div>`;
+  return `<div class="set-row onboarding-permission" data-onboarding-permission="${permission}"><span class="onboarding-icon">${icon}</span><div class="grow"><strong>${name}</strong><p class="hint">${why}</p><p class="hint onboarding-denied" hidden>leo is turned off in ${desktopApp?.platform === 'windows' ? '' : 'System '}Settings. Turn it on there, then come back.</p></div><div class="onboarding-permission-action"><button class="btn plain sm" data-action="app-command" data-app-action="${permission}">Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}</button><span role="status" class="set-status" hidden></span></div></div>`;
 }
 function onboardingPermissionsPage() {
   const windows = desktopApp.platform === 'windows';
@@ -52,7 +52,7 @@ function maybeOnboarding(force = false, only = null) {
   onboardingShown = true;
   const permissions = step === 0, writing = step === 3;
   const title = permissions ? 'Allow access' : writing ? 'Choose who writes your notes' : 'Choose a speech model';
-  const description = permissions ? 'leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : writing ? 'Notes and Felix use this AI. leo found these on this computer. You can change it later in Settings.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
+  const description = permissions ? 'leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : writing ? 'Notes, Felix and AI dictation use this AI. <span id="onboarding-found">leo found these on this computer.</span> You can change it later in Settings.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
   const foot = permissions
     ? `<button class="btn plain" data-action="onboarding-skip">Skip setup</button><button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="0" disabled>Continue</button>`
     : writing ? `<button class="btn plain" data-action="onboarding-next" data-step="3">Skip for now</button><button class="btn primary" id="onboarding-use" data-action="onboarding-use" disabled>Use writing AI</button>`
@@ -73,9 +73,10 @@ function updateOnboardingPermissions() {
     const allowed = now === 'allowed';
     const button = row.querySelector('button');
     button.hidden = allowed || now === 'unavailable';
-    const label = now === 'denied' ? 'Open System Settings' : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`;
+    const settings = desktopApp.platform === 'windows' ? 'Settings' : 'System Settings';
+    const label = now === 'denied' ? `Open ${settings}` : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`;
     if (button.textContent !== label) button.textContent = label;
-    button.setAttribute('aria-label', now === 'denied' ? `Open System Settings for ${permission === 'microphone' ? 'the microphone' : 'Accessibility'}` : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`);
+    button.setAttribute('aria-label', now === 'denied' ? `Open ${settings} for ${permission === 'microphone' ? 'the microphone' : 'Accessibility'}` : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`);
     row.querySelector('.onboarding-denied').hidden = now !== 'denied';
     row.classList.toggle('allowed', allowed);
     const status = row.querySelector('[role="status"]');
@@ -235,8 +236,9 @@ async function loadOnboardingWriting(generation) {
     const view = await api('/api/writing?probe=signin');
     if (generation !== onboardingGeneration || !onboardingHere(3)) return;
     onboardingWriting = view;
-    const candidates = view.candidates || [];
-    onboardingWriter = ONBOARDING_WRITERS.find((id) => onboardingWriterReady(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterUsable(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterCandidate(id)) || '';
+    const candidates = view.candidates || [], none = !candidates.some((c) => c.installed);
+    onboardingWriter = ONBOARDING_WRITERS.find((id) => onboardingWriterReady(onboardingWriterCandidate(id))) || ONBOARDING_WRITERS.find((id) => onboardingWriterUsable(onboardingWriterCandidate(id))) || (none && onboardingWriterCandidate('ollama') && 'ollama') || ONBOARDING_WRITERS.find((id) => onboardingWriterCandidate(id)) || '';
+    if (none && onboardingWriter === 'ollama' && $('#onboarding-found')) $('#onboarding-found').textContent = 'None of these is on this computer yet. Ollama runs here and needs no account.';
     const box = $('#onboarding-writing');
     if (box) box.innerHTML = `${choiceCards({ label: 'Writing AI', choices: ONBOARDING_WRITERS.filter((id) => candidates.some((c) => c.id === id)).map((id) => providerCard({ id })), current: onboardingWriter, action: 'onboarding-writer', key: 'writer', className: 'providers' })}<div id="onboarding-writer-status" role="status"></div>`;
     drawOnboardingWriting();

@@ -706,10 +706,14 @@ async function showWorkspace(dir = null) {
   });
 }
 
+const SHORTCUT_KEYS = { option: ['⌥', 'Alt'], opt: ['⌥', 'Alt'], alt: ['⌥', 'Alt'], ctrl: ['⌃', 'Ctrl'], control: ['⌃', 'Ctrl'], cmd: ['⌘', 'Win'], command: ['⌘', 'Win'], meta: ['⌘', 'Win'], super: ['⌘', 'Win'], shift: ['⇧', 'Shift'] };
+function shortcutText(keys) {
+  return keys.split('+').map((key) => SHORTCUT_KEYS[key.trim().toLowerCase()]?.[ON_MAC ? 0 : 1] || key.trim().replace(/^./, (c) => c.toUpperCase())).join(ON_MAC ? '' : '+');
+}
 async function dictateHint(el) {
   try {
     const keys = (await api('/api/dictation'))?.settings?.shortcut;
-    if (keys && el?.isConnected) { el.textContent = `Press ${keys} anywhere to dictate.`; el.hidden = false; }
+    if (keys && el?.isConnected) { el.textContent = `Press ${shortcutText(keys)} anywhere to dictate.`; el.hidden = false; }
   } catch (e) {}
 }
 

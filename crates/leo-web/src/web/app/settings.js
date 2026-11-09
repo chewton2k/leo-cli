@@ -333,7 +333,7 @@ function ollamaGB(bytes, unit = 1e9) {
   return `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} GB`;
 }
 
-function ollamaSetup(view, current) {
+function ollamaSetup(view, current, picked = ollamaSelected) {
   if (!view || (view.installed && !view.running)) return '';
   const where = ON_MAC ? 'this Mac' : 'this computer';
   if (!view.installed) return `<div class="set-row"><span class="grow">Ollama runs AI models on ${where}. It isn’t installed yet.</span><a class="btn primary sm" href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">Download Ollama</a></div><p class="set-note">Once it’s installed, leo finds it by itself and lists models that fit ${where}. No Terminal needed.</p>`;
@@ -342,14 +342,16 @@ function ollamaSetup(view, current) {
   const facts = [view.memory_bytes && `${ollamaGB(view.memory_bytes, 1073741824)} of memory`, view.free_disk_bytes && `${ollamaGB(view.free_disk_bytes)} free`].filter(Boolean);
   const summary = facts.length ? `<p class="hint">${ON_MAC ? 'This Mac' : 'This computer'} has ${facts.join(' and ')}.</p>` : '';
   const cards = (view.models || []).map((m) => {
-    const here = pull?.model === m.name;
+    const here = pull?.model === m.name, on = here || m.name === picked;
     const fit = m.recommended ? 'Recommended' : `${m.fits ? 'Fits' : 'Too big for'} ${where}`;
     const status = here ? `<span class="chip accent">Downloading ${percent}%</span>` : m.name === current ? '<span class="chip accent">In use</span>' : m.pulled ? '<span class="chip">Downloaded</span>' : '';
-    return `<button type="button" class="onboarding-model${here ? ' on' : ''}" data-action="ollama-pull" data-model="${esc(m.name)}"${m.fits ? '' : ' disabled'}><span class="onboarding-model-head"><b>${esc(m.name)}</b><span class="chip">${fit}</span><span class="onboarding-model-state">${status}</span></span><span class="hint">${esc(m.about)}</span><span class="hint">${ollamaGB(m.bytes)} · needs ${esc(m.memory_gb)} GB of memory</span></button>`;
+    return `<button type="button" class="onboarding-model${on ? ' on' : ''}" data-action="ollama-pick" data-model="${esc(m.name)}" aria-pressed="${on}"${m.fits ? '' : ' disabled'}><span class="onboarding-model-head"><b>${esc(m.name)}</b><span class="chip">${fit}</span><span class="onboarding-model-state">${status}</span></span><span class="hint">${esc(m.about)}</span><span class="hint">${ollamaGB(m.bytes)} · needs ${esc(m.memory_gb)} GB of memory</span></button>`;
   }).join('');
   const progress = pull ? `<div class="onboarding-model-action"><div class="grow onboarding-download"><span class="hint">Downloading ${esc(pull.model)} · ${pull.total ? `${ollamaGB(pull.completed)} of ${ollamaGB(pull.total)}` : 'Starting…'}</span><progress value="${percent}" max="100" aria-label="Downloading ${esc(pull.model)}"></progress></div><button class="btn plain" data-action="ollama-cancel">Cancel</button></div>` : '';
+  const choice = !pull && (view.models || []).find((m) => m.name === picked && m.fits && (!m.pulled || m.name !== current));
+  const choose = choice ? `<div class="onboarding-model-action"><span class="grow hint">${esc(choice.name)} ${choice.pulled ? 'is ready on this computer.' : 'downloads once, then works offline.'}</span><button class="btn primary" data-action="ollama-pull" data-model="${esc(choice.name)}">${choice.pulled ? 'Use' : `Download · ${ollamaGB(choice.bytes)}`}</button></div>` : '';
   const failed = view.pull?.state === 'failed' ? `<p class="set-note warn">${esc(view.pull.error)}</p>` : '';
-  return `${summary}<div class="onboarding-model-list" role="group" aria-label="Ollama models">${cards}</div>${progress}${failed}`;
+  return `${summary}<div class="onboarding-model-list" role="group" aria-label="Ollama models">${cards}</div>${progress}${choose}${failed}`;
 }
 
 let ollamaTimer = 0, ollamaGeneration = 0;
@@ -389,6 +391,12 @@ async function ollamaChange(change) {
   state.ollama = view;
   refreshPanel($('#ollama-setup'), ollamaSetup(view, writingModel()));
   loadOllama(mine);
+}
+let ollamaSelected = '';
+function ollamaPick(el) {
+  ollamaSelected = el.dataset.model;
+  if (onboardingHere(3)) return drawOnboardingWriting();
+  refreshPanel($('#ollama-setup'), ollamaSetup(state.ollama, writingModel()));
 }
 function ollamaPull(el) {
   const model = state.ollama?.models?.find((m) => m.name === el.dataset.model);

@@ -464,6 +464,8 @@
 
   const TODO = /^(buy|get|grab|pick up|pick|drop off|bring|order|return|pay|book|call|phone|ring|email|e-mail|text|message|reply to|reply|respond to|follow up|send|ask|tell|remind|invite|meet|visit|finish|submit|file|sign|apply|register|renew|cancel|schedule|reschedule|plan|prepare|prep|pack|print|clean|wash|tidy|cook|water|feed|walk|fix|repair|install|update|back up|backup|charge|study|practice|practise|review|revise|read|write|draft|edit|work on|look into|research|check|move|sell|donate|shop for|go to|take|make|post|upload|download|watch|listen to|learn)\b/i;
 
+  const STUDY = /\b(compare|explain|summari[sz]e|table|why|how)\b/i;
+
   function quickRank(input, { notes = [], places = [], folders = [], chats = [] } = {}, now = new Date()) {
     const text = String(input || '').trim();
     if (!text) return [];
@@ -493,7 +495,7 @@
     else if (shelves.length && leaf(shelves[0].path) === lower) top = shelves[0];
     else if (goes.length && words <= 2 && lower.length >= 3 && (!started.length || goes[0].name.toLowerCase().startsWith(lower))) top = goes[0];
     else if (started.length && words <= 4) top = opens[0];
-    else if (TODO.test(text) && words >= 2 && words <= 12) top = task;
+    else if (TODO.test(text) && words >= 2 && words <= 6 && !STUDY.test(text)) top = task;
     const rows = [top, ask, ...opens, search, ...shelves, ...talks, ...goes, task, note].filter((row, i, all) => all.indexOf(row) === i);
     const found = rows.filter((row) => row !== task && row !== note).slice(0, 6);
     return rows.filter((row) => found.includes(row) || row === task || row === note);

@@ -879,7 +879,7 @@ function answers(messages, { busy = null, send = () => {}, clipboard = null, fet
   const calls = [];
   const input = { value: '', focus() { calls.push('focus'); } };
   const context = {
-    ...C, state: { messages, busy, preparingSend: false, id: 'chat-12345678' }, escape: esc, render: (t) => `<p>${esc(t)}</p>`, input,
+    ...C, state: { messages, busy, preparingSend: false, id: 'chat-12345678', refs: [], sent: [], files: [], selection: null }, drawRefs() {}, escape: esc, render: (t) => `<p>${esc(t)}</p>`, input,
     root: { navigator: { clipboard } }, upload: Promise.resolve(), openTraces: new Set(), working: new Map(), tick() {}, workingFor: () => '', writer: () => '', writerOf: () => '',
     stepChevron: '', MOST_REPLY_STEPS: 64, clipped: (t) => t, stored: () => messages.filter((m) => !m.pending), fit() {}, persist() {}, draw() {}, send,
     notify: (text) => calls.push(`notify:${text}`), setTimeout: () => 0,
@@ -983,6 +983,34 @@ test('Edit puts the question back in the composer and drops the pair', async () 
   assert.equal(messages.length, 0);
   assert.equal(box.input.value, 'What is a heap?\n\ndraft');
   assert.deepEqual(box.calls.at(-1), 'focus');
+});
+
+const withAttachments = () => [{
+  role: 'user', text: 'Compare these', refs: [{ id: 'n1', title: 'Heaps' }], selection: { note: 'n2', title: 'Trees', from: 1, to: 2, text: 'a tree' },
+  files: ['d1'], docs: ['Notes.pdf'], cards: [{ name: 'Notes.pdf', excerpt: 'Lecture one' }],
+}, pair()[1]];
+
+test('Retry and Edit keep a question\u2019s notes, passage and documents', async () => {
+  for (const [name, again] of [['retryAnswer', true], ['editQuestion', false]]) {
+    const sent = [], messages = withAttachments();
+    const box = answers(messages, { send: (t) => sent.push(t) });
+    assert.ok(box.context.state.sent.push({ id: 'd1', name: 'Notes.pdf' }) && box.lastPair() === 0);
+    box.context.state.refs = [{ id: 'n3', title: 'Other' }];
+    await box[name]();
+    const { state } = box.context;
+    assert.deepEqual(state.refs.map((r) => r.id), ['n1', 'n3']);
+    assert.equal(state.selection.note, 'n2');
+    assert.equal(state.sent.length, 0);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.files)), [{ name: 'Notes.pdf', excerpt: 'Lecture one', id: 'd1', status: 'ready' }]);
+    assert.deepEqual(sent, again ? ['Compare these'] : []);
+    assert.equal(box.input.value, again ? '' : 'Compare these');
+  }
+});
+
+test('a quiz, next or steer question still has no Retry or Edit', () => {
+  for (const extra of [{ quiz: {} }, { next: true }, { steer: true }]) {
+    assert.equal(answers([{ ...pair()[0], ...extra }, pair()[1]]).lastPair(), -1);
+  }
 });
 
 test('a refused or busy take-back keeps the chat as it is', async () => {

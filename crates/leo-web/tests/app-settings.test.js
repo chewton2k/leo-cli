@@ -176,3 +176,15 @@ test('Health loads in shape', () => {
   assert.ok(html.includes('Checking…') && html.includes('activity-spin'));
   assert.ok(html.includes('class="skeleton"'));
 });
+test('the microphone fix button opens the system settings when access is denied', () => {
+  const { value } = context();
+  value.ICON = new Proxy({}, { get: () => '' });
+  const view = { sections: [{ checks: [{ name: 'microphone', state: 'missing', action: 'microphone' }] }] };
+  const button = (permissions, platform) => {
+    vm.runInContext(`desktopApp = ${JSON.stringify({ platform, permissions })}`, value);
+    return value.healthCards(view);
+  };
+  assert.match(button({ microphone: 'ask' }, 'macos'), />Allow access<\/button>/);
+  assert.match(button({ microphone: 'denied' }, 'macos'), />Open System Settings<\/button>/);
+  assert.match(button({ microphone: 'denied' }, 'windows'), />Open Settings<\/button>/);
+});

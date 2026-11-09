@@ -2490,7 +2490,7 @@
       const n = state.messages.length;
       const a = state.messages[n - 1];
       const q = state.messages[n - 2];
-      return a && q && a.role === 'assistant' && !a.pending && q.role === 'user' && !q.next && !q.quiz && !q.steer && !q.selection && !(q.refs || []).length && !(q.files || []).length && !(q.docs || []).length && !(q.cards || []).length ? n - 2 : -1;
+      return a && q && a.role === 'assistant' && !a.pending && q.role === 'user' && !q.next && !q.quiz && !q.steer ? n - 2 : -1;
     }
 
     async function copyAnswer(i, button) {
@@ -2509,7 +2509,7 @@
       const at = lastPair();
       if (at < 0 || state.busy || state.preparingSend || !state.id) return null;
       const id = state.id;
-      const text = state.messages[at].text;
+      const asked = state.messages[at];
       state.preparingSend = true;
       try {
         await upload;
@@ -2525,18 +2525,31 @@
       state.messages.splice(at, 2);
       persist();
       draw(false);
-      return text;
+      return asked;
+    }
+
+    function bringBack(asked) {
+      const ids = asked.files || [];
+      const back = state.sent.filter((f) => ids.includes(f.id));
+      state.refs = [...(asked.refs || []), ...state.refs].reduce(addRef, []);
+      if (asked.selection) state.selection = asked.selection;
+      state.sent = state.sent.filter((f) => !back.includes(f));
+      state.files = [...state.files, ...back.map((f) => ({ ...(asked.cards || []).find((c) => c.name === f.name), ...f, status: 'ready' }))];
+      drawRefs();
     }
 
     async function retryAnswer() {
-      const text = await takeBack();
-      if (text !== null) send(text);
+      const asked = await takeBack();
+      if (!asked) return;
+      bringBack(asked);
+      send(asked.text);
     }
 
     async function editQuestion() {
-      const text = await takeBack();
-      if (text === null) return;
-      input.value = [text, input.value].filter((t) => t.trim()).join('\n\n');
+      const asked = await takeBack();
+      if (!asked) return;
+      bringBack(asked);
+      input.value = [asked.text, input.value].filter((t) => t.trim()).join('\n\n');
       fit();
       input.focus();
     }

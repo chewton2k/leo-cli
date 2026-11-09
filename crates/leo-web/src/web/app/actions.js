@@ -20,6 +20,7 @@ const actions = {
   'dictation-add-word': addDictationWord,
   'speech-filter': filterSpeech,
   'speech-model': changeSpeechModel,
+  'ollama-pick': ollamaPick,
   'ollama-pull': ollamaPull,
   'ollama-cancel': () => ollamaChange({ action: 'cancel' }),
   back,

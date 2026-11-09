@@ -58,8 +58,17 @@ test('read completion distinguishes silence from failure without losing failed b
     await pending;
     assert.equal(h.state.reading, false);
     assert.equal(h.state.baseline.length, failed ? 0 : 1);
-    assert.equal(h.state.status, failed ? FAILED : '');
+    assert.equal(h.state.status, failed ? FAILED : 'Felix read it; nothing to add.');
   }
+});
+
+test('a read that leaves a margin note says nothing about having read', async () => {
+  const h = harness();
+  const pending = h.context.marginRead(h.state.s);
+  await new Promise(setImmediate);
+  h.settle().resolve({ note: { id: 't1', messages: [] } });
+  await pending;
+  assert.equal(h.state.status, '');
 });
 
 test('mode updates retain confirmed state after failure and ignore departed notes', async () => {
@@ -158,10 +167,11 @@ test('the dots wait 200 ms, then mark the last changed block, and only while tha
   }
 });
 
-test('silence fades the reading dots and leaves no status', async () => {
+test('silence fades the reading dots and says Felix read it, for a moment', async () => {
   const h = harness();
   const el = await finish(h, { note: null });
-  assert.equal(h.state.status, '');
+  assert.equal(h.state.status, 'Felix read it; nothing to add.');
+  assert.equal(h.state.brief, true);
   assert.equal(h.state.readingAt, null);
   assert.equal(h.state.readingEl, null);
   assert.equal(el.leaving, true);

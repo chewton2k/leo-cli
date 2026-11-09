@@ -106,17 +106,58 @@ test('Download and use finishes the speech step once the model is downloaded', a
   assert.deepEqual(calls.at(-1), ['app', 2]);
 });
 
-test('the dictation hint names the real shortcut and stays hidden without dictation', async () => {
+test('the dictation hint names the real shortcut the way the page shows keys and stays hidden without dictation', async () => {
   const core = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
-  for (const [answer, text] of [[{ settings: { shortcut: '⌥Space' } }, 'Press ⌥Space anywhere to dictate.'], [null, '']]) {
-    const context = { api: async () => { if (!answer) throw new Error('Dictation is not available.'); return answer; } };
+  for (const [mac, shortcut, text] of [
+    [true, 'option+space', 'Press ⌥Space anywhere to dictate.'],
+    [false, 'ctrl+space', 'Press Ctrl+Space anywhere to dictate.'],
+    [true, '⌥Space', 'Press ⌥Space anywhere to dictate.'],
+    [true, 'fn', 'Press Fn anywhere to dictate.'],
+    [true, null, ''],
+  ]) {
+    const context = { ON_MAC: mac, api: async () => { if (!shortcut) throw new Error('Dictation is not available.'); return { settings: { shortcut } }; } };
     vm.createContext(context);
-    vm.runInContext(core.slice(core.indexOf('async function dictateHint('), core.indexOf('function wireHomeAsk(')), context);
+    vm.runInContext(core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('function wireHomeAsk(')), context);
     const el = { hidden: true, isConnected: true, textContent: '' };
     await context.dictateHint(el);
     assert.equal(el.textContent, text);
-    assert.equal(el.hidden, !answer);
+    assert.equal(el.hidden, !shortcut);
   }
+});
+
+test('with no writing AI on the computer, setup preselects Ollama and says so', async () => {
+  const absent = [{ id: 'claude_code', installed: false }, { id: 'codex', installed: false }, { id: 'ollama', installed: false, running: false, models: [] }];
+  const found = { textContent: 'leo found these on this computer.' };
+  const { context, nodes } = setup(absent, null, () => ({ installed: false, running: false, pulled: [] }));
+  nodes['#onboarding-found'] = found;
+  await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', context);
+  assert.ok(nodes['#onboarding-writing'].innerHTML.startsWith('cards:ollama:'));
+  assert.equal(found.textContent, 'None of these is on this computer yet. Ollama runs here and needs no account.');
+  const some = setup([claude(false), ...absent.slice(1)]);
+  some.nodes['#onboarding-found'] = { textContent: 'leo found these on this computer.' };
+  await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', some.context);
+  assert.ok(some.nodes['#onboarding-writing'].innerHTML.startsWith('cards:claude_code:'));
+  assert.equal(some.nodes['#onboarding-found'].textContent, 'leo found these on this computer.');
+});
+
+test('the denied microphone text says Settings on Windows and System Settings elsewhere', () => {
+  for (const [platform, name] of [['windows', 'Settings'], ['macos', 'System Settings']]) {
+    const { context } = setup([]);
+    context.desktopApp = { platform };
+    const row = context.onboardingPermissionRow('microphone', '', 'Microphone', 'why');
+    assert.ok(row.includes(`leo is turned off in ${name}. Turn it on there`), row);
+  }
+});
+
+test('clicking an Ollama card in setup only selects it', async () => {
+  const { context, nodes, calls } = setup([ollama([])], null, () => ({ installed: true, running: true, pulled: [] }));
+  await vm.runInContext('loadOnboardingWriting(onboardingGeneration)', context);
+  await settle();
+  const before = calls.length;
+  context.ollamaPick({ dataset: { model: 'qwen3:4b' } });
+  assert.equal(vm.runInContext('ollamaSelected', context), 'qwen3:4b');
+  assert.equal(calls.length, before);
+  assert.ok(nodes['#onboarding-writer-status'].innerHTML.includes('<ollama-setup'));
 });
 
 function clocked(candidates) {

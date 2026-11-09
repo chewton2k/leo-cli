@@ -1207,7 +1207,7 @@ async function marginRead(s) {
     if (!got?.failed) marginPage.baseline = marginKit.blocksOf(source);
     if (!along) marginSetStatus('');
     else if (got?.failed) marginSetStatus(got.error || READ_FAILED);
-    else marginSetStatus('');
+    else marginSetStatus(got?.note ? '' : 'Felix read it; nothing to add.', true);
     if (!got?.failed) marginReadingDone(!got?.note);
     if (got?.note) {
       marginPage.threads.push(got.note);

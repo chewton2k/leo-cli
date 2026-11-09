@@ -168,11 +168,11 @@ const piece = (from, to, name, scope) => {
 const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 const icons = new Proxy({}, { get: () => '' });
 
-function idle(checks, platform) {
+function idle(checks, platform, denied = false) {
   return piece('drawIdle', 'drawLive', 'drawIdle', {
     s: { overview: { available: true, checks }, calendar: null, event: null },
     esc, icons, whenOf: L.whenOf, pendingLine: L.pendingLine, noteFields: () => '', kindChoices: () => '',
-    preflight: L.preflight, tipWords: L.tipWords, HEADSET: L.HEADSET, desktopNow: () => ({ platform }),
+    preflight: L.preflight, tipWords: L.tipWords, HEADSET: L.HEADSET, desktopNow: () => ({ platform }), micDenied: () => denied,
   })([], '');
 }
 
@@ -188,6 +188,14 @@ test('each missing piece is said above Start in a quiet line, and Start stays en
   assert.doesNotMatch(ready, /set-note|rec-headset/);
 });
 
+test('a denied microphone is said above Start with a way to the system settings, and Start stays enabled', () => {
+  const html = idle({}, 'macos', true);
+  assert.match(html, /<p class="set-note">leo can’t hear: microphone access is off\. <button class="btn plain sm" data-action="app-command" data-app-action="microphone">Open System Settings<\/button><\/p>/);
+  assert.ok(html.indexOf('microphone access is off') < html.indexOf('rec-start'));
+  assert.doesNotMatch(html, /rec-go"[^>]*disabled/);
+  assert.doesNotMatch(idle({}, 'macos'), /microphone access is off/);
+});
+
 test('the idle tip says system tray on Windows', () => {
   assert.match(idle({}, 'windows'), /Open leo from the system tray to return\./);
   assert.match(idle({}, 'macos'), /Open leo from the menu bar to return\./);
@@ -200,7 +208,7 @@ test('a denied microphone is said plainly with a way to the system settings', ()
   assert.equal(L.hearingWords('sound', 'microphone', false, false), 'Hearing sound');
   const live = (denied) => piece('drawLive', 'drawWriting', 'drawLive', {
     s: { view: { state: 'recording', source: 'microphone', points: [], warnings: [], secs: 3, transcript: '' }, wave: [], showHeard: true, wantsDraft: null, wantsState: '' },
-    esc, icons, clock: L.clock, stateWord: L.stateWord, hearing: L.hearing, hearingWords: L.hearingWords, WAVE_STEP_MS: 60, micDenied: () => denied,
+    esc, icons, clock: L.clock, stateWord: L.stateWord, hearing: L.hearing, hearingWords: L.hearingWords, WAVE_STEP_MS: 60, micDenied: () => denied, desktopNow: () => ({ platform: 'macos' }),
   })();
   const html = live(true);
   assert.match(html, /leo can’t hear: microphone access is off\./);

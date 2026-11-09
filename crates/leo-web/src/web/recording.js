@@ -372,6 +372,7 @@
         : '';
       const connect = s.calendar && !s.calendar.connected ? '<p class="hint rec-calendar"><a href="#/settings/calendar">Connect a calendar</a> to name recordings after your classes or meetings.</p>' : '';
       const gaps = preflight(ov.checks).map((g) => `<p class="set-note">${esc(g.text)} <a href="${g.href}">${esc(g.link)}</a></p>`).join('')
+        + (micDenied('microphone') ? '<p class="set-note">leo can’t hear: microphone access is off. <button class="btn plain sm" data-action="app-command" data-app-action="microphone">' + (desktopNow()?.platform === 'windows' ? 'Open Settings' : 'Open System Settings') + '</button></p>' : '')
         + (ov.checks && ov.checks.headset ? `<p class="set-note" id="rec-headset" hidden>${esc(HEADSET)}</p>` : '');
       const recover = pending.length
         ? `<div class="rec-recover">${pending.map((p) => `<div class="rec-recover-item"><div class="rec-recover-row">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">${esc(pendingLine(p))}</span></span></div><button type="button" class="btn plain sm" data-action="rec-recover" data-id="${esc(p.id)}">Recover</button><button type="button" class="btn plain sm" data-action="rec-discard" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.title || 'interrupted recording')}">Delete</button></div>`).join('')}</div>`
@@ -408,7 +409,7 @@
         <section class="set-card rec-live-card">
           <div class="rec-live-top"><span class="rec-state"><span class="rec-dot"></span><span id="rec-word">${esc(stateWord(v))}</span></span><span class="rec-meta">${kind}</span></div>
           <div class="rec-clock"><span id="rec-time">${clock(v.secs)}</span></div>
-          <div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused, micDenied(v.source)))}</p>${micDenied(v.source) ? '<button class="btn plain sm" data-action="app-command" data-app-action="microphone">Open System Settings</button>' : ''}
+          <div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused, micDenied(v.source)))}</p>${micDenied(v.source) ? `<button class="btn plain sm" data-action="app-command" data-app-action="microphone">${(desktopNow()?.platform === 'windows' ? 'Open Settings' : 'Open System Settings')}</button>` : ''}
           ${controls}
           ${warnings}
         </section>
