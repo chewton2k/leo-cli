@@ -2682,7 +2682,14 @@ button.choice-pick .felix { cursor: inherit; }
 .upload-error { color: var(--danger); }
 .chip.original { text-decoration: none; }
 .chip.original svg { width: 13px; height: 13px; }
-.drop-ok { outline: 2px solid var(--accent) !important; outline-offset: -2px; background: var(--accent-soft) !important; color: var(--text) !important; }
+.drop-ok, .side-note.combine-armed { outline: 2px solid var(--accent) !important; outline-offset: -2px; background: var(--accent-soft) !important; color: var(--text) !important; }
+.side-note:is(.combine-wait, .combine-armed) { position: relative; }
+.side-note:is(.combine-wait, .combine-armed)::after { content: 'Hold to combine'; margin-left: auto; padding-left: 8px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); font-weight: 500; color: var(--accent); }
+.side-note:is(.combine-wait, .combine-armed) .side-label { flex: 1 0 auto; max-width: calc(100% - 4em); }
+.side-note-wrap:has(.combine-wait, .combine-armed) .side-sub { display: none; }
+.side-note.combine-armed::after { content: 'Combine'; }
+@media (prefers-reduced-motion: no-preference) { .side-note.combine-wait::before { content: ''; position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px; border-radius: 1px; background: var(--accent); transform-origin: left; pointer-events: none; animation: combine-hold var(--spring) linear both; } }
+@keyframes combine-hold { from { transform: scaleX(0); } }
 .side-kids.drop-in { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); border-radius: 0 0 9px 9px; }
 .card[draggable="true"], .side-row[draggable="true"] { -webkit-user-drag: element; }
 body.files-over main { position: relative; }

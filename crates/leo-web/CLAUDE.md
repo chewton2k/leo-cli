@@ -346,7 +346,13 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (`drag.js`) moves notes and folders (`Store::move_dir` refuses itself, its
   own subfolder, or a taken name), files dropped open the upload sheet.
   Dropping a note on another opens Combine (`combine.rs`: the AI writes one
-  note, leo puts back anything it dropped). It runs in the background
+  note, leo puts back anything it dropped). In the explorer (2026-11-09, the user's call, after a 6-persona
+  simulation) a note held on another note's row for `SPRING_MS` arms it (the folder spring's timer slot, keyed
+  `{key, kind}`; `.combine-wait` "Hold to combine" with a line growing over the hold, then `.combine-armed` "Combine";
+  the parent folder is not lit) and a drop opens the sheet; a quicker drop still moves. The note menu has
+  Combine into… (`explorerCombineMenu`: up to 1000 notes from the brief notes list, " · folder" only on a title clash),
+  and a Quick Leo query that is just "merge" or "combine" (optionally followed by this, note, it, into or with) offers Combine “<open note>” into… above the ranked rows
+  (a hint row when no note is open). The sheet names the note that keeps its title; the ready toast says "ready to review". It runs in the background
   (2026-10-14, the user's call): POST `combine` starts a job on a thread
   (`AppState.combines`, at most 20, kept 6 h) metered as `combine:<id>`
   (streamed characters against the two notes' length); the Background panel
@@ -380,7 +386,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (2026-11-02, the user's call): every explorer row means its folder (the folder
   row and chevron, its open children `.side-kids`, a note row means the note's
   folder, empty tree space the top level), so a note dropped on a note in the
-  explorer moves there (combining stays on Search cards). The destination
+  explorer moves there unless held to combine (below). The destination
   folder's row gets `drop-ok` and its open children `drop-in`; holding a note or
   folder drag over a closed folder for `SPRING_MS` (600) opens it for that visit
   (`side.revealed`, never saved); the tree scrolls near its

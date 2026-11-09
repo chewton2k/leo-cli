@@ -494,7 +494,7 @@ function explorerMenu(el, event = null) {
   const owner = el.closest('button') || el.closest('.side-tree, .side-group');
   if (!owner) return;
   const rows = target.kind === 'note'
-    ? [['open', 'Open', ICON.note], ['rename', 'Rename', ICON.pen], ['move', 'Move to…', ICON.move], null, ['trash', 'Move to trash', ICON.trash, true]]
+    ? [['open', 'Open', ICON.note], ['rename', 'Rename', ICON.pen], ['move', 'Move to…', ICON.move], ['combine', 'Combine into…', ICON.note], null, ['trash', 'Move to trash', ICON.trash, true]]
     : [['new', target.dir ? 'New note here' : 'New note', ICON.filePlus], ['folder', target.dir ? 'New folder here' : 'New folder', ICON.folderPlus], ...(target.kind === 'folder' && target.dir ? [null, ['rename', 'Rename', ICON.pen], ['move', 'Move to…', ICON.move], null, ['trash', 'Move to trash', ICON.trash, true]] : [])];
   popupMenu(owner, {
     label: target.kind === 'note' ? 'Note options' : 'Folder options',
@@ -554,6 +554,7 @@ async function explorerAction(action, target) {
   if (action === 'rename') return renameExplorerNote(note);
   if (action === 'trash') return trashNote(note, target);
   if (action === 'move') return explorerMoveMenu(target, note, explorerFocus(target) || document.activeElement);
+  if (action === 'combine') return explorerCombineMenu(note, explorerFocus(target) || $('#title') || document.activeElement);
 }
 
 function inlineEdit(where, { id, value, label, hint = '', at, save }) {
@@ -634,6 +635,25 @@ async function explorerMoveMenu(target, note, owner) {
         else await dropNote({ id: note.id, title: note.title, dir: note.directory }, dir);
         refocusExplorer(target.kind === 'folder' ? { kind: 'folder', dir: dir ? `${dir}/${folderLabel(target.dir)}` : folderLabel(target.dir) } : { kind: 'folder', dir });
       },
+    })),
+  });
+}
+
+async function explorerCombineMenu(note, owner) {
+  const mine = seq;
+  const notes = await api(`/api/notes?${new URLSearchParams({ limit: '1000', brief: 'true', sort: 'title' })}`);
+  if (mine !== seq) return;
+  const others = notes.filter((n) => n.id !== note.id);
+  if (!others.length) return toast('There is no other note to combine it with.');
+  const titles = others.map((n) => n.title);
+  const twice = new Set(titles.filter((title, i) => titles.indexOf(title) !== i));
+  popupMenu(owner, {
+    label: `Combine “${note.title || 'Untitled'}” into`,
+    find: 'Find a note',
+    rows: others.map((n) => ({
+      text: `${n.title || 'Untitled'}${twice.has(n.title) ? ` · ${n.directory || 'Top level'}` : ''}`,
+      icon: ICON.note,
+      run: () => combineSheet({ id: note.id, title: note.title || 'Untitled' }, { id: n.id, title: n.title || 'Untitled' }),
     })),
   });
 }

@@ -56,7 +56,7 @@ function control(page, action) {
   return page.locator(`.fab[data-action="${action}"]:visible, .new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
-async function dragBetween(page, source, target) {
+async function dragBetween(page, source, target, hold = '') {
   for (let tries = 0; ; tries++) {
     try {
       await source.scrollIntoViewIfNeeded();
@@ -82,6 +82,12 @@ async function dragBetween(page, source, target) {
     expect(await target.evaluate((el, point) => el.contains(document.elementFromPoint(point.x, point.y)), end), 'the drop target is visible above fixed controls').toBe(true);
     await page.mouse.move(end.x, end.y, { steps: 3 });
     await page.mouse.move(end.x, end.y);
+    let nudge = 0;
+    if (hold) await expect.poll(async () => {
+      nudge = 1 - nudge;
+      await page.mouse.move(end.x + nudge, end.y);
+      return target.evaluate((el, name) => el.classList.contains(name), hold);
+    }).toBe(true);
   } finally {
     await page.mouse.up();
   }
@@ -728,6 +734,42 @@ test.describe('drag and drop', () => {
     await page.goto(`/#/f/${b}`);
     await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), page.locator('#side .side-group[data-drop-dir=""]'));
     await expect.poll(where).toBe('');
+  });
+
+  test('holding a note on another note in the explorer opens Combine, and a quick drop still moves it', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const tag = Date.now().toString(36);
+    const top = `hold-${tag}`;
+    const inner = `${top}/inner`;
+    await page.request.post('/api/dirs', { data: { path: inner } });
+    const make = async (title, directory) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory } })).json();
+    const a = await make(`Hold A ${tag}`, top);
+    const b = await make(`Hold B ${tag}`, top);
+    const c = await make(`Hold C ${tag}`, inner);
+    await page.goto(`/#/n/${c.id}`);
+    const row = (note) => page.locator(`#side .side-note[data-id="${note.id}"]`);
+    await expect(row(b)).toBeVisible();
+    await dragBetween(page, row(a), row(b), 'combine-armed');
+    const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
+    await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+    await expect(sheet).toContainText(`“${b.title}” keeps its title`);
+    await expect(page.locator('.combine-wait, .combine-armed')).toHaveCount(0);
+    await sheet.locator('[data-action="close"]').click();
+    await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+
+    await row(c).scrollIntoViewIfNeeded();
+    await page.evaluate(([from, to]) => {
+      const pick = (id) => document.querySelector(`#side .side-note[data-id="${id}"]`);
+      const data = new DataTransfer();
+      const fire = (el, type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data }));
+      fire(pick(from), 'dragstart');
+      fire(pick(to), 'dragover');
+      fire(pick(to), 'drop');
+      fire(pick(from), 'dragend');
+    }, [a.id, c.id]);
+    await expect(page.locator('.toast'), 'a drop that was not held moves the note into that note’s folder').toContainText(`Moved “${a.title}” to inner`);
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${a.id}`)).json()).directory).toBe(inner);
+    await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
   });
 
   test('files dropped on the page make a note, and on Felix go to him', async ({ page }) => {
@@ -3495,7 +3537,7 @@ test('dropping one note on another combines them in the background with progress
   percent = 70;
   await expect(panel).toContainText('· 70%');
   Object.assign(job, { state: 'ready', result: { title: b.title, with_title: a.title, body: '## Graphs\nA graph has nodes and edges.\n\n## BFS\nBFS uses a queue.', added: ['![Tree](tree.png)'], kept: 0.7, kept_enough: false, base: await versions(b.id), with_base: await versions(a.id) } });
-  await expect(page.locator('.toast')).toContainText('are combined');
+  await expect(page.locator('.toast')).toContainText('are ready to review');
   await expect(panel).toContainText('Ready to review');
   await expect(panel).toContainText('Ready in the background');
   await panel.locator('.activity-row').click();
@@ -3510,6 +3552,54 @@ test('dropping one note on another combines them in the background with progress
   await page.locator('.toast button', { hasText: 'Undo' }).click();
   await expect(page.locator('.toast')).toContainText('Both notes are back');
   expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toBe('A graph has nodes and edges.');
+});
+
+test('Combine into… in the explorer menu and a “merge” line in Quick Leo pick the other note from a list', async ({ page }) => {
+  test.skip(test.info().project.name === 'phone', 'the explorer is beside the page on wider screens');
+  const tag = Date.now().toString(36);
+  const folder = `pick-${tag}`;
+  await page.request.post('/api/dirs', { data: { path: folder } });
+  const make = async (title) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory: folder } })).json();
+  const a = await make(`Pick A ${tag}`);
+  const b = await make(`Pick B ${tag}`);
+  await page.goto(`/#/n/${a.id}`);
+  const row = page.locator(`#side .side-note[data-id="${a.id}"]`);
+  await expect(row).toBeVisible();
+  await row.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Combine into…' }).click();
+  const picker = page.getByRole('menu', { name: `Combine “${a.title}” into` });
+  await expect(picker.locator('input')).toBeFocused();
+  await picker.locator('input').fill(b.title);
+  await expect(picker.getByRole('menuitem')).toHaveCount(1);
+  await picker.getByRole('menuitem', { name: b.title }).click();
+  const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
+  await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+  await expect(sheet).toContainText(`“${b.title}” keeps its title and is rewritten with everything from both notes; “${a.title}” goes to the trash.`);
+  await sheet.locator('[data-action="close"]').click();
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+
+  await page.keyboard.press('ControlOrMeta+k');
+  const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
+  const input = box.locator('#quick-input');
+  await input.fill('merge');
+  const first = box.locator('.quick-row.on');
+  await expect(first).toContainText(`Combine “${a.title}” into…`);
+  await expect(first).toContainText('Combine notes');
+  await input.press('Enter');
+  await expect(box).toHaveCount(0);
+  await expect(picker.locator('input')).toBeFocused();
+  await picker.locator('input').fill(b.title);
+  await picker.getByRole('menuitem', { name: b.title }).click();
+  await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+  await sheet.locator('[data-action="close"]').click();
+
+  await page.goto('/');
+  await page.keyboard.press('ControlOrMeta+k');
+  await input.fill('combine');
+  await expect(first).toContainText('Open a note to combine it');
+  await input.press('Enter');
+  await expect(box).toBeVisible();
+  await expect(page.getByRole('menu')).toHaveCount(0);
 });
 
 test('PDF export leaves out the tasks panel and every overlay, with the same full-width page on any screen', async ({ page }) => {
@@ -5078,6 +5168,8 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/new/${dir}`);
   await page.goto('/#/calendar');
   await page.keyboard.press('ControlOrMeta+f');
+  await expect(page.locator('.quick-leo'), 'only Cmd/Ctrl+K opens Quick Leo').toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+k');
   await expect(page.locator('.quick-leo')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('.quick-leo')).toHaveCount(0);
@@ -5168,8 +5260,6 @@ test('a late missing note response keeps a new draft open', async ({ page }) => 
     await held;
     await route.fulfill({status:404,json:{error:'That note is no longer there.'}});
   });
-  await expect(page.locator('.quick-leo'), 'only Cmd/Ctrl+K opens Quick Leo').toHaveCount(0);
-  await page.keyboard.press('ControlOrMeta+k');
   await page.goto('/#/n/late-route-note');
   await page.evaluate(() => { location.hash = '#/new'; });
   const title = `Kept draft ${Date.now().toString(36)}`;
