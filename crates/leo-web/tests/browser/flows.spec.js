@@ -734,6 +734,7 @@ test.describe('drag and drop', () => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
     await page.goto('/');
     await dropFiles(page, 'main', [{ name: 'dropped.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
+    await page.locator('#drop-make').click();
     await expect(page.locator('#upload-list')).toContainText('dropped.txt');
     await page.keyboard.press('Escape');
 

@@ -698,8 +698,26 @@ async function showWorkspace(dir = null) {
   document.body.classList.remove('on-note');
   chrome({});
   swap('workspace', () => {
-    app.innerHTML = `<section class="workspace-empty">${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    app.innerHTML = `<section class="workspace-empty"><label class="quick-bar home-ask">${ICON.search}<input id="home-ask" placeholder="Ask Felix, search, or jot something…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Ask Felix, search, or jot something"><kbd>${quickLabel}</kbd></label>${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    wireHomeAsk();
     scrollToTop();
+  });
+}
+
+function wireHomeAsk() {
+  const field = $('#home-ask');
+  const open = () => {
+    quickLeo();
+    const input = $('#quick-input');
+    input.value = field.value;
+    if (input.value) input.dispatchEvent(new Event('input'));
+  };
+  field.addEventListener('click', open);
+  field.addEventListener('input', open);
+  field.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    open();
   });
 }
 

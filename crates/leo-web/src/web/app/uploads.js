@@ -84,6 +84,17 @@ function noteFields({ id, folders, here, most, before = '' }) {
   </div>`;
 }
 
+function dropChoice(files) {
+  const list = [...files];
+  const box = sheet(`<h3>What should leo do with these?</h3>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn plain" id="drop-make">Make notes from them</button><button class="btn primary" id="drop-ask">Ask Felix about these</button></div>`);
+  $('#drop-make', box).addEventListener('click', () => uploadSheet(list).catch(fail));
+  $('#drop-ask', box).addEventListener('click', () => {
+    closeSheet();
+    chat.attachFiles(list);
+  });
+}
+
 // The note a sheet opened on (files dropped on an open note can be added to it).
 let uploadNote = null;
 const addingToNote = () => Boolean(uploadNote) && $('#upload-where')?.value === 'add';

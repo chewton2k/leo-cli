@@ -3195,6 +3195,11 @@
         box.querySelector('summary').textContent = threads.length === 1 ? 'A margin note lost its place' : `${threads.length} margin notes lost their place`;
         box.querySelector('.chat-lost-list').innerHTML = threads.map((t) => `<div class="chat-lost-row"><q>${escape(t.quote)}</q><p>${escape((t.messages[t.messages.length - 1] || {}).text || '')}</p><button type="button" class="msg-act" data-action="margin-lost-open" data-id="${escape(t.id)}">Open in chat</button><button type="button" class="msg-act" data-action="margin-lost-dismiss" data-id="${escape(t.id)}">Dismiss</button></div>`).join('');
       },
+      attachFiles(list) {
+        toggle(true);
+        addFiles(pastedNames([...list]));
+        input.focus();
+      },
       isOpen: () => state.open,
       isBusy: () => Boolean(state.busy || state.preparingSend),
       askNew(text) {
