@@ -181,6 +181,10 @@ pub struct Powers {
     pub meaning: Option<vectors::Meaning>,
 }
 
+pub(crate) fn no_writer() -> String {
+    format!("{}no writing AI is chosen.", leo_core::NO_WRITING_AI)
+}
+
 #[derive(Clone)]
 struct AppState {
     visible: Arc<std::sync::atomic::AtomicBool>,

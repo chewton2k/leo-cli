@@ -263,6 +263,43 @@ pub fn writing_ready() -> bool {
     crate::health::writing(&cfg, &*store, None).state == crate::health::WritingState::Ready
 }
 
+pub use leo_core::NO_WRITING_AI;
+
+pub fn writing_error(err: &anyhow::Error) -> String {
+    let (cfg, store) = context();
+    let writing = crate::health::writing(&cfg, &*store, None);
+    let agent = writing
+        .provider
+        .as_deref()
+        .and_then(|name| cfg.provider(name))
+        .and_then(provider::agent_cli::Agent::of)
+        .map(|agent| agent.kind());
+    why(writing.state, agent, &err.to_string())
+}
+
+fn why(state: crate::health::WritingState, agent: Option<&str>, text: &str) -> String {
+    use crate::health::WritingState::*;
+    let name = agent.unwrap_or("your writing AI");
+    let reason = match state {
+        NotChosen => "no writing AI is chosen.".to_string(),
+        NotRunning => "no writing AI is ready (Ollama isn't running).".to_string(),
+        NoModel => "no writing AI is ready (Ollama has no models yet).".to_string(),
+        NotInstalled => format!("{name} isn't installed."),
+        Ready => {
+            let lower = text.to_lowercase();
+            if ["not signed in", "not logged in", "/login", "codex login"]
+                .iter()
+                .any(|marker| lower.contains(marker))
+            {
+                format!("{name} needs you to sign in.")
+            } else {
+                return leo_core::writing_said(text);
+            }
+        }
+    };
+    format!("{NO_WRITING_AI}{reason}")
+}
+
 pub fn see(prompt: chat::Prompt, images: &[provider::Image], max_tokens: u32) -> Result<String> {
     let (cfg, store) = context();
     let req = provider::ChatRequest {
@@ -365,6 +402,25 @@ mod tests {
             "codex".to_string(),
         ];
         cfg
+    }
+
+    #[test]
+    fn a_writing_failure_names_one_plain_reason_after_the_prefix() {
+        use crate::health::WritingState::*;
+        assert_eq!(
+            super::why(NotRunning, None, "x"),
+            "leo can't write yet: no writing AI is ready (Ollama isn't running)."
+        );
+        assert_eq!(
+            super::why(
+                Ready,
+                Some("Claude Code"),
+                "claude ended. If it is not signed in, run it"
+            ),
+            "leo can't write yet: Claude Code needs you to sign in."
+        );
+        let said = super::why(Ready, None, "boom\nsecond line");
+        assert_eq!(said, "leo can't write yet: boom.");
     }
 
     #[test]

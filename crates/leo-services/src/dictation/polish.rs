@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 pub const QUICK_DEADLINE: Duration = Duration::from_secs(12);
 pub const SELECTED_DEADLINE: Duration = Duration::from_secs(30);
-pub const NOT_SET_UP: &str = "No writing AI is set up. Choose one in Settings → Writing AI.";
+pub const NOT_SET_UP: &str = "leo can't write yet: no writing AI is ready.";
 pub const TOO_SLOW: &str = "The writing AI took too long.";
 pub const NO_ANSWER: &str = "The writing AI could not answer.";
 pub const CHANGED: &str = "The writing AI changed what you said, so it was not used.";
@@ -233,6 +233,11 @@ mod tests {
 
     fn never() -> Arc<dyn Fn() -> bool + Send + Sync> {
         Arc::new(|| false)
+    }
+
+    #[test]
+    fn not_set_up_starts_with_the_shared_prefix() {
+        assert!(NOT_SET_UP.starts_with(crate::ai::NO_WRITING_AI));
     }
 
     #[test]

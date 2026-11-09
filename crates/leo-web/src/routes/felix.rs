@@ -479,7 +479,7 @@ pub(crate) async fn mark_quiz(
     let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "Choose a writing AI in Settings to mark answers."})),
+            Json(serde_json::json!({"error": crate::no_writer()})),
         )
             .into_response();
     };
@@ -1199,6 +1199,10 @@ fn counted(spent: &mut Option<chat::Spent>, more: Option<chat::Spent>) {
     }
 }
 
+fn writer_said(e: anyhow::Error) -> anyhow::Error {
+    anyhow::anyhow!(leo_core::writing_said(&e.to_string()))
+}
+
 fn answer(
     state: &AppState,
     streamer: &chat::Streamer,
@@ -1570,7 +1574,7 @@ fn native_answer(
         started.elapsed(),
         outcome.is_err(),
     );
-    let reply = outcome?;
+    let reply = outcome.map_err(writer_said)?;
     if let Some(e) = failure {
         return Err(e);
     }
@@ -1653,7 +1657,7 @@ fn text_answer(
         if outcome.is_err() && stopped() {
             return Ok(spent);
         }
-        let reply = outcome?;
+        let reply = outcome.map_err(writer_said)?;
         counted(&mut spent, reply.spent);
         if desk.reply_closed() {
             return Ok(spent);
@@ -1811,7 +1815,7 @@ pub(crate) async fn chat_reply(
     let Some(streamer) = state.chat.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "This copy of leo has no AI for writing." })),
+            Json(serde_json::json!({ "error": crate::no_writer() })),
         )
             .into_response();
     };

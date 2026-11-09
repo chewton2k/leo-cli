@@ -47,8 +47,13 @@ pub fn writer(
                 ..Default::default()
             });
         usage.record(purpose, spent.as_ref(), started.elapsed(), result.is_err());
-        result.map(|outcome| outcome.value)
+        result.map(|outcome| outcome.value).map_err(said)
     })
+}
+
+pub fn said(e: anyhow::Error) -> anyhow::Error {
+    leo_core::diag::warn(format!("the writing AI failed: {e}"));
+    anyhow::anyhow!(leo_services::ai::writing_error(&e))
 }
 
 pub fn spent_of(answered: Answered) -> leo_web::Spent {
@@ -84,19 +89,22 @@ impl leo_web::Conversation for Talk {
         text: &str,
         exchange: leo_web::Exchange<'_>,
     ) -> anyhow::Result<leo_web::Reply> {
-        let (text, answered) = self.0.say(
-            text,
-            Turn {
-                tail: exchange.tail,
-                max_tokens: exchange.max_tokens,
-                most_calls: exchange.most_calls,
-                sink: exchange.piece,
-                restart: exchange.restart,
-                call: exchange.call,
-                stopped: exchange.stopped,
-                tools_done: exchange.tools_done,
-            },
-        )?;
+        let (text, answered) = self
+            .0
+            .say(
+                text,
+                Turn {
+                    tail: exchange.tail,
+                    max_tokens: exchange.max_tokens,
+                    most_calls: exchange.most_calls,
+                    sink: exchange.piece,
+                    restart: exchange.restart,
+                    call: exchange.call,
+                    stopped: exchange.stopped,
+                    tools_done: exchange.tools_done,
+                },
+            )
+            .map_err(said)?;
         Ok(leo_web::Reply {
             text,
             spent: answered.map(spent_of),

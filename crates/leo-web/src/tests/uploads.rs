@@ -338,6 +338,10 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
         }),
     ));
     assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(json_of(none)["error"]
+        .as_str()
+        .unwrap()
+        .starts_with(leo_core::NO_WRITING_AI));
     state.importer = Some(Arc::new(
         |_: Vec<UploadFile>, _: &str, _: &mut dyn FnMut(&str, usize, usize)| {
             anyhow::bail!("qwen3:8b cannot read images")

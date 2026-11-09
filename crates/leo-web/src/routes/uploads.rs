@@ -580,7 +580,7 @@ pub(crate) async fn start_import(
     let Some(importer) = state.importer.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "This copy of leo has no AI for writing." })),
+            Json(serde_json::json!({ "error": crate::no_writer() })),
         )
             .into_response();
     };

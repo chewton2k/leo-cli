@@ -1558,6 +1558,10 @@ async fn a_full_note_and_a_missing_ai_say_why() {
     let (id, version) = engine.plain(PASSAGE).await;
     let (status, why) = engine.analyze(&id, &version, &[PASSAGE], None).await;
     assert_eq!((status, why["why"].as_str()), (503, Some("no-ai")));
+    assert!(why["error"]
+        .as_str()
+        .unwrap()
+        .starts_with(leo_core::NO_WRITING_AI));
     assert_eq!(
         engine.get("/api/margin").await.1["problem"].as_str(),
         Some(margin::PROBLEM)

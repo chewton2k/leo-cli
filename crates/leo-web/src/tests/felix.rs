@@ -224,13 +224,9 @@ fn a_chat_without_ai_or_a_question_is_refused() {
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
     });
-    assert!(
-        text.lines()
-            .last()
-            .unwrap()
-            .contains("no AI for writing is chosen"),
-        "{text}"
-    );
+    let line = text.lines().last().unwrap();
+    assert!(line.contains(leo_core::NO_WRITING_AI), "{text}");
+    assert!(line.contains("no AI for writing is chosen"), "{text}");
 }
 
 fn chat_lines(state: &AppState, question: &str) -> Vec<serde_json::Value> {

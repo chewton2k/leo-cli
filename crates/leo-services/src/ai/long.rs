@@ -161,7 +161,8 @@ pub fn structure_recording(
                 title: fallback_title.to_string(),
                 body: raw(points, "Transcript", &text),
                 problems: vec![format!(
-                    "the notes could not be written ({e}), so the transcript was saved as it is"
+                    "{} The transcript was saved as it is.",
+                    super::writing_error(&e)
                 )],
                 writer_failed: true,
             },
@@ -182,24 +183,25 @@ pub fn structure_recording(
                     return;
                 };
                 let own = points_for(points, &groups, i);
-                let prompt = chat::build_part_prompt(
-                    &g.text,
-                    &own,
-                    i + 1,
-                    groups.len(),
-                    &span(g),
-                );
+                let prompt = chat::build_part_prompt(&g.text, &own, i + 1, groups.len(), &span(g));
                 let outcome = match chat_fn(prompt, super::STRUCTURE_MAX_TOKENS) {
                     Ok(reply) if !chat::clean_reply(&reply).trim().is_empty() => {
                         (chat::clean_reply(&reply), None)
                     }
                     Ok(_) => (
                         raw(&own, "Transcript", &g.text),
-                        Some(format!("part {} came back empty; its transcript is included instead", i + 1)),
+                        Some(format!(
+                            "part {} came back empty; its transcript is included instead",
+                            i + 1
+                        )),
                     ),
                     Err(e) => (
                         raw(&own, "Transcript", &g.text),
-                        Some(format!("part {} could not be written ({e}); its transcript is included instead", i + 1)),
+                        Some(format!(
+                            "{} Part {}'s transcript is included instead.",
+                            super::writing_error(&e),
+                            i + 1
+                        )),
                     ),
                 };
                 if let Ok(mut slot) = results[i].lock() {
@@ -272,7 +274,10 @@ pub fn structure_recording(
             )
         }
         Err(e) => {
-            problems.push(format!("the title and summary could not be written ({e})"));
+            problems.push(format!(
+                "{} The title and summary were not written.",
+                super::writing_error(&e)
+            ));
             (fallback_title.to_string(), String::new())
         }
     };

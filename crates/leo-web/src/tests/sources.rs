@@ -74,6 +74,17 @@ fn retained_sources_are_editable_with_conflict_protection_and_regeneration_is_a_
         "what the user wants is kept with the recording and can be changed when writing again"
     );
     assert!(response["base"].is_string());
+    state.regenerator = Some(Arc::new(|_, _| {
+        anyhow::bail!("every chat provider failed. Last error: ollama: error sending request")
+    }));
+    let failed = run(sources::regenerate(
+        State(state.clone()),
+        Path(id.clone()),
+        Json(serde_json::from_value(serde_json::json!({})).unwrap()),
+    ));
+    assert_eq!(failed.status(), StatusCode::BAD_GATEWAY);
+    let said = json_of(failed)["error"].as_str().unwrap().to_string();
+    assert!(said.starts_with(leo_core::NO_WRITING_AI), "{said}");
     store_now(&state, |store| {
         assert_eq!(store.find_note(&id).unwrap().body, "Existing note");
         Ok(())

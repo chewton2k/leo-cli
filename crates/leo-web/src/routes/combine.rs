@@ -100,10 +100,7 @@ pub(crate) async fn start(
     Json(body): Json<Start>,
 ) -> Response {
     let Some(writer) = state.graphs.writer() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Combining notes needs a writing AI. Choose one in Settings.",
-        );
+        return error(StatusCode::SERVICE_UNAVAILABLE, &crate::no_writer());
     };
     let (into, from, notes_dir) = match notes_for(&state, into, body.with).await {
         Ok(found) => found,

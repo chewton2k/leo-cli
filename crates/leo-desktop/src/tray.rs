@@ -278,7 +278,10 @@ fn plan_use(
     match limits {
         Some(limits) => format!("Plan use: {limits}"),
         None if state == leo_services::health::WritingState::NotChosen => {
-            "Plan use: choose a writing AI in Settings".into()
+            format!(
+                "Plan use: {}no writing AI is chosen.",
+                leo_services::ai::NO_WRITING_AI
+            )
         }
         None if writing.starts_with("Codex") => {
             "Plan use: unavailable; open Codex to refresh its limits".into()
@@ -305,7 +308,7 @@ mod tests {
     fn limits_explain_the_selected_provider_and_preserve_reported_use() {
         use leo_services::health::WritingState::{NotChosen, Ready};
         for (state, provider, expected) in [
-            (NotChosen, "No writing AI chosen", "choose a writing AI"),
+            (NotChosen, "No writing AI chosen", "no writing AI is chosen"),
             (Ready, "Codex · model", "open Codex"),
             (Ready, "Claude Code · model", "Claude Code reports limits"),
             (

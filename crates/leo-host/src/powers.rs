@@ -21,7 +21,8 @@ pub fn powers() -> leo_web::Powers {
                 piece,
                 restart,
                 stopped,
-            )?;
+            )
+            .map_err(crate::felix::said)?;
             Ok(leo_web::Reply {
                 text,
                 spent: answered.map(crate::felix::spent_of),
@@ -44,7 +45,8 @@ pub fn powers() -> leo_web::Powers {
                 piece,
                 restart,
                 stopped,
-            )?;
+            )
+            .map_err(crate::felix::said)?;
             Ok(leo_web::Reply {
                 text,
                 spent: answered.map(crate::felix::spent_of),
@@ -67,7 +69,8 @@ pub fn powers() -> leo_web::Powers {
                 piece,
                 restart,
                 stopped,
-            )?;
+            )
+            .map_err(crate::felix::said)?;
             Ok(leo_web::Reply {
                 text,
                 spent: answered.map(crate::felix::spent_of),

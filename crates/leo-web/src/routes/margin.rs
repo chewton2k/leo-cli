@@ -462,7 +462,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
             return Pass::Refused(said(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "no-ai",
-                "Choose a writing AI in Settings, then read through again.",
+                &crate::no_writer(),
             ));
         }
         return Pass::Failed;
@@ -672,7 +672,7 @@ async fn answered(
         return Err(Box::new(said(
             StatusCode::SERVICE_UNAVAILABLE,
             "no-ai",
-            "Choose a writing AI in Settings, then ask again.",
+            &crate::no_writer(),
         )));
     };
     let Some(foreground) = state.work.foreground() else {

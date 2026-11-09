@@ -1164,12 +1164,16 @@ impl Reads {
     }
 }
 
-pub const PROBLEM: &str =
-    "Felix could not read your note just now. Check that your writing AI is set up and answering.";
+pub const PROBLEM: &str = "leo can't write yet: Felix could not read your note just now.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_problem_line_starts_with_the_shared_prefix() {
+        assert!(PROBLEM.starts_with(leo_core::NO_WRITING_AI));
+    }
 
     #[test]
     fn a_reply_is_read_only_when_it_is_a_complete_short_note() {
