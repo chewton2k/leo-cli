@@ -1037,4 +1037,12 @@ test('a step Felix got wrong and then fixed with the same tool is not shown', ()
   assert.deepEqual(C.fixedSteps([tried, read, asked]), [read, asked]);
   assert.deepEqual(C.fixedSteps([read, tried]), [read, tried], 'a failure Felix never fixed stays visible');
   assert.deepEqual(C.fixedSteps([asked, tried]), [asked, tried], 'only a later success hides it');
+  const choice = { text: 'Asked you a question', tool: 'ask_user', failed: false };
+  assert.deepEqual(C.fixedSteps([tried, read, choice]), [read, choice], 'a question card fixes a failed quiz');
+  const lost = { text: 'Retried ask user: "question" is empty', tool: 'ask_user', failed: true };
+  assert.deepEqual(C.fixedSteps([read, lost]), [read, lost], 'while Felix works the step keeps its words');
+  const said = "Felix couldn't make that question. Ask again.";
+  assert.deepEqual(C.fixedSteps([read, lost, tried], true).map((s) => s.text), [read.text, said, said]);
+  const broken = { text: 'Retried open note: no such note', tool: 'open_note', failed: true };
+  assert.deepEqual(C.fixedSteps([broken], true), [broken], 'other failures keep their words');
 });

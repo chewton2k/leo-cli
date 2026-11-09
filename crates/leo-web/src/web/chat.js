@@ -159,8 +159,11 @@
     return changes > 0 ? `${line} · made ${plural(changes, 'change')}` : line;
   }
 
-  function fixedSteps(steps) {
-    return steps.filter((step, n) => !(step && step.failed && steps.slice(n + 1).some((later) => later && later.tool === step.tool && !later.failed)));
+  function fixedSteps(steps, finished = false) {
+    const group = (tool) => (tool === 'ask_user' ? 'quiz' : tool);
+    return steps
+      .filter((step, n) => !(step && step.failed && steps.slice(n + 1).some((later) => later && group(later.tool) === group(step.tool) && !later.failed)))
+      .map((step) => (finished && step && step.failed && group(step.tool) === 'quiz' ? { ...step, text: "Felix couldn't make that question. Ask again." } : step));
   }
 
   function notFromNotes(steps, shown, used) {
@@ -1951,7 +1954,7 @@
       const keep = save || meta || bigger ? `<div class="msg-acts">${save}${meta}${bigger}</div>` : '';
       const removed = verdict ? m.text.length - spoken.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
-      const taken = fixedSteps(parts.flatMap((part) => part.steps || []));
+      const taken = fixedSteps(parts.flatMap((part) => part.steps || []), !m.pending);
       const made = (m.proposals || []).filter((p) => p && p.state === 'applied').length;
       const prose = (text) => `<div class="prose">${cite(render(text, { rows: true }), m.sources, escape, m.files, marks).replace(/<input /g, '<input disabled ')}</div>`;
       const now = m.pending && taken.length ? stepRuns(taken.some((s) => s && !s.failed) ? taken.filter((s) => s && !s.failed) : taken).at(-1) : null;

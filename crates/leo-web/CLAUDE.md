@@ -551,7 +551,16 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   text protocol. A hand-written call that is not valid
   JSON is repaired when it can be (`tools::repaired`: raw line breaks, quotes
   that do not end a string, trailing commas, missing closing braces) before it
-  is refused; a refused call shows as "Retried open note: <reason>" (or
+  is refused. `Call::normalized` then repairs what keeps its meaning (2026-11-09, the user's call: "tool calls never
+  fail"): a tool name in another case or with spaces/hyphens, `options`/`ideas` arrays joined with ` | ` (unless an item
+  contains `|`), quiz kind synonyms (mcq, cloze, short answer…), a prediction made free response, a multiple-choice answer
+  matched to its option (case, trailing punctuation when exactly one option fits, a lone letter or "option N" when options
+  are not single letters; never an added option; no match stays refused), fewer than 2 options asked as free response, a fill-in's answer blanked on a whole-word match or else free
+  response. `quiz_from` stays strict (missing explain, a give-away longest option are refused and retried). A second question
+  in one reply and a finished session answer Felix with an empty step, which is never sent; a session quiz with no idea uses the one
+  open idea (a covered idea stays refused). On the page a failed step is hidden once the same tool (quiz and ask_user count as one)
+  later succeeds, and an unfixed failed quiz or ask_user step reads "Felix couldn't make that question. Ask again." once the
+  reply ends. Otherwise a refused call shows as "Retried open note: <reason>" (or
   "Rewrote a tool call: <reason>" when it was not readable), the reason
   inline (`why_it_failed`). Steps say what was read ("Read part 2 of 5 of
   “X” (lines 40–80)"), a read the cache found unchanged says "again

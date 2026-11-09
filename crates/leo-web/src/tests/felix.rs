@@ -1314,7 +1314,7 @@ fn felix_looks_at_a_notes_pictures_and_their_captions_come_along_next_time() {
 fn felix_gives_a_practice_question_then_stops_and_waits_for_the_answer() {
     let (mut state, _d, _) = state_with(&[("Graph traversals", "cs130")]);
     let (streamer, prompts) = scripted(vec![
-        "<tool>{\"name\": \"quiz\", \"kind\": \"multiple_choice\", \"question\": \"What does BFS use?\", \"options\": \"a stack | a queue\", \"answer\": \"a heap\"}</tool>",
+        "<tool>{\"name\": \"quiz\", \"kind\": \"multiple_choice\", \"question\": \"What does BFS use?\", \"options\": \"a stack | a queue\", \"answer\": \"a queue\"}</tool>",
         "<tool>{\"name\": \"quiz\", \"kind\": \"multiple_choice\", \"question\": \"What does BFS use?\", \"options\": \"a stack | a queue | a heap\", \"answer\": \"a queue\", \"explain\": \"Oldest first.\"}</tool>",
         "Give it a try!",
     ]);
@@ -1338,7 +1338,7 @@ fn felix_gives_a_practice_question_then_stops_and_waits_for_the_answer() {
     assert_eq!(quizzes[0]["answer"], "a queue");
     assert_eq!(quizzes[0]["explain"], "Oldest first.");
     let prompts = prompts.lock().unwrap();
-    assert!(prompts[1].contains("the answer must be one of the options"));
+    assert!(prompts[1].contains("a multiple_choice quiz needs explain"));
     assert!(prompts[2].contains(tools::ASKED));
     assert!(
         prompts[2].contains("You have used all the tools"),
@@ -1347,6 +1347,26 @@ fn felix_gives_a_practice_question_then_stops_and_waits_for_the_answer() {
     let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
     assert_eq!(shown, "Give it a try!");
     assert!(lines.first().unwrap()["answer"].is_string());
+}
+
+#[test]
+fn a_quiz_felix_wrote_a_little_off_is_shown_without_a_failed_step() {
+    let (mut state, _d, _) = state_with(&[("Graph traversals", "cs130")]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"Quiz\", \"kind\": \"MCQ\", \"question\": \"What does BFS use?\", \"options\": [\"a stack\", \"a queue\", \"a heap\"], \"answer\": \"b\", \"explain\": \"Oldest first.\"}</tool>",
+        "Give it a try!",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "quiz me on BFS");
+    let quizzes: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("quiz")).collect();
+    assert_eq!(quizzes.len(), 1, "{lines:?}");
+    assert_eq!(quizzes[0]["kind"], "multiple_choice");
+    assert_eq!(quizzes[0]["answer"], "a queue");
+    let steps: Vec<&serde_json::Value> = lines.iter().filter(|l| l.get("step").is_some()).collect();
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(steps[0]["step"], "Asked you a practice question");
+    assert_eq!(steps[0]["failed"], false);
+    assert!(prompts.lock().unwrap()[1].contains(tools::ASKED));
 }
 
 #[test]
@@ -1381,6 +1401,12 @@ fn felix_asks_a_question_with_choices_once_per_reply() {
     assert_eq!(
         asks[0]["options"],
         serde_json::json!(["Week 1", "Week 2", "Week 3"])
+    );
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(
+        steps,
+        ["Asked you a question"],
+        "a call after asking shows no step"
     );
     let results = results.lock().unwrap();
     assert_eq!(results[0], tools::ASKED);
@@ -2071,7 +2097,55 @@ fn a_study_session_plans_names_ideas_and_refuses_questions_once_covered() {
     };
     let lines = chat_lines_in(&state, "[[correct]] yes", None, Some(covered), None);
     assert!(lines.iter().all(|l| l.get("quiz").is_none()), "{lines:?}");
+    assert!(
+        lines.iter().all(|l| l.get("step").is_none()),
+        "a finished session refuses quietly: {lines:?}"
+    );
     assert!(prompts.lock().unwrap()[1].contains(tools::SESSION_DONE));
+
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"How does it sift down?\", \"answer\": \"swap with the smaller child\"}</tool>",
+        "Try it.",
+    ]);
+    state.chat = Some(streamer);
+    let one_open = tools::Session {
+        ideas: vec!["Root".into(), "Sift down".into()],
+        closed: vec![true, false],
+        asked: 1,
+    };
+    let lines = chat_lines_in(
+        &state,
+        "[[correct]] the minimum",
+        None,
+        Some(one_open),
+        None,
+    );
+    let quizzes: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("quiz")).collect();
+    assert_eq!(quizzes.len(), 1, "{lines:?}");
+    assert_eq!(quizzes[0]["idea"], 2, "the one open idea");
+
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"idea\": \"1\", \"question\": \"Where is the minimum?\", \"answer\": \"at the root\"}</tool>",
+        "Try it.",
+    ]);
+    state.chat = Some(streamer);
+    let one_open = tools::Session {
+        ideas: vec!["Root".into(), "Sift down".into()],
+        closed: vec![true, false],
+        asked: 1,
+    };
+    let lines = chat_lines_in(
+        &state,
+        "[[correct]] the minimum",
+        None,
+        Some(one_open),
+        None,
+    );
+    assert!(
+        lines.iter().all(|l| l.get("quiz").is_none()),
+        "a question about a covered idea is not moved to another idea: {lines:?}"
+    );
+    assert!(prompts.lock().unwrap()[1].contains("That did not work"));
 
     let (streamer, _) = scripted(vec![
         "<tool>{\"name\": \"end_session\"}</tool>",
@@ -3457,6 +3531,22 @@ fn tool_arguments_that_are_not_text_are_read_as_text() {
         crate::board_tools::column_names(&fixed.text("columns")).unwrap(),
         ["A", "B"]
     );
+    let asked = tools::Call {
+        name: "ask_user".into(),
+        args: serde_json::json!({ "question": "Which?", "options": ["BFS", "DFS", 2] }),
+    }
+    .normalized();
+    assert_eq!(asked.text("options"), "BFS | DFS | 2");
+    assert_eq!(
+        tools::asked_from(&asked).unwrap().options,
+        ["BFS", "DFS", "2"]
+    );
+    let planned = tools::Call {
+        name: "study_plan".into(),
+        args: serde_json::json!({ "ideas": ["Root", "Sift down"] }),
+    }
+    .normalized();
+    assert_eq!(tools::plan_from(&planned).unwrap(), ["Root", "Sift down"]);
 }
 
 #[test]

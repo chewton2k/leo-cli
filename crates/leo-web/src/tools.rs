@@ -1012,6 +1012,21 @@ impl Call {
                         serde_json::Value::String(if *yes { "yes" } else { "no" }.into())
                     }
                     serde_json::Value::Number(n) => serde_json::Value::String(n.to_string()),
+                    serde_json::Value::Array(items)
+                        if matches!(key.as_str(), "options" | "ideas")
+                            && items.iter().all(|i| {
+                                (i.is_string() || i.is_number())
+                                    && !i.as_str().is_some_and(|t| t.contains('|'))
+                            }) =>
+                    {
+                        serde_json::Value::String(
+                            items
+                                .iter()
+                                .map(|i| i.as_str().map_or_else(|| i.to_string(), str::to_string))
+                                .collect::<Vec<_>>()
+                                .join(" | "),
+                        )
+                    }
                     serde_json::Value::Array(_) | serde_json::Value::Object(_) if key != "name" => {
                         serde_json::Value::String(value.to_string())
                     }
@@ -1020,9 +1035,121 @@ impl Call {
                 (key.clone(), value)
             })
             .collect();
-        Call {
-            name: self.name.clone(),
+        let folded = self.name.trim().to_lowercase().replace([' ', '-'], "_");
+        let mut call = Call {
+            name: if spec_of(&self.name).is_none() && spec_of(&folded).is_some() {
+                folded
+            } else {
+                self.name.clone()
+            },
             args: serde_json::Value::Object(args),
+        };
+        if call.name == "quiz" {
+            call.repair_quiz();
+        }
+        call
+    }
+
+    fn repair_quiz(&mut self) {
+        let mut kind = match self
+            .text("kind")
+            .trim()
+            .to_lowercase()
+            .replace([' ', '-'], "_")
+            .as_str()
+        {
+            "mcq" => "multiple_choice".to_string(),
+            "cloze" | "fill_in_the_blank" | "fill_in" => "fill_blank".to_string(),
+            "short_answer" | "open" | "free_text" | "open_ended" => "free_response".to_string(),
+            other => other.to_string(),
+        };
+        if said_yes(self, "predict") {
+            kind = "free_response".into();
+        }
+        let question = self.text("question");
+        let answer = self.text("answer").trim().to_string();
+        let options = choices(&self.text("options"), 6);
+        let mut fixed_answer = None;
+        if kind == "multiple_choice" && options.len() < 2 {
+            kind = "free_response".into();
+        }
+        if kind == "multiple_choice" && !options.iter().any(|o| o.eq_ignore_ascii_case(&answer)) {
+            let loose = |t: &str| {
+                t.trim()
+                    .trim_end_matches(|c: char| c.is_ascii_punctuation())
+                    .trim()
+                    .to_lowercase()
+            };
+            let by_place = !options
+                .iter()
+                .any(|o| o.chars().count() == 1 && o.chars().all(|c| c.is_alphabetic()));
+            let said = answer
+                .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
+                .to_lowercase();
+            let numbered = ["option ", "choice "]
+                .iter()
+                .find_map(|p| said.strip_prefix(p))
+                .and_then(|n| n.trim().parse::<usize>().ok());
+            let letter = match said.as_bytes() {
+                [c @ b'a'..=b'f'] => Some(usize::from(c - b'a') + 1),
+                _ => None,
+            };
+            let mut alike = options.iter().filter(|o| loose(o) == loose(&answer));
+            fixed_answer = match (alike.next(), alike.next()) {
+                (Some(one), None) => Some(one),
+                _ => None,
+            }
+            .or_else(|| {
+                letter
+                    .or(numbered)
+                    .filter(|_| by_place)
+                    .and_then(|n| options.get(n.wrapping_sub(1)))
+            })
+            .cloned();
+        }
+        let mut blanked = None;
+        if kind == "fill_blank" && !question.contains("___") {
+            let word = answer
+                .split('|')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            let lower = question.to_ascii_lowercase();
+            let edge = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let found: Vec<usize> = lower
+                .match_indices(word.as_str())
+                .map(|(at, _)| at)
+                .filter(|&at| {
+                    edge(question.get(..at).and_then(|t| t.chars().next_back()))
+                        && edge(
+                            question
+                                .get(at + word.len()..)
+                                .and_then(|t| t.chars().next()),
+                        )
+                })
+                .collect();
+            match found[..] {
+                [at] if word.chars().count() >= 3 => {
+                    blanked = question
+                        .get(..at)
+                        .zip(question.get(at + word.len()..))
+                        .map(|(before, after)| format!("{before}___{after}"));
+                }
+                _ => kind = "free_response".into(),
+            }
+        }
+        let Some(args) = self.args.as_object_mut() else {
+            return;
+        };
+        if QUIZ_KINDS.contains(&kind.as_str()) {
+            args.insert("kind".into(), kind.into());
+        }
+        if let Some(option) = fixed_answer {
+            args.insert("answer".into(), option.into());
+        }
+        if let Some(question) = blanked {
+            args.insert("question".into(), question.into());
         }
     }
 
@@ -2899,6 +3026,170 @@ mod tests {
             assert!(text.contains("Untrusted"));
             assert!(text.contains("Use interpretable language"));
         }
+    }
+
+    fn quiz_call(args: serde_json::Value) -> Call {
+        Call {
+            name: "quiz".into(),
+            args,
+        }
+        .normalized()
+    }
+
+    #[test]
+    fn a_tool_name_written_with_capitals_spaces_or_hyphens_finds_its_tool() {
+        let named = |name: &str| {
+            Call {
+                name: name.into(),
+                args: serde_json::json!({}),
+            }
+            .normalized()
+            .name
+        };
+        assert_eq!(named("Search Notes"), "search_notes");
+        assert_eq!(named("open-note"), "open_note");
+        assert_eq!(
+            named("search_note"),
+            "search_note",
+            "no guessing at a near name"
+        );
+        assert_eq!(named("invalid"), "invalid");
+    }
+
+    #[test]
+    fn lists_of_options_and_ideas_are_joined_with_bars_unless_one_holds_a_bar() {
+        let call = Call {
+            name: "study_plan".into(),
+            args: serde_json::json!({ "ideas": ["Root", "Sift down", 3], "columns": ["A", "B"] }),
+        }
+        .normalized();
+        assert_eq!(call.text("ideas"), "Root | Sift down | 3");
+        assert_eq!(call.text("columns"), r#"["A","B"]"#);
+        let barred = quiz_call(serde_json::json!({ "options": ["a | b", "c"] }));
+        assert_eq!(barred.text("options"), r#"["a | b","c"]"#);
+    }
+
+    #[test]
+    fn other_names_for_a_quiz_kind_and_a_prediction_become_the_kind_they_mean() {
+        let kind = |kind: &str, predict: &str| {
+            quiz_call(serde_json::json!({ "kind": kind, "question": "Q ___", "options": "x | y", "answer": "x", "predict": predict }))
+                .text("kind")
+        };
+        assert_eq!(kind("MCQ", ""), "multiple_choice");
+        for cloze in ["cloze", "fill in the blank", "fill-in"] {
+            assert_eq!(kind(cloze, ""), "fill_blank", "{cloze}");
+        }
+        for open in ["short answer", "open", "free_text", "open-ended"] {
+            assert_eq!(kind(open, ""), "free_response", "{open}");
+        }
+        assert_eq!(
+            kind("essay", ""),
+            "essay",
+            "an unknown kind is still refused"
+        );
+        assert_eq!(kind("multiple_choice", "yes"), "free_response");
+    }
+
+    #[test]
+    fn a_multiple_choice_answer_finds_its_option_or_is_left_for_felix_to_fix() {
+        let quiz = |options: &str, answer: &str| {
+            let call = quiz_call(serde_json::json!({
+                "kind": "multiple_choice", "question": "Q", "options": options,
+                "answer": answer, "explain": "why"
+            }));
+            (call.text("kind"), call.text("answer"))
+        };
+        let mc = |answer: &str| ("multiple_choice".to_string(), answer.to_string());
+        let free = |answer: &str| ("free_response".to_string(), answer.to_string());
+        assert_eq!(quiz("a stack | a queue", " A Queue. "), mc("a queue"));
+        assert_eq!(quiz("a stack | a queue | a heap", "b"), mc("a queue"));
+        assert_eq!(quiz("a stack | a queue | a heap", "(C)"), mc("a heap"));
+        assert_eq!(
+            quiz("a stack | a queue | a heap", "Option 1"),
+            mc("a stack")
+        );
+        assert_eq!(quiz("a stack | a queue", "choice 2"), mc("a queue"));
+        assert_eq!(
+            quiz("a stack | a queue", "d"),
+            mc("d"),
+            "no such option: left as written, so it is refused"
+        );
+        assert_eq!(
+            quiz("A | B | C", "c"),
+            mc("c"),
+            "already an option, as written"
+        );
+        assert_eq!(
+            quiz("A | B | C", "option 2"),
+            mc("option 2"),
+            "letters are the options"
+        );
+        assert_eq!(
+            quiz("a stack | a queue", "a heap"),
+            mc("a heap"),
+            "never a new option"
+        );
+        assert_eq!(
+            quiz("O(n) | O(n!)", "O(n!)."),
+            mc("O(n!)."),
+            "two options look alike once punctuation goes, so neither is picked"
+        );
+        let wrong = quiz_call(serde_json::json!({
+            "kind": "multiple_choice", "question": "Q", "options": "a stack | a queue",
+            "answer": "a heap", "explain": "why"
+        }));
+        assert!(quiz_from(&wrong)
+            .unwrap_err()
+            .contains("must be one of the options"));
+        assert_eq!(quiz("a queue", "a queue"), free("a queue"));
+        let fixed = quiz_call(serde_json::json!({
+            "kind": "multiple_choice", "question": "Q", "options": "a stack | a queue",
+            "answer": "B", "explain": "why"
+        }));
+        assert_eq!(quiz_from(&fixed).unwrap().answer, "a queue");
+    }
+
+    #[test]
+    fn a_fill_blank_without_a_blank_blanks_its_answer_once_or_asks_freely() {
+        let quiz = |question: &str, answer: &str| {
+            let call = quiz_call(
+                serde_json::json!({ "kind": "fill_blank", "question": question, "answer": answer }),
+            );
+            (call.text("kind"), call.text("question"))
+        };
+        assert_eq!(
+            quiz("BFS uses a Queue to pick nodes.", "queue | a FIFO queue"),
+            ("fill_blank".into(), "BFS uses a ___ to pick nodes.".into())
+        );
+        assert_eq!(
+            quiz("A queue in a queues list: queue.", "queue"),
+            (
+                "free_response".into(),
+                "A queue in a queues list: queue.".into()
+            )
+        );
+        assert_eq!(
+            quiz("BFS uses queues.", "queue"),
+            ("free_response".into(), "BFS uses queues.".into()),
+            "whole words only"
+        );
+        assert_eq!(
+            quiz("It is O(n).", "n"),
+            ("free_response".into(), "It is O(n).".into()),
+            "too short to find"
+        );
+        assert_eq!(
+            quiz("BFS uses a ___.", "queue"),
+            ("fill_blank".into(), "BFS uses a ___.".into())
+        );
+    }
+
+    #[test]
+    fn a_multiple_choice_with_no_explanation_is_still_refused() {
+        let call = quiz_call(serde_json::json!({
+            "kind": "multiple_choice", "question": "Q", "options": "a stack | a queue", "answer": "b"
+        }));
+        assert!(quiz_from(&call).unwrap_err().contains("needs explain"));
     }
 
     #[test]

@@ -600,18 +600,41 @@ fn interact(
         proposal: None,
         found: Vec::new(),
     };
+    let silent = |result: &str| tools::Done {
+        step: String::new(),
+        result: result.into(),
+        proposal: None,
+        found: Vec::new(),
+    };
     if desk.asked > 0 {
-        return quiet(tools::ALREADY_ASKED.into());
+        return silent(tools::ALREADY_ASKED);
     }
+    let mut one_idea = None;
     if call.name == "quiz" && desk.session.is_some() {
         if desk.session_over || desk.session.as_ref().is_some_and(tools::Session::over) {
-            return quiet(tools::SESSION_DONE.into());
+            return silent(tools::SESSION_DONE);
         }
         let idea = tools::quiz_from(call).ok().and_then(|q| q.idea);
-        if let Some(Err(why)) = desk.session.as_ref().map(|s| s.check(idea)) {
-            return quiet(format!("That did not work: {why}."));
+        if let Some(session) = desk.session.as_ref() {
+            if let Err(why) = session.check(idea) {
+                if idea.is_some() {
+                    return quiet(format!("That did not work: {why}."));
+                }
+                let open: Vec<usize> = (1..=session.ideas.len())
+                    .filter(|&n| session.check(Some(n)).is_ok())
+                    .collect();
+                let [only] = open[..] else {
+                    return quiet(format!("That did not work: {why}."));
+                };
+                let mut fixed = call.clone();
+                if let Some(args) = fixed.args.as_object_mut() {
+                    args.insert("idea".into(), only.to_string().into());
+                }
+                one_idea = Some(fixed);
+            }
         }
     }
+    let call = one_idea.as_ref().unwrap_or(call);
     let (step, shown) = if call.name == "quiz" {
         match tools::quiz_from(call) {
             Ok(quiz) => (
@@ -645,9 +668,9 @@ fn run_tool(
     let call = &call.normalized();
     let result = execute_tool(state, desk, call, send);
     state.usage.tool(
-        result
-            .as_ref()
-            .map_or(true, |done| done.result.starts_with("That did not work:")),
+        result.as_ref().map_or(true, |done| {
+            done.result.starts_with("That did not work:") && !done.step.is_empty()
+        }),
         result
             .as_ref()
             .is_ok_and(|done| done.result.starts_with("Unchanged:")),
@@ -718,7 +741,7 @@ fn execute_tool(
         interact(desk, call, send)
     } else if desk.asked > 0 {
         tools::Done {
-            step: "Waited for your answer".into(),
+            step: String::new(),
             result: tools::ALREADY_ASKED.into(),
             proposal: None,
             found: Vec::new(),
@@ -824,7 +847,7 @@ fn execute_tool(
         .reads
         .compact(&call.name, &read_args.to_string(), &done.result)
     {
-        if call.text("fresh") != "yes" {
+        if call.text("fresh") != "yes" && !done.step.is_empty() {
             done.result = reused;
             done.step = format!("{} again (unchanged)", done.step);
         }
@@ -833,12 +856,14 @@ fn execute_tool(
         desk.reads.study_rules = true;
         done.result = format!("{}\n\n{}", done.result, chat::study_rules_block());
     }
-    send(serde_json::json!({
-        "step": done.step,
-        "tool": call.name,
-        "found": done.found,
-        "failed": done.result.starts_with("That did not work:") || done.step.starts_with("Tried to "),
-    }));
+    if !done.step.is_empty() {
+        send(serde_json::json!({
+            "step": done.step,
+            "tool": call.name,
+            "found": done.found,
+            "failed": done.result.starts_with("That did not work:") || done.step.starts_with("Tried to "),
+        }));
+    }
     let added = desk.take_steering();
     if !added.is_empty() {
         send(serde_json::json!({ "steered": added }));
