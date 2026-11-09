@@ -17,7 +17,8 @@ a test, or leave it unset to see the user's own data.
    `fresh_token()`; the port actually used is remembered. A failure opens
    `dist/index.html?problem=…` instead.
 3. Plugins: single instance (a second launch shows the window), autostart
-   (enabled once, marker `<config>/app-launched`; never in debug builds).
+   (enabled once, marker `<config>/app-launched`; never in debug builds),
+   notification (Rust only; the page gets no notification permission).
 4. Window `main`: the engine's sign-in URL, 1200×800, `--hidden` when started at
    login. macOS: overlay title bar, hidden title, window buttons at (18, 31) in
    the sidebar head; `window.__LEO_APP__ = 'mac'` makes `theme.js` set
@@ -58,6 +59,14 @@ a test, or leave it unset to see the user's own data.
   Page commands are offered for 5 s (the page may still be loading) and run once
   per click (`__leoAsked`); copying runs off the main thread. A speech model that
   is chosen but not on disk reads "(not downloaded)".
+- Calendar events (2026-11-09, `notify.rs`): `AppApi::event_starting` posts
+  "<title> is starting" with the event uid in `extra`; a tap (`on_action`, which
+  2.8.0 reports on macOS and Windows) shows the window and navigates to
+  `#/record?event=<uid>&kind=call` through `leoFromApp('event', uid)` (`page`
+  JSON-quotes its argument). macOS asks for notification permission on that first
+  post, never during onboarding. The tray always adds "Record <title>" under
+  Record a call until start+10 min, hidden while a recording is live
+  (`Running::recording_live`), so a denied or missed notification still has a way in.
 - The window disables Tauri's drag-drop handler (`disable_drag_drop_handler`):
   left on, it swallows the webview's HTML drag events, so moving notes and
   folders and combining notes did nothing in the app (2026-11-02). Dropped

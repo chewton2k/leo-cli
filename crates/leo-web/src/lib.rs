@@ -510,6 +510,7 @@ struct Background {
     graph: tokio::task::JoinHandle<()>,
     idle: tokio::task::JoinHandle<()>,
     expiry: tokio::task::JoinHandle<()>,
+    calendar: tokio::task::JoinHandle<()>,
 }
 
 impl Background {
@@ -517,6 +518,7 @@ impl Background {
         self.graph.abort();
         self.idle.abort();
         self.expiry.abort();
+        self.calendar.abort();
     }
 }
 
@@ -557,6 +559,10 @@ impl Running {
     /// bar: "12 AI requests · 340k tokens (210k cached)".
     pub fn usage_line(&self) -> String {
         self.state.usage.line()
+    }
+
+    pub fn recording_live(&self) -> bool {
+        record::live(&self.state.recording)
     }
 
     pub async fn stop(self) {
@@ -705,6 +711,7 @@ pub(crate) async fn start_in(
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
         expiry,
+        calendar: tokio::spawn(calendar::offer_to_record(state.clone())),
     };
     let app = router(state.clone()).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
@@ -770,7 +777,12 @@ fn router(state: AppState) -> Router {
             get(get_note).patch(update_note).delete(delete_note),
         )
         .route("/api/notes/{id}/toggle", post(toggle_checkbox))
-        .route("/api/calendar", get(calendar::get).post(calendar::add))
+        .route(
+            "/api/calendar",
+            get(calendar::get)
+                .post(calendar::add)
+                .patch(calendar::change),
+        )
         .route("/api/calendar/refresh", post(calendar::refresh_now))
         .route(
             "/api/calendar/{id}",

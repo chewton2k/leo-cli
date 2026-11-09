@@ -110,6 +110,23 @@ test('the calendar card guides each provider and checks the address before savin
     assert.equal(nodes['#calendar-link'].attrs['aria-invalid'], 'true');
   });
 });
+test('the calendar card offers to record when an event starts, on by default once connected', async () => {
+  const listeners = {};
+  const sent = [];
+  const context = { app: { addEventListener() {} }, document: { addEventListener: (type, fn) => (listeners[type] = [...(listeners[type] || []), fn]) }, window: {}, ICON: new Proxy({}, { get: () => '' }), esc: text => String(text), segmented: () => '', settingsSwitch: (attrs, on) => `<input ${attrs}${on ? ' checked' : ''}>`, rel: () => 'today', api: async (url, options) => { sent.push([url, options]); return { offer: options.body.offer }; }, state: {} };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings.js'), 'utf8'), context);
+  const row = /<label class="set-row" data-find="calendar-offer"><span class="grow">Offer to record when an event starts<\/span><input data-cal-offer( checked)?><\/label>/;
+  const linked = [{ id: 'a', name: 'Work', added_at: '2026-11-01T00:00:00Z' }];
+  assert.doesNotMatch(context.calendarCard({ calendars: [] }), /calendar-offer/);
+  assert.equal(context.calendarCard({ calendars: linked }).match(row)[1], ' checked');
+  assert.equal(context.calendarCard({ calendars: linked, offer: true }).match(row)[1], ' checked');
+  assert.equal(context.calendarCard({ calendars: linked, offer: false }).match(row)[1], undefined);
+  const box = { checked: false, matches: (at) => at === '[data-cal-offer]' };
+  await Promise.all(listeners.change.map((fn) => fn({ target: box })));
+  assert.deepEqual(JSON.parse(JSON.stringify(sent)), [['/api/calendar', { method: 'PATCH', body: { offer: false } }]]);
+  assert.equal(context.state.calendar.offer, false);
+});
 
 test('Ollama setup guides an install, waits for the app, and lists models that fit', () => {
   const context = { app: { addEventListener() {} }, document: { addEventListener() {} }, window: {}, ICON: new Proxy({}, {get: () => ''}), esc: text => String(text), choiceCards: () => '', ON_MAC: true };

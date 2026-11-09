@@ -11,10 +11,16 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+pub struct EventStarting {
+    pub uid: String,
+    pub title: String,
+    pub start: chrono::DateTime<chrono::Utc>,
+}
 pub trait AppApi: Send + Sync {
     fn view(&self) -> Result<Value>;
     fn change(&self, value: Value) -> Result<Value>;
     fn health(&self, notes: &Path) -> Result<Value>;
+    fn event_starting(&self, _event: EventStarting) {}
 }
 fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error":message}))).into_response()

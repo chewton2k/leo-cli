@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -23,6 +23,11 @@ const REFRESH: Duration = Duration::from_secs(5 * 60);
 /// A menu command is offered to the page this many times, this far apart.
 const ASK_TRIES: u32 = 10;
 const ASK_GAP: Duration = Duration::from_millis(500);
+
+const OFFER_AT: usize = 4;
+const OFFER_CHECK: Duration = Duration::from_secs(15);
+
+struct TrayMenu(Menu<Wry>);
 
 struct Status {
     speech: MenuItem<Wry>,
@@ -89,8 +94,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 page(app, "settings", "updates");
             }
             "quit" => app.exit(0),
-            _ => {}
+            id => {
+                if let Some(uid) = id.strip_prefix("event:") {
+                    page(app, "event", uid);
+                }
+            }
         });
+    app.manage(TrayMenu(menu.clone()));
     if let Some(icon) = app.default_window_icon().cloned() {
         tray = tray.icon(icon);
     }
@@ -186,10 +196,10 @@ fn popup<M: tauri::menu::ContextMenu + 'static>(tray: &tauri::tray::TrayIcon, me
 }
 
 /// Shows the window and asks the page to go somewhere (`leoFromApp` in
-/// app/events.js). The arguments are fixed words, never user text. The page may
+/// app/events.js). `which` is passed as a JSON string literal. The page may
 /// still be loading (first launch, a reload), so the request is tried for a few
 /// seconds and runs at most once (`__leoAsked` remembers each click's number).
-fn page(app: &AppHandle, what: &'static str, which: &'static str) {
+pub(crate) fn page(app: &AppHandle, what: &'static str, which: &str) {
     static CLICKS: AtomicU64 = AtomicU64::new(0);
     if !crate::update_window::may_open(leo_core::activity::global()) {
         return;
@@ -197,10 +207,11 @@ fn page(app: &AppHandle, what: &'static str, which: &'static str) {
     crate::show(app);
     let click = CLICKS.fetch_add(1, Ordering::Relaxed);
     let app = app.clone();
+    let which = serde_json::to_string(which).unwrap_or_default();
     let script = format!(
         "(() => {{ const done = window.__leoAsked = window.__leoAsked || {{}}; \
          if (done[{click}] || !window.leoFromApp) return; done[{click}] = true; \
-         window.leoFromApp('{what}', '{which}'); }})()"
+         window.leoFromApp('{what}', {which}); }})()"
     );
     let _ = std::thread::Builder::new()
         .name("leo-tray-page".into())
@@ -215,6 +226,52 @@ fn page(app: &AppHandle, what: &'static str, which: &'static str) {
                 std::thread::sleep(ASK_GAP);
             }
         });
+}
+
+pub(crate) fn offer(app: &AppHandle, uid: String, title: String, until: SystemTime) {
+    let Some(menu) = app.try_state::<TrayMenu>().map(|held| held.0.clone()) else {
+        return;
+    };
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("leo-tray-event".into())
+        .spawn(move || {
+            let Ok(item) = MenuItem::with_id(
+                &app,
+                format!("event:{uid}"),
+                format!("Record {title}"),
+                true,
+                None::<&str>,
+            ) else {
+                return;
+            };
+            let mut shown = false;
+            loop {
+                let ended = SystemTime::now() >= until;
+                let wanted = !ended && !recording_live(&app);
+                if wanted != shown {
+                    let _ = if wanted {
+                        menu.insert(&item, OFFER_AT)
+                    } else {
+                        menu.remove(&item)
+                    };
+                    shown = wanted;
+                }
+                if ended {
+                    return;
+                }
+                std::thread::sleep(OFFER_CHECK);
+            }
+        });
+}
+
+fn recording_live(app: &AppHandle) -> bool {
+    app.try_state::<crate::Engine>().is_some_and(|engine| {
+        engine.0.lock().ok().is_some_and(|held| {
+            held.as_ref()
+                .is_some_and(|running| running.recording_live())
+        })
+    })
 }
 
 /// Reads the newest dictation off the main thread, so a busy database never

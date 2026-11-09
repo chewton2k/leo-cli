@@ -230,6 +230,12 @@ impl RecordJob {
 
 pub(crate) type Recordings = Arc<Mutex<Option<RecordJob>>>;
 
+pub(crate) fn live(recordings: &Recordings) -> bool {
+    recordings
+        .lock()
+        .is_ok_and(|held| held.as_ref().is_some_and(RecordJob::live))
+}
+
 fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }

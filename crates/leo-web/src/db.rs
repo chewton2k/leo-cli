@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS calendar_feeds (
     problem TEXT,
     body BLOB
 );
+CREATE TABLE IF NOT EXISTS calendar_prompted (
+    uid TEXT NOT NULL,
+    start TEXT NOT NULL,
+    PRIMARY KEY (uid, start)
+);
 CREATE TABLE IF NOT EXISTS reading (
     note TEXT PRIMARY KEY,
     anchor TEXT NOT NULL,

@@ -951,7 +951,9 @@ async function showSearch(query) {
 const SEARCH_MOST = 300;
 const SEARCH_STEP = 60;
 
-async function showRecord(dir) {
+async function showRecord(arg) {
+  const [dir] = arg.split('?');
+  const asked = new URLSearchParams(location.hash.split('?')[1] || '');
   const mine = ++seq;
   state = { view: 'record', dir: '' };
   chrome({ showBack: true });
@@ -965,7 +967,7 @@ async function showRecord(dir) {
     if (e instanceof Locked) throw e;
   }
   if (mine !== seq) return;
-  await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean) });
+  await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean), event: asked.get('event'), kind: asked.get('kind') });
 }
 
 window.addEventListener('beforeprint', () => {

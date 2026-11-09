@@ -6,6 +6,7 @@ mod dictation;
 mod helpers;
 mod input;
 mod links;
+mod notify;
 mod overlay;
 mod paste_tx;
 mod permissions;
@@ -41,6 +42,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show(app);
         }))
@@ -56,6 +58,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.handle().plugin(tauri_nspanel::init())?;
             overlay::create(app.handle())?;
+            notify::listen(app.handle());
             let dictation = dictation::Dictation::new(app.handle().clone())?;
             let app_settings =
                 app_settings::AppSettings::new(app.handle().clone(), dictation.clone())?;

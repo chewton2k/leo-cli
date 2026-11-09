@@ -26,6 +26,10 @@ const LIVE_MINUTES: i64 = 2;
 const KEPT_EXPANSIONS: usize = 12;
 const MOST_DAYS_SHOWN: i64 = 43;
 const MOST_REACH_DAYS: i64 = 400;
+const OFFER_BEFORE_MINUTES: i64 = 2;
+const OFFER_AFTER_MINUTES: i64 = 10;
+const PROMPTED_KEPT_DAYS: i64 = 2;
+const OFFER_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 const OLD_FILES: [&str; 3] = [
     "calendar-google.json",
     "calendar-status.json",
@@ -147,6 +151,8 @@ struct Linked {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Linking {
     calendars: Vec<Linked>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offer: Option<bool>,
 }
 
 fn data(notes: &Path) -> PathBuf {
@@ -296,7 +302,81 @@ fn status(notes: &Path, calendar: &Calendar, busy: bool, now: DateTime<Utc>) -> 
         "synced": synced(notes, &linking),
         "refreshing": busy,
         "events": events,
+        "offer": linking.offer != Some(false),
     })
+}
+
+fn starting(
+    notes: &Path,
+    calendar: &Calendar,
+    live: bool,
+    now: DateTime<Utc>,
+) -> Vec<crate::app_settings::EventStarting> {
+    let linking: Linking = read(&settings_path(notes));
+    if live || linking.calendars.is_empty() || linking.offer == Some(false) {
+        return Vec::new();
+    }
+    let db = db_for(notes);
+    let old = (now - Duration::days(PROMPTED_KEPT_DAYS)).to_rfc3339();
+    let _ = db.with(|c| c.execute("DELETE FROM calendar_prompted WHERE start < ?1", [old]));
+    let hour = DateTime::from_timestamp(now.timestamp().div_euclid(3600) * 3600, 0).unwrap_or(now);
+    calendar
+        .events(notes, hour - Duration::hours(1), hour + Duration::hours(2))
+        .into_iter()
+        .map(|(_, _, e)| e)
+        .filter(|e| {
+            !e.all_day
+                && e.start - Duration::minutes(OFFER_BEFORE_MINUTES) <= now
+                && now < e.start + Duration::minutes(OFFER_AFTER_MINUTES)
+        })
+        .filter(|e| {
+            db.with(|c| {
+                c.execute(
+                    "INSERT OR IGNORE INTO calendar_prompted (uid, start) VALUES (?1, ?2)",
+                    [&e.id, &e.start.to_rfc3339()],
+                )
+            })
+            .is_ok_and(|added| added == 1)
+        })
+        .map(|e| crate::app_settings::EventStarting {
+            uid: e.id,
+            title: e.title,
+            start: e.start,
+        })
+        .collect()
+}
+
+fn offer(
+    notes: &Path,
+    calendar: &Calendar,
+    api: &dyn crate::app_settings::AppApi,
+    live: bool,
+    now: DateTime<Utc>,
+) {
+    for event in starting(notes, calendar, live, now) {
+        api.event_starting(event);
+    }
+}
+
+pub(crate) async fn offer_to_record(state: AppState) {
+    let Some(api) = state.app_settings.clone() else {
+        return;
+    };
+    let mut every = tokio::time::interval(OFFER_EVERY);
+    every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        every.tick().await;
+        let Ok(notes) = notes_of(&state).await else {
+            continue;
+        };
+        let live = crate::record::live(&state.recording);
+        let calendar = Arc::clone(&state.calendar);
+        let api = Arc::clone(&api);
+        let _ = tokio::task::spawn_blocking(move || {
+            offer(&notes, &calendar, api.as_ref(), live, Utc::now())
+        })
+        .await;
+    }
 }
 
 fn stale(notes: &Path, now: DateTime<Utc>, minutes: i64) -> bool {
@@ -427,6 +507,7 @@ pub(crate) async fn add(State(state): State<AppState>, Json(body): Json<Add>) ->
             },
             added_at: now,
         });
+        linking.offer = read::<Linking>(&settings_path(&notes)).offer;
         if let Err(e) = leo_core::recording::write_json(&settings_path(&notes), &linking) {
             let _ = access.delete(&account(&id));
             return Err(e);
@@ -516,6 +597,34 @@ pub(crate) async fn refresh_now(State(state): State<AppState>) -> Response {
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "The calendars could not be read.",
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Change {
+    offer: bool,
+}
+
+pub(crate) async fn change(State(state): State<AppState>, Json(body): Json<Change>) -> Response {
+    let notes = match notes_of(&state).await {
+        Ok(n) => n,
+        Err(code) => return code.into_response(),
+    };
+    let calendar = Arc::clone(&state.calendar);
+    let busy = state.calendar.busy.load(Ordering::Acquire);
+    let done = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+        let mut linking: Linking = read(&settings_path(&notes));
+        linking.offer = Some(body.offer);
+        leo_core::recording::write_json(&settings_path(&notes), &linking)?;
+        Ok(status(&notes, &calendar, busy, Utc::now()))
+    })
+    .await;
+    match done {
+        Ok(Ok(value)) => Json(value).into_response(),
+        _ => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "That calendar setting could not be saved.",
         ),
     }
 }
@@ -659,6 +768,149 @@ pub(crate) mod tests {
             self.secrets.lock().unwrap().remove(account);
             Ok(())
         }
+    }
+
+    const MEETINGS: &str = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:sync\nSUMMARY:Design sync\nDTSTART;TZID=America/Los_Angeles:20261030T090000\nDTEND;TZID=America/Los_Angeles:20261030T093000\nRRULE:FREQ=DAILY\nEND:VEVENT\nBEGIN:VEVENT\nUID:holiday\nSUMMARY:Holiday\nDTSTART;VALUE=DATE:20261105\nDTEND;VALUE=DATE:20261106\nEND:VEVENT\nEND:VCALENDAR\n";
+
+    #[derive(Default)]
+    struct Asked(Mutex<Vec<(String, String, DateTime<Utc>)>>);
+
+    impl crate::app_settings::AppApi for Asked {
+        fn view(&self) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({}))
+        }
+        fn change(&self, _: serde_json::Value) -> Result<serde_json::Value> {
+            self.view()
+        }
+        fn health(&self, _: &Path) -> Result<serde_json::Value> {
+            self.view()
+        }
+        fn event_starting(&self, e: crate::app_settings::EventStarting) {
+            self.0.lock().unwrap().push((e.uid, e.title, e.start));
+        }
+    }
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    fn linked(offer: Option<bool>) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        let linking = Linking {
+            calendars: vec![Linked {
+                id: "work".into(),
+                name: "Work".into(),
+                added_at: Utc::now(),
+            }],
+            offer,
+        };
+        leo_core::recording::write_json(&settings_path(&notes), &linking).unwrap();
+        db_for(&notes)
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO calendar_feeds (feed, fetched_at, tried_at, body) VALUES ('work', ?1, ?1, ?2)",
+                    rusqlite::params![Utc::now().to_rfc3339(), MEETINGS.as_bytes()],
+                )
+            })
+            .unwrap();
+        (dir, notes)
+    }
+
+    fn asked(notes: &Path, live: bool, now: DateTime<Utc>) -> Vec<(String, DateTime<Utc>)> {
+        let api = Asked::default();
+        offer(notes, &Calendar::default(), &api, live, now);
+        let seen = api.0.lock().unwrap();
+        seen.iter().map(|(_, t, s)| (t.clone(), *s)).collect()
+    }
+
+    #[test]
+    fn a_calendar_event_is_offered_once_from_two_minutes_before_its_start() {
+        let (_dir, notes) = linked(None);
+        let start = at("2026-10-30T16:00:00Z");
+        assert!(asked(&notes, false, at("2026-10-30T15:57:59Z")).is_empty());
+        assert_eq!(
+            asked(&notes, false, at("2026-10-30T15:58:00Z")),
+            [("Design sync".to_string(), start)]
+        );
+        assert!(asked(&notes, false, at("2026-10-30T16:05:00Z")).is_empty());
+        let api = Asked::default();
+        offer(
+            &notes,
+            &Calendar::default(),
+            &api,
+            false,
+            at("2026-10-31T15:59:00Z"),
+        );
+        assert_eq!(
+            api.0.lock().unwrap()[0].0,
+            "sync@1793462400",
+            "the next day is its own event"
+        );
+    }
+
+    #[test]
+    fn a_calendar_event_is_not_offered_from_ten_minutes_after_its_start() {
+        let (_dir, notes) = linked(None);
+        assert!(asked(&notes, false, at("2026-10-30T16:10:00Z")).is_empty());
+        assert_eq!(asked(&notes, false, at("2026-10-30T16:09:59Z")).len(), 1);
+    }
+
+    #[test]
+    fn a_calendar_offer_waits_while_recording_and_skips_all_day_events() {
+        let (_dir, notes) = linked(None);
+        assert!(asked(&notes, true, at("2026-10-30T16:01:00Z")).is_empty());
+        assert_eq!(asked(&notes, false, at("2026-10-30T16:02:00Z")).len(), 1);
+        let holiday = ics::read(
+            MEETINGS,
+            at("2026-11-04T00:00:00Z"),
+            at("2026-11-07T00:00:00Z"),
+        )
+        .events
+        .into_iter()
+        .find(|e| e.all_day)
+        .unwrap();
+        for minutes in [-2, 0, 5] {
+            assert!(
+                asked(&notes, false, holiday.start + Duration::minutes(minutes))
+                    .iter()
+                    .all(|(title, _)| title != "Holiday")
+            );
+        }
+    }
+
+    #[test]
+    fn a_calendar_offer_follows_the_local_time_across_daylight_saving() {
+        let (_dir, notes) = linked(None);
+        assert_eq!(asked(&notes, false, at("2026-10-30T15:59:00Z")).len(), 1);
+        assert!(asked(&notes, false, at("2026-11-02T16:00:00Z")).is_empty());
+        assert_eq!(
+            asked(&notes, false, at("2026-11-02T16:59:00Z")),
+            [("Design sync".to_string(), at("2026-11-02T17:00:00Z"))]
+        );
+        let kept: Vec<String> = db_for(&notes)
+            .with(|c| {
+                let mut rows = c.prepare("SELECT start FROM calendar_prompted")?;
+                let all = rows.query_map([], |r| r.get(0))?.flatten().collect();
+                Ok(all)
+            })
+            .unwrap();
+        assert_eq!(
+            kept,
+            ["2026-11-02T17:00:00+00:00"],
+            "rows older than two days are dropped"
+        );
+    }
+
+    #[test]
+    fn a_calendar_offer_is_off_when_the_switch_is_off() {
+        let (_dir, notes) = linked(Some(false));
+        assert!(asked(&notes, false, at("2026-10-30T16:00:00Z")).is_empty());
+        let (_dir, notes) = linked(Some(true));
+        assert_eq!(asked(&notes, false, at("2026-10-30T16:00:00Z")).len(), 1);
     }
 
     #[test]

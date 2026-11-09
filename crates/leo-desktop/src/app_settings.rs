@@ -289,6 +289,9 @@ impl leo_web::app_settings::AppApi for AppSettings {
         }
         self.view()
     }
+    fn event_starting(&self, event: leo_web::app_settings::EventStarting) {
+        crate::notify::starting(&self.app, event);
+    }
     fn health(&self, notes: &Path) -> Result<Value> {
         use leo_web::dictation::DictationApi;
         let mut view = leo_host::health::scan(notes)?;

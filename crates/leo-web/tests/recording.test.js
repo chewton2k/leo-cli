@@ -221,3 +221,22 @@ test('choosing Call fills an empty want and never overwrites typed text', () => 
   assert.equal(pick('call', 'only the exam').wants, 'only the exam');
   assert.deepEqual(pick('microphone', ''), { wants: '', headset: true });
 });
+
+test('a meeting prompt preselects Call and its event and fills the meeting wording without starting', () => {
+  const ask = (asked, typed = '', s = { calendar: { events: [{ id: 'standup@1', title: 'Standup', start: '2026-11-09T09:00:00Z', end: '2026-11-09T09:15:00Z' }, { id: 'sync@2', title: 'Design sync', start: '2026-11-09T15:00:00Z', end: '2026-11-09T16:00:00Z' }] }, event: null, eventChosen: false }) => {
+    let picked = 'microphone';
+    const radios = ['microphone', 'screen', 'call'].map((value) => ({ value, disabled: false, get checked() { return picked === value; }, set checked(on) { if (on) picked = value; } }));
+    const fields = { '#rec-title': { value: '' }, '#rec-wants': { value: typed }, '#rec-headset': { hidden: true }, '.rec-idle': {} };
+    const box = { querySelector: (at) => at === 'input[name="rec-kind"]:checked' ? radios.find((r) => r.checked) : fields[at] || radios.find((r) => at === `input[name="rec-kind"][value="${r.value}"]`) || null };
+    piece('chooseEvent', 'idleForm', 'preselect', { s, MEETING_WANTS: L.MEETING_WANTS, eventNow: () => -1 })(box, asked);
+    return { kind: radios.find((r) => r.checked).value, event: s.event, chosen: s.eventChosen, title: fields['#rec-title'].value, wants: fields['#rec-wants'].value };
+  };
+  assert.deepEqual(ask({ event: 'sync@2', kind: 'call' }), { kind: 'call', event: 1, chosen: true, title: 'Design sync', wants: L.MEETING_WANTS });
+  assert.equal(ask({ event: 'sync@2', kind: 'call' }, 'only the decisions').wants, 'only the decisions');
+  assert.deepEqual(ask({ event: 'gone@3', kind: 'call' }), { kind: 'call', event: null, chosen: false, title: '', wants: L.MEETING_WANTS });
+  assert.equal(ask({ event: 'sync@2', kind: 'call' }, '', { calendar: { events: [{ id: 'sync@2', title: 'Design sync' }] }, event: null, eventChosen: true }).event, 0, 'the prompt wins over an earlier choice');
+  assert.equal(ask({ kind: '"] , x' }).kind, 'microphone');
+  assert.equal(ask({}).kind, 'microphone');
+  const body = recordingSource.slice(recordingSource.indexOf('    function preselect('), recordingSource.indexOf('    function idleForm('));
+  assert.doesNotMatch(body, /begin|start\(|rec-start|click/, 'the prompt never presses Start');
+});

@@ -497,6 +497,20 @@
       if (fill && call && wants && !wants.value.trim()) wants.value = MEETING_WANTS;
     }
 
+    function preselect(box, asked) {
+      if (!box || !box.querySelector('.rec-idle')) return;
+      const events = (s.calendar && s.calendar.events) || [];
+      const wanted = asked.event ? events.findIndex((e) => e.id === asked.event) : -1;
+      const at = wanted >= 0 ? wanted : s.eventChosen ? -1 : eventNow(events);
+      if (wanted >= 0) s.eventChosen = true;
+      if (at >= 0) chooseEvent(box, at);
+      const kind = ['microphone', 'screen', 'call'].includes(asked.kind) && box.querySelector(`input[name="rec-kind"][value="${asked.kind}"]`);
+      if (kind && !kind.disabled) {
+        kind.checked = true;
+        pickKind(box, true);
+      }
+    }
+
     function idleForm(box) {
       if (!box.querySelector('.rec-idle')) return null;
       const picked = box.querySelector('input[name="rec-kind"]:checked');
@@ -715,10 +729,7 @@
         pill();
         await refresh();
         s.calendar = await api('/api/calendar').catch(() => null);
-        if (!s.eventChosen && s.container && s.container.querySelector('.rec-idle')) {
-          const now = eventNow(s.calendar && s.calendar.events);
-          if (now >= 0) chooseEvent(s.container, now);
-        }
+        preselect(s.container, options);
         draw();
         pill();
       },

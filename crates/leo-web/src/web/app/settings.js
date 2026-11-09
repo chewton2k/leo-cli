@@ -72,6 +72,16 @@ document.addEventListener('change', (e) => {
 document.addEventListener('input', (e) => {
   if (e.target.id === 'calendar-link') showCalendarError('');
 });
+document.addEventListener('change', async (e) => {
+  const field = e.target;
+  if (!field.matches?.('[data-cal-offer]')) return;
+  try {
+    state.calendar = await api('/api/calendar', { method: 'PATCH', body: { offer: field.checked } });
+  } catch (error) {
+    field.checked = !field.checked;
+    fail(error);
+  }
+});
 
 function calendarCard(cal) {
   if (!cal) return '';
@@ -98,6 +108,7 @@ function calendarCard(cal) {
     <header><h3>Calendar</h3>${chip}</header>
     <p class="hint">Recordings are named after the class or meeting you are in, and the AI gets its description and who was invited. leo only reads your calendar.</p>
     ${rows}
+    ${count ? `<label class="set-row" data-find="calendar-offer"><span class="grow">Offer to record when an event starts</span>${settingsSwitch('data-cal-offer', cal.offer !== false)}</label>` : ''}
     ${adder}
   </section>`;
 }

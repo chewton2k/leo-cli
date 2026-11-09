@@ -48,6 +48,16 @@ fn a_pasted_calendar_link_shows_upcoming_events_and_is_never_sent_back() {
         "the secret link stays in the secret store"
     );
     assert_eq!(fake.secrets.lock().unwrap().len(), 1);
+    assert_eq!(
+        page["offer"], true,
+        "offering to record is on once connected"
+    );
+    let off = json_of(run(crate::calendar::change(
+        State(state.clone()),
+        Json(serde_json::from_value(serde_json::json!({"offer": false})).unwrap()),
+    )));
+    assert_eq!(off["offer"], false);
+    assert_eq!(off["calendars"][0]["name"], "Classes");
 
     fake.pages.lock().unwrap().clear();
     let refreshed = json_of(run(crate::calendar::refresh_now(State(state.clone()))));

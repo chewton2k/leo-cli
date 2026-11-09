@@ -920,6 +920,17 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   moved instances, all-day items are dates. GET `/api/schedule?from&to&live`
   (≤43 days); the page refreshes every 2.5 min while visible.
 
+- Offer to record (2026-11-09, item L1): `calendar::offer_to_record`, a 60 s
+  background task (stops with the engine; only when `Powers.app_settings` is
+  set) over the cached expansions, never fetching. A timed event is offered once
+  when start−2 min ≤ now < start+10 min (UTC instants) and no recording is live
+  (`record::live`); leo.db `calendar_prompted(uid, start)` dedupes (rows older
+  than 2 days pruned) and `AppApi::event_starting(EventStarting {uid, title,
+  start})` (default no-op) tells the app. Settings → Calendar's switch "Offer to
+  record when an event starts" is `offer` in calendars.json (absent = on; PATCH
+  `/api/calendar {offer}`). `#/record?event=<uid>&kind=call` preselects Call and
+  that event (`preselect` in recording.js) and never presses Start.
+
 - Standalone tasks are files: `<notes>/.leo/tasks/<id>.json`
   (`tasks::tasks_dir`), one JSON line each, written atomically. The reader
   takes the line with the newest `updated_at`. Deleting writes a tombstone
