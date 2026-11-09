@@ -12,6 +12,38 @@ fn a_failed_read_does_not_reload_the_store_and_a_failed_write_does() {
 }
 
 #[test]
+fn a_panic_inside_the_store_reloads_it_from_disk_instead_of_failing_every_request() {
+    let (state, _dir, ids) = state_with(&[("One", "")]);
+    let id = ids[0].clone();
+    let panicked: Result<(), StatusCode> = run(state.with_store(move |store| {
+        store.find_note_mut(&id).unwrap().body = "Never saved".into();
+        panic!("simulated failure inside the store");
+    }));
+    assert_eq!(panicked, Err(StatusCode::INTERNAL_SERVER_ERROR));
+    assert!(state.store.is_poisoned());
+    let bodies = run(state.read_store(|store| {
+        Ok(store
+            .notes
+            .iter()
+            .map(|note| note.body.clone())
+            .collect::<Vec<_>>())
+    }))
+    .unwrap();
+    assert_eq!(bodies, vec![String::new()]);
+    assert!(!state.store.is_poisoned());
+    let id = ids[0].clone();
+    let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<(), StatusCode> = store_now(&state, move |store| {
+            store.find_note_mut(&id).unwrap().body = "Never saved".into();
+            panic!("simulated failure inside the store");
+        });
+    }));
+    assert!(again.is_err() && state.store.is_poisoned());
+    let body = store_now(&state, |store| Ok(store.notes[0].body.clone())).unwrap();
+    assert_eq!(body, "");
+}
+
+#[test]
 fn saving_another_note_preserves_external_creates_and_edits_before_watch_delivery() {
     for creating in [false, true] {
         let (state, _dir, ids) = state_with(&[("Local", ""), ("External", "")]);

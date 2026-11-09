@@ -113,7 +113,7 @@ pub(crate) async fn get(State(state): State<AppState>) -> Response {
         .parent()
         .unwrap()
         .to_path_buf();
-    call(state.dictation, data, None).await
+    call(state.dictation.clone(), data, None).await
 }
 pub(crate) async fn change(
     State(state): State<AppState>,
@@ -130,7 +130,7 @@ pub(crate) async fn change(
         .parent()
         .unwrap()
         .to_path_buf();
-    call(state.dictation, data, Some(change)).await
+    call(state.dictation.clone(), data, Some(change)).await
 }
 
 #[cfg(test)]

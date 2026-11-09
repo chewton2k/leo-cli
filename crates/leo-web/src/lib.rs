@@ -43,42 +43,14 @@ mod warm;
 mod work;
 
 use std::future::IntoFuture;
-#[cfg(test)]
-use std::sync::MutexGuard;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Result;
-use axum::{
-    http::StatusCode,
-    routing::{get, post},
-    Router,
-};
+use axum::http::StatusCode;
 use leo_core::store::Store;
 
-use crate::routes::activity::{activity, page_visible};
-use crate::routes::assets::{
-    app_js, chat_js, doc_js, editing_js, favicon, index, markdown_js, recording_js, saving_js,
-};
-use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
-use crate::routes::downloads::{export_zip, originals_zip};
-use crate::routes::felix::{
-    add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat,
-    drop_last_messages, get_chat, get_review, list_chat_files, list_chats, mark_reviewed, put_chat,
-    remove_chat_file, steer_answer,
-};
-use crate::routes::housekeeping::{get_keep, set_keep};
-use crate::routes::notes::{
-    create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
-    move_note, rename_dir, search_notes, toggle_checkbox, update_note,
-};
-use crate::routes::pictures::{add_picture, get_picture, PICTURE_BYTES};
-use crate::routes::settings::{change_setting, get_settings, test_setting};
-use crate::routes::trash::{
-    delete_from_trash, list_trash, move_to_trash, restore_many, restore_note,
-};
-use crate::routes::uploads::{
-    get_original, import_status, list_originals, start_import, ImportJob, IMPORT_BYTES,
-};
+use crate::routes::auth::same_host;
+use crate::routes::uploads::ImportJob;
 
 pub use chat::{Conversation, Converser, Exchange, Instructions, Reply, Spent, Streamer, ToolSpec};
 pub use graph::Writer;
@@ -187,6 +159,7 @@ pub(crate) fn no_writer() -> String {
 
 #[derive(Clone)]
 struct AppState {
+    powers: Powers,
     visible: Arc<std::sync::atomic::AtomicBool>,
     shown: Arc<tokio::sync::Notify>,
     covered: Arc<std::sync::atomic::AtomicBool>,
@@ -195,51 +168,41 @@ struct AppState {
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
-    quick: Option<Writer>,
-    toolless: Option<Writer>,
     margin: Arc<margin::Reads>,
-    housekeeping: Option<Writer>,
-    usage: Arc<usage::Usage>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     work: Arc<work::Work>,
-    chat: Option<Streamer>,
-    light_chat: Option<Streamer>,
-    lighter: Option<Lighter>,
-    toolless_chat: Option<Streamer>,
-    settings: Option<Arc<dyn SettingsApi>>,
-    speech: Option<Arc<dyn speech::SpeechApi>>,
-    ollama: Option<Arc<dyn ollama::OllamaApi>>,
     ollama_pulls: Arc<ollama::Pulls>,
-    dictation: Option<Arc<dyn dictation::DictationApi>>,
-    app_settings: Option<Arc<dyn app_settings::AppApi>>,
     usage_refreshes: Arc<tokio::sync::Semaphore>,
-    importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     import_slots: Arc<routes::uploads::ImportSlots>,
     zip_slots: Arc<tokio::sync::Semaphore>,
     combines: Arc<Mutex<std::collections::HashMap<String, routes::combine::CombineJob>>>,
-    listener: Option<record::Listener>,
-    regenerator: Option<record::Regenerator>,
-    calendar_access: Option<Arc<dyn CalendarAccess>>,
     recording: record::Recordings,
     capture_activity: leo_core::activity::Gate,
     discarded_recordings: Arc<Mutex<std::collections::VecDeque<String>>>,
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
     chats: std::path::PathBuf,
-    housekeeper: Option<Arc<dyn record::Housekeeper>>,
-    reader: Option<Reader>,
-    room: Option<Room>,
-    context: Option<Room>,
-    converse: Option<chat::Converser>,
-    seer: Option<captions::Seer>,
     captions: Arc<captions::Captions>,
     originals: Arc<originals::Originals>,
     activity: Arc<Activity>,
     steering: steer::Steering,
-    meaning: Option<vectors::Meaning>,
     vectors: Arc<vectors::Vectors>,
+}
+
+impl std::ops::Deref for AppState {
+    type Target = Powers;
+    fn deref(&self) -> &Powers {
+        &self.powers
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for AppState {
+    fn deref_mut(&mut self) -> &mut Powers {
+        &mut self.powers
+    }
 }
 
 struct Activity {
@@ -303,6 +266,8 @@ async fn note_activity(
 
 const GRAPH_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
 const PICTURES_PER_TICK: usize = 4;
+const KEEPING_EVERY: std::time::Duration = std::time::Duration::from_secs(86_400);
+const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
 
 async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + GRAPH_CHECK, GRAPH_CHECK);
@@ -429,6 +394,15 @@ impl std::ops::DerefMut for Storage {
     }
 }
 
+fn lock_storage(store: &Mutex<Storage>) -> MutexGuard<'_, Storage> {
+    store.lock().unwrap_or_else(|poisoned| {
+        store.clear_poison();
+        let mut storage = poisoned.into_inner();
+        storage.reload = true;
+        storage
+    })
+}
+
 impl AppState {
     async fn with_store<R: Send + 'static>(
         &self,
@@ -451,10 +425,7 @@ impl AppState {
     ) -> Result<R, StatusCode> {
         let state = self.clone();
         tokio::task::spawn_blocking(move || {
-            let mut store = state
-                .store
-                .lock()
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let mut store = lock_storage(&state.store);
             let force = state
                 .refresh_requested
                 .swap(false, std::sync::atomic::Ordering::AcqRel);
@@ -478,7 +449,7 @@ impl AppState {
 
     #[cfg(test)]
     fn fresh(&self) -> MutexGuard<'_, Storage> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = lock_storage(&self.store);
         if store.reload || store.changed_on_disk() {
             store.refresh().unwrap();
             store.reload = false;
@@ -505,6 +476,7 @@ pub struct Running {
     stop: tokio::sync::oneshot::Sender<()>,
     server: tokio::task::JoinHandle<std::io::Result<()>>,
     background: Background,
+    grace: std::time::Duration,
 }
 
 struct Background {
@@ -572,11 +544,12 @@ impl Running {
             stop,
             server,
             background,
+            grace,
             ..
         } = self;
         background.stop();
         let _ = stop.send(());
-        shutdown::drain(shutdown::GRACE, server).await;
+        shutdown::drain(grace, server).await;
         drop(background);
         let warm = Arc::clone(&state.warm);
         drop(state);
@@ -610,27 +583,12 @@ pub(crate) async fn start_in(
     let notes = store.notes_dir.clone();
     let vectors = Arc::new(vectors::Vectors::for_notes(&store.notes_dir));
     let graphs = Arc::new(
-        graph::Graphs::for_notes(&store.notes_dir, powers.writer)
+        graph::Graphs::for_notes(&store.notes_dir, powers.writer.clone())
             .with_room(powers.room.clone())
             .with_vectors(Arc::clone(&vectors)),
     );
     let chats = chats::dir_for(&store.notes_dir);
     powers.usage.save_in(chats.clone());
-    let quick = powers.quick;
-    let chat = powers.chat;
-    let settings = powers.settings;
-    let importer = powers.importer;
-    let recorder = powers.listener;
-    let housekeeper = powers.housekeeper;
-    let reader = powers.reader;
-    let room = powers.room;
-    let converse = powers.converse;
-    let seer = powers.seer;
-    let meaning = powers.meaning;
-    let toolless = powers.toolless;
-    let toolless_chat = powers.toolless_chat;
-    let light_chat = powers.light_chat;
-    let lighter = powers.lighter;
     let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
     let (listener, port) = bind(options.port).await?;
     let gate = Arc::new(sessions::Gate::new(
@@ -638,10 +596,7 @@ pub(crate) async fn start_in(
         sessions::Sessions::load(&places.sessions)?,
     ));
     let state = AppState {
-        toolless,
-        toolless_chat,
-        light_chat,
-        lighter,
+        powers,
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),
@@ -655,52 +610,32 @@ pub(crate) async fn start_in(
         })),
         gate: Arc::clone(&gate),
         graphs,
-        quick,
-        housekeeping: powers.housekeeping,
-        usage: powers.usage,
         progress: Arc::new(progress::Board::kept_in(&chats)),
         warm: Default::default(),
         work: Default::default(),
-        chat,
-        settings,
-        speech: powers.speech,
-        ollama: powers.ollama,
         ollama_pulls: Default::default(),
-        dictation: powers.dictation,
-        app_settings: powers.app_settings,
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
-        importer,
         imports: Default::default(),
         import_slots: Default::default(),
         zip_slots: routes::downloads::zip_slots(),
         combines: Default::default(),
-        listener: recorder,
-        regenerator: powers.regenerator,
-        calendar_access: powers.calendar_access,
         recording: Default::default(),
         capture_activity: leo_core::activity::global().clone(),
         discarded_recordings: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),
         chats,
-        housekeeper,
-        reader,
-        room,
-        context: powers.context,
-        converse,
-        seer,
         captions,
         originals: Default::default(),
         activity: Default::default(),
         steering: Default::default(),
-        meaning,
         vectors,
     };
 
     let expiry = tokio::spawn({
         let state = state.clone();
         async move {
-            let mut daily = tokio::time::interval(std::time::Duration::from_secs(86_400));
+            let mut daily = tokio::time::interval(KEEPING_EVERY);
             loop {
                 daily.tick().await;
                 keeping::expire_now(&state).await;
@@ -714,7 +649,7 @@ pub(crate) async fn start_in(
         expiry,
         calendar: tokio::spawn(calendar::offer_to_record(state.clone())),
     };
-    let app = router(state.clone()).layer(axum::middleware::from_fn(
+    let app = routes::router(state.clone()).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             same_host(port, request, next)
         },
@@ -737,6 +672,7 @@ pub(crate) async fn start_in(
         stop,
         server,
         background,
+        grace: shutdown::GRACE,
     })
 }
 
@@ -769,278 +705,8 @@ async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
     ))
 }
 
-fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(index))
-        .route("/api/notes", get(list_notes).post(create_note))
-        .route(
-            "/api/notes/{id}",
-            get(get_note).patch(update_note).delete(delete_note),
-        )
-        .route("/api/notes/{id}/toggle", post(toggle_checkbox))
-        .route(
-            "/api/calendar",
-            get(calendar::get)
-                .post(calendar::add)
-                .patch(calendar::change),
-        )
-        .route("/api/calendar/refresh", post(calendar::refresh_now))
-        .route(
-            "/api/calendar/{id}",
-            axum::routing::delete(calendar::remove),
-        )
-        .route(
-            "/api/notes/{id}/recording",
-            get(routes::sources::sources).put(routes::sources::edit_sources),
-        )
-        .route(
-            "/api/notes/{id}/regenerate",
-            post(routes::sources::regenerate),
-        )
-        .route("/api/notes/{id}/move", post(move_note))
-        .route("/api/notes/{id}/combine", post(routes::combine::start))
-        .route(
-            "/api/notes/{id}/combined",
-            post(routes::combine::keep).layer(axum::extract::DefaultBodyLimit::max(
-                combine::MOST_CHARS * 8 + 65_536,
-            )),
-        )
-        .route(
-            "/api/notes/{id}/uncombine",
-            post(routes::combine::uncombine),
-        )
-        .route(
-            "/api/combines/{job}",
-            get(routes::combine::job).delete(routes::combine::forget),
-        )
-        .route("/api/notes/{id}/suggestion", post(apply_suggestion))
-        .route("/api/felix/act", post(routes::organize::act_route))
-        .route(
-            "/api/notes/{id}/insert",
-            post(routes::insert::insert_into_note),
-        )
-        .route(
-            "/api/notes/{id}/margin",
-            get(routes::margin::note_margin).post(routes::margin::set_note_mode),
-        )
-        .route(
-            "/api/notes/{id}/margin/read",
-            post(routes::margin::read)
-                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
-        )
-        .route(
-            "/api/notes/{id}/margin/analyze",
-            post(routes::margin::analyze)
-                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
-        )
-        .route(
-            "/api/notes/{id}/margin/threads",
-            post(routes::margin::ask)
-                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
-        )
-        .route(
-            "/api/notes/{id}/margin/threads/{thread}",
-            post(routes::margin::set_status).delete(routes::margin::forget),
-        )
-        .route(
-            "/api/notes/{id}/margin/threads/{thread}/reply",
-            post(routes::margin::reply)
-                .layer(axum::extract::DefaultBodyLimit::max(margin::BODY_BYTES)),
-        )
-        .route(
-            "/api/margin",
-            get(routes::margin::settings).post(routes::margin::change_settings),
-        )
-        .route(
-            "/api/notes/{id}/related",
-            get(routes::related::related_notes),
-        )
-        .route(
-            "/api/notes/{id}/reading",
-            get(routes::related::get_reading).put(routes::related::put_reading),
-        )
-        .route(
-            "/api/tasks",
-            get(routes::tasks::list_tasks).post(routes::tasks::create_task),
-        )
-        .route("/api/tasks/promote", post(routes::tasks::promote_task))
-        .route("/api/tasks/import", post(routes::tasks::import_tasks))
-        .route(
-            "/api/tasks/{id}",
-            axum::routing::patch(routes::tasks::change_task).delete(routes::tasks::delete_task),
-        )
-        .route("/api/tasks/{id}/ics", get(routes::tasks::task_ics))
-        .route(
-            "/api/boards",
-            get(routes::boards::list_boards).post(routes::boards::create_board),
-        )
-        .route("/api/boards/restore", post(routes::boards::restore_board))
-        .route(
-            "/api/boards/{id}",
-            get(routes::boards::get_board)
-                .patch(routes::boards::change_board)
-                .delete(routes::boards::delete_board),
-        )
-        .route("/api/boards/{id}/cards", post(routes::boards::create_card))
-        .route(
-            "/api/cards/{id}",
-            axum::routing::patch(routes::boards::change_card).delete(routes::boards::delete_card),
-        )
-        .route("/api/cards/{id}/move", post(routes::boards::move_card))
-        .route("/api/schedule", get(calendar::schedule))
-        .route("/api/search", get(search_notes))
-        .route("/api/dirs", get(list_dirs).post(create_dir))
-        .route("/api/dirs/move", post(move_dir))
-        .route("/api/dirs/rename", post(rename_dir))
-        .route("/api/folders", get(list_folders))
-        .route("/api/trash", get(list_trash))
-        .route("/api/trash/{id}/restore", post(restore_note))
-        .route("/api/trash/delete", post(delete_from_trash))
-        .route("/api/trash/move", post(move_to_trash))
-        .route("/api/trash/restore", post(restore_many))
-        .route("/app.js", get(app_js))
-        .route("/markdown.js", get(markdown_js))
-        .route(
-            routes::assets::MERMAID_PATH,
-            get(routes::assets::mermaid_js),
-        )
-        .route(
-            "/vendor/katex-0.16.11/{*path}",
-            get(routes::assets::katex_file),
-        )
-        .route("/editing.js", get(editing_js))
-        .route("/doc.js", get(doc_js))
-        .route("/saving.js", get(saving_js))
-        .route("/schedule.js", get(routes::assets::schedule_js))
-        .route("/margin.js", get(routes::assets::margin_js))
-        .route("/theme.js", get(routes::assets::theme_js))
-        .route("/chat.js", get(chat_js))
-        .route("/pane-resize.js", get(routes::assets::pane_resize_js))
-        .route("/api/chat", post(chat_reply))
-        .route("/api/quiz/mark", post(routes::felix::mark_quiz))
-        .route(
-            "/api/chat/compact",
-            post(routes::felix::compact_chat)
-                .layer(axum::extract::DefaultBodyLimit::max(chats::CHAT_BYTES)),
-        )
-        .route("/api/chat/{answer}/steer", post(steer_answer))
-        .route("/api/chat/{answer}/access", post(change_answer_access))
-        .route("/api/chats", get(list_chats))
-        .route("/api/review", get(get_review).post(mark_reviewed))
-        .route(
-            "/api/chats/{id}/files",
-            get(list_chat_files)
-                .post(add_chat_file)
-                .layer(axum::extract::DefaultBodyLimit::max(
-                    chat_files::UPLOAD_BYTES,
-                )),
-        )
-        .route(
-            "/api/chats/{id}/files/{doc}",
-            axum::routing::delete(remove_chat_file),
-        )
-        .route("/api/keep", get(get_keep).post(set_keep))
-        .route(
-            "/api/keep/preview",
-            post(routes::housekeeping::preview_keep),
-        )
-        .route("/api/export", get(export_zip))
-        .route("/api/chats/{id}/drop", post(drop_last_messages))
-        .route(
-            "/api/chats/{id}",
-            get(get_chat)
-                .put(put_chat)
-                .delete(delete_chat)
-                .layer(axum::extract::DefaultBodyLimit::max(chats::CHAT_BYTES)),
-        )
-        .route("/api/settings", get(get_settings).post(change_setting))
-        .route("/api/settings/test", post(test_setting))
-        .route("/api/settings/usage", post(routes::settings::refresh_usage))
-        .route("/api/writing", get(routes::settings::writing))
-        .route("/api/processes", get(routes::processes::list))
-        .route(
-            "/api/import",
-            post(start_import)
-                .layer(axum::extract::DefaultBodyLimit::max(IMPORT_BYTES))
-                .layer(axum::middleware::from_fn_with_state(
-                    state.clone(),
-                    routes::uploads::import_limit,
-                )),
-        )
-        .route("/api/import/{id}", get(import_status))
-        .route("/api/activity", get(activity))
-        .route("/api/visible", post(page_visible))
-        .route("/api/image", get(get_picture))
-        .route(
-            "/api/images",
-            post(add_picture).layer(axum::extract::DefaultBodyLimit::max(PICTURE_BYTES)),
-        )
-        .route(
-            "/api/app",
-            get(app_settings::get)
-                .post(app_settings::change)
-                .layer(axum::extract::DefaultBodyLimit::max(16_384)),
-        )
-        .route("/api/health", get(app_settings::health))
-        .route(
-            "/api/dictation",
-            get(dictation::get)
-                .post(dictation::change)
-                .layer(axum::extract::DefaultBodyLimit::max(200_000)),
-        )
-        .route(
-            "/api/speech",
-            get(speech::get)
-                .post(speech::change)
-                .layer(axum::extract::DefaultBodyLimit::max(4096)),
-        )
-        .route(
-            "/api/writing/ollama",
-            get(ollama::get)
-                .post(ollama::change)
-                .layer(axum::extract::DefaultBodyLimit::max(4096)),
-        )
-        .route("/api/record", get(record::overview).post(record::start))
-        .route(
-            "/api/record/{id}",
-            get(record::status).delete(record::discard),
-        )
-        .route("/api/record/{id}/pause", post(record::pause))
-        .route("/api/record/{id}/point", post(record::point))
-        .route("/api/record/{id}/wants", post(record::wants))
-        .route(
-            "/api/record/{id}/snapshot",
-            post(record::snapshot).layer(axum::extract::DefaultBodyLimit::max(
-                routes::pictures::PICTURE_BYTES,
-            )),
-        )
-        .route("/api/record/{id}/stop", post(record::stop))
-        .route("/api/record/{id}/finish", post(record::finish_available))
-        .route("/api/record/{id}/recover", post(record::recover))
-        .route("/recording.js", get(recording_js))
-        .route("/api/notes/{id}/originals", get(list_originals))
-        .route(
-            "/api/notes/{id}/originals/{name}/passage",
-            get(routes::felix::original_passage),
-        )
-        .route("/api/notes/{id}/originals.zip", get(originals_zip))
-        .route("/api/notes/{id}/originals/{name}", get(get_original))
-        .route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
-        .route_layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            note_activity,
-        ))
-        .route("/favicon.svg", get(favicon))
-        .layer(axum::middleware::from_fn(security_headers))
-        .layer(axum::middleware::from_fn(note_peer))
-        .with_state(state)
-}
-
 async fn stop_idle_sessions(warm: Arc<warm::Slot>) {
-    let mut every = tokio::time::interval(std::time::Duration::from_secs(30));
+    let mut every = tokio::time::interval(IDLE_CHECK);
     loop {
         every.tick().await;
         if !warm.holding() {
@@ -1055,10 +721,7 @@ fn store_now<R>(
     state: &AppState,
     work: impl FnOnce(&mut Store) -> Result<R, StatusCode>,
 ) -> Result<R, StatusCode> {
-    let mut store = state
-        .store
-        .lock()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut store = lock_storage(&state.store);
     if store.reload || store.changed_on_disk() {
         store
             .refresh()

@@ -41,7 +41,7 @@ async fn call(api: Option<Arc<dyn SpeechApi>>, change: Option<Value>) -> Respons
 }
 
 pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    call(state.speech, None).await
+    call(state.speech.clone(), None).await
 }
 
 pub(crate) async fn change(
@@ -54,5 +54,5 @@ pub(crate) async fn change(
             "This model change could not be read. Choose an action in Speech models.",
         );
     };
-    call(state.speech, Some(change)).await
+    call(state.speech.clone(), Some(change)).await
 }

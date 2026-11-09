@@ -75,7 +75,7 @@ async fn call(
     }
 }
 pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    call(state.app_settings, None, None, None).await
+    call(state.app_settings.clone(), None, None, None).await
 }
 pub(crate) async fn change(
     State(state): State<AppState>,
@@ -87,7 +87,7 @@ pub(crate) async fn change(
             "This app setting could not be read. Choose an option in Settings.",
         );
     };
-    call(state.app_settings, Some(value), None, None).await
+    call(state.app_settings.clone(), Some(value), None, None).await
 }
 pub(crate) async fn health(State(state): State<AppState>) -> Response {
     let notes = match state.read_store(|s| Ok(s.notes_dir.clone())).await {
@@ -95,7 +95,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Response {
         Err(status) => return status.into_response(),
     };
     call(
-        state.app_settings,
+        state.app_settings.clone(),
         None,
         Some(notes),
         state.margin.problem(),
