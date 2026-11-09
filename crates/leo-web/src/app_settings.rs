@@ -15,6 +15,7 @@ pub struct EventStarting {
     pub uid: String,
     pub title: String,
     pub start: chrono::DateTime<chrono::Utc>,
+    pub online: bool,
 }
 pub trait AppApi: Send + Sync {
     fn view(&self) -> Result<Value>;

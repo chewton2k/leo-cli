@@ -380,7 +380,10 @@ async function warnUnsaved() {
 window.leoFromApp = async (what, which) => {
   if (what === 'quit') return toast(await quitText());
   if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
-  if (what === 'event') return go(`#/record?event=${encodeURIComponent(which)}&kind=call`);
+  if (what === 'event') {
+    const [kind, ...uid] = String(which).split(':');
+    return go(`#/record?event=${encodeURIComponent(uid.join(':'))}&kind=${kind === 'microphone' ? 'microphone' : 'call'}`);
+  }
   if (what !== 'record' || !['microphone', 'call'].includes(which)) return;
   if (recorder.active()) return go('#/record');
   if (state.view !== 'record') go('#/record');

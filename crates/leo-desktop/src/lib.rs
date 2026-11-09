@@ -328,6 +328,7 @@ fn stop_engine(app: &AppHandle) {
     if let Some(dictation) = app.try_state::<std::sync::Arc<dictation::Dictation>>() {
         dictation.shutdown();
     }
+    sign_in::stop();
     let _ = leo_services::speech::engine::engine().stop();
     let running = app
         .state::<Engine>()

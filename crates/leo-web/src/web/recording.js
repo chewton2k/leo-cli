@@ -476,7 +476,7 @@
 
     const IDLE_FIELDS = ['#rec-dir', '#rec-title', '#rec-wants'];
 
-    function chooseEvent(box, index) {
+    function chooseEvent(box, index, fill = true) {
       const events = (s.calendar && s.calendar.events) || [];
       const before = s.event !== null ? events[s.event] : null;
       const e = index !== null ? events[index] : null;
@@ -484,7 +484,7 @@
       const title = box.querySelector('#rec-title');
       const wants = box.querySelector('#rec-wants');
       if (title && (!title.value.trim() || (before && title.value === before.title))) title.value = e ? e.title : '';
-      if (wants && e && !wants.value.trim()) wants.value = MEETING_WANTS;
+      if (wants && e && fill && !wants.value.trim()) wants.value = MEETING_WANTS;
       else if (wants && !e && wants.value === MEETING_WANTS) wants.value = '';
     }
 
@@ -503,7 +503,7 @@
       const wanted = asked.event ? events.findIndex((e) => e.id === asked.event) : -1;
       const at = wanted >= 0 ? wanted : s.eventChosen ? -1 : eventNow(events);
       if (wanted >= 0) s.eventChosen = true;
-      if (at >= 0) chooseEvent(box, at);
+      if (at >= 0) chooseEvent(box, at, asked.kind !== 'microphone');
       const kind = ['microphone', 'screen', 'call'].includes(asked.kind) && box.querySelector(`input[name="rec-kind"][value="${asked.kind}"]`);
       if (kind && !kind.disabled) {
         kind.checked = true;

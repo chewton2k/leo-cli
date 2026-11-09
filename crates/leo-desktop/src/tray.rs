@@ -20,6 +20,8 @@ use crate::app_settings::UpdateApi;
 /// a click, and then at most every five minutes (`usage::STALE_AFTER`).
 const REFRESH: Duration = Duration::from_secs(5 * 60);
 
+const OFFER_TITLE_CHARS: usize = 40;
+
 /// A menu command is offered to the page this many times, this far apart.
 const ASK_TRIES: u32 = 10;
 const ASK_GAP: Duration = Duration::from_millis(500);
@@ -228,7 +230,7 @@ pub(crate) fn page(app: &AppHandle, what: &'static str, which: &str) {
         });
 }
 
-pub(crate) fn offer(app: &AppHandle, uid: String, title: String, until: SystemTime) {
+pub(crate) fn offer(app: &AppHandle, which: String, title: String, until: SystemTime) {
     let Some(menu) = app.try_state::<TrayMenu>().map(|held| held.0.clone()) else {
         return;
     };
@@ -238,8 +240,8 @@ pub(crate) fn offer(app: &AppHandle, uid: String, title: String, until: SystemTi
         .spawn(move || {
             let Ok(item) = MenuItem::with_id(
                 &app,
-                format!("event:{uid}"),
-                format!("Record {title}"),
+                format!("event:{which}"),
+                offer_label(&title),
                 true,
                 None::<&str>,
             ) else {
@@ -263,6 +265,15 @@ pub(crate) fn offer(app: &AppHandle, uid: String, title: String, until: SystemTi
                 std::thread::sleep(OFFER_CHECK);
             }
         });
+}
+
+fn offer_label(title: &str) -> String {
+    let shown: String = if title.chars().count() > OFFER_TITLE_CHARS {
+        title.chars().take(OFFER_TITLE_CHARS).chain(['…']).collect()
+    } else {
+        title.to_string()
+    };
+    format!("Get ready to record {}", shown.replace('&', "&&"))
 }
 
 fn recording_live(app: &AppHandle) -> bool {
@@ -352,6 +363,25 @@ fn plan_use(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_event_menu_label_escapes_ampersands_and_cuts_long_titles_by_characters() {
+        use super::offer_label;
+        assert_eq!(offer_label("Q&A"), "Get ready to record Q&&A");
+        assert_eq!(
+            offer_label("Design sync"),
+            "Get ready to record Design sync"
+        );
+        let long = "é".repeat(41);
+        assert_eq!(
+            offer_label(&long),
+            format!("Get ready to record {}…", "é".repeat(40))
+        );
+        assert_eq!(
+            offer_label(&"é".repeat(40)),
+            format!("Get ready to record {}", "é".repeat(40))
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn the_menu_flips_the_app_only_when_it_is_away_from_this_desktop() {

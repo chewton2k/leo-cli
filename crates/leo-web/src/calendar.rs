@@ -339,6 +339,9 @@ fn starting(
             .is_ok_and(|added| added == 1)
         })
         .map(|e| crate::app_settings::EventStarting {
+            online: [&e.location, &e.context]
+                .iter()
+                .any(|text| text.contains("http://") || text.contains("https://")),
             uid: e.id,
             title: e.title,
             start: e.start,
@@ -358,6 +361,19 @@ fn offer(
     }
 }
 
+fn catch_up(
+    notes: &Path,
+    calendar: &Calendar,
+    access: &dyn crate::CalendarAccess,
+    now: DateTime<Utc>,
+) {
+    if stale(notes, now, STALE_AFTER_MINUTES) {
+        if let Some(_busy) = Busy::take(&calendar.busy) {
+            refresh(notes, access, now);
+        }
+    }
+}
+
 pub(crate) async fn offer_to_record(state: AppState) {
     let Some(api) = state.app_settings.clone() else {
         return;
@@ -371,9 +387,14 @@ pub(crate) async fn offer_to_record(state: AppState) {
         };
         let live = crate::record::live(&state.recording);
         let calendar = Arc::clone(&state.calendar);
+        let access = state.calendar_access.clone();
         let api = Arc::clone(&api);
         let _ = tokio::task::spawn_blocking(move || {
-            offer(&notes, &calendar, api.as_ref(), live, Utc::now())
+            let now = Utc::now();
+            if let Some(access) = access {
+                catch_up(&notes, &calendar, access.as_ref(), now);
+            }
+            offer(&notes, &calendar, api.as_ref(), live, now)
         })
         .await;
     }
@@ -818,6 +839,72 @@ pub(crate) mod tests {
             })
             .unwrap();
         (dir, notes)
+    }
+
+    #[derive(Default)]
+    struct Counting(std::sync::atomic::AtomicUsize);
+
+    impl crate::CalendarAccess for Counting {
+        fn fetch(&self, _: &str) -> Result<Vec<u8>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(MEETINGS.as_bytes().to_vec())
+        }
+        fn get(&self, _: &str) -> Result<Option<String>> {
+            Ok(Some("https://example.com/a.ics".into()))
+        }
+        fn set(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_stale_calendar_is_refreshed_once_before_offering_and_a_fresh_one_is_not() {
+        let (_dir, notes) = linked(None);
+        let calendar = Calendar::default();
+        let access = Counting::default();
+        let now = Utc::now();
+        catch_up(&notes, &calendar, &access, now);
+        assert_eq!(access.0.load(Ordering::SeqCst), 0);
+        let later = now + Duration::minutes(STALE_AFTER_MINUTES + 1);
+        catch_up(&notes, &calendar, &access, later);
+        catch_up(&notes, &calendar, &access, later);
+        assert_eq!(access.0.load(Ordering::SeqCst), 1);
+        assert!(!calendar.busy.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn an_event_with_a_link_is_online_and_one_without_is_in_person() {
+        let (_dir, notes) = linked(None);
+        let now = at("2026-10-30T16:00:00Z");
+        let seen = |text: &str| {
+            let calendar = Calendar::default();
+            db_for(&notes)
+                .with(|c| {
+                    c.execute("DELETE FROM calendar_prompted", [])?;
+                    c.execute("UPDATE calendar_feeds SET body = ?1", [text.as_bytes()])
+                })
+                .unwrap();
+            starting(&notes, &calendar, false, now)
+                .into_iter()
+                .map(|e| e.online)
+                .collect::<Vec<_>>()
+        };
+        let with = |line: &str| {
+            MEETINGS.replace(
+                "SUMMARY:Design sync",
+                &format!("SUMMARY:Design sync\n{line}"),
+            )
+        };
+        assert_eq!(seen(MEETINGS), [false]);
+        assert_eq!(seen(&with("LOCATION:Room 4")), [false]);
+        assert_eq!(seen(&with("LOCATION:https://meet.example.com/abc")), [true]);
+        assert_eq!(
+            seen(&with("DESCRIPTION:Join http://zoom.example.com/j/1")),
+            [true]
+        );
     }
 
     fn asked(notes: &Path, live: bool, now: DateTime<Utc>) -> Vec<(String, DateTime<Utc>)> {

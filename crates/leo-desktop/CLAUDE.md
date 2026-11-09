@@ -60,12 +60,15 @@ a test, or leave it unset to see the user's own data.
   per click (`__leoAsked`); copying runs off the main thread. A speech model that
   is chosen but not on disk reads "(not downloaded)".
 - Calendar events (2026-11-09, `notify.rs`): `AppApi::event_starting` posts
-  "<title> is starting" with the event uid in `extra`; a tap (`on_action`, which
+  "<title> is starting" with the event uid and kind in `extra`; a tap (`on_action`, which
   2.8.0 reports on macOS and Windows) shows the window and navigates to
-  `#/record?event=<uid>&kind=call` through `leoFromApp('event', uid)` (`page`
-  JSON-quotes its argument). macOS asks for notification permission on that first
-  post, never during onboarding. The tray always adds "Record <title>" under
-  Record a call until start+10 min, hidden while a recording is live
+  `#/record?event=<uid>&kind=<call|microphone>` through
+  `leoFromApp('event', '<kind>:<uid>')` (`page` JSON-quotes its argument). `call`
+  when the event's location or description holds an http(s) link
+  (`EventStarting.online`), else `microphone`. The page only opens Record ready;
+  it never starts. macOS asks for notification permission on that first
+  post, never during onboarding. The tray always adds "Get ready to record <title>" (`&` doubled, title cut at 40
+  characters with an ellipsis) under Record a call until start+10 min, hidden while a recording is live
   (`Running::recording_live`), so a denied or missed notification still has a way in.
 - The window disables Tauri's drag-drop handler (`disable_drag_drop_handler`):
   left on, it swallows the webview's HTML drag events, so moving notes and

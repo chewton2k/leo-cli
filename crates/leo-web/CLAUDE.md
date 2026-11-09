@@ -926,10 +926,14 @@ notes and Felix, and refresh when idle. The graph page, canvas renderer and
   when start−2 min ≤ now < start+10 min (UTC instants) and no recording is live
   (`record::live`); leo.db `calendar_prompted(uid, start)` dedupes (rows older
   than 2 days pruned) and `AppApi::event_starting(EventStarting {uid, title,
-  start})` (default no-op) tells the app. Settings → Calendar's switch "Offer to
+  start, online})` (default no-op) tells the app. Settings → Calendar's switch "Offer to
   record when an event starts" is `offer` in calendars.json (absent = on; PATCH
-  `/api/calendar {offer}`). `#/record?event=<uid>&kind=call` preselects Call and
-  that event (`preselect` in recording.js) and never presses Start.
+  `/api/calendar {offer}`). `#/record?event=<uid>&kind=call|microphone` preselects that kind and
+  event (`preselect` in recording.js; the meeting wording is filled only for
+  call) and never presses Start. `online` is an http(s) link in the event's
+  location or description. The 60 s tick first refreshes a stale cached feed
+  (`catch_up`, under the same `Busy` guard as the routes), so a leo kept in the
+  menu bar offers current meetings.
 
 - Standalone tasks are files: `<notes>/.leo/tasks/<id>.json`
   (`tasks::tasks_dir`), one JSON line each, written atomically. The reader

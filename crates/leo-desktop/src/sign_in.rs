@@ -29,6 +29,14 @@ pub fn start(provider: &str) -> Result<()> {
     }
 }
 
+pub fn stop() {
+    let mut slot = CODEX_LOGIN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut child) = slot.take() {
+        leo_core::children::stop_tree(&mut child);
+        let _ = child.wait();
+    }
+}
+
 fn codex_arguments() -> [&'static str; 1] {
     ["login"]
 }

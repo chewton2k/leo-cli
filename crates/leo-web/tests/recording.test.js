@@ -235,6 +235,7 @@ test('a meeting prompt preselects Call and its event and fills the meeting wordi
   assert.equal(ask({ event: 'sync@2', kind: 'call' }, 'only the decisions').wants, 'only the decisions');
   assert.deepEqual(ask({ event: 'gone@3', kind: 'call' }), { kind: 'call', event: null, chosen: false, title: '', wants: L.MEETING_WANTS });
   assert.equal(ask({ event: 'sync@2', kind: 'call' }, '', { calendar: { events: [{ id: 'sync@2', title: 'Design sync' }] }, event: null, eventChosen: true }).event, 0, 'the prompt wins over an earlier choice');
+  assert.deepEqual(ask({ event: 'sync@2', kind: 'microphone' }), { kind: 'microphone', event: 1, chosen: true, title: 'Design sync', wants: '' });
   assert.equal(ask({ kind: '"] , x' }).kind, 'microphone');
   assert.equal(ask({}).kind, 'microphone');
   const body = recordingSource.slice(recordingSource.indexOf('    function preselect('), recordingSource.indexOf('    function idleForm('));
