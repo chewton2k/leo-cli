@@ -203,7 +203,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   "n more" when that tab went back into the overflow; it pulses on landing.
 - Opening a note (2026-11-08, the user's pick): the title wipes in left to right (`clip-path`, `OPEN_MS`, `EASE_OUT`)
   only when `swap` reports a new page; nothing glides over from the explorer. Enter or Tab in the title goes to the body
-  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, then the persona button, then the Felix mode button).
+  (Shift+Tab stays; Escape then Shift+Tab reaches the Read through button, then the Felix mode button, then the persona button).
 - Pulse: `pulse(el, { lift, ring })`, one 320 ms pulse on what just succeeded; no repeats.
 - Overlap: `overlapOut(el)` clones the old state on the body (`ghostOf`, shared with the sheet close)
   and fades it over 140 ms while the new state arrives. The clone keeps its classes, so a test that
@@ -691,10 +691,17 @@ target. Check the page sequence after loading preferences.
   engine). Per note in `margin_personas` (forgotten and swept with the note, not exported), else
   `Prefs.default_persona`, else Reader; a deleted persona falls back the same way. `margin::voiced` puts the
   style after the prompt's first paragraph, so the note-is-not-instructions and format rules come last; asks
-  and replies are told to answer directly first. Page: `#margin-persona` beside the mode menu (rows of icon,
+  and replies are told to answer directly first. Page: `#margin-persona` ("Felix as Reader") before the mode menu, whose
+  label drops "Felix:" ("Reads along", "When you ask") (2026-11-09) (rows of icon,
   name, short line; New persona opens Settings → Felix with the form started), Settings → Felix → Who reads
   your notes (icon tiles, one line for the chosen one, See details shows the real instruction text, New/Edit/
   Delete in place).
+- Note instructions (2026-11-09, the user's call): `margin_instructions` holds one text per note (trimmed, at most
+  `MOST_INSTRUCTIONS` 500 characters, control characters refused, empty deletes the row; forgotten and swept with the
+  note, not exported), read by GET and saved by POST `/api/notes/{id}/margin` (`instructions`). `margin::instructed` adds
+  it after the prompt's first paragraph for read-along, Read through, asks and replies. The persona menu's
+  Instructions for this note… opens `#margin-instructions` under the meta line (shown while the note has some); Enter or
+  blur saves, Escape restores, and the margin status says Instructions saved/removed.
 - Read-along (`POST /api/notes/{id}/margin/read`, `{version, blocks}`): the page
   sends changed blocks after a pause (fast 2 s, regular 4 s, slow 8 s). Silence is the normal answer:
   `{}` or empty output is success; malformed JSON or prose is a failed read. The server refuses, whatever the page
@@ -735,9 +742,11 @@ target. Check the page sequence after loading preferences.
   bounded when parsed.
 - A failed or missing AI shows a fixed, actionable status above the note and leaves `margin::PROBLEM`
   (fixed text, no provider detail) in Settings → Felix and Health until a read works.
-- Selection: Ask Felix (⌘⇧E) opens a draft in the margin and asks at once, POST
+- Selection: ⌘⇧E opens a draft in the margin and asks at once, POST
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
-  only Felix's message is stored). The draft shows dots (`.margin-pending`, filled from
+  only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this
+  passage…", 2026-11-09): Enter sends the typed question (empty Enter asks generally), Escape or blur closes it;
+  when the margin cannot take the passage the pill goes to the chat as before. The draft shows dots (`.margin-pending`, filled from
   `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
   (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
   leaves the thread closed when it lands, and a closed failure toasts. An open failure

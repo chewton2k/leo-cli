@@ -3775,6 +3775,7 @@ test.describe('passages', () => {
     const ask = page.locator('.ask-float');
     await expect(ask).toBeVisible();
     await ask.click();
+    await page.getByRole('textbox', { name: 'Ask Felix about this passage' }).press('Enter');
     await page.locator('.margin-note[data-open]').getByRole('button', { name: 'Ask in chat' }).click();
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
@@ -3806,13 +3807,13 @@ test.describe('passages', () => {
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
     await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
     await page.goto(`/#/n/${note.id}`);
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await expect(page.locator('.note-columns')).toHaveAttribute('data-margin', 'both');
     await page.reload();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.waitForTimeout(4500);
     expect(reads, 'opening a note must not read it').toEqual([]);
 
@@ -3869,7 +3870,7 @@ test.describe('passages', () => {
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#margin-mode').click();
     await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
+    await expect(page.locator('#margin-mode')).toHaveText('Reads along');
     await page.locator('#doc .blk').first().click();
     const area = page.locator('#doc textarea.line-edit');
     await area.press('End');
@@ -3900,7 +3901,7 @@ test.describe('passages', () => {
     let analyzed = 0;
     page.on('request', (r) => { if (r.url().includes('/margin/analyze')) analyzed++; });
     await page.goto(`/#/n/${note.id}`);
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
     expect(analyzed).toBe(0);
     await page.getByRole('button', { name: 'Read through' }).click();
     await expect(page.locator('.margin-note .margin-felix')).toContainText('In plain text?', { timeout: 12000 });
@@ -3908,7 +3909,7 @@ test.describe('passages', () => {
     await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
     const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
     await expect.poll(left).toBe(0);
-    await expect(page.locator('#margin-mode')).toHaveText('Felix: when you ask');
+    await expect(page.locator('#margin-mode')).toHaveText('When you ask');
   });
 
   for (const [title, later, says] of [

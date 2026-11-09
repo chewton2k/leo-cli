@@ -223,9 +223,9 @@ async function prepareAlong(page, title) {
   await expect(page.locator('#title')).toHaveText(title);
   await page.locator('#margin-mode').click();
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-  await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
+  await expect(page.locator('#margin-mode')).toHaveText('Reads along');
   await page.reload();
-  await expect(page.locator('#margin-mode')).toHaveText('Felix: reads along');
+  await expect(page.locator('#margin-mode')).toHaveText('Reads along');
   return note;
 }
 

@@ -45,6 +45,7 @@ pub(crate) struct StatusBody {
 pub(crate) struct ModeBody {
     mode: Option<String>,
     persona: Option<String>,
+    instructions: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -62,6 +63,7 @@ pub(crate) struct PrefsBody {
 struct ReadFacts {
     along: bool,
     voice: String,
+    instructions: String,
     cap: u32,
     gap: u32,
     quotes: Vec<String>,
@@ -139,6 +141,7 @@ pub(crate) async fn note_margin(State(state): State<AppState>, Path(id): Path<St
         serde_json::json!({
             "mode": margin::mode_of(&chats, &id, note.created),
             "persona": margin::persona_of(&chats, &id),
+            "instructions": margin::instructions_of(&chats, &id),
             "threads": margin::open_on(&chats, &id),
         })
     })
@@ -157,19 +160,24 @@ pub(crate) async fn set_note_mode(
     if let Err(refused) = open_note(&state, &id).await {
         return *refused;
     }
-    if (body.mode.is_none() && body.persona.is_none())
+    if (body.mode.is_none() && body.persona.is_none() && body.instructions.is_none())
         || body.mode.as_deref().is_some_and(|m| !margin::valid_mode(m))
+        || body
+            .instructions
+            .as_deref()
+            .is_some_and(|t| t.chars().any(|c| c.is_control() && c != '\n'))
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let chats = state.chats.clone();
     let (mode, persona) = (body.mode.clone(), body.persona.clone());
+    let instructions = body.instructions.clone();
     let done = blocking(move || {
         if persona
             .as_deref()
             .is_some_and(|p| !margin::persona_known(&margin::prefs(&chats), p))
         {
-            return StatusCode::BAD_REQUEST;
+            return (StatusCode::BAD_REQUEST, None);
         }
         let saved = mode
             .as_deref()
@@ -177,15 +185,18 @@ pub(crate) async fn set_note_mode(
             && persona
                 .as_deref()
                 .is_none_or(|p| margin::set_persona(&chats, &id, p));
-        if saved {
-            StatusCode::OK
+        let kept = instructions
+            .as_deref()
+            .map(|t| margin::set_instructions(&chats, &id, t));
+        if saved && kept.as_ref().is_none_or(Option::is_some) {
+            (StatusCode::OK, kept.flatten())
         } else {
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, None)
         }
     })
     .await;
     match done {
-        Ok(StatusCode::OK) => {
+        Ok((StatusCode::OK, kept)) => {
             let mut view = serde_json::Map::new();
             if let Some(mode) = body.mode {
                 view.insert("mode".into(), mode.into());
@@ -193,9 +204,12 @@ pub(crate) async fn set_note_mode(
             if let Some(persona) = body.persona {
                 view.insert("persona".into(), persona.into());
             }
+            if let Some(kept) = kept {
+                view.insert("instructions".into(), kept.into());
+            }
             Json(view).into_response()
         }
-        Ok(code) => code.into_response(),
+        Ok((code, _)) => code.into_response(),
         Err(refused) => *refused,
     }
 }
@@ -393,6 +407,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
             ReadFacts {
                 along: margin::mode_of(&held, &id, created) == "along",
                 voice: margin::voice_of(&prefs, &margin::persona_of(&held, &id)),
+                instructions: margin::instructions_of(&held, &id),
                 cap: prefs.cap,
                 gap: prefs.gap,
                 quotes: margin::open_on(&held, &id)
@@ -501,7 +516,10 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     } else {
         (margin::READ_SYSTEM, "changed_text", margin::READ_TOKENS)
     };
-    let system = margin::voiced(system, &facts.voice, false);
+    let system = margin::instructed(
+        &margin::voiced(system, &facts.voice, false),
+        &facts.instructions,
+    );
     let user = margin::read_prompt(&note.title, &blocks, tag);
     let answer = tokio::time::timeout(
         margin::READ_LIMIT,
@@ -673,8 +691,9 @@ async fn answered(
         let _foreground = foreground;
         let prefs = margin::prefs(&chats);
         let voice = margin::voice_of(&prefs, &margin::persona_of(&chats, &held));
+        let said = margin::instructions_of(&chats, &held);
         let reply = streamer(
-            &margin::voiced(margin::REPLY_SYSTEM, &voice, asked),
+            &margin::instructed(&margin::voiced(margin::REPLY_SYSTEM, &voice, asked), &said),
             &user,
             margin::REPLY_TOKENS,
             &mut |_| {},

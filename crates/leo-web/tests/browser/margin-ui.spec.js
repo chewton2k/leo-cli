@@ -14,7 +14,7 @@ test('note reading modes sit beside the save state, work in both orders and reta
   const button = page.locator('#margin-mode');
   await expect(button).toBeEnabled();
   expect((await button.boundingBox()).y).toBeGreaterThan((await page.locator('#title').boundingBox()).y);
-  for (const [key, label] of [['Home', 'Felix: reads along'], ['End', 'Felix: when you ask'], ['Home', 'Felix: reads along'], ['End', 'Felix: when you ask']]) {
+  for (const [key, label] of [['Home', 'Reads along'], ['End', 'When you ask'], ['Home', 'Reads along'], ['End', 'When you ask']]) {
     await button.click();
     await page.waitForTimeout(300);
     await expect(page.getByRole('menu', { name: 'Note reading mode' })).toBeVisible();
@@ -24,12 +24,12 @@ test('note reading modes sit beside the save state, work in both orders and reta
     await expect(button).toBeEnabled();
   }
   await page.reload();
-  await expect(button).toHaveText('Felix: when you ask');
+  await expect(button).toHaveText('When you ask');
   await page.route(`**/api/notes/${note.id}/margin`, route => route.request().method() === 'POST'
     ? route.fulfill({ status: 503, json: { error: 'Try again.' } }) : route.continue());
   await button.click();
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-  await expect(button).toHaveText('Felix: when you ask');
+  await expect(button).toHaveText('When you ask');
   await expect(page.locator('#margin-status')).toHaveText('Could not save this mode. Try again.');
   await button.click();
   await page.keyboard.press('Escape');
@@ -58,17 +58,17 @@ test('a note keeps its own persona, and a persona made in Settings joins the not
   const note = await (await page.request.post('/api/notes', { data: { title: 'Persona pick', body: 'Words about a passage.' } })).json();
   await page.goto(`/#/n/${note.id}`);
   const button = page.locator('#margin-persona');
-  await expect(button).toHaveText('Reader');
+  await expect(button).toHaveText('Felix as Reader');
   await button.click();
   const menu = page.getByRole('menu', { name: 'Who reads this note' });
   await expect(menu).toBeVisible();
   await expect(menu.getByRole('menuitemradio')).toHaveText([/Reader/, /Critic/, /Encourager/]);
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
-  await expect(button).toHaveText('Critic');
+  await expect(button).toHaveText('Felix as Critic');
   await expect(menu).toBeHidden();
   await page.reload();
-  await expect(button).toHaveText('Critic');
+  await expect(button).toHaveText('Felix as Critic');
   expect((await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).persona).toBe('critic');
   await button.click();
   await page.getByRole('menuitem', { name: 'New persona' }).click();
@@ -107,7 +107,7 @@ test('a note keeps its own persona, and a persona made in Settings joins the not
   expect(await page.locator('#felix-persona-card').evaluate((card) => card.getAnimations().length)).toBe(0);
   await expect(page.getByRole('button', { name: 'See details' })).toBeFocused();
   await page.goto(`/#/n/${note.id}`);
-  await expect(button).toHaveText('Reader');
+  await expect(button).toHaveText('Felix as Reader');
   await page.request.post('/api/margin', { data: { default_persona: 'reader' } });
 });
 
@@ -150,18 +150,18 @@ test('a reading mode picked on a new note is saved with the note', async ({ page
   await button.click();
   await page.waitForTimeout(300);
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
-  await expect(button).toHaveText('Felix: reads along');
+  await expect(button).toHaveText('Reads along');
   const persona = page.locator('#margin-persona');
   await persona.click();
   await page.getByRole('menuitemradio', { name: /Encourager/ }).click();
-  await expect(persona).toHaveText('Encourager');
+  await expect(persona).toHaveText('Felix as Encourager');
   await page.locator('#title').click();
   await page.keyboard.type('Picked early');
   await expect(page).toHaveURL(/#\/n\//);
   const id = page.url().match(/#\/n\/([^/?]+)/)[1];
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).mode).toBe('along');
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${id}/margin`)).json()).persona).toBe('encourager');
-  await expect(button).toHaveText('Felix: reads along');
+  await expect(button).toHaveText('Reads along');
   await expect(page.locator('#title')).toBeFocused();
 });
 

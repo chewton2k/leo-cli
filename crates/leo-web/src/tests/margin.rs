@@ -1688,6 +1688,74 @@ async fn a_persona_shapes_the_system_prompt_and_reader_leaves_it_alone() {
 }
 
 #[tokio::test]
+async fn a_note_keeps_its_own_instructions_and_every_margin_prompt_carries_them() {
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::clone(&seen);
+    let writer: Writer = Arc::new(move |system, _, _| {
+        kept.lock().unwrap().push(system.to_string());
+        Ok("{}".to_string())
+    });
+    let heard = Arc::clone(&seen);
+    let streamer: crate::chat::Streamer = Arc::new(move |system, _, _, _, _, _| {
+        heard.lock().unwrap().push(system.to_string());
+        Ok(crate::chat::Reply::from("Sourced.".to_string()))
+    });
+    let engine = Engine::with(Powers {
+        toolless: Some(writer),
+        toolless_chat: Some(streamer),
+        ..Default::default()
+    })
+    .await;
+    let (id, version) = engine.note("Told", PASSAGE).await;
+    let path = format!("/api/notes/{id}/margin");
+    assert_eq!(engine.get(&path).await.1["instructions"], "");
+    let (status, set) = engine
+        .post(
+            &path,
+            serde_json::json!({ "instructions": "  Check every claim has a source.  " }),
+        )
+        .await;
+    assert_eq!(
+        (status, &set),
+        (
+            200,
+            &serde_json::json!({ "instructions": "Check every claim has a source." })
+        )
+    );
+    assert_eq!(
+        engine.get(&path).await.1["instructions"],
+        "Check every claim has a source."
+    );
+    assert_eq!(engine.read(&id, &version, &[PASSAGE]).await.0, 200);
+    assert_eq!(engine.analyze(&id, &version, &[PASSAGE], None).await.0, 200);
+    let (status, _) = engine
+        .post(
+            &format!("{path}/threads"),
+            serde_json::json!({ "version": version, "quote": PASSAGE, "question": "Why?" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let systems = seen.lock().unwrap().clone();
+    assert_eq!(systems.len(), 3);
+    for system in &systems {
+        assert!(system.contains("Instruction: Check every claim has a source."));
+    }
+    assert_eq!(
+        engine
+            .post(&path, serde_json::json!({ "instructions": "a\u{7}b" }))
+            .await
+            .0,
+        400
+    );
+    let (status, set) = engine
+        .post(&path, serde_json::json!({ "instructions": " " }))
+        .await;
+    assert_eq!((status, set["instructions"].as_str()), (200, Some("")));
+    assert_eq!(engine.get(&path).await.1["instructions"], "");
+    engine.stop().await;
+}
+
+#[tokio::test]
 async fn asks_and_replies_take_the_note_persona_and_only_a_real_question_is_told_to_answer_first() {
     let systems = Arc::new(Mutex::new(Vec::<String>::new()));
     let kept = Arc::clone(&systems);

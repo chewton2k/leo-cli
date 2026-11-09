@@ -138,6 +138,10 @@ CREATE TABLE IF NOT EXISTS margin_personas (
     note TEXT PRIMARY KEY,
     persona TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS margin_instructions (
+    note TEXT PRIMARY KEY,
+    text TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS margin_state (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL

@@ -5,33 +5,76 @@ askFloat.innerHTML = `${ICON.chat}<span>Ask Felix</span>`;
 askFloat.hidden = true;
 askFloat.dataset.keepSelection = '';
 askFloat.addEventListener('mousedown', (e) => e.preventDefault());
-askFloat.addEventListener('click', () => askAboutSelection());
+askFloat.addEventListener('click', () => openAskField());
 document.body.appendChild(askFloat);
+
+const askField = document.createElement('form');
+askField.className = 'field ask-field';
+askField.hidden = true;
+askField.innerHTML = `${ICON.chat}<input type="text" maxlength="1000" placeholder="Ask about this passage…" aria-label="Ask Felix about this passage" autocomplete="off" enterkeyhint="send">`;
+const askInput = askField.querySelector('input');
+let askHeld = null;
+askField.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const held = askHeld;
+  const question = askInput.value.trim();
+  closeAskField();
+  if (held && held.s === state.session) askAboutSelection(question, held);
+});
+askInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  e.preventDefault();
+  e.stopPropagation();
+  closeAskField();
+});
+askInput.addEventListener('blur', () => closeAskField());
+document.body.appendChild(askField);
+
+function closeAskField() {
+  askHeld = null;
+  askField.hidden = true;
+}
 
 function hideAskFloat() {
   askFloat.hidden = true;
+  closeAskField();
+}
+
+function placeFloat(el, point) {
+  const doc = $('#doc');
+  if (!point || !doc) return false;
+  el.hidden = false;
+  const width = el.offsetWidth;
+  const area = doc.getBoundingClientRect();
+  const left = Math.max(area.left, Math.min(point.x - width / 2, area.right - width));
+  el.style.left = `${Math.max(8, left)}px`;
+  el.style.top = `${Math.min(point.y + 6, window.innerHeight - el.offsetHeight - 12)}px`;
+  return true;
 }
 
 function placeAskFloat(has) {
   const s = state.view === 'note' ? state.session : null;
-  const point = has && s && s.doc ? s.doc.selectionBox() : null;
-  const doc = $('#doc');
-  if (!point || !doc) return hideAskFloat();
-  askFloat.hidden = false;
-  const width = askFloat.offsetWidth;
-  const area = doc.getBoundingClientRect();
-  const left = Math.max(area.left, Math.min(point.x - width / 2, area.right - width));
-  askFloat.style.left = `${Math.max(8, left)}px`;
-  askFloat.style.top = `${Math.min(point.y + 6, window.innerHeight - askFloat.offsetHeight - 12)}px`;
+  if (!placeFloat(askFloat, has && s && s.doc ? s.doc.selectionBox() : null)) askFloat.hidden = true;
 }
 
-function askAboutSelection() {
+function openAskField() {
   const s = state.view === 'note' ? state.session : null;
   const picked = s && s.doc ? s.doc.selection() : null;
+  if (!picked || !s.note.id || !marginBeside(s, picked)) return askAboutSelection();
+  askFloat.hidden = true;
+  askInput.value = '';
+  if (!placeFloat(askField, s.doc.selectionBox())) return askAboutSelection();
+  askHeld = { s, picked };
+  askInput.focus({ preventScroll: true });
+}
+
+function askAboutSelection(question = '', held = null) {
+  const s = held ? held.s : state.view === 'note' ? state.session : null;
+  const picked = held ? held.picked : s && s.doc ? s.doc.selection() : null;
   hideAskFloat();
   if (!picked) return toast('Select some text in the note first.');
   if (!s.note.id) return toast('Felix can read this note once it has been saved.');
-  if (marginAsk(s, picked)) return;
+  if (marginAsk(s, picked, question)) return;
   chat.attachSelection({ note: s.note.id, title: cleanTitle(s.title.textContent) || s.note.title || 'Untitled', ...picked });
 }
 
