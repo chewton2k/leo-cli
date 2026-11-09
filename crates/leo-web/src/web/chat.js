@@ -856,8 +856,6 @@
       <div class="study-progress" id="study-progress" hidden></div>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
       <footer class="chat-foot">
-        <div class="chat-pick" id="chat-pick" hidden></div>
-        <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
           <span class="chat-perch" id="chat-face">${felix(100, 'idle')}</span>
           <div class="chat-attach-menu" id="chat-attach-menu" role="menu" hidden><button type="button" role="menuitem" data-chat="attach-note">${icons.note || ''}<span>A note from leo</span></button>${prepare ? `<button type="button" role="menuitem" data-chat="attach-file">${icons.paperclip || ''}<span>A file from this device</span></button>` : ''}</div>
@@ -871,6 +869,8 @@
           </div>
           <div class="chat-access-menu" id="chat-access-menu" role="menu" hidden>${ACCESS.map((a) => `<button type="button" role="menuitemradio" data-chat="access-pick" data-access="${a.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACCESS_GLYPHS[a.id]}</svg><span><b>${escape(a.label)}</b><small>${escape(a.hint)}</small></span></button>`).join('')}</div>
         </form>
+        <div class="chat-refs" id="chat-refs"></div>
+        <div class="chat-pick" id="chat-pick" hidden></div>
       </footer>
       <div class="chat-below" id="chat-below"></div>
       </section>`;
