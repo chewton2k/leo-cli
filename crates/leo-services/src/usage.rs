@@ -267,22 +267,12 @@ fn cached_codex(home: &Path, now: DateTime<Utc>) -> Option<Usage> {
     files.sort_unstable_by_key(|file| std::cmp::Reverse(file.0));
     let mut newest: Option<Usage> = None;
     for (_, path) in files.into_iter().take(RECENT_FILES) {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let Ok(mut file) = options.open(path) else {
+        let Ok(mut file) = leo_core::paths::open_regular(&path) else {
             continue;
         };
         let Ok(meta) = file.metadata() else {
             continue;
         };
-        if !meta.is_file() {
-            continue;
-        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

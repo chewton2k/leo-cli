@@ -119,20 +119,14 @@ impl FileStore {
                 "credentials must be a regular private file, not a symbolic link",
             ));
         }
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options.open(&self.path)?;
+        let file = leo_core::paths::open_regular(&self.path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::Other {
+                std::io::Error::other("credentials must be a regular private file")
+            } else {
+                error
+            }
+        })?;
         let metadata = file.metadata()?;
-        if !metadata.is_file() {
-            return Err(std::io::Error::other(
-                "credentials must be a regular private file",
-            ));
-        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

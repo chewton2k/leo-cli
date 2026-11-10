@@ -3431,7 +3431,6 @@ dependencies = [
  "futures-util",
  "iana-time-zone",
  "leo-core",
- "libc",
  "rusqlite",
  "serde",
  "serde_json",
