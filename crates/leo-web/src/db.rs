@@ -321,13 +321,16 @@ pub fn for_chats(chats_dir: &Path) -> Arc<Db> {
     try_for_chats(chats_dir).unwrap_or_else(|e| panic!("{e:#}"))
 }
 
-pub fn try_for_chats(chats_dir: &Path) -> Result<Arc<Db>> {
-    let data = if chats_dir.file_name().is_some_and(|n| n == "chats") {
+pub fn data_dir(chats_dir: &Path) -> &Path {
+    if chats_dir.file_name().is_some_and(|n| n == "chats") {
         chats_dir.parent().unwrap_or(chats_dir)
     } else {
         chats_dir
-    };
-    try_at(&data.join(FILE))
+    }
+}
+
+pub fn try_for_chats(chats_dir: &Path) -> Result<Arc<Db>> {
+    try_at(&data_dir(chats_dir).join(FILE))
 }
 
 pub fn put_aside(path: &Path) {

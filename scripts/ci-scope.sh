@@ -23,6 +23,8 @@ changed=$(git diff --name-only --no-renames "$base" HEAD) || everything
 while IFS= read -r file; do
     case "$file" in
         '') ;;
+        crates/leo-web/src/web/styles/*|crates/leo-web/src/web/page-head.html|crates/leo-web/src/web/page-tail.html)
+            rust=true; browser=true; node=true ;;
         crates/leo-web/src/web/*) browser=true; node=true ;;
         crates/leo-web/tests/browser/*) browser=true ;;
         crates/leo-web/tests/page-source.js) browser=true; node=true ;;

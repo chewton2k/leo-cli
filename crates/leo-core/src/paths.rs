@@ -103,6 +103,8 @@ pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> Resul
     temp.write_all(contents.as_ref())?;
     temp.as_file().sync_all()?;
     temp.persist(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 

@@ -106,11 +106,7 @@ async fn call(
     }
 }
 pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    let data = crate::db::for_chats(&state.chats)
-        .path()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let data = crate::db::data_dir(&state.chats).to_path_buf();
     call(state.dictation.clone(), data, None).await
 }
 pub(crate) async fn change(
@@ -123,11 +119,7 @@ pub(crate) async fn change(
             "This dictation change could not be read. Try again in Settings.",
         );
     };
-    let data = crate::db::for_chats(&state.chats)
-        .path()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let data = crate::db::data_dir(&state.chats).to_path_buf();
     call(state.dictation.clone(), data, Some(change)).await
 }
 

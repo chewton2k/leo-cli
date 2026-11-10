@@ -107,7 +107,7 @@ impl Captions {
             .unwrap_or_default()
     }
 
-    fn forget_stale(&self, stored: &HashSet<String>) {
+    pub fn forget_stale(&self) {
         {
             let mut pruned = self.pruned.lock().unwrap_or_else(|e| e.into_inner());
             if pruned.is_some_and(|at| at.elapsed() < PRUNE_EVERY) {
@@ -115,6 +115,7 @@ impl Captions {
             }
             *pruned = Some(Instant::now());
         }
+        let stored = self.keys();
         let stale: Vec<&String> = stored
             .iter()
             .filter(|key| {
@@ -225,10 +226,11 @@ pub fn uncaptioned(store: &Store, captions: &Captions, most: usize) -> Vec<PathB
             }
         }
     }
-    if !store.notes.is_empty() && store.unreadable.is_empty() {
-        captions.forget_stale(&stored);
-    }
     out
+}
+
+pub fn may_forget(store: &Store) -> bool {
+    !store.notes.is_empty() && store.unreadable.is_empty()
 }
 
 pub fn describe(path: &Path, seer: &Seer, question: &str) -> Result<String> {
@@ -340,6 +342,8 @@ mod tests {
         captions.put(gone.clone(), "deleted".into());
         captions.put(format!("{}:1:0", shown.display()), "changed".into());
         assert!(uncaptioned(&store, &captions, 10).is_empty());
+        assert!(may_forget(&store));
+        captions.forget_stale();
         assert_eq!(captions.get(&live).as_deref(), Some("kept"));
         assert_eq!(captions.get(&elsewhere).as_deref(), Some("trashed note"));
         assert_eq!(captions.get(&gone), None);

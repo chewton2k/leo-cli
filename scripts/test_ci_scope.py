@@ -59,6 +59,10 @@ class ScopeTests(unittest.TestCase):
     def test_page_changes_run_node_and_both_browser_suites(self):
         self.assert_scope(self.scope('crates/leo-web/src/web/app/notes.js'), 'node', 'browser')
 
+    def test_page_parts_compiled_into_rust_also_run_rust(self):
+        for path in ('crates/leo-web/src/web/styles/09-kanban.css', 'crates/leo-web/src/web/page-head.html', 'crates/leo-web/src/web/page-tail.html'):
+            self.assert_scope(self.scope(path), 'rust', 'node', 'browser')
+
     def test_browser_specs_do_not_require_rust_unit_tests(self):
         self.assert_scope(self.scope('crates/leo-web/tests/browser/flows.spec.js'), 'browser')
 

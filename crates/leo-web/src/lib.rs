@@ -352,14 +352,21 @@ async fn keep_graph_current(state: AppState) {
         if let Some(seer) = state.seer.clone() {
             let captions = Arc::clone(&state.captions);
             let listed = Arc::clone(&captions);
-            let Ok(paths) = state
+            let Ok((paths, forget)) = state
                 .read_store(move |store| {
-                    Ok(captions::uncaptioned(store, &listed, PICTURES_PER_TICK))
+                    Ok((
+                        captions::uncaptioned(store, &listed, PICTURES_PER_TICK),
+                        captions::may_forget(store),
+                    ))
                 })
                 .await
             else {
                 continue;
             };
+            if forget {
+                let stale = Arc::clone(&captions);
+                let _ = tokio::task::spawn_blocking(move || stale.forget_stale()).await;
+            }
             if !paths.is_empty() {
                 settled = false;
                 busy |= tokio::task::spawn_blocking(move || {
