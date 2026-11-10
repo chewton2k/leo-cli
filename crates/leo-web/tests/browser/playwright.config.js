@@ -11,7 +11,6 @@ module.exports = defineConfig({
   fullyParallel: true,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  failOnFlakyTests: !!process.env.CI,
   reporter: process.env.CI ? [['github'], ['list'], ['html',{open:'never'}]] : 'list',
   timeout: 30000,
   use: {

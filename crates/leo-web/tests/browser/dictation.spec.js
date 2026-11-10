@@ -43,11 +43,12 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       const words = page.locator('[data-dictation="custom_words"]');
       await words.fill('Charlton\n東京');
       await words.evaluate(el => { el.focus(); el.setSelectionRange(3, 3); });
-      await expect.poll(() => view.settings.custom_words).toEqual(['Charlton', '東京']);
-      await expect(page.locator('#dictation-result')).toHaveText('Saved');
+      await page.waitForTimeout(1400);
       await expect(words).toBeFocused();
       await expect(words).toHaveValue('Charlton\n東京');
       expect(await words.evaluate(el => el.selectionStart)).toBe(3);
+      await expect.poll(() => view.settings.custom_words).toEqual(['Charlton', '東京']);
+      await expect(page.locator('#dictation-result')).toHaveText('Saved');
       await expect(page.getByRole('button', { name: /^Save/ })).toHaveCount(0);
       const shortcut = await page.locator('.set-line:has([data-dictation="shortcut"])').evaluate(line => [...line.querySelectorAll('.set-label, input, button:not([hidden])')].map(el => Math.round(el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2)));
       expect(Math.max(...shortcut) - Math.min(...shortcut)).toBeLessThan(3);

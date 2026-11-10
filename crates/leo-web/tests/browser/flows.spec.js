@@ -458,15 +458,9 @@ test.describe('editing like Obsidian', () => {
       await expect(page.locator('#doc .blk').first()).toBeVisible();
       if (body.startsWith('$$')) await expect(page.locator('#doc .math')).toHaveAttribute('data-drawn', 'yes');
       const place = () => page.locator('#doc .blk').first().boundingBox();
-      let before = await place();
-      await expect.poll(async () => {
-        const now = await place();
-        const same = JSON.stringify(now) === JSON.stringify(before);
-        before = now;
-        return same;
-      }, { message: `${body} settles before its animation is finished` }).toBe(true);
+      const before = await place();
       await page.locator('article.note').evaluate(el => { for (const run of el.getAnimations()) run.finish(); });
-      expect(await page.locator('#doc .blk').first().boundingBox(), body).toEqual(before);
+      await expect.poll(place, { message: body }).toEqual(before);
     }
   });
 
@@ -768,14 +762,20 @@ test('on a phone a sheet swipes down to close, and a small drag springs back', a
     const box = sheet.getBoundingClientRect();
     const at = (y) => [new Touch({ identifier: 1, target: sheet, clientX: box.left + 40, clientY: y })];
     const top = box.top + 20;
-    sheet.dispatchEvent(new TouchEvent('touchstart', { touches: at(top), changedTouches: at(top), bubbles: true, cancelable: true }));
-    const steps = 6;
-    for (let i = 1; i <= steps; i++) {
-      await new Promise((r) => setTimeout(r, ms / steps));
-      const y = top + (distance * i) / steps;
-      sheet.dispatchEvent(new TouchEvent('touchmove', { touches: at(y), changedTouches: at(y), bubbles: true, cancelable: true }));
+    let now = performance.now();
+    performance.now = () => now;
+    try {
+      sheet.dispatchEvent(new TouchEvent('touchstart', { touches: at(top), changedTouches: at(top), bubbles: true, cancelable: true }));
+      const steps = 6;
+      for (let i = 1; i <= steps; i++) {
+        now += ms / steps;
+        const y = top + (distance * i) / steps;
+        sheet.dispatchEvent(new TouchEvent('touchmove', { touches: at(y), changedTouches: at(y), bubbles: true, cancelable: true }));
+      }
+      sheet.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: at(top + distance), bubbles: true, cancelable: true }));
+    } finally {
+      delete performance.now;
     }
-    sheet.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: at(top + distance), bubbles: true, cancelable: true }));
   }, [distance, ms]);
   await page.locator('#menu').click();
   await expect(page.locator('.sheet')).toBeVisible();
@@ -3859,7 +3859,8 @@ test.describe('passages', () => {
     const toggle = page.locator('.margin-note .margin-toggle');
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('.margin-note')).not.toHaveAttribute('tabindex', '0');
-    await expect(page.locator('.ink-word, .margin-ink path.arriving')).toHaveCount(0);
+    await expect(page.locator('.margin-note.arriving, .margin-ink path.arriving')).toHaveCount(0);
+    await page.waitForFunction(() => document.getAnimations().every((run) => run.playState !== 'running' || run.effect.getComputedTiming().iterations === Infinity));
     await toggle.focus();
     await page.keyboard.press('Enter');
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');

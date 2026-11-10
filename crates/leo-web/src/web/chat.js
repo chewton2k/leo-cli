@@ -2029,7 +2029,10 @@
       } catch (e) {
         marked = false;
       }
-      if (!marked) state.review = all;
+      if (!marked) {
+        const now = state.review || [];
+        state.review = [...items.filter((m) => !now.some((r) => r.key === m.key)), ...now];
+      }
     }
 
     const TOOL_ICONS = {

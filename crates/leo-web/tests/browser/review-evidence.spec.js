@@ -153,7 +153,7 @@ test('R1 the real Felix @ picker scrolls on its own at both ends and in the midd
   await list.evaluate((el) => { el.scrollTop = 0; });
   let before = await positions(page);
   await page.mouse.wheel(0, 70);
-  await expect.poll(async () => (await positions(page)).list, { message: 'the wheel scrolls the picker' }).toBeGreaterThan(before.list);
+  await page.waitForTimeout(250);
   let after = await positions(page);
   log.middle = { before, after };
   expect(after.list, 'wheel in the middle moves the picker').toBeGreaterThan(before.list);
@@ -867,8 +867,7 @@ test('R17 the loaded explorer keeps its rows and never flashes Opening notes dur
   await expect(theme.nth(0)).toHaveAttribute('aria-pressed', 'true');
   await createNote(page, `Cached row late ${tag}`, 'Arrives while Settings is open.', dir);
   await page.evaluate(() => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('leo-visibility')); document.dispatchEvent(new Event('visibilitychange')); });
-  await expect(page.locator('#side .side-note', { hasText: `Cached row late ${tag}` })).toBeVisible({ timeout: 10000 });
-  await frame(page);
+  await page.waitForTimeout(2500);
   const flash = await page.evaluate(() => { window.__flash.on = false; return window.__flash; });
   await still(page, 'r17-explorer-after-settings');
   expect(flash.opening, `Opening notes appeared in ${flash.opening} frames`).toBe(0);

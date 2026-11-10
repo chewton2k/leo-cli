@@ -470,6 +470,42 @@ test('removing a document keeps the chip gone when the server no longer has it a
   }
 });
 
+test('the request wrapper sends same-origin credentials and reports a locked session', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('    const request = async (url, init = {}) => {');
+  const wrapper = source.slice(start, source.indexOf('\n    };\n', start) + 7);
+  for (const [status, locked] of [[401, 1], [200, 0]]) {
+    const sent = [];
+    let locks = 0;
+    const context = vm.createContext({ onLocked: () => { locks += 1; }, fetch: async (url, init) => { sent.push([url, init]); return { ok: status === 200, status }; } });
+    vm.runInContext(`${wrapper}\nthis.request = request;`, context);
+    const response = await context.request('/api/review', { method: 'POST', body: '{}' });
+    assert.equal(response.status, status);
+    assert.equal(locks, locked, String(status));
+    assert.deepEqual(JSON.parse(JSON.stringify(sent)), [['/api/review', { credentials: 'same-origin', method: 'POST', body: '{}' }]]);
+  }
+});
+
+test('a failed review-done post puts the sent items back without dropping a newer list', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('    async function startReview() {');
+  const startReview = source.slice(start, source.indexOf('\n    const TOOL_ICONS', start));
+  const due = { key: 'a', due: true, notes: [] };
+  const later = { key: 'b', due: false, notes: [] };
+  const newer = [{ key: 'c', due: true, notes: [] }];
+  for (const [ok, reload, expected] of [[false, true, 'a,c'], [false, false, 'a,b'], [true, true, 'c'], [true, false, 'b']]) {
+    const state = { review: [due, later], busy: null, refs: [] };
+    const context = vm.createContext({ state, MOST_REFS: 8, drawRefs() {}, send() {}, reviewPrompt: () => '', request: async () => { if (reload) state.review = newer; return { ok }; } });
+    vm.runInContext(startReview, context);
+    await context.startReview();
+    assert.equal(state.review.map((m) => m.key).join(), expected, `${ok} ${reload}`);
+  }
+});
+
 function chatSendFixture(id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');

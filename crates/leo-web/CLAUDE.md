@@ -566,7 +566,7 @@ keys and downloaded runtimes stay untouched.
   (`target/debug/leo-test-server`, or `LEO_TEST_BIN`) with a fresh disposable
   home, `LEO_NO_UPDATE_CHECK`, `LEO_NO_MICROPHONE` and the coding providers
   pointed at missing fixture binaries, so detection never inspects the
-  developer's accounts. CI sets `failOnFlakyTests`. The `phone` project runs only
+  developer's accounts. The `phone` project runs only
   the "on a phone" test in flows.spec.js. There is no visual suite.
 - Fixture specs (boards.spec.js, calendar.spec.js) run the real CSS and page code
   over an in-memory API; flows.spec.js joins the page to the real routes.

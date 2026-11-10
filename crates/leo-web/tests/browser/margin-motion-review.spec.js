@@ -191,8 +191,7 @@ test.describe('arriving underline', () => {
         const took = done.t - began.t;
         expect(took).toBeGreaterThan(350);
         expect(took).toBeLessThan(700);
-        const rest = await page.evaluate(() => window.dots('t3').map((l) => l.clip));
-        expect(rest.every((c) => c === 'none')).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.dots('t3').map((l) => l.clip).every((c) => c === 'none'))).toBe(true);
       }, options);
     });
   }
@@ -472,8 +471,7 @@ test.describe('reading-mode menu', () => {
         setTimeout(() => button.click(), 120);
       });
       await expect.poll(() => page.evaluate(() => document.querySelector('#margin-mode-menu').getAnimations().length)).toBe(0);
-      const settled = await page.evaluate(() => ({ hidden: document.querySelector('#margin-mode-menu').hidden, expanded: document.querySelector('#margin-mode').getAttribute('aria-expanded'), running: document.querySelector('#margin-mode-menu').getAnimations().length }));
-      expect(settled.running).toBe(0);
+      const settled = await page.evaluate(() => ({ hidden: document.querySelector('#margin-mode-menu').hidden, expanded: document.querySelector('#margin-mode').getAttribute('aria-expanded') }));
       expect(settled.hidden).toBe(settled.expanded !== 'true');
     });
     await fixture(browser, async (page) => {

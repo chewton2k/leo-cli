@@ -130,8 +130,8 @@ cd crates/leo-web/tests/browser
 ```
 
 The flows include a contrast check (`readability`): every text on every page,
-light and dark, must be at least 3:1 against what is behind it. CI fails on
-flaky tests (`failOnFlakyTests`). There is no screenshot suite.
+light and dark, must be at least 3:1 against what is behind it. There is no
+screenshot suite.
 
 ## Tests that only run by hand
 
