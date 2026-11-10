@@ -58,9 +58,20 @@ class ReleaseTests(unittest.TestCase):
         import validate_updater_signing
         import subprocess
         env = {'TAURI_SIGNING_PRIVATE_KEY':'private-marker','TAURI_SIGNING_PRIVATE_KEY_PASSWORD':'password-marker'}
+        public = base64.b64decode(validate_updater_signing.PUBLIC_KEY.read_text()).decode().splitlines()[1]
+        def signature(key_id):
+            raw = b'Ed' + key_id + bytes(64)
+            body = 'untrusted comment: signature from tauri secret key\n' + base64.b64encode(raw).decode() + '\ntrusted comment: probe\n'
+            return base64.b64encode(body.encode()).decode()
         def valid(command, **options):
             self.assertEqual(options['env']['TAURI_SIGNING_PRIVATE_KEY_PASSWORD'], 'password-marker')
             self.assertGreater(options['timeout'], 0)
+            pathlib.Path(command[-1] + '.sig').write_text(signature(base64.b64decode(public)[2:10]))
+            return subprocess.CompletedProcess(command, 0, b'', b'')
+        def other_key(command, **options):
+            pathlib.Path(command[-1] + '.sig').write_text(signature(b'\x01' * 8))
+            return subprocess.CompletedProcess(command, 0, b'', b'')
+        def garbled(command, **options):
             pathlib.Path(command[-1] + '.sig').write_text('public signature')
             return subprocess.CompletedProcess(command, 0, b'', b'')
         validate_updater_signing.validate(env, valid)
@@ -75,6 +86,10 @@ class ReleaseTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, b'', b'')
         with self.assertRaises(ValueError):
             validate_updater_signing.validate(env, no_signature)
+        for wrong in (other_key, garbled):
+            with self.assertRaises(ValueError) as mismatch:
+                validate_updater_signing.validate(env, wrong)
+            self.assertIn('updater-public-key.txt', str(mismatch.exception))
         with self.assertRaises(ValueError):
             validate_updater_signing.validate({}, valid)
         def timed_out(command, **options):

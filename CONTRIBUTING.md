@@ -131,9 +131,11 @@ queue runs and the daily 09:23 UTC run select every check.
 | Change | Checks in addition to formatting and CI selection tests |
 |--------|---------------------------------------------------------|
 | Documentation only | None |
-| Page assets | All JavaScript unit tests, Chromium and WebKit integration suites |
+| README or CONTRIBUTING | Rust checks (the wording test reads them) |
+| Page scripts (`app/*.js`, top-level `web/*.js`) | The Rust checks, all JavaScript unit tests, Chromium and WebKit integration suites |
+| Other page assets | All JavaScript unit tests, Chromium and WebKit integration suites |
 | JavaScript unit tests only | All JavaScript unit tests |
-| Browser tests only | Chromium and WebKit integration suites |
+| Browser tests only | Chromium and WebKit integration suites (`tests/browser/server.js` also runs the JavaScript unit tests) |
 | Core, services, host or web Rust | Workspace tests on macOS and Windows, clippy, Rust 1.88 check, Intel macOS build, both browser suites |
 | Desktop, CLI or Rust integration tests | The same Rust checks, without browser suites |
 | Installer or release helper scripts | Rust checks and installer validation, including PowerShell syntax on Windows |
