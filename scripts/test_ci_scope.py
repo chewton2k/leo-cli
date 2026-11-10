@@ -66,7 +66,10 @@ class ScopeTests(unittest.TestCase):
         self.assert_scope(self.scope('crates/leo-web/tests/saving.test.js'), 'node')
 
     def test_node_support_files_run_node(self):
-        self.assert_scope(self.scope('crates/leo-web/tests/page-source.js'), 'node')
+        self.assert_scope(self.scope('crates/leo-web/tests/chat.test.js'), 'node')
+
+    def test_page_source_shared_with_browser_specs_runs_both(self):
+        self.assert_scope(self.scope('crates/leo-web/tests/page-source.js'), 'browser', 'node')
 
     def test_rust_sources_read_by_node_tests_run_node(self):
         for path in ('crates/leo-web/src/routes/assets.rs', 'crates/leo-web/src/routes/mod.rs'):

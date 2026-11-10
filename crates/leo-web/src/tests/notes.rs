@@ -291,7 +291,9 @@ fn web_note_creation_directory_creation_and_moves_reject_traversal() {
 #[test]
 fn a_reload_failure_is_reported_instead_of_serving_a_stale_store() {
     let (state, dir, _) = state_with(&[("A", "")]);
-    std::fs::write(dir.path().join("notes/directories.json"), "not json").unwrap();
+    let folders = dir.path().join("notes").join("directories.json");
+    let _ = std::fs::remove_file(&folders);
+    std::fs::create_dir(&folders).unwrap();
     let result = run(list_notes(
         State(state),
         Query(ListParams {

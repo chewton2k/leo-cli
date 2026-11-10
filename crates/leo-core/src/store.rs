@@ -294,7 +294,18 @@ fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
     if path.exists() {
         let raw = fs::read(&path)?;
         Ok(serde_json::from_slice(&raw).unwrap_or_else(|e| {
-            crate::diag::warn(format!("skipping {}: {e}", path.display()));
+            let kept = path.with_extension("json.corrupt");
+            match fs::rename(&path, &kept) {
+                Ok(()) => crate::diag::warn(format!(
+                    "skipping {}: {e}; kept it as {}",
+                    path.display(),
+                    kept.display()
+                )),
+                Err(moved) => crate::diag::warn(format!(
+                    "skipping {}: {e}; could not keep it: {moved}",
+                    path.display()
+                )),
+            }
             Vec::new()
         }))
     } else {
@@ -360,7 +371,11 @@ fn collect_md_paths_at(
                 let _ = collect_md_paths_at(&path, result, depth + 1);
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            result.push((path, entry.metadata().ok()));
+            #[cfg(windows)]
+            let meta = fs::metadata(&path).ok();
+            #[cfg(not(windows))]
+            let meta = entry.metadata().ok();
+            result.push((path, meta));
         }
     }
     Ok(())
@@ -776,6 +791,7 @@ impl Store {
     pub fn trashed(&self) -> Vec<Trashed> {
         let mut out: Vec<Trashed> = trash_entries(&self.notes_dir)
             .into_iter()
+            .filter(|(_, note, _)| !self.notes.iter().any(|n| n.id == note.id))
             .map(|(_, note, deleted_at)| Trashed {
                 id: note.id,
                 title: note.title,
@@ -1798,10 +1814,13 @@ mod tests {
         let (mut store, _d) = temp_store();
         store.create_note("Deep", "x", vec![], "cs162").unwrap();
         store.save().unwrap();
+        let corrupt = store.notes_dir.join("directories.json.corrupt");
+        std::fs::write(&corrupt, "older").unwrap();
         std::fs::write(store.notes_dir.join("directories.json"), "{not json").unwrap();
         let store = Store::load_from(&store.notes_dir).unwrap();
         assert_eq!(store.notes.len(), 1);
         assert_eq!(store.directories, vec!["cs162"]);
+        assert_eq!(std::fs::read_to_string(&corrupt).unwrap(), "{not json");
     }
 
     #[cfg(unix)]
@@ -2786,6 +2805,10 @@ mod tests {
         fs::copy(store.notes_dir.join("Kept.md"), &trashed).unwrap();
         store.refresh().unwrap();
         assert!(trashed.exists(), "a refresh within the hour tidied again");
+        assert!(
+            store.trashed().is_empty(),
+            "a live note was listed in the trash"
+        );
         store.tidied.set(None);
         store.refresh().unwrap();
         assert!(!trashed.exists(), "a live note stayed in the trash");

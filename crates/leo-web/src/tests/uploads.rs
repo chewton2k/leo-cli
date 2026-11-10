@@ -416,6 +416,47 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
 }
 
 #[test]
+fn an_upload_dropped_while_it_is_decoded_gives_its_place_back() {
+    use base64::Engine;
+    use std::future::Future;
+    let (mut state, _dir, _) = state_with(&[]);
+    state.importer = Some(Arc::new(
+        |_: Vec<UploadFile>, _: &str, _: &mut dyn FnMut(&str, usize, usize)| {
+            anyhow::bail!("not reached")
+        },
+    ));
+    let body = ImportBody {
+        directory: String::new(),
+        title: None,
+        wants: String::new(),
+        files: vec![ImportFileBody {
+            name: "big.pdf".into(),
+            mime: String::new(),
+            data: base64::engine::general_purpose::STANDARD.encode(vec![0u8; 8 * 1024 * 1024]),
+        }],
+        each: false,
+        into: None,
+    };
+    run(async {
+        let mut upload = Box::pin(start_import(State(state.clone()), Json(body)));
+        let started = std::time::Instant::now();
+        loop {
+            let ready = std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(upload.as_mut().poll(cx).is_ready())
+            })
+            .await;
+            assert!(!ready, "the upload finished before it could be dropped");
+            if !state.imports.lock().unwrap().is_empty() {
+                break;
+            }
+            assert!(started.elapsed() < std::time::Duration::from_secs(10));
+            tokio::task::yield_now().await;
+        }
+    });
+    assert!(state.imports.lock().unwrap().is_empty());
+}
+
+#[test]
 fn a_download_name_works_in_every_browser_whatever_the_title() {
     assert_eq!(
         attachment_header("Lecture 4 originals.zip"),

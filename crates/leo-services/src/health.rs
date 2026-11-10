@@ -129,24 +129,6 @@ pub fn microphone_device() -> Check {
     }
 }
 
-/// Everything needed to record speech into a note.
-///
-/// Separate from the full report so `listen` can check it before recording
-/// rather than failing partway through.
-/// `microphone` is only meaningful when the audio comes from a microphone:
-/// `record screen` captures system output through a loopback device, and the replay
-/// hook reads a file, so probing the mic for either would block a recording
-/// that would have worked.
-pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool) -> Vec<Check> {
-    let mut checks = Vec::new();
-
-    if uses_microphone {
-        checks.push(microphone_device());
-    }
-    checks.push(chain_check(config, Chain::Transcribe, store));
-    checks
-}
-
 /// Which chain a check refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chain {
@@ -677,18 +659,6 @@ mod tests {
         assert!(!ran.exists(), "the cheap path ran the program");
     }
 
-    /// Screen capture does not go through the microphone, so a silent mic must
-    /// not block it. Nor must a replayed file.
-    #[test]
-    fn screen_capture_is_not_blocked_by_the_microphone() {
-        let config = config_with(vec![], vec![]);
-        let without = recording(&config, &store(), false);
-        assert!(
-            !without.iter().any(|c| c.what == "microphone"),
-            "screen capture probed the microphone"
-        );
-    }
-
     /// A port check must not hang, panic, or resolve DNS on nonsense input.
     /// It ran for fifteen minutes before it stopped going through
     /// `to_socket_addrs`, which does an unbounded lookup.
@@ -724,17 +694,5 @@ mod tests {
         assert!(is_loopback("http://localhost:11434/v1"));
         assert!(is_loopback("http://127.0.0.1:1234/v1"));
         assert!(!is_loopback("https://openrouter.ai/api/v1"));
-    }
-
-    /// The recording pre-flight must cover everything a recording needs, so the
-    /// user learns about all of it before speaking rather than one gap at a time.
-    #[test]
-    fn the_recording_preflight_needs_audio_and_speech_but_not_writing() {
-        let config = config_with(vec![], vec![]);
-        let checks = recording(&config, &store(), false);
-        let subjects: Vec<&str> = checks.iter().map(|c| c.what.as_str()).collect();
-        assert!(!subjects.contains(&"sox"), "{subjects:?}");
-        assert!(subjects.contains(&"a transcription model"), "{subjects:?}");
-        assert!(!subjects.contains(&"a chat model"), "{subjects:?}");
     }
 }

@@ -393,6 +393,25 @@ transcribe = { chain = ["openai_whisper"] }
     }
 
     #[test]
+    fn a_load_during_a_settings_save_tidies_in_memory_and_leaves_the_file_to_the_save() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("config.toml");
+        let text = "[providers.claude_code]\nmodel = \"sonnet\"\n";
+        std::fs::write(&path, text).unwrap();
+        let saving = edit::saving().unwrap();
+        assert!(edit::saving().is_none());
+        let config = Config::load_from(&path);
+        assert_ne!(
+            config.provider("claude_code").unwrap().model.as_deref(),
+            Some("sonnet")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        drop(saving);
+        Config::load_from(&path);
+        assert_ne!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
     fn a_retired_claude_model_goes_back_to_the_default() {
         let mut doc = "[providers.anthropic]\nmodel = \"claude-haiku-4-5\"\n[providers.openrouter]\nmodel = \"anthropic/claude-haiku-4.5\"\n[providers.claude_code]\nmodel = \"sonnet\"\n"
             .parse::<DocumentMut>()

@@ -25,6 +25,7 @@ while IFS= read -r file; do
         '') ;;
         crates/leo-web/src/web/*) browser=true; node=true ;;
         crates/leo-web/tests/browser/*) browser=true ;;
+        crates/leo-web/tests/page-source.js) browser=true; node=true ;;
         crates/leo-web/tests/*.js) node=true ;;
         crates/leo-web/src/routes/assets.rs|crates/leo-web/src/routes/mod.rs)
             rust=true; browser=true; node=true ;;

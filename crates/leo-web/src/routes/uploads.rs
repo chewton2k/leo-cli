@@ -652,6 +652,19 @@ pub(crate) async fn start_import(
     if !reserved {
         return import_busy();
     }
+    type Jobs = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, ImportJob>>>;
+    struct Reservation(Option<(Jobs, String)>);
+    impl Drop for Reservation {
+        fn drop(&mut self) {
+            if let Some((imports, id)) = self.0.take() {
+                imports
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+            }
+        }
+    }
+    let mut reservation = Reservation(Some((std::sync::Arc::clone(&state.imports), id.clone())));
     let uploads = std::mem::take(&mut body.files);
     let decoded =
         tokio::task::spawn_blocking(move || -> Result<Vec<UploadFile>, (StatusCode, String)> {
@@ -692,14 +705,10 @@ pub(crate) async fn start_import(
     let files = match decoded {
         Ok(files) => files,
         Err((code, error)) => {
-            state
-                .imports
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
             return (code, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
+    reservation.0 = None;
     let into = body.into.clone();
     let each = body.each && files.len() > 1 && into.is_none();
     set_job(&state, &id, |job| {

@@ -18,10 +18,12 @@ pub type Seer = Arc<dyn Fn(&str, &str, Vec<Picture>) -> Result<String> + Send + 
 pub const DESCRIBE: &str = "You describe pictures from someone's study notes for a reader who cannot see them. Say what kind of picture it is, then its content: any text, labels and numbers, the structure of a diagram, a chart's axes and trend, code, or the steps shown, and what it explains. Use interpretable language. Two to six sentences. Reply with the description only.";
 const MOST_PICTURE_BYTES: u64 = 20 * 1024 * 1024;
 const RETRY_FAILED_AFTER: Duration = Duration::from_secs(60 * 60);
+const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 
 pub struct Captions {
     db: Arc<crate::db::Db>,
     failed: Mutex<HashMap<String, Instant>>,
+    pruned: Mutex<Option<Instant>>,
 }
 
 impl Captions {
@@ -53,6 +55,7 @@ impl Captions {
         Captions {
             db,
             failed: Mutex::default(),
+            pruned: Mutex::default(),
         }
     }
 
@@ -104,8 +107,22 @@ impl Captions {
             .unwrap_or_default()
     }
 
-    fn forget_unless(&self, stored: &HashSet<String>, live: &HashSet<String>) {
-        let stale: Vec<&String> = stored.difference(live).collect();
+    fn forget_stale(&self, stored: &HashSet<String>) {
+        {
+            let mut pruned = self.pruned.lock().unwrap_or_else(|e| e.into_inner());
+            if pruned.is_some_and(|at| at.elapsed() < PRUNE_EVERY) {
+                return;
+            }
+            *pruned = Some(Instant::now());
+        }
+        let stale: Vec<&String> = stored
+            .iter()
+            .filter(|key| {
+                key.rsplitn(3, ':')
+                    .nth(2)
+                    .is_none_or(|path| key_of(Path::new(path)).as_ref() != Some(*key))
+            })
+            .collect();
         if stale.is_empty() {
             return;
         }
@@ -193,7 +210,6 @@ pub fn picture(path: &Path) -> Option<Picture> {
 
 pub fn uncaptioned(store: &Store, captions: &Captions, most: usize) -> Vec<PathBuf> {
     let stored = captions.keys();
-    let mut live: HashSet<String> = HashSet::new();
     let mut out: Vec<PathBuf> = Vec::new();
     for note in &store.notes {
         for (_, path) in pictures_of(&store.notes_dir, &note.directory, &note.body) {
@@ -207,11 +223,10 @@ pub fn uncaptioned(store: &Store, captions: &Captions, most: usize) -> Vec<PathB
             {
                 out.push(path);
             }
-            live.insert(key);
         }
     }
     if !store.notes.is_empty() && store.unreadable.is_empty() {
-        captions.forget_unless(&stored, &live);
+        captions.forget_stale(&stored);
     }
     out
 }
@@ -300,25 +315,35 @@ mod tests {
     }
 
     #[test]
-    fn captions_no_note_shows_are_dropped_and_shown_ones_kept() {
+    fn stale_captions_are_dropped_and_current_ones_kept() {
         let dir = tempfile::tempdir().unwrap();
         let notes = dir.path().join("notes");
         let mut store = Store::load_from(&notes).unwrap();
-        std::fs::create_dir_all(notes.join("attachments")).unwrap();
-        let shown = notes.join("attachments/a.png");
-        std::fs::write(&shown, png()).unwrap();
+        let attachments = notes.join("attachments");
+        std::fs::create_dir_all(&attachments).unwrap();
+        let shown = attachments.join("a.png");
+        let unshown = attachments.join("b.png");
+        let deleted = attachments.join("c.png");
+        for path in [&shown, &unshown, &deleted] {
+            std::fs::write(path, png()).unwrap();
+        }
         store
             .create_note("One", "![a](attachments/a.png)", vec![], "")
             .unwrap();
         let captions = Captions::for_notes(&notes);
         let live = key_of(&shown).unwrap();
+        let elsewhere = key_of(&unshown).unwrap();
+        let gone = key_of(&deleted).unwrap();
+        std::fs::remove_file(&deleted).unwrap();
         captions.put(live.clone(), "kept".into());
-        for i in 0..3 {
-            captions.put(format!("{}:{i}:0", shown.display()), "stale".into());
-        }
+        captions.put(elsewhere.clone(), "trashed note".into());
+        captions.put(gone.clone(), "deleted".into());
+        captions.put(format!("{}:1:0", shown.display()), "changed".into());
         assert!(uncaptioned(&store, &captions, 10).is_empty());
         assert_eq!(captions.get(&live).as_deref(), Some("kept"));
-        assert_eq!(captions.len(), 1);
+        assert_eq!(captions.get(&elsewhere).as_deref(), Some("trashed note"));
+        assert_eq!(captions.get(&gone), None);
+        assert_eq!(captions.len(), 2);
     }
 
     #[test]

@@ -182,14 +182,9 @@ pub fn load(notes: &Path, note: &str) -> Result<Vec<Archive>> {
                 bytes <= MOST_SOURCE_BYTES,
                 "This note's recording sources exceed the size limit"
             );
-            match serde_json::from_slice::<Archive>(&std::fs::read(entry.path())?) {
-                Ok(source) if valid_id(&source.id) => out.push(source),
-                Ok(_) => crate::diag::warn(format!(
-                    "skipping {}: invalid saved recording id",
-                    entry.path().display()
-                )),
-                Err(e) => crate::diag::warn(format!("skipping {}: {e}", entry.path().display())),
-            }
+            let source: Archive = serde_json::from_slice(&std::fs::read(entry.path())?)?;
+            anyhow::ensure!(valid_id(&source.id), "Invalid saved recording id");
+            out.push(source);
         }
     }
     out.sort_by_key(|s| s.started);
@@ -276,18 +271,6 @@ mod tests {
         remove(&notes, "note-1234", &["session-456".into()]).unwrap();
         assert_eq!(load(&notes, "note-1234").unwrap().len(), 1);
         assert!(remove(&notes, "note-1234", &["../x".into()]).is_err());
-        let dir = folder(&notes, "note-1234").unwrap();
-        std::fs::write(dir.join("broken.json"), "{not json").unwrap();
-        let bad_id = Archive {
-            id: "x".into(),
-            ..source.clone()
-        };
-        write_json(&dir.join("bad-id.json"), &bad_id).unwrap();
-        assert_eq!(
-            load(&notes, "note-1234").unwrap().len(),
-            1,
-            "one broken source never hides the others"
-        );
     }
     #[cfg(unix)]
     #[test]

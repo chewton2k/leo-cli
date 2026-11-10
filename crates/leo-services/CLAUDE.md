@@ -140,8 +140,8 @@ itself. `ollama_models.json` is the vendored catalog. `machine()` reads total
 memory and free home-folder disk. `fit` is TooBig when memory needed exceeds
 total by more than 10% or size + 2 GB exceeds free disk; unknown values never
 block; no `recommended` while memory is unknown. `pull` streams loopback
-`POST /api/pull` NDJSON with only a 300 ms connect timeout and the `stop` flag
-(no total deadline: a blocking timeout covers the whole body), and says disk and
+`POST /api/pull` NDJSON with a 300 ms connect timeout, a six-hour total bound
+(a blocking timeout covers the whole body) and the `stop` flag, and says disk and
 memory errors in one sentence (`plain_error`).
 
 ### Agent CLIs (`ai/provider/agent_cli.rs`)

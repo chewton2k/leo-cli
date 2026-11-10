@@ -68,6 +68,23 @@ async fn showing_the_window_reconciles_external_edits_before_the_watcher_deliver
 }
 
 #[tokio::test]
+async fn start_returns_an_error_when_the_database_cannot_open() {
+    let (places, dir) = places();
+    std::fs::create_dir(dir.path().join(crate::db::FILE)).unwrap();
+    let failed = start_in(
+        places,
+        StartOptions {
+            port: 0,
+            token: "t".into(),
+        },
+        Powers::default(),
+    )
+    .await;
+    let said = format!("{:#}", failed.err().unwrap());
+    assert!(said.contains(crate::db::FILE), "{said}");
+}
+
+#[tokio::test]
 async fn start_binds_loopback_only() {
     let (places, _dir) = places();
     let running = start_in(

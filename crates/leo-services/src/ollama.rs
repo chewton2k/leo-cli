@@ -194,7 +194,7 @@ pub fn pull(
     }
     let response = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_millis(300))
-        .timeout(None::<Duration>)
+        .timeout(Duration::from_secs(6 * 60 * 60))
         .build()?
         .post(format!("{}/api/pull", root(base_url)))
         .json(&json!({ "model": model, "stream": true }))

@@ -582,6 +582,13 @@ pub(crate) async fn start_in(
 ) -> Result<Running> {
     let store = places.store;
     let notes = store.notes_dir.clone();
+    let _db = db::try_at(
+        &store
+            .notes_dir
+            .parent()
+            .unwrap_or(&store.notes_dir)
+            .join(db::FILE),
+    )?;
     let vectors = Arc::new(vectors::Vectors::for_notes(&store.notes_dir));
     let graphs = Arc::new(
         graph::Graphs::for_notes(&store.notes_dir, powers.writer.clone())

@@ -267,7 +267,12 @@ fn tidied(path: &std::path::Path, text: String) -> String {
     if !tidy::tidy(&mut doc) {
         return text;
     }
-    let _ = edit::save_document(path, &doc);
+    let Some(_saving) = edit::saving() else {
+        return doc.to_string();
+    };
+    if std::fs::read_to_string(path).is_ok_and(|now| now == text) {
+        let _ = edit::save_document(path, &doc);
+    }
     doc.to_string()
 }
 

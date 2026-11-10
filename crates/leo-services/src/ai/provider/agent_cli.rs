@@ -1216,6 +1216,7 @@ impl AgentCli {
                     bytes = bytes.saturating_add(line.len());
                     if bytes > MOST_OUTPUT {
                         heard.exceeded = finished.is_none();
+                        forced = finished.is_some();
                         break;
                     }
                     if hear(&line, &mut heard, sink) && finished.is_none() {
@@ -1225,13 +1226,14 @@ impl AgentCli {
                 Ok(Ok(None)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Ok(Err(_)) => {
                     heard.exceeded = finished.is_none();
+                    forced = finished.is_some();
                     break;
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
         }
         drop(lines);
-        if heard.exceeded {
+        if heard.exceeded || forced {
             child.stop();
         }
         let status = loop {
@@ -2241,6 +2243,30 @@ sleep 30"##,
         let spent = agent.spent().unwrap();
         assert_eq!((spent.input, spent.output), (7, 2));
         assert_eq!(spent.model.as_deref(), Some("gpt-lingering"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_finished_turn_is_kept_when_oversized_or_unreadable_output_follows() {
+        for tail in [
+            "head -c 3000000 /dev/zero | tr '\\0' a",
+            "printf '\\377\\376\\n'; head -c 3000000 /dev/zero",
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let bin = script(
+                dir.path(),
+                &format!(
+                    r##"[ "$1" = features ] && exit 0
+cat >/dev/null
+printf '%s\n' '{{"type":"item.completed","item":{{"type":"agent_message","text":"done"}}}}'
+printf '%s\n' '{{"type":"turn.completed","usage":{{"input_tokens":3,"output_tokens":1}}}}'
+{tail}"##
+                ),
+            );
+            let cfg = config(ProviderKind::Codex, &bin, None);
+            let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+            assert_eq!(agent.complete(&request()).unwrap(), "done", "{tail}");
+        }
     }
 
     #[cfg(unix)]
