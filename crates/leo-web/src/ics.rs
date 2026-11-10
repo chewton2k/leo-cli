@@ -328,10 +328,12 @@ fn rule_of(text: &str) -> Option<Rule> {
             _ => {}
         }
     }
-    matches!(
-        rule.freq.as_str(),
-        "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
-    )
+    let by_day_fits = rule.days.is_empty() || matches!(rule.freq.as_str(), "DAILY" | "WEEKLY");
+    (by_day_fits
+        && matches!(
+            rule.freq.as_str(),
+            "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
+        ))
     .then_some(rule)
 }
 
@@ -346,6 +348,7 @@ fn occurrences(
     start: DateTime<Utc>,
     zone: Option<chrono_tz::Tz>,
     rule: &Rule,
+    from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Vec<DateTime<Utc>> {
     let first = naive_in(start, zone);
@@ -358,10 +361,25 @@ fn occurrences(
     days.sort_by_key(|d| d.num_days_from_monday());
     days.dedup();
     let mut out = Vec::new();
-    for n in 0..MOST_STEPS as i64 {
+    let skipped = if rule.count.is_some() {
+        0
+    } else {
+        let gap = (naive_in(from, zone) - first).num_days().max(0);
+        let periods = match rule.freq.as_str() {
+            "DAILY" => gap,
+            "WEEKLY" => gap / 7,
+            "MONTHLY" => gap / 31,
+            _ => gap / 366,
+        };
+        (periods / rule.interval - 1).max(0)
+    };
+    for n in skipped..skipped + MOST_STEPS as i64 {
         let k = n * rule.interval;
         let batch: Vec<NaiveDateTime> = match rule.freq.as_str() {
-            "DAILY" => vec![first + Duration::days(k)],
+            "DAILY" => Some(first + Duration::days(k))
+                .filter(|t| rule.days.is_empty() || rule.days.contains(&t.weekday()))
+                .into_iter()
+                .collect(),
             "WEEKLY" => days
                 .iter()
                 .map(|d| {
@@ -398,6 +416,10 @@ fn occurrences(
         }
     }
     out
+}
+
+fn most_shown(from: DateTime<Utc>, to: DateTime<Utc>) -> usize {
+    (MOST_SHOWN * ((to - from).num_days().max(0) as usize / 7 + 1)).min(MOST_EVENTS)
 }
 
 fn expand(raws: &[Raw], from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
@@ -439,6 +461,7 @@ fn expand(raws: &[Raw], from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
                             Utc.from_utc_datetime(&noon),
                             Some(chrono_tz::UTC),
                             &rule,
+                            from - Duration::days(days),
                             to + Duration::days(1),
                         )
                         .into_iter()
@@ -449,10 +472,10 @@ fn expand(raws: &[Raw], from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
                     None => vec![first],
                 }
             };
+            let except_days: HashSet<&NaiveDate> = raw.except_days.iter().collect();
             for day in dates {
                 if raw.instead_of_day.is_none()
-                    && (raw.except_days.contains(&day)
-                        || moved_days.contains(&(raw.uid.clone(), day)))
+                    && (except_days.contains(&day) || moved_days.contains(&(raw.uid.clone(), day)))
                 {
                     continue;
                 }
@@ -488,19 +511,20 @@ fn expand(raws: &[Raw], from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
         let starts = match raw.rule.as_deref() {
             None => vec![start],
             Some(text) => match rule_of(text) {
-                Some(rule) => occurrences(start, zone, &rule, to),
+                Some(rule) => occurrences(start, zone, &rule, from - length, to),
                 None => vec![start],
             },
         };
+        let except: HashSet<&DateTime<Utc>> = raw.except.iter().collect();
         for at in starts {
-            if raw.except.contains(&at) || moved.contains_key(&(raw.uid.clone(), at)) {
+            if except.contains(&at) || moved.contains_key(&(raw.uid.clone(), at)) {
                 continue;
             }
             emit(raw, at, length, &mut out);
         }
     }
     out.sort_by_key(|e| e.start);
-    out.truncate(MOST_SHOWN);
+    out.truncate(most_shown(from, to));
     out
 }
 
@@ -705,14 +729,90 @@ END:VCALENDAR\r
             at("2026-10-01T00:00:00Z"),
             at("2026-12-31T00:00:00Z"),
         );
-        assert_eq!(cal.events.len(), MOST_SHOWN);
+        assert_eq!(
+            cal.events.len(),
+            most_shown(at("2026-10-01T00:00:00Z"), at("2026-12-31T00:00:00Z"))
+        );
         let daily = "BEGIN:VEVENT\nUID:d\nDTSTART:19000101T160000Z\nRRULE:FREQ=DAILY\nEND:VEVENT";
-        assert!(read(
-            daily,
-            at("2026-10-01T00:00:00Z"),
-            at("2026-12-31T00:00:00Z")
-        )
-        .events
-        .is_empty());
+        assert_eq!(
+            read(
+                daily,
+                at("2026-10-01T00:00:00Z"),
+                at("2026-10-08T00:00:00Z")
+            )
+            .events
+            .len(),
+            7
+        );
+    }
+
+    #[test]
+    fn a_busy_month_keeps_every_event_in_view() {
+        let text: String = (0..245)
+            .map(|i| {
+                format!(
+                    "BEGIN:VEVENT\nUID:e{i}\nSUMMARY:Meeting {i}\nDTSTART:2026110{}T{:02}0000Z\nEND:VEVENT\n",
+                    1 + i / 49 % 9,
+                    8 + i % 49 / 5
+                )
+            })
+            .collect();
+        let cal = read(
+            &text,
+            at("2026-11-01T00:00:00Z"),
+            at("2026-12-06T00:00:00Z"),
+        );
+        assert_eq!(cal.events.len(), 245);
+    }
+
+    #[test]
+    fn every_weekday_repeats_skip_the_weekend_and_monthly_weekday_rules_show_once() {
+        let text = "BEGIN:VEVENT\nUID:a\nSUMMARY:Standup\nDTSTART:20261019T160000Z\nRRULE:FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR\nEND:VEVENT\nBEGIN:VEVENT\nUID:b\nSUMMARY:Tuesdays\nDTSTART:20261020T170000Z\nRRULE:FREQ=MONTHLY;BYDAY=TU\nEND:VEVENT\n";
+        let cal = read(text, at("2026-10-19T00:00:00Z"), at("2026-11-30T00:00:00Z"));
+        let standups: Vec<_> = cal.events.iter().filter(|e| e.title == "Standup").collect();
+        assert_eq!(standups.len(), 30);
+        assert!(standups
+            .iter()
+            .all(|e| !matches!(e.start.weekday(), Weekday::Sat | Weekday::Sun)));
+        assert_eq!(
+            cal.events.iter().filter(|e| e.title == "Tuesdays").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_series_that_began_long_ago_still_shows_but_a_counted_one_ends() {
+        let long = "BEGIN:VEVENT\nUID:a\nSUMMARY:Stand-up\nDTSTART:20120102T160000Z\nRRULE:FREQ=DAILY\nEND:VEVENT\nBEGIN:VEVENT\nUID:b\nSUMMARY:Weekly\nDTSTART:20120102T170000Z\nRRULE:FREQ=WEEKLY;INTERVAL=2\nEND:VEVENT\nBEGIN:VEVENT\nUID:c\nSUMMARY:Counted\nDTSTART:20120102T180000Z\nRRULE:FREQ=DAILY;COUNT=5\nEND:VEVENT\n";
+        let cal = read(long, at("2026-11-02T00:00:00Z"), at("2026-11-09T00:00:00Z"));
+        let count = |title: &str| cal.events.iter().filter(|e| e.title == title).count();
+        assert_eq!(count("Stand-up"), 7);
+        assert_eq!(count("Weekly"), 1);
+        assert_eq!(count("Counted"), 0);
+    }
+
+    #[test]
+    fn a_feed_full_of_exclusion_dates_is_expanded_quickly() {
+        let first = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+        let mut text =
+            String::from("BEGIN:VEVENT\nUID:d\nDTSTART:20260101T160000Z\nRRULE:FREQ=DAILY\n");
+        for line in 0..60 {
+            let days: Vec<String> = (0..5_000)
+                .map(|n| {
+                    (first + Duration::days(line * 5_000 + n))
+                        .format("%Y%m%dT160000Z")
+                        .to_string()
+                })
+                .collect();
+            text.push_str(&format!("EXDATE:{}\n", days.join(",")));
+        }
+        text.push_str("END:VEVENT\n");
+        let began = std::time::Instant::now();
+        let cal = read(
+            &text,
+            at("2026-01-01T00:00:00Z"),
+            at("2040-01-01T00:00:00Z"),
+        );
+        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        assert!(!cal.events.is_empty());
     }
 }

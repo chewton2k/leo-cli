@@ -659,3 +659,82 @@ fn an_installation_fence_refuses_recording_before_creating_a_job() {
     assert!(state.recording.lock().unwrap().is_none());
     drop(installing);
 }
+
+struct Watching {
+    recording: record::Recordings,
+    locked_during: std::sync::Mutex<Vec<bool>>,
+    ids: Vec<&'static str>,
+}
+
+impl record::Housekeeper for Watching {
+    fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
+        Ok(self
+            .ids
+            .iter()
+            .map(|id| record::Pending {
+                id: (*id).into(),
+                title: None,
+                directory: String::new(),
+                source: record::Source::Microphone,
+                profile: Default::default(),
+                started: Some(chrono::Utc::now() - chrono::Duration::days(90)),
+            })
+            .collect())
+    }
+    fn discard_recording(&self, _id: &str) -> anyhow::Result<()> {
+        self.locked_during
+            .lock()
+            .unwrap()
+            .push(self.recording.try_lock().is_err());
+        Ok(())
+    }
+}
+
+#[test]
+fn deleting_and_expiring_unfinished_audio_hold_the_recording_lock_while_they_discard() {
+    let (mut state, _d, _ids) = state_with(&[]);
+    let watching = Arc::new(Watching {
+        recording: state.recording.clone(),
+        locked_during: Default::default(),
+        ids: vec!["old-one", "old-two"],
+    });
+    state.housekeeper = Some(watching.clone());
+    let deleted = run(record::discard(
+        State(state.clone()),
+        Path("old-one".into()),
+    ));
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let expired =
+        crate::keeping::expire_audio(&*watching, Some(30), chrono::Utc::now(), &state.recording);
+    assert_eq!(expired, 2);
+    assert_eq!(*watching.locked_during.lock().unwrap(), [true, true, true]);
+}
+
+#[test]
+fn expiry_and_delete_leave_the_recording_being_recovered_alone() {
+    let (mut state, _d, _ids) = state_with(&[]);
+    let watching = Arc::new(Watching {
+        recording: state.recording.clone(),
+        locked_during: Default::default(),
+        ids: vec!["recovering-one"],
+    });
+    state.housekeeper = Some(watching.clone());
+    state.listener = Some(hearing());
+    let recovered = run(record::recover(
+        State(state.clone()),
+        Path("recovering-one".into()),
+    ));
+    assert_eq!(recovered.status(), StatusCode::ACCEPTED);
+    let expired =
+        crate::keeping::expire_audio(&*watching, Some(30), chrono::Utc::now(), &state.recording);
+    assert_eq!(expired, 0);
+    let deleted = run(record::discard(
+        State(state.clone()),
+        Path("recovering-one".into()),
+    ));
+    assert_eq!(deleted.status(), StatusCode::CONFLICT);
+    assert!(watching.locked_during.lock().unwrap().is_empty());
+    let id = state.recording.lock().unwrap().as_ref().unwrap().view().id;
+    run(record::stop(State(state.clone()), Path(id)));
+    recording_until(&state, |s| s == "done" || s == "failed");
+}

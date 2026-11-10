@@ -4,7 +4,7 @@
 //! Each board and each card is its own file, `<notes>/.leo/boards/<id>.json` and
 //! `<notes>/.leo/cards/<id>.json`, stored like standalone tasks: one JSON line per
 //! save, written atomically, and read as the line with the newest `updated_at`.
-//! Deleting writes a tombstone line, never removes the file.
+//! Deleting writes a tombstone line; the file goes when the Trash period ends.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -200,6 +200,15 @@ pub fn boards(chats: &Path) -> Vec<Board> {
     all.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
     all.truncate(MOST_BOARDS);
     all
+}
+
+pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
+    let Some(days) = days else {
+        return 0;
+    };
+    let before = now - chrono::Duration::days(i64::from(days));
+    crate::jsonline::forget_deleted::<Board>(chats, before, |b| b.deleted)
+        + crate::jsonline::forget_deleted::<Card>(chats, before, |c| c.deleted)
 }
 
 pub fn board(chats: &Path, id: &str) -> Option<Board> {
@@ -533,6 +542,31 @@ mod tests {
                 .all(|n| n.ends_with(".json") && !n.starts_with('.')),
             "no temporary file is left behind: {names:?}"
         );
+    }
+
+    #[test]
+    fn old_board_and_card_tombstones_go_with_the_trash_period_and_live_ones_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let now = Utc::now();
+        let live = new_board("Live", now);
+        put_board(&chats, &live).unwrap();
+        let mut gone = new_board("Gone", now);
+        gone.deleted = true;
+        put_board(&chats, &gone).unwrap();
+        put_card(&chats, &card_in(&live, 0, "card-0001", 1.0, now)).unwrap();
+        let mut dead = card_in(&live, 0, "card-0002", 2.0, now);
+        dead.deleted = true;
+        put_card(&chats, &dead).unwrap();
+        let tomb = |kind: &str, id: &str| dir.path().join(format!("notes/.leo/{kind}/{id}.json"));
+        assert_eq!(forget_deleted(&chats, None, now), 0);
+        assert_eq!(forget_deleted(&chats, Some(30), now), 0);
+        assert!(tomb("boards", &gone.id).exists() && tomb("cards", "card-0002").exists());
+        let later = now + chrono::Duration::days(31);
+        assert_eq!(forget_deleted(&chats, Some(30), later), 2);
+        assert!(!tomb("boards", &gone.id).exists() && !tomb("cards", "card-0002").exists());
+        assert!(tomb("boards", &live.id).exists() && tomb("cards", "card-0001").exists());
+        assert!(board(&chats, &live.id).is_some() && card(&chats, "card-0001").is_some());
     }
 
     #[test]

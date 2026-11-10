@@ -3,7 +3,7 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
 
-use crate::record::Housekeeper;
+use crate::record::{discard_unless_in_use, Housekeeper, Recordings};
 use crate::AppState;
 
 const MOST_ENTRIES: usize = 100_000;
@@ -158,11 +158,11 @@ pub(crate) async fn would_delete(state: &AppState, field: &str, days: Option<u32
     .unwrap_or(0)
 }
 
-pub fn expire_audio(
+pub(crate) fn expire_audio(
     housekeeper: &dyn Housekeeper,
     days: Option<u32>,
     now: DateTime<Utc>,
-    active: Option<&str>,
+    recording: &Recordings,
 ) -> usize {
     let Some(days) = days else {
         return 0;
@@ -177,8 +177,9 @@ pub fn expire_audio(
     kept + pending
         .into_iter()
         .filter(|p| p.started.is_some_and(|started| started < cutoff))
-        .filter(|p| active != Some(p.id.as_str()))
-        .filter(|p| housekeeper.discard_recording(&p.id).is_ok())
+        .filter(|p| {
+            discard_unless_in_use(recording, housekeeper, &p.id).is_some_and(|done| done.is_ok())
+        })
         .count()
 }
 
@@ -196,6 +197,7 @@ pub(crate) async fn expire_now(state: &AppState) {
     };
     let housekeeper = state.housekeeper.clone();
     let chats = state.chats.clone();
+    let recording = state.recording.clone();
     let active = state
         .recording
         .lock()
@@ -208,10 +210,14 @@ pub(crate) async fn expire_now(state: &AppState) {
             let _writing = crate::tasks::writing();
             crate::tasks::forget_deleted(&chats, keep.trash_days, now);
         }
+        {
+            let _writing = crate::boards::writing();
+            crate::boards::forget_deleted(&chats, keep.trash_days, now);
+        }
         expire_uploads(&notes_dir, keep.upload_days, now);
         expire_transcripts(&notes_dir, keep.transcript_days, now, active.as_deref());
         if let Some(housekeeper) = housekeeper {
-            expire_audio(&*housekeeper, keep.audio_days, now, active.as_deref());
+            expire_audio(&*housekeeper, keep.audio_days, now, &recording);
         }
     })
     .await;
@@ -373,23 +379,19 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_audio_follows_its_age_and_never_the_recording_in_use() {
+    fn unfinished_audio_follows_its_age() {
         let now = Utc::now();
         let fake = Fake {
             pending: vec![
                 pending("old-recording", Some(31), now),
                 pending("new-recording", Some(29), now),
-                pending("active-recording", Some(90), now),
                 pending("unknown-age", None, now),
             ],
             ..Default::default()
         };
-        assert_eq!(expire_audio(&fake, None, now, None), 0);
+        assert_eq!(expire_audio(&fake, None, now, &Default::default()), 0);
         assert!(fake.discarded.lock().unwrap().is_empty());
-        assert_eq!(
-            expire_audio(&fake, Some(30), now, Some("active-recording")),
-            1
-        );
+        assert_eq!(expire_audio(&fake, Some(30), now, &Default::default()), 1);
         assert_eq!(*fake.discarded.lock().unwrap(), ["old-recording"]);
     }
 
@@ -411,7 +413,10 @@ mod tests {
             }
         }
         let stubborn = Stubborn(Mutex::new(Vec::new()));
-        assert_eq!(expire_audio(&stubborn, Some(30), Utc::now(), None), 1);
+        assert_eq!(
+            expire_audio(&stubborn, Some(30), Utc::now(), &Default::default()),
+            1
+        );
         assert_eq!(stubborn.0.lock().unwrap().len(), 2);
     }
 }

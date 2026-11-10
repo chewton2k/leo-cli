@@ -231,6 +231,18 @@ impl RecordJob {
 
 pub(crate) type Recordings = Arc<Mutex<Option<RecordJob>>>;
 
+pub(crate) fn discard_unless_in_use(
+    recordings: &Recordings,
+    housekeeper: &dyn Housekeeper,
+    session: &str,
+) -> Option<anyhow::Result<()>> {
+    let held = recordings.lock().unwrap_or_else(|e| e.into_inner());
+    if held.as_ref().is_some_and(|job| job.view.session == session) {
+        return None;
+    }
+    Some(housekeeper.discard_recording(session))
+}
+
 pub(crate) fn live(recordings: &Recordings) -> bool {
     recordings
         .lock()
@@ -955,32 +967,26 @@ pub(crate) async fn finish_available(
 }
 
 async fn discard_pending(state: AppState, id: String) -> Response {
-    let in_use = state
-        .recording
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .is_some_and(|job| job.session_id() == id);
-    if in_use {
-        return error(
-            StatusCode::CONFLICT,
-            "This recording is being recovered. Wait for it to finish first.",
-        );
-    }
     let Some(housekeeper) = state.housekeeper.clone() else {
         return error(StatusCode::NOT_FOUND, "That recording is over.");
     };
-    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+    let recordings = state.recording.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<bool>> {
         if !housekeeper.pending_recordings()?.iter().any(|p| p.id == id) {
-            return Ok(false);
+            return Ok(Some(false));
         }
-        housekeeper.discard_recording(&id)?;
-        Ok(true)
+        discard_unless_in_use(&recordings, &*housekeeper, &id)
+            .transpose()
+            .map(|done| done.map(|()| true))
     })
     .await;
     match result {
-        Ok(Ok(true)) => Json(serde_json::json!({ "deleted": true })).into_response(),
-        Ok(Ok(false)) => error(StatusCode::NOT_FOUND, "That recording is over."),
+        Ok(Ok(None)) => error(
+            StatusCode::CONFLICT,
+            "This recording is being recovered. Wait for it to finish first.",
+        ),
+        Ok(Ok(Some(true))) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Ok(Ok(Some(false))) => error(StatusCode::NOT_FOUND, "That recording is over."),
         _ => error(
             StatusCode::CONFLICT,
             "The recording could not be deleted. Try again.",

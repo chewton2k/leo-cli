@@ -5,6 +5,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 const MOST_FILE_BYTES: u64 = 256 * 1024;
+const MOST_FORGOTTEN_SCAN: usize = 100_000;
 
 pub(crate) trait Line: Serialize + DeserializeOwned {
     const DIR: &'static str;
@@ -71,6 +72,8 @@ pub(crate) fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> 
     temp.write_all(line.as_bytes())?;
     temp.as_file().sync_all()?;
     temp.persist(&path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(&dir)?.sync_all()?;
     Ok(())
 }
 
@@ -97,6 +100,30 @@ pub(crate) fn read_all<T: Line>(chats: &Path, most: Option<usize>) -> Vec<T> {
         .take(most.unwrap_or(usize::MAX))
         .filter_map(|(id, path)| read_file::<T>(chats, &path).filter(|item| item.id() == id))
         .collect()
+}
+
+pub(crate) fn forget_deleted<T: Line>(
+    chats: &Path,
+    before: DateTime<Utc>,
+    deleted: impl Fn(&T) -> bool,
+) -> usize {
+    let Ok(entries) = checked_dir(chats, T::DIR).and_then(|dir| Ok(std::fs::read_dir(dir)?)) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .take(MOST_FORGOTTEN_SCAN)
+        .filter(|path| {
+            read_file::<T>(chats, path).is_some_and(|item| {
+                deleted(&item)
+                    && item.stamp() < before
+                    && path.file_stem().and_then(|stem| stem.to_str()) == Some(item.id())
+            })
+        })
+        .filter(|path| std::fs::remove_file(path).is_ok())
+        .count()
 }
 
 pub(crate) fn load<T: Line>(chats: &Path, id: &str) -> Option<T> {

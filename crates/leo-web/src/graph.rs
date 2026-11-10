@@ -694,9 +694,10 @@ pub fn build_near(
 
     let work = link_work_near(sources, cache, scale, near);
     let redo: BTreeSet<String> = work.iter().flat_map(|w| w.fresh.iter().cloned()).collect();
-    cache
-        .links
-        .retain(|l| !redo.contains(&l.a) && !redo.contains(&l.b));
+    let (replaced, kept): (Vec<NoteLink>, Vec<NoteLink>) = std::mem::take(&mut cache.links)
+        .into_iter()
+        .partition(|l| redo.contains(&l.a) || redo.contains(&l.b));
+    cache.links = kept;
     total = batches.len() + work.len();
     progress(batches.len(), total);
     let mut failed: BTreeSet<String> = BTreeSet::new();
@@ -730,6 +731,19 @@ pub fn build_near(
             }
             finished += 1;
             progress(finished, total);
+        }
+    }
+    for link in replaced {
+        let held = [&link.a, &link.b]
+            .into_iter()
+            .all(|id| !redo.contains(id) || failed.contains(id));
+        if held
+            && !cache
+                .links
+                .iter()
+                .any(|l| (&l.a, &l.b) == (&link.a, &link.b))
+        {
+            cache.links.push(link);
         }
     }
     for source in sources {
@@ -1795,6 +1809,45 @@ mod tests {
             1
         );
         assert!(cache.links.iter().any(|l| l.why == "kept"));
+    }
+
+    #[test]
+    fn a_failed_link_request_keeps_the_notes_existing_links_until_it_works() {
+        let (mut many, mut cache) = linked_library(5);
+        many[0].body = "edited".into();
+        let read_only = |_: &str, user: &str, _: u32| -> Result<String> {
+            if user.contains("<note id=") {
+                Ok(r#"{"notes": [{"id": "n1", "summary": "fresh", "concepts": []}]}"#.into())
+            } else {
+                anyhow::bail!("rate limited")
+            }
+        };
+        let problems = build(&many, &mut cache, &read_only, &mut |_, _| {});
+        assert_eq!(problems, ["rate limited"]);
+        assert_eq!(cache.notes["000"].linked, None);
+        assert!(cache.links.iter().any(|l| l.why == "kept"));
+        let working = |_: &str, user: &str, _: u32| -> Result<String> {
+            let ids = short_ids(user);
+            let a = ids
+                .iter()
+                .find(|(_, l)| l.contains("Note 0"))
+                .unwrap()
+                .0
+                .clone();
+            let b = ids
+                .iter()
+                .find(|(_, l)| l.contains("Note 2"))
+                .unwrap()
+                .0
+                .clone();
+            Ok(format!(
+                r#"{{"links": [{{"a": "{a}", "b": "{b}", "kind": "same idea", "strength": 2, "why": "new"}}]}}"#
+            ))
+        };
+        let problems = build(&many, &mut cache, &working, &mut |_, _| {});
+        assert!(problems.is_empty());
+        assert!(cache.links.iter().all(|l| l.why != "kept"));
+        assert!(cache.links.iter().any(|l| l.why == "new"));
     }
 
     #[test]
