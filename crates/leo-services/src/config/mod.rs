@@ -201,7 +201,14 @@ kind = "parakeet"
                     Config::default()
                 }
             },
-            Err(_) => Config::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+            Err(e) => {
+                leo_core::diag::warn(format!(
+                    "config: {} could not be read ({e}); using defaults",
+                    path.display()
+                ));
+                Config::default()
+            }
         };
         cfg.apply_env_overrides();
         cfg

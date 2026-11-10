@@ -54,12 +54,6 @@ pub fn rates(price: &str) -> Option<(f64, f64)> {
     Some((input?, output?))
 }
 
-fn on_this_computer(url: &str) -> bool {
-    ["://localhost", "://127.0.0.1", "://[::1]", "://0.0.0.0"]
-        .iter()
-        .any(|host| url.contains(host))
-}
-
 pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
     let pc = cfg.provider(provider);
     let kind = pc.and_then(|p| p.kind);
@@ -68,10 +62,15 @@ pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
         Some(kind) => matches!(kind, ProviderKind::ClaudeCode | ProviderKind::Codex),
         None => matches!(provider, "claude_code" | "codex"),
     };
-    let local = choice.is_some_and(|c| c.local())
-        || pc
-            .and_then(|p| p.base_url.as_deref())
-            .is_some_and(on_this_computer);
+    let model = spent
+        .model
+        .as_deref()
+        .or(pc.and_then(|p| p.model.as_deref()))
+        .unwrap_or("");
+    let local = pc
+        .and_then(|p| p.base_url.as_deref())
+        .is_some_and(crate::ai::loopback)
+        && !model.to_ascii_lowercase().contains("cloud");
     let cost = if plan {
         None
     } else if local {
@@ -80,7 +79,7 @@ pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
         spent
             .model
             .as_deref()
-            .and_then(|model| choice.and_then(|c| c.price(model)))
+            .and_then(|model| choice.filter(|c| !c.local()).and_then(|c| c.price(model)))
             .and_then(rates)
             .map(|(input, output)| {
                 let read = cache_read_share(provider, spent.model.as_deref().unwrap_or(""));
@@ -153,6 +152,12 @@ mod tests {
         }
         let local = answered(&cfg, "ollama", spent("qwen3:8b", 10, 10));
         assert_eq!((local.cost, local.local), (Some(0.0), true));
+        let cloud = answered(&cfg, "ollama", spent("gpt-oss:120b-cloud", 10, 10));
+        assert!(!cloud.local && cloud.cost != Some(0.0));
+        let mut away = Config::default();
+        away.providers.get_mut("ollama").unwrap().base_url =
+            Some("http://192.168.1.20:11434/v1".into());
+        assert!(!answered(&away, "ollama", spent("qwen3:8b", 10, 10)).local);
         for provider in [
             "openai",
             "anthropic",

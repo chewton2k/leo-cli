@@ -116,9 +116,12 @@ pub struct Local {
 }
 
 pub fn local_models(cfg: &Config) -> Local {
-    let url = cfg.provider("ollama").and_then(|p| p.base_url.clone());
-    let ollama_running = url.as_deref().is_some_and(crate::health::port_open);
+    let provider = cfg.provider("ollama");
+    let url = provider.and_then(|p| p.base_url.clone());
+    let remote = url.as_deref().is_some_and(|url| !crate::ai::loopback(url));
+    let ollama_running = remote || url.as_deref().is_some_and(crate::health::port_open);
     let ollama = match (&url, ollama_running) {
+        _ if remote => provider.and_then(|p| p.model.clone()).into_iter().collect(),
         (Some(url), true) => ollama_models(url),
         _ => Vec::new(),
     };
@@ -130,7 +133,7 @@ pub fn local_models(cfg: &Config) -> Local {
 }
 
 pub fn ollama_models(base_url: &str) -> Vec<String> {
-    if !crate::health::port_open(base_url) {
+    if !crate::ai::loopback(base_url) || !crate::health::port_open(base_url) {
         return Vec::new();
     }
     let root = crate::ollama::root(base_url);
@@ -578,6 +581,19 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(ollama_models("http://127.0.0.1:9/v1").is_empty());
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn an_ollama_on_another_computer_is_never_probed() {
+        let remote = "http://192.0.2.1:11434/v1".to_string();
+        assert!(ollama_models(&remote).is_empty());
+        let mut cfg = load("[chat]\nchain = [\"ollama\"]\n");
+        let ollama = cfg.providers.get_mut("ollama").unwrap();
+        ollama.base_url = Some(remote);
+        ollama.model = Some("qwen3:8b".into());
+        let local = local_models(&cfg);
+        assert!(local.ollama_running);
+        assert_eq!(local.ollama, ["qwen3:8b"]);
     }
 
     #[test]

@@ -262,6 +262,7 @@ fn scope_from_listing(listing: &str) -> ProviderResult<Vec<String>> {
         "otel.log_user_prompt=false",
         "skills.include_instructions=false",
         "model_provider=\"openai\"",
+        "web_search=\"cached\"",
     ] {
         args.extend(["-c".to_string(), setting.to_string()]);
     }
@@ -507,11 +508,15 @@ fn instructions_failed() -> ProviderError {
     )
 }
 
-fn instructions_file(room: &Path, system: &str) -> ProviderResult<tempfile::NamedTempFile> {
+fn instructions_file(
+    room: &Path,
+    system: &str,
+    suffix: &str,
+) -> ProviderResult<tempfile::NamedTempFile> {
     let write = || {
         let mut file = tempfile::Builder::new()
             .prefix("instructions-")
-            .suffix(".md")
+            .suffix(suffix)
             .tempfile_in(room)?;
         file.write_all(system.as_bytes())?;
         file.as_file().sync_all()?;
@@ -766,7 +771,10 @@ impl ClaudeSession {
                         self.child.stop();
                         return Err(ProviderError::Retryable("The writing program kept requesting tools after its limit. Try a smaller request.".into()));
                     }
-                    gap();
+                    if !heard.answer.trim().is_empty() {
+                        gap();
+                        heard.answer.clear();
+                    }
                     let result = if calls >= control.most_calls || (control.tools_done)() {
                         limited = true;
                         "No more tools are available for this answer. Use the results already returned and answer the user now. Use interpretable language.".to_string()
@@ -876,11 +884,7 @@ impl AgentCli {
         self.total_limit
     }
 
-    fn session_arguments_with(
-        &self,
-        system_file: &Path,
-        bridge: Option<&super::mcp::Bridge>,
-    ) -> Vec<String> {
+    fn session_arguments_with(&self, system_file: &Path, bridge: Option<&Path>) -> Vec<String> {
         let allowed = match bridge {
             Some(_) => format!("WebSearch mcp__{}", super::mcp::SERVER),
             None => "WebSearch".to_string(),
@@ -919,7 +923,7 @@ impl AgentCli {
         if let Some(bridge) = bridge {
             args.extend([
                 "--mcp-config".to_string(),
-                bridge.config(),
+                bridge.display().to_string(),
                 "--strict-mcp-config".to_string(),
             ]);
         }
@@ -951,7 +955,7 @@ impl AgentCli {
             ProviderError::Retryable(format!("{}: {} is not installed", self.name, self.bin))
         })?;
         let room = self.room()?;
-        let system_file = instructions_file(room.path(), system)?
+        let system_file = instructions_file(room.path(), system, ".md")?
             .keep()
             .map_err(|_| instructions_failed())?
             .1;
@@ -963,9 +967,18 @@ impl AgentCli {
                 ProviderError::Retryable(format!("{}: could not offer leo's tools: {e}", self.name))
             })?)
         };
+        let mcp_file = match &bridge {
+            Some(bridge) => Some(
+                instructions_file(room.path(), &bridge.config(), ".json")?
+                    .keep()
+                    .map_err(|_| instructions_failed())?
+                    .1,
+            ),
+            None => None,
+        };
         let mut command = leo_core::children::quiet_command(program);
         command
-            .args(self.session_arguments_with(&system_file, bridge.as_ref()))
+            .args(self.session_arguments_with(&system_file, mcp_file.as_deref()))
             .current_dir(room.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1042,7 +1055,7 @@ impl AgentCli {
         let instructions = req
             .system
             .as_ref()
-            .map(|system| instructions_file(room.path(), system))
+            .map(|system| instructions_file(room.path(), system, ".md"))
             .transpose()?;
         let material = ChatRequest {
             system: if instructions.is_some() {
@@ -1713,9 +1726,10 @@ mod tests {
                 "otel.log_user_prompt=false",
                 "skills.include_instructions=false",
                 "model_provider=\"openai\"",
+                "web_search=\"cached\"",
             ]
         );
-        assert_eq!(scope_from_listing("[]").unwrap().len(), 14);
+        assert_eq!(scope_from_listing("[]").unwrap().len(), 16);
         assert!(scope_from_listing(r#"[{"name":"unknown_shape"}]"#)
             .unwrap()
             .contains(&"mcp_servers.unknown_shape.enabled=false".to_string()));
@@ -2358,6 +2372,79 @@ printf '%s\n' '{{"type":"turn.completed","usage":{{"input_tokens":3,"output_toke
             other => panic!("expected session-ended error, got {other:?}"),
         }
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_claude_reads_its_tool_address_from_a_private_file_and_keeps_only_the_last_words() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = dir.path().join("heard");
+        let delta = |text: &str| {
+            format!(
+                r#"printf '%s\n' '{{"type":"stream_event","event":{{"type":"content_block_delta","delta":{{"type":"text_delta","text":"{text}"}}}}}}'"#
+            )
+        };
+        let bin = script(
+            dir.path(),
+            &format!(
+                r##"echo "$@" > "{log}.args"
+for a in "$@"; do
+  if [ "$take" = 1 ]; then cfg="$a"; fi
+  take=0
+  if [ "$a" = --mcp-config ]; then take=1; fi
+done
+url=$(sed 's/.*"url":"\([^"]*\)".*/\1/' "$cfg")
+read -r _line
+{first}
+sleep 0.2
+curl -s -X POST -H 'Content-Type: application/json' -d '{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"search_notes","arguments":{{}}}}}}' "$url" > "{log}.called"
+{second}
+printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"result":"Heaps keep the minimum on top."}}'
+read -r _line"##,
+                log = log.display(),
+                first = delta("Let me check."),
+                second = delta("Heaps keep the minimum on top."),
+            ),
+        );
+        let cfg = config(ProviderKind::ClaudeCode, &bin, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        let tools = vec![super::super::mcp::Tool {
+            name: "search_notes".into(),
+            description: "Search notes.".into(),
+            schema: serde_json::json!({ "type": "object", "properties": {} }),
+        }];
+        let mut session = agent.claude_native("You are Felix.", tools).unwrap();
+        let mut gaps = 0;
+        let (answer, _) = session
+            .say_with(
+                "what is a heap?",
+                &mut |_| {},
+                &mut |_, _| "[n1] \"Heaps\"".into(),
+                &mut || gaps += 1,
+            )
+            .unwrap();
+        assert_eq!(answer, "Heaps keep the minimum on top.");
+        assert_eq!(gaps, 1);
+        let called = std::fs::read_to_string(format!("{}.called", log.display())).unwrap();
+        assert!(called.contains("Heaps"), "{called}");
+        let args = std::fs::read_to_string(format!("{}.args", log.display())).unwrap();
+        assert!(
+            !args.contains("/mcp/") && !args.contains("mcpServers"),
+            "{args}"
+        );
+        let file = args
+            .split_whitespace()
+            .skip_while(|a| *a != "--mcp-config")
+            .nth(1)
+            .map(std::path::PathBuf::from)
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(session);
+        assert!(!file.exists());
     }
 
     #[cfg(unix)]

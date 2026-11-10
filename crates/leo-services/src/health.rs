@@ -304,8 +304,8 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
         return crate::speech::library::library().is_ok_and(|l| l.selected().is_ok());
     }
     if let Some(agent) = crate::ai::provider::agent_cli::Agent::of(provider) {
-        let bin = provider.bin.as_deref().unwrap_or(agent.program());
-        return crate::ai::provider::agent_cli::locate(bin).is_some();
+        let cli = crate::ai::provider::agent_cli::AgentCli::new(name.to_string(), agent, provider);
+        return crate::ai::provider::agent_cli::locate(cli.bin()).is_some();
     }
     // A key-based provider: only the key leo stored, and `has` rather than a
     // read so this cannot cost a permission prompt.
@@ -429,6 +429,28 @@ mod tests {
         );
         assert!(provider_usable(&config, "present", &store()));
         assert!(!provider_usable(&config, "absent", &store()));
+    }
+
+    #[test]
+    fn an_empty_program_setting_means_the_usual_program() {
+        for kind in [
+            crate::config::provider::ProviderKind::ClaudeCode,
+            crate::config::provider::ProviderKind::Codex,
+        ] {
+            let usual = ProviderConfig {
+                kind: Some(kind),
+                ..Default::default()
+            };
+            let empty = ProviderConfig {
+                bin: Some(String::new()),
+                ..usual.clone()
+            };
+            let config = config_with(vec![("usual", usual), ("empty", empty)], vec![]);
+            assert_eq!(
+                provider_usable(&config, "empty", &store()),
+                provider_usable(&config, "usual", &store())
+            );
+        }
     }
 
     #[test]
