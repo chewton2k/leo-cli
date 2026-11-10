@@ -507,6 +507,7 @@ impl Library {
         for entry in entries.flatten() {
             if entry.file_name().to_string_lossy().starts_with(PARTIAL)
                 && entry.file_type().is_ok_and(|t| t.is_file())
+                && crate::providers::older_than(&entry, Duration::from_secs(600))
             {
                 let _ = std::fs::remove_file(entry.path());
             }

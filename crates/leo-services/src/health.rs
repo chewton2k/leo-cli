@@ -249,7 +249,7 @@ pub fn writing(
         },
         (Some(_), None) if agent.is_some() => WritingState::NotInstalled,
         (Some(pc), None)
-            if pc.key_env.is_none() && pc.base_url.as_deref().is_some_and(is_loopback) =>
+            if pc.key_env.is_none() && pc.base_url.as_deref().is_some_and(crate::ai::loopback) =>
         {
             WritingState::NotRunning
         }
@@ -315,15 +315,11 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
 
     // A local server with no key: is anything listening?
     match &provider.base_url {
-        Some(url) if is_loopback(url) => port_open(url),
+        Some(url) if crate::ai::loopback(url) => port_open(url),
         // Remote and keyless: assume reachable; a request will say otherwise.
         Some(_) => true,
         None => false,
     }
-}
-
-fn is_loopback(url: &str) -> bool {
-    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]")
 }
 
 /// Where credentials are kept, and whether the file is readable by anyone else.
@@ -709,12 +705,5 @@ mod tests {
         assert!(!port_open("http://localhost:1"));
         assert!(!port_open("http://[::1]:1/v1"));
         assert!(!port_open("http://127.0.0.1:1/v1/chat"));
-    }
-
-    #[test]
-    fn loopback_urls_are_recognized() {
-        assert!(is_loopback("http://localhost:11434/v1"));
-        assert!(is_loopback("http://127.0.0.1:1234/v1"));
-        assert!(!is_loopback("https://openrouter.ai/api/v1"));
     }
 }

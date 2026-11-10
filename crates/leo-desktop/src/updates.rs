@@ -46,6 +46,7 @@ pub struct Updates {
     operating: AtomicBool,
     installed: AtomicBool,
     quit_install: AtomicBool,
+    leaving: AtomicBool,
     installed_lease: Mutex<Option<leo_core::activity::Lease>>,
 }
 impl Updates {
@@ -60,6 +61,7 @@ impl Updates {
             operating: AtomicBool::new(false),
             installed: AtomicBool::new(false),
             quit_install: AtomicBool::new(false),
+            leaving: AtomicBool::new(false),
             installed_lease: Mutex::new(None),
         });
         let worker = this.clone();
@@ -150,8 +152,12 @@ impl Updates {
     fn quit_install_failed(&self) {
         if self.quit_install.swap(false, Ordering::AcqRel) {
             self.ready.store(false, Ordering::Release);
+            self.leaving.store(true, Ordering::Release);
             self.app.exit(0);
         }
+    }
+    pub fn leaving(&self) -> bool {
+        self.leaving.load(Ordering::Acquire)
     }
     pub fn stop(&self) {
         let _ = self.tx.try_send(Command::Stop);

@@ -41,8 +41,8 @@ pub struct Confirm {
 }
 
 impl Confirm {
-    pub fn allows(&mut self, code: Option<i32>, now: Instant) -> bool {
-        if code != Some(0) {
+    pub fn allows(&mut self, code: Option<i32>, leaving: bool, now: Instant) -> bool {
+        if leaving || code != Some(0) {
             return true;
         }
         if self
@@ -65,18 +65,26 @@ mod tests {
     fn user_quits_need_a_second_attempt_and_confirmation_is_consumed() {
         let now = Instant::now();
         let mut confirm = Confirm::default();
-        assert!(!confirm.allows(Some(0), now));
-        assert!(confirm.allows(Some(0), now + AGAIN));
-        assert!(!confirm.allows(Some(0), now + AGAIN));
+        assert!(!confirm.allows(Some(0), false, now));
+        assert!(confirm.allows(Some(0), false, now + AGAIN));
+        assert!(!confirm.allows(Some(0), false, now + AGAIN));
     }
 
     #[test]
     fn an_expired_attempt_starts_a_new_confirmation_window() {
         let now = Instant::now();
         let mut confirm = Confirm::default();
-        assert!(!confirm.allows(Some(0), now));
-        assert!(!confirm.allows(Some(0), now + AGAIN + Duration::from_nanos(1)));
-        assert!(confirm.allows(Some(0), now + AGAIN + Duration::from_secs(1)));
+        assert!(!confirm.allows(Some(0), false, now));
+        assert!(!confirm.allows(Some(0), false, now + AGAIN + Duration::from_nanos(1)));
+        assert!(confirm.allows(Some(0), false, now + AGAIN + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn leaving_after_a_failed_install_needs_no_confirmation() {
+        let now = Instant::now();
+        let mut confirm = Confirm::default();
+        assert!(confirm.allows(Some(0), true, now));
+        assert!(!confirm.allows(Some(0), false, now));
     }
 
     #[test]
@@ -86,9 +94,9 @@ mod tests {
                 let now = Instant::now();
                 let mut confirm = Confirm::default();
                 if armed {
-                    assert!(!confirm.allows(Some(0), now));
+                    assert!(!confirm.allows(Some(0), false, now));
                 }
-                assert!(confirm.allows(code, now));
+                assert!(confirm.allows(code, false, now));
             }
         }
     }

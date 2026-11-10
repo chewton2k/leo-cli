@@ -14,6 +14,7 @@ fn http(secs: u64) -> reqwest::Result<reqwest::blocking::Client> {
         .build()
 }
 
+static CLIENT_120: Http = std::sync::LazyLock::new(|| http(120));
 static CLIENT_300: Http = std::sync::LazyLock::new(|| http(300));
 static CLIENT_600: Http = std::sync::LazyLock::new(|| http(600));
 
@@ -385,6 +386,10 @@ fn delta_text(payload: &str) -> Option<Delta> {
 }
 
 impl OpenAiChat {
+    fn streams_plain_answers(&self) -> bool {
+        crate::ai::loopback(&self.base_url)
+    }
+
     fn send(
         &self,
         req: &ChatRequest,
@@ -520,7 +525,11 @@ impl ChatProvider for OpenAiChat {
     }
 
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
-        self.complete_streaming(req, &mut |_| {})
+        if self.streams_plain_answers() {
+            self.complete_streaming(req, &mut |_| {})
+        } else {
+            self.send(req, self.body(req, false), &CLIENT_120)
+        }
     }
 
     fn complete_with_images(
@@ -702,6 +711,12 @@ mod tests {
         let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" stay ordered.\"}}]}\n\ndata: [DONE]\n\n";
         let provider = local(refuse_once("200 OK", stream));
         assert_eq!(provider.complete(&ask()).unwrap(), "Heaps stay ordered.");
+    }
+
+    #[test]
+    fn only_a_local_server_streams_a_plain_answer() {
+        assert!(local("http://127.0.0.1:11434/v1".into()).streams_plain_answers());
+        assert!(!local("https://api.example.com/v1".into()).streams_plain_answers());
     }
 
     #[test]

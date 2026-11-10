@@ -235,7 +235,7 @@ pub(crate) fn loopback(url: &str) -> bool {
     host == "localhost"
         || host
             .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
+            .is_ok_and(|address| address.is_loopback() || address.is_unspecified())
 }
 
 pub fn reads_stay_here(cfg: &Config) -> bool {
@@ -511,6 +511,26 @@ mod tests {
     }
 
     #[test]
+    fn this_computer_is_loopback_or_unspecified_and_nothing_that_merely_contains_it() {
+        for url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:1/v1",
+            "http://0.0.0.0:11434/v1",
+            "http://[::]:11434/v1",
+        ] {
+            assert!(super::loopback(url), "{url}");
+        }
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "http://127.0.0.1.evil.example/v1",
+            "http://evil.example/localhost",
+        ] {
+            assert!(!super::loopback(url), "{url}");
+        }
+    }
+
+    #[test]
     fn only_a_loopback_ollama_with_a_local_model_keeps_text_here() {
         let with = |url: &str, model: &str| {
             let mut cfg = chained("ollama");
@@ -533,7 +553,8 @@ mod tests {
         assert!(!with("http://127.0.0.1.evil.example/v1", "llama3.2"));
         assert!(!with("http://localhost.evil.example/v1", "llama3.2"));
         assert!(!with("http://evil.example/127.0.0.1", "llama3.2"));
-        assert!(!with("http://0.0.0.0:11434/v1", "llama3.2"));
+        assert!(with("http://0.0.0.0:11434/v1", "llama3.2"));
+        assert!(with("http://[::]:11434/v1", "llama3.2"));
         assert!(!super::reads_stay_here(&chained("claude_code")));
     }
 

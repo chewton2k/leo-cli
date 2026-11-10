@@ -171,8 +171,10 @@ impl PreferenceStore {
     }
     fn record(&self, apply: impl FnOnce() -> Result<()>) {
         if let Err(error) = apply() {
-            *self.problem.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some(format!("Leo could not apply a startup setting: {error:#}"));
+            self.problem
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(|| format!("Leo could not apply a startup setting: {error:#}"));
         }
     }
     fn change(&self, change: PreferenceChange) -> Result<()> {
@@ -234,7 +236,7 @@ impl AppSettings {
             }
             Ok(())
         });
-        if self.path.exists() && self.preferences.problem().is_none() && !cfg!(debug_assertions) {
+        if self.path.exists() && !cfg!(debug_assertions) {
             self.preferences.record(|| {
                 if preferences.open_at_login {
                     self.app.autolaunch().enable()?;
@@ -382,6 +384,8 @@ mod tests {
         store.record(|| Ok(()));
         assert!(store.problem().is_none());
         store.record(|| anyhow::bail!("login item blocked"));
+        assert!(store.problem().unwrap().contains("login item blocked"));
+        store.record(|| anyhow::bail!("tray blocked"));
         assert!(store.problem().unwrap().contains("login item blocked"));
     }
     #[test]

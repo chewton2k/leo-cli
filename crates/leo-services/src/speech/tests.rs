@@ -369,9 +369,17 @@ fn downloads_write_a_recognisable_partial_that_a_later_download_clears() {
     .unwrap();
     t.join().unwrap();
     std::fs::write(models.join(".leo-download-stale"), b"part").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(models.join(".leo-download-stale"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+    std::fs::write(models.join(".leo-download-running"), b"part").unwrap();
     std::fs::write(models.join("older.gguf"), b"old").unwrap();
     l.drop_partials();
     assert!(!models.join(".leo-download-stale").exists());
+    assert!(models.join(".leo-download-running").exists());
     assert!(models.join("older.gguf").exists());
     assert!(l.model_path("parakeet-tdt-0.6b-v3").unwrap().exists());
 }

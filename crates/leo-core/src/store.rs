@@ -816,7 +816,8 @@ impl Store {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut note = parse_note_from_markdown(&fs::read_to_string(path)?, relative, Utc::now())?;
+        let text = fs::read_to_string(path)?;
+        let mut note = parse_note_from_markdown(&text, relative, Utc::now())?;
         if note.id != id {
             note.id = id.to_string();
             write_atomic(&dest, note_to_markdown(&note)?)?;
@@ -824,9 +825,8 @@ impl Store {
             return Ok(());
         }
         fs::rename(path, &dest)?;
-        if let Err(e) = stamp_deleted(&dest) {
-            fs::rename(&dest, path)?;
-            return Err(e.into());
+        if stamp_deleted(&dest).is_err() {
+            write_atomic(&dest, text)?;
         }
         Ok(())
     }

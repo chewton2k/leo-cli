@@ -259,6 +259,11 @@ impl Bundles {
     }
 }
 
+fn parse_bundle(json: &str) -> Result<Bundle> {
+    serde_json::from_str(json)
+        .map_err(|e| anyhow::anyhow!("stored credentials could not be read ({e})"))
+}
+
 static KEYCHAIN: Bundles = Bundles::new();
 
 pub fn forget_keychain(providers: &[String]) -> usize {
@@ -291,14 +296,7 @@ impl KeyringStore {
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.into()),
         }) {
-            Ok(Some(json)) => Ok(serde_json::from_str::<Bundle>(&json).unwrap_or_else(|e| {
-                // Refuse to guess at a corrupt bundle: report it and behave as
-                // though nothing is stored, rather than deleting anything.
-                leo_core::diag::warn(format!(
-                    "stored credentials could not be read ({e}); treating them as absent"
-                ));
-                Bundle::new()
-            })),
+            Ok(Some(json)) => parse_bundle(&json),
             Ok(None) => Ok(Bundle::new()),
             // A backend that is absent rather than broken is not a problem worth
             // reporting: a machine with no keychain simply has no stored keys,
@@ -594,13 +592,21 @@ mod tests {
         assert_eq!(keychain.item.lock().unwrap().len(), 9);
     }
 
-    /// A corrupt bundle must not be silently discarded or crash the app.
     #[test]
-    fn an_unreadable_bundle_is_treated_as_empty() {
-        assert!(serde_json::from_str::<Bundle>("not json").is_err());
-        // The store maps that error to an empty bundle rather than panicking;
-        // this asserts the shape it falls back to.
-        assert!(Bundle::new().is_empty());
+    fn a_corrupt_bundle_is_a_failed_read_that_is_never_written_over() {
+        let keychain = FakeKeychain::holding(&[("openrouter", "o")]);
+        let cache = Bundles::new();
+        let load = || parse_bundle("not json");
+        let write = |b: &Bundle| keychain.write(b);
+        assert!(cache.current(&load).is_none());
+        let insert = |b: &mut Bundle| {
+            b.insert("feed".into(), "f".into());
+            true
+        };
+        assert!(cache.change(&load, &write, insert).is_err());
+        assert!(cache.change(&load, &write, |_| true).is_err());
+        assert_eq!(keychain.writes.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(keychain.item.lock().unwrap().len(), 1);
     }
 
     /// The first command a new user runs must not look like a failure. A machine
