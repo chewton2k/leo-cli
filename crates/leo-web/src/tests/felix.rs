@@ -75,7 +75,10 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
     });
     let prompt = seen.lock().unwrap().clone();
     assert!(
-        prompt.contains("<document id=\"d1\" name=\"slides.pdf\">"),
+        prompt.contains(&format!(
+            "<document_{} id=\"d1\" name=\"slides.pdf\">",
+            crate::chat::fence()
+        )),
         "{prompt}"
     );
     assert!(prompt.contains("Text of slides.pdf: Dijkstra uses a heap."));
@@ -3621,4 +3624,144 @@ fn taking_back_the_last_reply_removes_it_and_refuses_a_stale_count() {
         .unwrap()
         .messages
         .is_empty());
+}
+
+#[test]
+fn a_redo_after_a_broken_answer_is_told_what_leo_already_changed() {
+    struct MakesThenBreaks;
+    impl chat::Conversation for MakesThenBreaks {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let _ = (exchange.call)(
+                "create_note",
+                &serde_json::json!({ "title": "Lab 3", "body": "Submit on Friday." }),
+            );
+            anyhow::bail!("claude stopped before its final text")
+        }
+    }
+    let (mut state, _d, _) = state_with(&[]);
+    state.converse = Some(Arc::new(|_: &chat::Instructions, _: &[chat::ToolSpec]| {
+        Some(Box::new(MakesThenBreaks) as Box<dyn chat::Conversation>)
+    }));
+    let (streamer, prompts) = scripted(vec!["The note for the lab is made."]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(
+        &state,
+        "make a note to submit lab 3 on friday",
+        Some("auto"),
+    );
+    assert!(lines.iter().any(|l| l.get("reset").is_some()), "{lines:?}");
+    let prompts = prompts.lock().unwrap();
+    assert!(
+        prompts[0].contains("do not make them again"),
+        "{}",
+        prompts[0]
+    );
+    assert!(prompts[0].contains("create \"Lab 3\""), "{}", prompts[0]);
+    let made = state
+        .fresh()
+        .notes
+        .iter()
+        .filter(|n| n.title == "Lab 3")
+        .count();
+    assert_eq!(made, 1);
+}
+
+#[test]
+fn an_auto_edit_of_a_huge_note_still_sends_its_card_and_finishes() {
+    let (mut state, _d, ids) = state_with(&[("Lecture transcript", "cs130")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body =
+            format!("Intro line.\n{}", "word ".repeat(120_000));
+        store.save().unwrap();
+    }
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"edit_note\", \"note\": \"Lecture transcript\", \"find\": \"Intro line.\", \"replace\": \"Opening line.\"}</tool>",
+        "I renamed the opening line.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(
+        &state,
+        "fix the first line of my lecture transcript",
+        Some("auto"),
+    );
+    let shown: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+    assert_eq!(
+        shown.len(),
+        1,
+        "{:?}",
+        lines
+            .iter()
+            .map(|l| l.to_string().chars().take(120).collect::<String>())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(shown[0]["state"], "applied");
+    assert_eq!(shown[0]["note"], ids[0].as_str());
+    assert!(shown[0].get("before").is_none());
+    assert_eq!(lines.last().unwrap()["done"], true);
+    assert!(state
+        .fresh()
+        .find_note(&ids[0])
+        .unwrap()
+        .body
+        .starts_with("Opening line."));
+}
+
+#[test]
+fn chat_database_reads_wait_off_the_async_worker() {
+    let (mut state, _d, _) = state_with(&[]);
+    let elsewhere = tempfile::tempdir().unwrap();
+    state.chats = elsewhere.path().join("chats");
+    state.chat = Some(scripted(vec!["A heap keeps the smallest on top."]).0);
+    let db = chats::db_of(&state.chats);
+    let (held, holding) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        db.with(|_| {
+            held.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            Ok(())
+        })
+        .unwrap()
+    });
+    holding.recv().unwrap();
+    let body = chat::ChatBody {
+        messages: vec![chat::Turn {
+            role: "user".into(),
+            text: "what is a heap?".into(),
+        }],
+        note: None,
+        refs: vec![],
+        chat: Some("chat-wait-0001".into()),
+        files: vec![],
+        access: None,
+        recent: vec![],
+        practice: false,
+        mark: false,
+        selection: None,
+        session: None,
+    };
+    let longest = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let reply = tokio::spawn(chat_reply(State(state.clone()), Json(body)));
+            let mut longest = std::time::Duration::ZERO;
+            let mut last = std::time::Instant::now();
+            for _ in 0..30 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                longest = longest.max(last.elapsed());
+                last = std::time::Instant::now();
+            }
+            let _ = reply.await;
+            longest
+        });
+    holder.join().unwrap();
+    assert!(
+        longest < std::time::Duration::from_millis(300),
+        "{longest:?}"
+    );
 }

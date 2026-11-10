@@ -374,17 +374,17 @@ pub fn remove(chats: &Path, id: &str) -> bool {
         .is_ok_and(|gone| gone > 0)
 }
 
-fn state_of<T: serde::de::DeserializeOwned>(chats: &Path, key: &str) -> Option<T> {
-    let text: Option<String> = db_of(chats)
-        .with(|c| {
-            c.query_row("SELECT data FROM margin_state WHERE key = ?1", [key], |r| {
-                r.get(0)
-            })
-            .optional()
+fn state_row(chats: &Path, key: &str) -> anyhow::Result<Option<String>> {
+    db_of(chats).with(|c| {
+        c.query_row("SELECT data FROM margin_state WHERE key = ?1", [key], |r| {
+            r.get(0)
         })
-        .ok()
-        .flatten();
-    serde_json::from_str(&text?).ok()
+        .optional()
+    })
+}
+
+fn state_of<T: serde::de::DeserializeOwned>(chats: &Path, key: &str) -> Option<T> {
+    serde_json::from_str(&state_row(chats, key).ok().flatten()?).ok()
 }
 
 fn set_state(chats: &Path, key: &str, value: &impl Serialize) -> bool {
@@ -402,14 +402,19 @@ fn set_state(chats: &Path, key: &str, value: &impl Serialize) -> bool {
 }
 
 pub fn prefs(chats: &Path) -> Prefs {
-    let mut prefs = state_of(chats, "prefs").unwrap_or_else(|| {
-        let fresh = Prefs {
-            since: Some(Utc::now()),
-            ..Prefs::default()
-        };
-        set_state(chats, "prefs", &fresh);
-        fresh
-    });
+    let fresh = || Prefs {
+        since: Some(Utc::now()),
+        ..Prefs::default()
+    };
+    let mut prefs = match state_row(chats, "prefs") {
+        Ok(None) => {
+            let seeded = fresh();
+            set_state(chats, "prefs", &seeded);
+            seeded
+        }
+        Ok(Some(text)) => serde_json::from_str(&text).unwrap_or_else(|_| fresh()),
+        Err(_) => fresh(),
+    };
     if !READ_GAPS.contains(&prefs.gap) {
         prefs.gap = READ_GAP;
     }
@@ -1479,6 +1484,23 @@ mod tests {
         };
         assert!(set_prefs(&path, &old));
         assert_eq!(prefs(&path).gap, READ_GAP);
+    }
+
+    #[test]
+    fn unreadable_saved_settings_are_left_as_they_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chats.db");
+        let newer: serde_json::Value = serde_json::from_str(
+            r#"{"default_mode":"read","cap":"many","personas":[{"id":"mine"}]}"#,
+        )
+        .unwrap();
+        assert!(set_state(&path, "prefs", &newer));
+        let before = state_row(&path, "prefs").unwrap();
+        assert_eq!(prefs(&path).cap, Prefs::default().cap);
+        assert_eq!(state_row(&path, "prefs").unwrap(), before);
+        let empty = dir.path().join("empty.db");
+        prefs(&empty);
+        assert!(state_row(&empty, "prefs").unwrap().is_some());
     }
 
     #[test]

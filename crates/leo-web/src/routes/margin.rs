@@ -639,6 +639,9 @@ pub(crate) async fn forget(
     if !margin::valid_note(&id) || !margin::valid_note(&thread) {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let Some(_replying) = state.margin.replying(&thread) else {
+        return said(StatusCode::CONFLICT, "replying", "Felix is answering this.");
+    };
     let chats = state.chats.clone();
     let (held, wanted) = (id, thread.clone());
     let found = blocking(move || margin::one(&chats, &held, &wanted)).await;
@@ -646,9 +649,6 @@ pub(crate) async fn forget(
         Ok(Some(found)) => found,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(refused) => return *refused,
-    };
-    let Some(_replying) = state.margin.replying(&thread) else {
-        return said(StatusCode::CONFLICT, "replying", "Felix is answering this.");
     };
     if found.messages.iter().any(|m| m.from != "felix") {
         return said(
@@ -823,6 +823,13 @@ pub(crate) async fn reply(
         Ok(note) => note,
         Err(refused) => return *refused,
     };
+    let Some(_replying) = state.margin.replying(&thread) else {
+        return said(
+            StatusCode::CONFLICT,
+            "busy",
+            "Felix is already answering this.",
+        );
+    };
     let chats = state.chats.clone();
     let (held, wanted) = (id.clone(), thread.clone());
     let found = blocking(move || margin::one(&chats, &held, &wanted)).await;
@@ -841,13 +848,6 @@ pub(crate) async fn reply(
             "This thread is full. Open it in chat to go on.",
         );
     }
-    let Some(_replying) = state.margin.replying(&thread) else {
-        return said(
-            StatusCode::CONFLICT,
-            "busy",
-            "Felix is already answering this.",
-        );
-    };
     let answer = match answered(&state, &note, &found, &text).await {
         Ok(answer) => answer,
         Err(refused) => return *refused,

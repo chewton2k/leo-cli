@@ -147,9 +147,31 @@ pub(crate) async fn start(
         progress::COMBINE,
         Some(expected.max(500.0)),
     );
-    let writer = match &ticket {
-        Some(t) => progress::metered(writer, state.chat.clone(), std::sync::Arc::clone(&t.meter)),
-        None => writer,
+    let writer: crate::Writer = match (&ticket, state.chat.clone()) {
+        (Some(t), Some(stream)) => {
+            let meter = std::sync::Arc::clone(&t.meter);
+            let usage = std::sync::Arc::clone(&state.usage);
+            std::sync::Arc::new(move |system: &str, user: &str, most: u32| {
+                let started = Instant::now();
+                let reply = stream(
+                    system,
+                    user,
+                    most,
+                    &mut |piece| meter.add(piece),
+                    &mut || meter.restart(),
+                    &|| false,
+                );
+                usage.record(
+                    crate::usage::Purpose::OtherWriting,
+                    reply.as_ref().ok().and_then(|r| r.spent.as_ref()),
+                    started.elapsed(),
+                    reply.is_err(),
+                );
+                Ok(reply?.text)
+            })
+        }
+        (Some(t), None) => progress::metered(writer, None, std::sync::Arc::clone(&t.meter)),
+        (None, _) => writer,
     };
     let request_chars = state.graphs.scale().batch_chars;
     let jobs = std::sync::Arc::clone(&state.combines);

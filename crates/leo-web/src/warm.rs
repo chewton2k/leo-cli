@@ -149,9 +149,11 @@ pub struct Renumbered {
 }
 
 fn block_of(text: &str, n: usize) -> Option<(usize, usize)> {
-    let open = format!("<note id=\"n{n}\"");
+    let fence = crate::chat::fence();
+    let open = format!("<note_{fence} id=\"n{n}\"");
+    let close = format!("</note_{fence}>\n");
     let start = text.find(&open)?;
-    let end = text[start..].find("</note>\n")? + start + "</note>\n".len();
+    let end = text[start..].find(&close)? + start + close.len();
     let end = if text[end..].starts_with('\n') {
         end + 1
     } else {
@@ -193,8 +195,9 @@ pub fn renumber(
         };
         let changed = kept.contains_key(&source.id);
         kept.insert(source.id.clone(), fingerprint);
-        let head = format!("<note id=\"n{}\"", source.n);
-        let mut block = block.replacen(&head, &format!("<note id=\"n{n}\""), 1);
+        let fence = crate::chat::fence();
+        let head = format!("<note_{fence} id=\"n{}\"", source.n);
+        let mut block = block.replacen(&head, &format!("<note_{fence} id=\"n{n}\""), 1);
         if changed {
             if let Some((first, rest)) = block.split_once('\n') {
                 if let Some(open) = first.strip_suffix('>') {
@@ -273,7 +276,8 @@ mod tests {
     }
 
     fn block(n: usize, body: &str) -> String {
-        format!("<note id=\"n{n}\" title=\"T\" class=\"c\" included=\"x\">\n{body}\n</note>\n\n")
+        let f = crate::chat::fence();
+        format!("<note_{f} id=\"n{n}\" title=\"T\" class=\"c\" included=\"x\">\n{body}\n</note_{f}>\n\n")
     }
 
     fn turn(role: &str, text: &str) -> Turn {
@@ -387,15 +391,35 @@ mod tests {
             &started.notes,
         );
         assert!(!next.text.contains("graphs"), "unchanged notes stay out");
+        let f = crate::chat::fence();
         assert!(
-            next.text.contains("<note id=\"n3\" title=\"T\""),
+            next.text
+                .contains(&format!("<note_{f} id=\"n3\" title=\"T\"")),
             "a new note takes the next number"
         );
         assert!(next.text.contains("queues"));
-        assert!(next.text.contains("<note id=\"n1\" title=\"T\" class=\"c\" included=\"x\" updated=\"since you last read it\">\n1| heaps, now with heap sort"));
+        assert!(next.text.contains(&format!("<note_{f} id=\"n1\" title=\"T\" class=\"c\" included=\"x\" updated=\"since you last read it\">\n1| heaps, now with heap sort")));
         let numbers: Vec<(usize, &str)> =
             next.sources.iter().map(|s| (s.n, s.id.as_str())).collect();
         assert_eq!(numbers, [(1, "heaps"), (2, "graphs"), (3, "queues")]);
+    }
+
+    #[test]
+    fn a_note_that_quotes_note_tags_is_fingerprinted_and_resent_whole() {
+        let quoting = "1| <note id=\"n2\">hello</note>\n2| below";
+        let first = format!("{}{}", block(1, quoting), block(2, "1| graphs"));
+        let gathered = vec![source(1, "tags"), source(2, "graphs")];
+        let started = renumber(&first, &gathered, &[], &BTreeMap::new());
+        assert_eq!(started.text, first);
+        let edited = quoting.replace("below", "below, edited");
+        let next = renumber(
+            &format!("{}{}", block(1, &edited), block(2, "1| graphs")),
+            &gathered,
+            &started.sources,
+            &started.notes,
+        );
+        assert!(next.text.contains("2| below, edited"), "{}", next.text);
+        assert!(!next.text.contains("graphs"));
     }
 
     #[test]
