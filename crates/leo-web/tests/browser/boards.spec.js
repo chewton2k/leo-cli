@@ -752,3 +752,23 @@ test('new board setup has a full-width named field and a readable column preview
     expect(await page.evaluate(()=>db.boards.at(-1).columns.map(c=>c.name))).toEqual(['To do','In progress','Done']);
   });
 });
+
+test('clicking anywhere in an empty card description shows it as a field with the caret in it', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.locator('[data-card="cread00001"]').click();
+    const description = page.locator('#kanban-panel #kanban-card-description');
+    await expect(description).toHaveText('Add details, steps or links…');
+    const editing = () => page.evaluate(() => {
+      const el = document.activeElement;
+      return Boolean(el && el.matches('#kanban-card-description textarea') && el.selectionStart === el.value.length);
+    });
+    for (const spot of [{ x: 40, y: 12 }, { x: 40, y: 160 }]) {
+      await page.locator('#kanban-card-title').click();
+      await description.click({ position: spot });
+      await expect.poll(editing).toBe(true);
+      expect(await description.evaluate(el => { const probe = document.createElement('i'); probe.style.color = 'var(--accent)'; el.append(probe); const accent = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(el).borderTopColor === accent; })).toBe(true);
+    }
+    await page.keyboard.type('Bring the reading list');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Bring the reading list');
+  });
+});

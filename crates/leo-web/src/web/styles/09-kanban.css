@@ -113,7 +113,9 @@ body.kanban-panel-on .kanban-layout { grid-template-columns: minmax(0, 1fr) min(
 .kanban-props .segmented { flex: 1; max-width: none; margin-left: 0; }
 .kanban-status .kanban-dot { position: absolute; z-index: 1; left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .kanban-status .select-menu-button { padding-left: 28px; }
-.kanban-panel .kanban-description { min-height: 220px; margin-top: 0; }
+.kanban-panel .kanban-description { box-sizing: border-box; width: calc(100% + 9px); min-height: 220px; margin: 0 0 0 -9px; padding: 4px 8px; cursor: text; border: 1px solid transparent; border-radius: var(--r-md); }
+.kanban-panel .kanban-description:hover { border-color: var(--line); }
+.kanban-panel .kanban-description:focus-within { border-color: var(--accent); background: var(--surface); }
 .kanban-limit { position: sticky; bottom: -24px; margin: 12px 0 0; padding: 8px 0; font-size: var(--fs-sm); color: var(--danger); background: var(--tint); }
 .kanban-limit[hidden] { display: none; }
 .kanban-panel .kanban-description .blk.editing { margin-left: 0 !important; }
