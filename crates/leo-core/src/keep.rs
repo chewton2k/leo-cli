@@ -65,7 +65,6 @@ pub fn load(notes_dir: &Path) -> Keep {
 }
 
 pub fn save(notes_dir: &Path, keep: &Keep) -> Result<()> {
-    use std::io::Write;
     let days = [
         keep.trash_days,
         keep.chat_days,
@@ -79,13 +78,8 @@ pub fn save(notes_dir: &Path, keep: &Keep) -> Result<()> {
     let path = path_for(notes_dir);
     let dir = path.parent().unwrap_or(notes_dir);
     std::fs::create_dir_all(dir)?;
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)
-        .with_context(|| format!("could not write in {}", dir.display()))?;
-    tmp.write_all(serde_json::to_string_pretty(keep)?.as_bytes())
-        .with_context(|| format!("could not write {}", path.display()))?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(&path).map_err(|e| e.error)?;
-    Ok(())
+    crate::paths::write_atomic(&path, serde_json::to_string_pretty(keep)?)
+        .with_context(|| format!("could not write {}", path.display()))
 }
 
 pub fn describe(days: Option<u32>) -> String {

@@ -22,6 +22,9 @@ pub struct Config {
     pub providers: BTreeMap<String, ProviderConfig>,
 }
 
+static BUILT_IN: std::sync::LazyLock<Result<Config, toml::de::Error>> =
+    std::sync::LazyLock::new(|| toml::from_str(&Config::built_in_toml()));
+
 pub const DEFAULT_CHAT_CHAIN: [&str; 1] = ["ollama"];
 pub const DEFAULT_TRANSCRIBE_CHAIN: [&str; 1] = ["parakeet"];
 
@@ -53,7 +56,7 @@ impl Config {
     /// of writing a block with the same name — no need to copy the other
     /// seventeen to keep them.
     fn merge_built_in_providers(&mut self) {
-        let built_in: Config = match toml::from_str(&Config::built_in_toml()) {
+        let built_in = match &*BUILT_IN {
             Ok(config) => config,
             // Unreachable in a shipped binary: a test asserts it parses.
             Err(e) => {
@@ -61,7 +64,7 @@ impl Config {
                 return;
             }
         };
-        for (name, provider) in built_in.providers {
+        for (name, provider) in built_in.providers.clone() {
             match self.providers.get_mut(&name) {
                 Some(own) => own.fill_from(provider),
                 None => {
@@ -253,8 +256,7 @@ kind = "parakeet"
     }
 
     pub fn built_in_provider(name: &str) -> Option<ProviderConfig> {
-        let built_in: Config = toml::from_str(&Config::built_in_toml()).ok()?;
-        built_in.providers.get(name).cloned()
+        BUILT_IN.as_ref().ok()?.providers.get(name).cloned()
     }
 }
 
@@ -265,7 +267,12 @@ fn tidied(path: &std::path::Path, text: String) -> String {
     if !tidy::tidy(&mut doc) {
         return text;
     }
-    let _ = edit::save_document(path, &doc);
+    let Some(_saving) = edit::saving() else {
+        return doc.to_string();
+    };
+    if std::fs::read_to_string(path).is_ok_and(|now| now == text) {
+        let _ = edit::save_document(path, &doc);
+    }
     doc.to_string()
 }
 

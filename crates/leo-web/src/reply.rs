@@ -2,10 +2,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+
 const MOST_EVENTS: usize = 32;
 const MOST_EVENT_BYTES: usize = 512 * 1024;
 const WAIT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(10);
+
+pub(crate) fn error(status: StatusCode, message: impl ToString) -> Response {
+    (
+        status,
+        Json(serde_json::json!({ "error": message.to_string() })),
+    )
+        .into_response()
+}
 
 #[derive(Clone)]
 pub struct Sender {

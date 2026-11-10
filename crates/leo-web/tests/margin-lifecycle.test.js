@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { pageHtml } = require('./page-source');
 const kit = require('../src/web/margin.js');
 require('../src/web/chat.js');
 const FAILED = "Felix could not read your note just now. Try again in a moment.";
@@ -261,7 +262,8 @@ test('the page keeps only the asking affordances it really has', () => {
 
 test('the mascot, the tether and the reading stub are gone from the margin script and styles', () => {
   const script = fs.readFileSync(path.join(__dirname, '../src/web/app/margin-notes.js'), 'utf8');
-  const page = fs.readFileSync(path.join(__dirname, '../src/web/index.html'), 'utf8');
+  const page = pageHtml();
+  assert.match(page, /\.settings-layout[\s\S]*<\/html>/);
   for (const dead of ['tether', 'felix.felix', 'margin-head', 'margin-face', 'readFace']) assert.equal(script.includes(dead), false, dead);
   for (const dead of ['.tether', '.margin-reading', '.margin-head', 'margin-reveal', '@keyframes margin-draw', '.chat-history-new', '.settings-layout::before']) assert.equal(page.includes(dead), false, dead);
 });

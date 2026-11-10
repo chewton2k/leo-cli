@@ -130,30 +130,6 @@ fn parse(xml: &str) -> Result<Document<'_>> {
     if xml.len() > MOST_PART_BYTES {
         bail!("this Office file expands to too much text; split it into smaller documents");
     }
-    let mut reader = quick_xml::Reader::from_str(xml);
-    let mut depth = 0usize;
-    let mut events = 0u32;
-    loop {
-        events += 1;
-        if events > MOST_NODES.saturating_mul(3) {
-            bail!("this Office file has too many XML elements; split it into smaller documents");
-        }
-        match reader.read_event() {
-            Ok(quick_xml::events::Event::Start(_)) => {
-                depth += 1;
-                if depth >= MOST_DEPTH {
-                    bail!("this Office file is nested too deeply; export a simpler document");
-                }
-            }
-            Ok(quick_xml::events::Event::End(_)) => depth = depth.saturating_sub(1),
-            Ok(quick_xml::events::Event::DocType(_)) => {
-                bail!("this Office file has unsupported XML entities; export it again")
-            }
-            Ok(quick_xml::events::Event::Eof) => break,
-            Err(_) => bail!("this Office file has damaged XML; export it again"),
-            _ => {}
-        }
-    }
     let doc = Document::parse_with_options(
         xml,
         ParsingOptions {

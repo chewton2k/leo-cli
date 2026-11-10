@@ -1,10 +1,8 @@
 const { test, expect } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
+const { signIn } = require('./sign-in');
 
 test.beforeEach(async ({ page }) => {
-  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-  await page.goto(`/?token=${token}#/new`);
+  await signIn(page, '#/new');
   await expect(page.locator('#title')).toBeFocused();
 });
 

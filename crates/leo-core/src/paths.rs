@@ -96,6 +96,33 @@ pub fn contained_path(root: &std::path::Path, relative: &std::path::Path) -> Res
     Ok(path)
 }
 
+pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> Result<()> {
+    use std::io::Write;
+    let parent = path.parent().context("the file has no parent directory")?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(contents.as_ref())?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+pub fn open_regular(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +147,85 @@ mod tests {
     #[test]
     fn no_directory_at_all_is_an_error_not_a_panic() {
         assert!(choose(None, None, "data").is_err());
+    }
+
+    #[test]
+    fn folder_names_stay_inside_the_notes() {
+        for (directory, ok) in [
+            ("", true),
+            ("a", true),
+            ("a/b", true),
+            ("..", false),
+            ("a/../b", false),
+            ("/abs", false),
+            ("a\\b", false),
+            ("c:x", false),
+            (".hidden", false),
+            ("a//b", false),
+            ("a/", false),
+            ("a\nb", false),
+        ] {
+            assert_eq!(validate_directory(directory).is_ok(), ok, "{directory:?}");
+        }
+    }
+
+    #[test]
+    fn contained_paths_refuse_escapes_and_links_but_allow_missing_leaves() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("real")).unwrap();
+        assert_eq!(
+            contained_path(root, std::path::Path::new("real/missing.md")).unwrap(),
+            root.join("real/missing.md")
+        );
+        assert!(contained_path(root, std::path::Path::new("missing/leaf.md")).is_ok());
+        for bad in ["../x", "real/../../x", "/etc/passwd"] {
+            assert!(
+                contained_path(root, std::path::Path::new(bad)).is_err(),
+                "{bad}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside.path(), root.join("middle")).unwrap();
+            std::os::unix::fs::symlink(outside.path().join("f"), root.join("real/leaf.md"))
+                .unwrap();
+            assert!(contained_path(root, std::path::Path::new("middle/x.md")).is_err());
+            assert!(contained_path(root, std::path::Path::new("real/leaf.md")).is_err());
+        }
+    }
+
+    #[test]
+    fn only_regular_files_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, "hi").unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut open_regular(&file).unwrap(), &mut text).unwrap();
+        assert_eq!(text, "hi");
+        assert!(open_regular(dir.path()).is_err());
+        assert_eq!(
+            open_regular(&dir.path().join("missing"))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&file, &link).unwrap();
+            assert!(open_regular(&link).is_err());
+        }
+    }
+
+    #[test]
+    fn an_atomic_write_replaces_the_whole_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.json");
+        write_atomic(&path, "first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }

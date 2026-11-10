@@ -26,11 +26,14 @@ const test = base.test.extend({
 });
 const fs = require('node:fs');
 const path = require('node:path');
+const { signIn, token } = require('./sign-in');
+
+const FIXED_NOW = new Date(2026, 10, 3, 11, 40);
+const FIXED_TODAY = '2026-11-03';
+const FIXED_TOMORROW = '2026-11-04';
 
 test.beforeEach(async ({ page }) => {
-  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-  await page.goto(`/?token=${token}`);
-  await expect(page.locator('#app')).not.toBeEmpty();
+  await signIn(page);
 });
 
 async function goPlace(page, action) {
@@ -53,7 +56,7 @@ async function goPlace(page, action) {
 
 
 function control(page, action) {
-  return page.locator(`.fab[data-action="${action}"]:visible, .new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
+  return page.locator(`.new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
 async function dragBetween(page, source, target, hold = '') {
@@ -64,7 +67,7 @@ async function dragBetween(page, source, target, hold = '') {
       break;
     } catch (e) {
       if (tries >= 2 || !/not attached/.test(String(e))) throw e;
-      await page.waitForTimeout(200);
+      await expect(source).toBeVisible();
     }
   }
   const from = await source.boundingBox();
@@ -460,9 +463,10 @@ test.describe('editing like Obsidian', () => {
       await page.goto(`/#/n/${note.id}`);
       await expect(page.locator('#doc .blk').first()).toBeVisible();
       if (body.startsWith('$$')) await expect(page.locator('#doc .math')).toHaveAttribute('data-drawn', 'yes');
-      const before = await page.locator('#doc .blk').first().boundingBox();
+      const place = () => page.locator('#doc .blk').first().boundingBox();
+      const before = await place();
       await page.locator('article.note').evaluate(el => { for (const run of el.getAnimations()) run.finish(); });
-      expect(await page.locator('#doc .blk').first().boundingBox(), body).toEqual(before);
+      await expect.poll(place, { message: body }).toEqual(before);
     }
   });
 
@@ -800,14 +804,20 @@ test('on a phone a sheet swipes down to close, and a small drag springs back', a
     const box = sheet.getBoundingClientRect();
     const at = (y) => [new Touch({ identifier: 1, target: sheet, clientX: box.left + 40, clientY: y })];
     const top = box.top + 20;
-    sheet.dispatchEvent(new TouchEvent('touchstart', { touches: at(top), changedTouches: at(top), bubbles: true, cancelable: true }));
-    const steps = 6;
-    for (let i = 1; i <= steps; i++) {
-      await new Promise((r) => setTimeout(r, ms / steps));
-      const y = top + (distance * i) / steps;
-      sheet.dispatchEvent(new TouchEvent('touchmove', { touches: at(y), changedTouches: at(y), bubbles: true, cancelable: true }));
+    let now = performance.now();
+    performance.now = () => now;
+    try {
+      sheet.dispatchEvent(new TouchEvent('touchstart', { touches: at(top), changedTouches: at(top), bubbles: true, cancelable: true }));
+      const steps = 6;
+      for (let i = 1; i <= steps; i++) {
+        now += ms / steps;
+        const y = top + (distance * i) / steps;
+        sheet.dispatchEvent(new TouchEvent('touchmove', { touches: at(y), changedTouches: at(y), bubbles: true, cancelable: true }));
+      }
+      sheet.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: at(top + distance), bubbles: true, cancelable: true }));
+    } finally {
+      delete performance.now;
     }
-    sheet.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: at(top + distance), bubbles: true, cancelable: true }));
   }, [distance, ms]);
   await page.locator('#menu').click();
   await expect(page.locator('.sheet')).toBeVisible();
@@ -1991,6 +2001,7 @@ test.describe('large libraries', () => {
 
 test.describe('readability', () => {
   async function lowContrast(page, within = 'body') {
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
     return page.evaluate(async (within) => {
       await Promise.all(document.getAnimations().filter((run) => run.effect && run.effect.getComputedTiming().iterations !== Infinity).map((run) => run.finished.catch(() => {})));
       const parse = (s) => {
@@ -2056,12 +2067,10 @@ test.describe('readability', () => {
       await page.goto('/#/calendar');
       await page.locator(`.cal-open[data-id="${task.id}"]:visible`).click();
       await expect(page.locator('#cal-side').getByRole('button', { name: 'Delete', exact: true })).toBeVisible();
-      await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.keyboard.press('Escape');
       await page.goto('/#/settings/keeping');
       await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
-      await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
       await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
       await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
@@ -2071,7 +2080,6 @@ test.describe('readability', () => {
       if (await history.isHidden()) await page.getByRole('button', { name: 'Your chats', exact: true }).click();
       await history.locator(`[data-chat="forget"][data-id="readable-${tag}"]`).click();
       await expect(history.locator('.chat-history-x.sure')).toHaveAttribute('aria-label', /^Confirm delete/);
-      await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
     });
 
@@ -2085,13 +2093,12 @@ test.describe('readability', () => {
       await page.request.delete(`/api/notes/${gone.id}`);
       const problems = {};
       const look = async (name) => {
-        await page.waitForTimeout(300);
-        await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['keeping', '#/settings/keeping'], ['record', '#/record'], ['calendar', '#/calendar']]) {
+      for (const [name, hash, ready] of [['folders', '#/', '#home-ask'], ['folder', '#/f/readable', '#home-ask'], ['note', `#/n/${note.id}`, '#doc .blk'], ['search', '#/search/readable', '#app .cards .card'], ['trash', '#/trash', '.trash-row'], ['settings', '#/settings', '.settings-section .settings-head'], ['keeping', '#/settings/keeping', 'select[data-keep="trash_days"]'], ['record', '#/record', '#rec-box [data-action="rec-start"]'], ['calendar', '#/calendar', '#cal-main .cal-week, #cal-main .cal-month']]) {
         await page.goto(`/${hash}`);
+        await expect(page.locator(ready).first()).toBeVisible();
         await look(name);
       }
       await page.goto('/');
@@ -2175,22 +2182,31 @@ test.describe('trash', () => {
     await page.locator('[data-action="trash-select"]').click();
     await page.locator('[data-trash-all]').check();
     await expect(page.locator('.trash-row.picked')).toHaveCount(await page.locator('.trash-row').count());
+    await page.locator('[data-trash-all]').uncheck();
+    await expect(page.locator('.trash-row.picked')).toHaveCount(0);
+    await row(3).click();
+    await row(4).click();
+    await expect(page.locator('.select-bar')).toContainText('2 selected');
     await page.locator('[data-action="trash-delete-picked"]').click();
     await page.locator('[data-action="close"]').click();
     await expect(row(3)).toBeVisible();
     await page.locator('[data-action="trash-delete-picked"]').click();
     await page.locator('[data-action="trash-delete-now"]').click();
-    await expect(page.locator('.empty')).toContainText('The trash is empty');
-    await expect(page.locator('.select-bar')).toHaveCount(0);
-    expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
+    await expect(row(3)).toHaveCount(0);
+    await expect(row(4)).toHaveCount(0);
+    const mine = async () => (await (await page.request.get('/api/trash')).json()).filter((t) => /^Trashed \d /.test(t.title) && t.title.endsWith(` ${tag}`));
+    expect(await mine()).toEqual([]);
 
     const again = await (await page.request.post('/api/notes', { data: { title: `Trashed 5 ${tag}`, body: 'x' } })).json();
     await page.request.delete(`/api/notes/${again.id}`);
     await page.goto('/#/');
     await page.goto('/#/trash');
+    await expect(page.locator('.trash-row', { hasText: `Trashed 5 ${tag}` })).toBeVisible();
     await page.locator('[data-action="trash-empty"]').click();
     await page.locator('[data-action="trash-delete-now"]').click();
     await expect(page.locator('.empty')).toContainText('The trash is empty');
+    await expect(row(5)).toHaveCount(0);
+    expect(await mine()).toEqual([]);
   });
 });
 
@@ -3721,7 +3737,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   const inspect = async () => {
     const selects = page.locator('select:visible');
     expect(await selects.count()).toBeGreaterThan(0);
-    const issues = await selects.evaluateAll(els => els.flatMap(el => {
+    const issues = () => selects.evaluateAll(els => els.flatMap(el => {
       const wrap = el.closest('.select-control');
       const menu = wrap && wrap.classList.contains('has-menu') && wrap.querySelector(':scope > .select-menu-button');
       if (menu) {
@@ -3742,7 +3758,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
         ? [`${el.id || el.dataset.set || el.dataset.keep}: misaligned chevron`]
         : [];
     }));
-    expect(issues).toEqual([]);
+    await expect.poll(issues).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   };
   await page.goto('/#/settings/keeping');
@@ -3793,6 +3809,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.route('**/api/chat', route => route.fulfill({ contentType: 'application/x-ndjson', body: [{ step: 'Found relevant notes', tool: 'search_notes', found: ['Queues', 'Heaps'] }, { t: 'Here are the notes.' }, { done: true }].map(line => JSON.stringify(line)).join('\n') + '\n' }));
   await page.locator('#chat-input').fill('Find my algorithm notes');
   await page.locator('#chat-input').press('Enter');
+  await expect(page.locator('#chat .msg').last()).toContainText('Here are the notes.');
   await page.locator('.msg-trace').last().locator('> summary').click();
   const step = page.locator('details.msg-step').last();
   await expect(step.locator('summary > .msg-step-chevron')).toHaveCount(1);
@@ -3804,6 +3821,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   await page.route('**/api/record/controls-failed', route => route.fulfill({ json: job }));
   await page.goto('/#/record');
   await expect(page.locator('.rec-error-details summary > svg')).toHaveCount(1);
+  await expect(page.locator('.rec-error-details')).toBeVisible();
   await page.locator('.rec-error-details summary').click();
   await expect(page.locator('.rec-error-details')).toHaveAttribute('open', '');
 });
@@ -3948,7 +3966,8 @@ test.describe('passages', () => {
     const toggle = page.locator('.margin-note .margin-toggle');
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('.margin-note')).not.toHaveAttribute('tabindex', '0');
-    await page.waitForTimeout(1500);
+    await expect(page.locator('.margin-note.arriving, .margin-ink path.arriving')).toHaveCount(0);
+    await page.waitForFunction(() => document.getAnimations().every((run) => run.playState !== 'running' || run.effect.getComputedTiming().iterations === Infinity));
     await toggle.focus();
     await page.keyboard.press('Enter');
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -4168,7 +4187,6 @@ test.describe('passages', () => {
 
   test('the margin mark is easy to hit with a mouse and a finger, and keeps its edges in forced colors', async ({ browser, page }) => {
     await page.setViewportSize({ width: 1000, height: 800 });
-    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
     const note = await (await page.request.post('/api/notes', { data: { title: 'Marks', body: 'First.\n\nThe quoted words stay here.' } })).json();
     await page.request.post(`/api/notes/${note.id}/margin/threads`, { data: { version: note.version, quote: 'quoted words', question: 'Why?' } });
     await page.goto(`/#/n/${note.id}`);
@@ -4183,7 +4201,7 @@ test.describe('passages', () => {
     const baseURL = new URL(page.url()).origin;
     const touch = await browser.newContext({ baseURL, hasTouch: true, isMobile: true, viewport: { width: 390, height: 800 } });
     const phone = await touch.newPage();
-    await phone.goto(`/?token=${token}`);
+    await phone.goto(`/?token=${token()}`);
     await phone.goto(`/#/n/${note.id}`);
     const finger = await phone.locator('.margin-mark').boundingBox();
     expect(Math.min(finger.width, finger.height)).toBeGreaterThanOrEqual(44);
@@ -4412,14 +4430,19 @@ test.describe('calendar', () => {
     await about.fill('');
     await expect.poll(async () => (await saved()).description).toBe('');
     await expect(about).toHaveAttribute('placeholder', 'Add a description…');
+    let inFlight = false;
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
     await page.route('**/api/tasks/*', async (route) => {
       if (route.request().method() !== 'PATCH') return route.continue();
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      inFlight = true;
+      await held;
       await route.continue();
     });
     await about.fill('Saving this');
-    await page.waitForTimeout(700);
+    await expect.poll(() => inFlight).toBe(true);
     await about.pressSequentially(' and still typing');
+    release();
     await expect(about).toBeFocused();
     await expect(about).toHaveValue('Saving this and still typing');
     await expect.poll(async () => (await saved()).description).toBe('Saving this and still typing');
@@ -4462,6 +4485,7 @@ test.describe('calendar', () => {
     });
     const undated = await (await page.request.post('/api/tasks', { data: { title: `Ask tutor ${tag}` } })).json();
     const note = await (await page.request.post('/api/notes', { data: { title: `Lecture ${tag}`, body: '## Action items\n- [ ] Submit HW 4 — due October 16, 2026 at 11:59 pm.\n## Check yourself\n- [ ] What is a heap?' } })).json();
+    await page.clock.install({ time: FIXED_NOW });
     await page.goto('/');
     await goPlace(page, 'calendar');
     await expect(page).toHaveURL(/#\/calendar$/);
@@ -4470,10 +4494,8 @@ test.describe('calendar', () => {
     const noDate = box.locator('.cal-tray-list', { hasText: 'No date' });
     await expect(noDate).toContainText(`Ask tutor ${tag}`);
 
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     await noDate.locator(`.cal-open[data-id="${undated.id}"]`).click();
-    await page.locator('#cal-peek-date').fill(today);
+    await page.locator('#cal-peek-date').fill(FIXED_TODAY);
     await page.locator('#cal-peek-date').dispatchEvent('change');
     await expect(page.locator('#cal-peek-start')).toBeEnabled();
     await page.locator('#cal-peek-start').fill('09:00');
@@ -5089,10 +5111,10 @@ test('On a Mac only Command opens Quick Leo, so Control+K stays a text-editing k
 
 test('Quick Leo is one Spotlight-style line that works out what you want: a reminder, a question, a note to open or a new one', async ({ page }) => {
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
-  const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
-  const due = await (await page.request.post('/api/tasks', { data: { title: `Due ${tag}`, date: today } })).json();
+  const due = await (await page.request.post('/api/tasks', { data: { title: `Due ${tag}`, date: FIXED_TODAY } })).json();
   const asked = [];
   await page.route('**/api/chat', (route) => { asked.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"A heap keeps the smallest on top."}\n{"done":true}\n' }); });
+  await page.clock.install({ time: FIXED_NOW });
   await page.goto('/');
   for (const key of ['j', 'y']) {
     await page.keyboard.press(`ControlOrMeta+${key}`);
@@ -5116,8 +5138,7 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await expect(box).toHaveCount(0);
   await expect(page.locator('.toast')).toContainText(`Added “email Bob ${tag}”`);
   const made = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.title === `email Bob ${tag}`);
-  const tomorrow = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
-  expect([made.date, String(made.time).slice(0, 5)]).toEqual([tomorrow, '15:00']);
+  expect([made.date, String(made.time).slice(0, 5)]).toEqual([FIXED_TOMORROW, '15:00']);
 
   await page.keyboard.press('ControlOrMeta+k');
   await input.fill(`Pay rent ${tag}`);
@@ -5229,12 +5250,12 @@ test('the Tasks panel stays usable beside a long note on short and tall screens'
 });
 
 test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {
-  const start = new Date();
-  start.setHours(12, 0, 0, 0);
+  const start = new Date(2026, 10, 3, 12, 0);
   const end = new Date(start.getTime() + 3600000);
   const description = 'Itinerary: Charlton S<br />Monday<br/><br/><strong>How to connect:</strong><ul><li>Click "Join with Google Meet" then “Join Now”.</li><li>Wait to be admitted.</li></ul><a href="https://meet.google.com/abc-defg-hij">Join the call</a><img src=x onerror="window.__ran = 1"><script>window.__ran = 2</script>';
   const event = { id: 'event-rich-1', title: 'Data/Algos Interview', start: start.toISOString(), end: end.toISOString(), all_day: false, location: '', calendar: 'Work', context: `Calendar event: Data/Algos Interview\nOrganised by: c_c463e763f192@group.calendar.google.com\nInvited: GoodTime Sync, charlton@ucla.edu\nDescription:\n${description}` };
   await page.route('**/api/schedule?*', (route) => route.fulfill({ json: { connected: true, events: [event], tasks: [], warnings: [] } }));
+  await page.clock.install({ time: FIXED_NOW });
   await page.goto('/#/calendar');
   await page.locator('.cal-open[data-id="event-rich-1"]').first().click();
   const sheet = page.locator('#cal-side.peek');

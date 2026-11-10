@@ -28,21 +28,32 @@ function list(project, shard) {
   }
 }
 
-test('desktop shards balance individual tests and cover the complete suite exactly once', t => {
-  const all = list('desktop');
-  const shards = Array.from({ length: 4 }, (_, index) => list('desktop', `${index + 1}/4`));
+function covers(project, count) {
+  const all = list(project);
+  const shards = Array.from({ length: count }, (_, index) => list(project, `${index + 1}/${count}`));
   const counts = shards.map(shard => shard.length);
   assert.ok(Math.max(...counts) - Math.min(...counts) <= 1, `unbalanced shards: ${counts}`);
-  assert.ok(shards.filter(shard => shard.some(spec => spec.file === 'flows.spec.js')).length > 1, 'the large flow file must split across multiple shards');
   const ids = shards.flat().map(spec => spec.id);
   assert.equal(new Set(ids).size, ids.length, 'a test ran in more than one shard');
   assert.deepEqual(ids.sort(), all.map(spec => spec.id).sort(), 'sharding changed the selected coverage');
+  return { all, shards, counts };
+}
+
+test('desktop shards balance individual tests and cover the complete suite exactly once', t => {
+  const { all, shards, counts } = covers('desktop', 4);
+  assert.ok(shards.filter(shard => shard.some(spec => spec.file === 'flows.spec.js')).length > 1, 'the large flow file must split across multiple shards');
   t.diagnostic(`${all.length} desktop tests across shards: ${counts.join(' / ')}`);
 });
 
-test('the unsharded WebKit job keeps its complete suite', t => {
-  const all = list('webkit');
+test('WebKit shards balance individual tests and cover the complete suite exactly once', t => {
+  const { all, counts } = covers('webkit', 3);
   assert.ok(all.length > 0);
-  assert.deepEqual(list('webkit', '1/1').map(spec => spec.id), all.map(spec => spec.id));
-  t.diagnostic(`${all.length} WebKit tests retained`);
+  t.diagnostic(`${all.length} WebKit tests across shards: ${counts.join(' / ')}`);
+});
+
+test('the phone project runs only the phone tests', () => {
+  const all = list('phone');
+  assert.ok(all.length > 0);
+  assert.ok(all.every(spec => spec.title.includes('on a phone')), 'the phone project selected a non-phone test');
+  assert.deepEqual(list('phone', '1/1').map(spec => spec.id), all.map(spec => spec.id));
 });

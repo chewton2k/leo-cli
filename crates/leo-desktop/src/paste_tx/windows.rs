@@ -198,7 +198,7 @@ fn flush_pending() {
         Ok(mut st) => st.cancelled = true,
         Err(_) => return,
     }
-    let sequence = *previous.sequence.lock().unwrap();
+    let sequence = *previous.sequence.lock().unwrap_or_else(|e| e.into_inner());
     let still_ours = unsafe { GetClipboardSequenceNumber() } == sequence;
     if still_ours {
         unsafe { settle_clipboard(&previous) };
@@ -214,7 +214,7 @@ unsafe fn settle_clipboard(shared: &WinTxShared) {
         warn!("[reliable-paste] could not open clipboard to leave transcript");
         return;
     }
-    let sequence = *shared.sequence.lock().unwrap();
+    let sequence = *shared.sequence.lock().unwrap_or_else(|e| e.into_inner());
     if GetClipboardSequenceNumber() != sequence
         || GetClipboardOwner().ok().map(|h| h.0 as usize)
             != Some(shared.owner.load(std::sync::atomic::Ordering::Acquire))
@@ -236,7 +236,7 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
     if OpenClipboard(None).is_err() {
         return;
     }
-    let sequence = *shared.sequence.lock().unwrap();
+    let sequence = *shared.sequence.lock().unwrap_or_else(|e| e.into_inner());
     if GetClipboardSequenceNumber() != sequence
         || GetClipboardOwner().ok().map(|h| h.0 as usize)
             != Some(shared.owner.load(std::sync::atomic::Ordering::Acquire))
@@ -408,7 +408,7 @@ unsafe fn snapshot_clipboard(hwnd: HWND, shared: &WinTxShared) -> Result<(), Str
         };
         formats.push(SavedFormat { format, data });
     }
-    *shared.snapshot.lock().unwrap() = formats;
+    *shared.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = formats;
     Ok(())
 }
 
@@ -504,7 +504,7 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
         info!("[reliable-paste] settling: no read within timeout, restoring anyway");
     }
 
-    let sequence = *shared.sequence.lock().unwrap();
+    let sequence = *shared.sequence.lock().unwrap_or_else(|e| e.into_inner());
     let still_ours = !ownership_lost && unsafe { GetClipboardSequenceNumber() } == sequence;
     if still_ours {
         unsafe { settle_clipboard(shared) };
@@ -578,11 +578,19 @@ fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
         );
 
         let published = match snapshot_clipboard(hwnd, &shared) {
-            Ok(()) if (shared.current)() && !shared.state.lock().unwrap().cancelled => {
+            Ok(())
+                if (shared.current)()
+                    && !shared
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .cancelled =>
+            {
                 match publish(hwnd) {
                     Ok(sequence) => Ok(sequence),
                     Err(e) => {
-                        *shared.sequence.lock().unwrap() = GetClipboardSequenceNumber();
+                        *shared.sequence.lock().unwrap_or_else(|e| e.into_inner()) =
+                            GetClipboardSequenceNumber();
                         restore_snapshot(&shared);
                         Err(e)
                     }
@@ -599,8 +607,12 @@ fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
                 return;
             }
         };
-        *shared.sequence.lock().unwrap() = sequence;
-        shared.state.lock().unwrap().published_at = Instant::now();
+        *shared.sequence.lock().unwrap_or_else(|e| e.into_inner()) = sequence;
+        shared
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .published_at = Instant::now();
         if let Ok(mut slot) = PENDING.lock() {
             *slot = Some(shared.clone());
         }
@@ -647,7 +659,11 @@ pub(super) fn run(
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e),
         Err(_) => {
-            shared.state.lock().unwrap().cancelled = true;
+            shared
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .cancelled = true;
             return Err(
                 "Automatic paste took too long. Copy your text from Recent dictations.".into(),
             );
@@ -655,13 +671,21 @@ pub(super) fn run(
     }
     info!("[reliable-paste] published transcript (delayed render)");
 
-    shared.state.lock().unwrap().injected_at = Some(Instant::now());
+    shared
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .injected_at = Some(Instant::now());
     match send_chord(enigo, paste_method) {
         Ok(()) => {
             info!("[reliable-paste] paste chord sent ({paste_method:?})");
         }
         Err(e) => {
-            shared.state.lock().unwrap().injection_failed = true;
+            shared
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .injection_failed = true;
             error!("[reliable-paste] failed to send paste chord: {e}");
         }
     }

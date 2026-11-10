@@ -2,6 +2,7 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 const at = (d, h, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 
@@ -11,7 +12,7 @@ const at = (d, h, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 async function calendarFixture(browser, run, { width = 1360, height = 900, view = 'week' } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const core = read('app/core.js');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const sheets = read('app/sheets.js');

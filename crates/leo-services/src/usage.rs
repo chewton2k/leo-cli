@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -110,36 +110,6 @@ pub fn label(usage: &Usage, now: DateTime<Utc>) -> String {
         parts.push(age);
     }
     parts.join(", ")
-}
-
-fn resets(at: i64, now: DateTime<Utc>) -> String {
-    let Some(when) = Local.timestamp_opt(at, 0).single() else {
-        return String::new();
-    };
-    let today = now.with_timezone(&Local).date_naive() == when.date_naive();
-    let text = if today {
-        when.format("%-I:%M %p").to_string()
-    } else {
-        when.format("%a %-I:%M %p").to_string()
-    };
-    format!(" (resets {text})")
-}
-
-pub fn detail(usage: &Usage, now: DateTime<Utc>) -> String {
-    let mut parts = Vec::new();
-    for (name, w) in [("5 hours", &usage.five_hour), ("7 days", &usage.seven_day)] {
-        if let Some(w) = w {
-            let reset = match w.resets_at {
-                Some(at) if at > now.timestamp() => resets(at, now),
-                _ => String::new(),
-            };
-            parts.push(format!("{name}: {}% used{reset}", percent(w, now)));
-        }
-    }
-    if let Some(age) = age(usage.seen_at, now) {
-        parts.push(format!("as of {age}"));
-    }
-    parts.join("; ")
 }
 
 fn file() -> Option<PathBuf> {
@@ -297,22 +267,12 @@ fn cached_codex(home: &Path, now: DateTime<Utc>) -> Option<Usage> {
     files.sort_unstable_by_key(|file| std::cmp::Reverse(file.0));
     let mut newest: Option<Usage> = None;
     for (_, path) in files.into_iter().take(RECENT_FILES) {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let Ok(mut file) = options.open(path) else {
+        let Ok(mut file) = leo_core::paths::open_regular(&path) else {
             continue;
         };
         let Ok(meta) = file.metadata() else {
             continue;
         };
-        if !meta.is_file() {
-            continue;
-        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -443,6 +403,7 @@ pub fn refresh_claude(cfg: &crate::config::Config) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn at(secs: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(secs, 0).unwrap()
@@ -576,9 +537,6 @@ mod tests {
             label(&usage, at(1000 + 3 * 3600)),
             "5h: 0%, 7d: 50%, 3 h ago"
         );
-        let text = detail(&usage, at(1200));
-        assert!(text.starts_with("5 hours: 80% used (resets "), "{text}");
-        assert!(text.contains("7 days: 50% used (resets "), "{text}");
     }
 
     #[test]

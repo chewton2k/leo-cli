@@ -1,4 +1,4 @@
-const { defineConfig } = require('@playwright/test');
+const { defineConfig, devices } = require('@playwright/test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -20,6 +20,7 @@ module.exports = defineConfig({
     launchOptions: { args: ['--host-resolver-rules=MAP leo-http.test 127.0.0.1', '--no-proxy-server'] },
   },
   projects: [
+    { name: 'phone', use: { ...devices['Pixel 7'] }, testMatch: ['flows.spec.js'], grep: /on a phone/ },
     { name: 'desktop', use: { browserName: 'chromium' } },
     { name: 'webkit', use: { browserName: 'webkit' }, testMatch: ['settings.spec.js', 'speech-models.spec.js', 'dictation.spec.js', 'editor-layout.spec.js', 'sidebar.spec.js', 'explorer-workspace.spec.js', 'margin-ui.spec.js', 'explorer-review.spec.js', 'margin-motion-review.spec.js', 'review-evidence.spec.js', 'routing-chat-review.spec.js', 'boards.spec.js', 'calendar.spec.js', 'title-keys.spec.js'] },
   ],

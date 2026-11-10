@@ -8,6 +8,39 @@ use crate::config::secret::Secret;
 
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
+type Http = std::sync::LazyLock<reqwest::Result<reqwest::blocking::Client>>;
+
+fn http(secs: u64) -> reqwest::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(secs))
+        .build()
+}
+
+static CLIENT_120: Http = std::sync::LazyLock::new(|| http(120));
+static CLIENT_300: Http = std::sync::LazyLock::new(|| http(300));
+static CLIENT_600: Http = std::sync::LazyLock::new(|| http(600));
+
+fn capped_lines(
+    mut reader: impl std::io::BufRead,
+) -> impl Iterator<Item = std::io::Result<String>> {
+    let mut total = 0usize;
+    std::iter::from_fn(
+        move || match crate::ai::provider::process::line(&mut reader) {
+            Ok(Some(line)) => {
+                total += line.len();
+                if total > crate::ai::provider::process::MOST_OUTPUT {
+                    return Some(Err(std::io::Error::other(
+                        "the stream sent too much output",
+                    )));
+                }
+                Some(Ok(line.trim_end_matches(['\r', '\n']).to_string()))
+            }
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        },
+    )
+}
+
 /// Any endpoint speaking the OpenAI chat-completions protocol: OpenRouter,
 /// Ollama, LM Studio, llama.cpp server, vLLM, Groq chat.
 pub struct OpenAiChat {
@@ -100,7 +133,7 @@ pub fn read_round(
 ) -> ProviderResult<Round> {
     let mut round = Round::default();
     let mut calls: Vec<(String, String, String)> = Vec::new();
-    for line in reader.lines() {
+    for line in capped_lines(reader) {
         let line =
             line.map_err(|e| ProviderError::Retryable(format!("{name}: stream ended early: {e}")))?;
         let Some(payload) = line.strip_prefix("data:") else {
@@ -170,6 +203,22 @@ pub fn read_round(
 }
 
 impl OpenAiChat {
+    fn client(&self, client: &'static Http) -> ProviderResult<&'static reqwest::blocking::Client> {
+        client
+            .as_ref()
+            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))
+    }
+
+    fn refused(&self, resp: reqwest::blocking::Response) -> ProviderError {
+        let status = resp.status().as_u16();
+        let text = resp.text().unwrap_or_default();
+        let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
+        match self.key {
+            Some(_) => classify_status_with_key(status, &self.name, &text),
+            None => classify_status(status, &self.name, &text),
+        }
+    }
+
     pub fn model(&self) -> &str {
         &self.model
     }
@@ -196,23 +245,14 @@ impl OpenAiChat {
     }
 
     pub fn stream_round(&self, body: &serde_json::Value, sink: Sink<'_>) -> ProviderResult<Round> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(600))
-            .build()
-            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
+        let client = self.client(&CLIENT_600)?;
         let resp = self
             .authorized(client.post(self.endpoint()))
             .json(body)
             .send()
             .map_err(|e| classify_reqwest(&self.name, &e))?;
-        let status = resp.status().as_u16();
         if !resp.status().is_success() {
-            let text = resp.text().unwrap_or_default();
-            let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
-            return Err(match self.key {
-                Some(_) => classify_status_with_key(status, &self.name, &text),
-                None => classify_status(status, &self.name, &text),
-            });
+            return Err(self.refused(resp));
         }
         read_round(std::io::BufReader::new(resp), &self.name, sink)
     }
@@ -352,12 +392,9 @@ impl OpenAiChat {
         &self,
         req: &ChatRequest,
         body: serde_json::Value,
-        secs: u64,
+        client: &'static Http,
     ) -> ProviderResult<String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(secs))
-            .build()
-            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
+        let client = self.client(client)?;
 
         let resp = self
             .authorized(client.post(self.endpoint()))
@@ -365,18 +402,8 @@ impl OpenAiChat {
             .send()
             .map_err(|e| classify_reqwest(&self.name, &e))?;
 
-        let status = resp.status().as_u16();
         if !resp.status().is_success() {
-            // Only the response body is quoted — never our request headers,
-            // so our own Authorization header cannot leak this way. Scrub
-            // defensively in case a misbehaving gateway reflects the key
-            // back inside the body itself.
-            let text = resp.text().unwrap_or_default();
-            let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
-            return Err(match self.key {
-                Some(_) => classify_status_with_key(status, &self.name, &text),
-                None => classify_status(status, &self.name, &text),
-            });
+            return Err(self.refused(resp));
         }
 
         let json: serde_json::Value = resp.json().map_err(|e| {
@@ -425,12 +452,7 @@ impl OpenAiChat {
 
 impl ChatProvider for OpenAiChat {
     fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
-        use std::io::{BufRead, BufReader};
-
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
+        let client = self.client(&CLIENT_300)?;
 
         let resp = self
             .authorized(client.post(self.endpoint()))
@@ -438,14 +460,8 @@ impl ChatProvider for OpenAiChat {
             .send()
             .map_err(|e| classify_reqwest(&self.name, &e))?;
 
-        let status = resp.status().as_u16();
         if !resp.status().is_success() {
-            let text = resp.text().unwrap_or_default();
-            let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
-            return Err(match self.key {
-                Some(_) => classify_status_with_key(status, &self.name, &text),
-                None => classify_status(status, &self.name, &text),
-            });
+            return Err(self.refused(resp));
         }
 
         let mut answer = String::new();
@@ -455,8 +471,8 @@ impl ChatProvider for OpenAiChat {
         let mut finish = String::new();
         let mut usage = None;
 
-        let reader = BufReader::new(resp);
-        for line in reader.lines() {
+        let reader = std::io::BufReader::new(resp);
+        for line in capped_lines(reader) {
             let line = line.map_err(|e| {
                 // A stream that dies partway is retryable: the next provider may
                 // manage it, and any text already delivered is still useful.
@@ -504,7 +520,7 @@ impl ChatProvider for OpenAiChat {
     }
 
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
-        self.send(req, self.body(req, false), 120)
+        self.send(req, self.body(req, false), &CLIENT_120)
     }
 
     fn complete_with_images(
@@ -522,7 +538,7 @@ impl ChatProvider for OpenAiChat {
         if let Some(last) = body["messages"].as_array_mut().and_then(|m| m.last_mut()) {
             last["content"] = serde_json::Value::Array(parts);
         }
-        self.send(req, body, 300)
+        self.send(req, body, &CLIENT_300)
     }
 
     fn available(&self) -> bool {
@@ -824,7 +840,7 @@ mod tests {
 
 #[cfg(test)]
 mod streaming_tests {
-    use super::delta_text;
+    use super::{capped_lines, delta_text};
 
     use super::Delta;
 
@@ -921,5 +937,18 @@ mod streaming_tests {
             })
             .collect();
         assert_eq!(whole, "Ownership moves.");
+    }
+
+    #[test]
+    fn a_stream_line_over_the_cap_is_an_error_not_memory() {
+        let mut lines = capped_lines(std::io::Cursor::new("a\r\nb\n"));
+        assert_eq!(lines.next().unwrap().unwrap(), "a");
+        assert_eq!(lines.next().unwrap().unwrap(), "b");
+        assert!(lines.next().is_none());
+        let huge = vec![b'x'; crate::ai::provider::process::MOST_LINE + 10];
+        assert!(capped_lines(std::io::Cursor::new(huge))
+            .next()
+            .unwrap()
+            .is_err());
     }
 }

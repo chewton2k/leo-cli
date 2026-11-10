@@ -1,7 +1,7 @@
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 
@@ -179,21 +179,15 @@ fn add_dir<W: Write + Seek>(
             )?;
         } else if kind.is_file() {
             let path = checked_path(root, &entry.path())?;
-            let mut open = std::fs::OpenOptions::new();
-            open.read(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                open.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-            }
-            let file = open.open(path).context(
-                "An export file could not be opened safely; check its permissions and try again",
-            )?;
+            let file = match leo_core::paths::open_regular(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::Other => bail!(
+                    "Only regular files can be exported; remove the special file and try again"
+                ),
+                opened => opened.context(
+                    "An export file could not be opened safely; check its permissions and try again",
+                )?,
+            };
             let meta = file.metadata()?;
-            ensure!(
-                meta.is_file(),
-                "Only regular files can be exported; remove the special file and try again"
-            );
             ensure!(meta.len() <= budget.remaining_bytes(), LIMIT_MESSAGE);
             zip.start_file(&inside, options)?;
             let mut input = file.take(budget.remaining_bytes() + 1);

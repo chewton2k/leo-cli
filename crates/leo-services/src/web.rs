@@ -142,6 +142,16 @@ fn follows(url: &reqwest::Url, previous: usize, https_only: bool) -> bool {
     previous < 5 && allowed(url) && (!https_only || url.scheme() == "https")
 }
 
+fn redirect_policy(https_only: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if follows(attempt.url(), attempt.previous().len(), https_only) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
 fn protected_client(
     builder: reqwest::blocking::ClientBuilder,
     https_only: bool,
@@ -152,13 +162,7 @@ fn protected_client(
         .timeout(TIMEOUT)
         .user_agent(AGENT)
         .dns_resolver(Arc::new(PublicOnly))
-        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-            if !follows(attempt.url(), attempt.previous().len(), https_only) {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        }))
+        .redirect(redirect_policy(https_only))
         .build()?)
 }
 
@@ -171,13 +175,7 @@ pub(crate) fn model_client(timeout: Duration) -> Result<reqwest::Client> {
         .timeout(timeout)
         .user_agent(AGENT)
         .dns_resolver(Arc::new(PublicOnly))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if follows(attempt.url(), attempt.previous().len(), true) {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
+        .redirect(redirect_policy(true))
         .build()?)
 }
 

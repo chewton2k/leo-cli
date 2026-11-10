@@ -97,18 +97,25 @@ pub(crate) async fn page_visible(
 }
 
 pub(crate) async fn activity(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let imports = state.imports.lock().map(|j| j.clone()).unwrap_or_default();
+    let imports = state
+        .imports
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let recording = state
         .recording
         .lock()
-        .ok()
-        .and_then(|held| held.as_ref().map(|j| j.view()));
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|j| j.view());
     let mut tasks = activity_tasks(&imports, recording.as_ref(), state.graphs.building());
     let jobs: Vec<_> = state
         .combines
         .lock()
-        .map(|jobs| jobs.values().cloned().collect())
-        .unwrap_or_default();
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
     tasks.extend(combine_tasks(&jobs, |id| {
         state
             .progress

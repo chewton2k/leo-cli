@@ -196,4 +196,7 @@ document.addEventListener('focusout', (e) => {
 document.addEventListener('change', (e) => {
   if (e.target.dataset?.menu) syncSelectMenu(e.target);
 });
-new MutationObserver(() => enhanceSelects()).observe(document.body, { childList: true, subtree: true });
+new MutationObserver((records) => {
+  const selectable = (n) => n.nodeType === 1 && (n.matches('select, .set-row') || n.querySelector('select, .set-row'));
+  if (records.some((r) => [...r.addedNodes].some(selectable))) enhanceSelects();
+}).observe(document.body, { childList: true, subtree: true });

@@ -61,7 +61,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
+    #[ignore = "benchmark: run by hand with --ignored"]
     fn benchmark_unchanged_note_scans() {
         let root = tempfile::tempdir().unwrap();
         for index in 0..1000 {

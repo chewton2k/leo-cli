@@ -10,9 +10,9 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `filename`, `open` (opens a link with the system), `children` (stops a process tree, lists the processes leo owns for Felix activity's Running now; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices), `paths`, `recording`, `activity` | — |
+| `crates/leo-core` | `notes`, `store`, `filename`, `open` (opens a link with the system), `children` (stops a process tree, lists the processes leo owns for Felix activity's Running now; `quiet_command` starts every helper program without a console window on Windows), `diag`, `keep` (retention choices), `paths`, `recording`, `activity` | — |
 | `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials), `health`, `providers`, `speech`, `dictation`, `session`, `update`, `usage`, `import` | core |
-| `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
+| `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`page-head.html` + `styles/*.css` + `page-tail.html` joined at compile time, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
 | `crates/leo-host` | `powers()` (the AI, speech, settings, recording housekeeping and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
 | `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, services, host, web |
 | root `leo` | `main.rs` and `cli/`: `leo` opens the app, `leo update`, `leo uninstall`, `--version` | core, services |
@@ -55,19 +55,6 @@ Subsystem notes load only when working in that crate:
 `crates/leo-services/CLAUDE.md`, `crates/leo-web/CLAUDE.md`,
 `crates/leo-desktop/CLAUDE.md`.
 
-### Undo lives in the store
-
-`Store` keeps a bounded stack of `Undoable` values, and `delete_note`,
-`delete_dir_recursive`, `move_note` and `toggle_checkbox` all record onto it. It
-restores whole `Note` values rather than replaying an inverse operation, because a
-restored note has to come back with its original id and timestamps instead of as a
-copy that resembles it. The stack is not persisted: undo covers a session, and a
-deletion that survived a restart is a decision the user has lived with.
-
-Two invariants worth keeping: a no-op (a delete that matched nothing, a refused
-root delete) must record nothing, or `u` appears to do nothing; and undo must not
-push its own inverse, or one press would toggle forever.
-
 ### Notes stay local
 
 Leo no longer sets up or runs git/GitHub backup. Saves, idle work, visibility
@@ -80,10 +67,12 @@ changes and quit never commit or push. Existing repositories/remotes and legacy
 the pre-flight before recording agree, and every gap arrives with what fixes it
 rather than as a failure discovered mid-use.
 `health::writing` is the one writing-AI answer (Ready, NotInstalled,
-NotRunning, NoModel, NotChosen, with its fix): the doctor's chat check,
-`ai::writing_ready` and the tray use its cheap path (no HTTP, never NoModel);
-Settings (`web_settings::describe`'s `writing`) passes the listed local models, so
-an Ollama with no models is NoModel there.
+NotRunning, NoModel, NotChosen, with its fix): `ai::writing_ready` and the
+tray use its cheap path (no HTTP, never NoModel); the doctor's chat check
+(`health::chain_check`), the recording pre-flight (leo-host's
+`Housekeeping::checks`) and Settings (`web_settings::describe`'s `writing`) pass
+the listed local models (`choice::local_models`: one loopback Ollama `/api/tags`
+call with its short timeout), so an Ollama with no models is NoModel there.
 
 Two rules there, both learned from tests that hung:
 
@@ -95,7 +84,8 @@ Two rules there, both learned from tests that hung:
   literal addresses and localhost only. A bogus hostname cost 900 seconds.
 
 Checks must stay cheap enough to run on startup: a key presence check, a PATH
-scan, or a loopback connect with a 300 ms timeout. Never a real request.
+scan, a loopback connect with a 300 ms timeout, or that one loopback model
+list. Never a request that leaves the machine.
 
 ### Data model
 
@@ -111,8 +101,8 @@ settings and credentials are excluded from note exports.
 
 ### Recent additions worth knowing
 
-- `leo_services::doctor::scan` (sections leo/notes/AI/recording;
-  network/mic probes behind `Probe`), plan 4 is shown in Settings → Health.
+- `leo_services::doctor::scan` (sections leo/notes/AI/recording; local checks
+  only, no network, microphone or AI probes) is shown in Settings → Health.
 - Recording loop: `leo_services::session::recorder` (`record`, `resume`,
   `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio.
 - `Store::unreadable`: files that failed to parse; `save` never deletes them.
@@ -120,11 +110,11 @@ settings and credentials are excluded from note exports.
   its id is not live) to `<notes>/.trash/<same relative path>`, mtime = when
   deleted. `tidy_trash` (load, a save that writes a new id, and hourly on save) drops live ids and ones past
   the Keeping choice (`keep::DEFAULT_TRASH_DAYS`, 30). The Trash page restores and empties.
-- Updates: `leo_services::update::available()` reads the latest tag from the
-  `releases/latest` redirect (not the API: rate limits), cached a day in
-  `<config>/update-check.json`, failures cached too; `LEO_NO_UPDATE_CHECK=1`
-  disables (e2e sets it). Doctor: `Probe.update`. `leo update` runs
-  the release's app installer with a bounded checked download; script-download
+- Updates: `LEO_NO_UPDATE_CHECK=1` disables the app's automatic update check
+  (`crates/leo-desktop/src/updates.rs`; e2e and the browser tests set it).
+  `leo update` reads the latest tag with `update::latest_release()` from the
+  `releases/latest` redirect (not the API: rate limits; `LEO_LATEST_RELEASE`
+  pins it), then runs the release's app installer with a bounded checked download; script-download
   failures cannot become successful empty shell pipelines. `LEO_INSTALL_DIR`
   comes from private atomic `app-cli-dir` outside the app, preserving a custom
   shim directory across in-app updates. `LEO_UPDATE_SCRIPT` injects a local
@@ -146,13 +136,14 @@ settings and credentials are excluded from note exports.
   `<title> (conflict from leo)` with a new id (`CONFLICT_SUFFIX`, listed by
   doctor) instead of overwriting; deleted notes are trashed only if their file
   is still what leo saw. Writes are temp-file + rename.
-- `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes;
-  refresh keeps undo). Engine mutations reconcile before writing; hot read-only
+- `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes).
+  Engine mutations reconcile before writing; hot read-only
   paths use the existing filesystem watcher with a 60 s reconciliation fallback.
   Returning to the native window forces a check before serving cached reads.
 - Never slice strings by byte offsets computed from lengths: use char indices
   or `str::get`.
-- Tests must never run the microphone probe (`doctor::recording_checks` with the probe off).
+- Tests must never open the microphone: doctor's recording section only reads the
+  device name (`health::microphone_device`), and tests set `LEO_NO_MICROPHONE`.
 - Install: `install.sh` downloads the latest GitHub release. Releases are
   automatic: `ci.yml` calls `release.yml` after every job passes on a push to
   main; `scripts/next-version.sh` picks the version (patch + 1, or Cargo.toml's
@@ -182,39 +173,25 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   described by their scripts and workflow; updates check the selected catalog
   speech model, and uninstall retains the existing data-removal controls.
 - Note connections (cache code still says `graph`): see crates/leo-web/CLAUDE.md.
-- Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
-  line each, tombstones for deletes); leo-web reads the newest line.
-  A repeating task's moved days live in its `moved` field (original date →
-  new slot); the Calendar page is a Notion-style Day/Week/Month screen beside
-  the explorer: see crates/leo-web/CLAUDE.md.
+- Tasks (`<notes>/.leo/tasks/`), boards and cards (`.leo/boards/`, `.leo/cards/`)
+  are one-JSON-line-per-save files (newest line wins, tombstone deletes); boards
+  are not calendar tasks. Calendar, boards and their Felix tools: see
+  crates/leo-web/CLAUDE.md.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
   search and note connections cover it): no tag column, completion, Tags page or
   chips on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian).
-- Felix in the margin (2026-11-04, the user's call): threads in `leo.db`, never
-  note files or git; read-along is the default for notes made after install (2026-11-08); Read through reads a whole note on request (2026-11-08). Reads use `Powers.toolless`
-  (no tools at all). See crates/leo-web/CLAUDE.md.
-- Boards (2026-11-02, the user's call): Jira-style task boards on their own
-  rail page (`#/boards`), several boards, untimed cards (title, subheading,
-  description, priority) in custom columns, dragged between columns and boards.
-  Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` follow tasks (one
-  JSON line per save, newest line wins); they are not calendar tasks. Felix has
-  board tools (list/open, add/update/move/delete cards, add/change/delete
-  boards) under the usual Ask/Auto/Read and Undo. See crates/leo-web/CLAUDE.md.
+- Felix in the margin: threads in `leo.db`, never note files or git; reads use
+  `Powers.toolless` (no tools at all). See crates/leo-web/CLAUDE.md.
 - Menu bar, study order, idle compaction and in-app drag and drop
   (2026-11-02, the user's notes): see crates/leo-desktop/CLAUDE.md (tray,
   `disable_drag_drop_handler`) and crates/leo-web/CLAUDE.md (Felix study order,
   idle compaction).
 - Keeping: `leo_core::keep` (`<data>/keep.json`, beside notes, not synced):
-  `trash_days` (7/30/90/365/None=forever, default 30) drives `tidy_trash`;
-  one shared choice list (7, 30, 90, 365 days, forever);
-  `chat_days`, `upload_days`, `transcript_days` and `audio_days` (default forever)
-  drive the expiry in `crates/leo-web/src/keeping.rs`. Settings → Data → Keeping
-  (`#/settings/keeping`) shows the five rows, each with a line saying what it
-  is, and the zip export. A shorter choice asks first with a count from
-  `/api/keep/preview`. Expiry runs at start, once a day and after a save, and
-  stops with the engine. `keep::describe` words a choice; `keep::load` reads
-  each field on its own, so one bad value never resets the others.
+  `trash_days` (default 30) drives `tidy_trash`; `chat_days`, `upload_days`,
+  `transcript_days` and `audio_days` (default forever) drive leo-web's
+  `keeping.rs` (see crates/leo-web/CLAUDE.md). `keep::describe` words a choice;
+  `keep::load` reads each field on its own, so one bad value never resets the others.
 - Cut-down (2026-11-05, the user's call): the Storage page is replaced by
   Keeping; Felix has no web tool of leo's own (Claude Code and Codex keep
   theirs); the first-run manual note is gone; the legacy fallbacks and

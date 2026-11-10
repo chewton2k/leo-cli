@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
@@ -7,7 +8,7 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, DTYPE};
 use tokenizers::{PaddingParams, Tokenizer, TruncationParams};
 
-use crate::providers::{download_verified, files_state, model_state, ModelState};
+use crate::providers::{download_verified, model_state, worst_state, ModelState};
 
 pub const MODEL_URL: &str =
     "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a";
@@ -30,7 +31,29 @@ pub fn dir() -> PathBuf {
 }
 
 pub fn state() -> ModelState {
-    files_state(&dir(), &manifest())
+    type Stamp = (u64, std::time::SystemTime);
+    static VERIFIED: LazyLock<Mutex<HashMap<(PathBuf, String), Stamp>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let dir = dir();
+    worst_state(manifest().into_iter().map(|(name, sha)| {
+        let path = dir.join(name);
+        let stamp = std::fs::metadata(&path)
+            .ok()
+            .and_then(|meta| Some((meta.len(), meta.modified().ok()?)));
+        let key = (path, sha);
+        let known = |cache: &HashMap<(PathBuf, String), Stamp>| cache.get(&key) == stamp.as_ref();
+        if stamp.is_some() && known(&VERIFIED.lock().unwrap_or_else(|e| e.into_inner())) {
+            return ModelState::Ready;
+        }
+        let state = model_state(&key.0, &key.1);
+        if let (ModelState::Ready, Some(stamp)) = (state, stamp) {
+            VERIFIED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key, stamp);
+        }
+        state
+    }))
 }
 
 pub fn wanted() -> bool {

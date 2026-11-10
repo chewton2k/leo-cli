@@ -7,9 +7,17 @@ use leo_core::store::Store;
 use leo_core::tasks::{self as core, Located};
 use serde::{Deserialize, Serialize};
 
+use crate::jsonline;
+
 pub const MOST_TASKS: usize = 10_000;
 pub const MOST_TITLE: usize = 300;
 pub const MOST_DESCRIPTION: usize = 4_000;
+
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn writing() -> std::sync::MutexGuard<'static, ()> {
+    WRITING.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub fn description_of(text: &str) -> Result<String, &'static str> {
     let text = text.trim();
@@ -193,9 +201,7 @@ pub fn note_task_id(note: &str, text: &str) -> String {
     format!("n{:016x}", fnv(&format!("{note}\0{}", text.trim())))
 }
 
-pub fn valid_id(id: &str) -> bool {
-    (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
+pub use crate::jsonline::valid_id;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Listed {
@@ -471,8 +477,8 @@ fn when_lines(
     }
 }
 
-pub fn db_of(chats: &Path) -> std::sync::Arc<crate::db::Db> {
-    crate::chats::db_of(chats)
+pub fn db_of(chats: &Path) -> anyhow::Result<std::sync::Arc<crate::db::Db>> {
+    crate::db::try_for_chats(chats)
 }
 
 #[cfg(test)]
@@ -485,89 +491,18 @@ pub fn tasks_dir(chats: &Path) -> std::path::PathBuf {
         .join("tasks")
 }
 
-const MOST_FILE_BYTES: u64 = 256 * 1024;
-
-fn checked_dir(chats: &Path) -> anyhow::Result<std::path::PathBuf> {
-    leo_core::paths::contained_path(
-        chats.parent().unwrap_or(chats),
-        Path::new("notes/.leo/tasks"),
-    )
-}
-
-fn task_path(chats: &Path, name: &str) -> anyhow::Result<std::path::PathBuf> {
-    let dir = checked_dir(chats)?;
-    leo_core::paths::contained_path(&dir, Path::new(name))
-}
-
-fn read_file(chats: &Path, path: &Path) -> Option<Task> {
-    use std::io::Read;
-    let checked = task_path(chats, path.file_name()?.to_str()?).ok()?;
-    if checked != path {
-        return None;
+impl jsonline::Line for Task {
+    const DIR: &'static str = "tasks";
+    fn id(&self) -> &str {
+        &self.id
     }
-
-    let meta = std::fs::symlink_metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MOST_FILE_BYTES {
-        return None;
+    fn stamp(&self) -> DateTime<Utc> {
+        self.updated_at
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path).ok()?;
-    if !file.metadata().ok()?.is_file() {
-        return None;
-    }
-    let mut text = String::new();
-    file.take(MOST_FILE_BYTES + 1)
-        .read_to_string(&mut text)
-        .ok()?;
-    if text.len() as u64 > MOST_FILE_BYTES {
-        return None;
-    }
-    text.lines()
-        .filter_map(|line| serde_json::from_str::<Task>(line.trim()).ok())
-        .max_by_key(|t| t.updated_at)
-}
-
-fn write_file(chats: &Path, task: &Task) -> anyhow::Result<()> {
-    anyhow::ensure!(valid_id(&task.id), "that task id is not valid");
-    use std::io::Write;
-    let dir = checked_dir(chats)?;
-    std::fs::create_dir_all(&dir)?;
-    let line = serde_json::to_string(task)? + "\n";
-    anyhow::ensure!(
-        line.len() as u64 <= MOST_FILE_BYTES,
-        "That task is too large. Shorten its details and try again."
-    );
-    let path = task_path(chats, &format!("{}.json", task.id))?;
-    let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
-    temp.write_all(line.as_bytes())?;
-    temp.as_file().sync_all()?;
-    temp.persist(&path).map_err(|e| e.error)?;
-    Ok(())
 }
 
 fn read_all(chats: &Path) -> Vec<Task> {
-    let Ok(dir) = checked_dir(chats) else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<Task> = entries
-        .flatten()
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            !name.starts_with('.') && name.ends_with(".json")
-        })
-        .take(MOST_TASKS * 2)
-        .filter_map(|e| read_file(chats, &e.path()))
-        .filter(|t| valid_id(&t.id))
-        .collect();
+    let mut out: Vec<Task> = jsonline::read_all(chats, Some(MOST_TASKS * 2));
     out.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
     out
 }
@@ -584,8 +519,7 @@ pub fn load(chats: &Path, id: &str) -> Option<Task> {
     if !valid_id(id) {
         return None;
     }
-    let path = task_path(chats, &format!("{id}.json")).ok()?;
-    read_file(chats, &path).filter(|t| !t.deleted && t.id == id)
+    jsonline::load::<Task>(chats, id).filter(|t| !t.deleted)
 }
 
 pub fn count(chats: &Path) -> usize {
@@ -593,7 +527,7 @@ pub fn count(chats: &Path) -> usize {
 }
 
 pub fn put(chats: &Path, task: &Task) -> anyhow::Result<()> {
-    write_file(chats, task)
+    jsonline::write_file(chats, task)
 }
 
 pub fn remove(chats: &Path, id: &str) -> bool {
@@ -602,7 +536,7 @@ pub fn remove(chats: &Path, id: &str) -> bool {
     };
     task.deleted = true;
     task.updated_at = Utc::now();
-    write_file(chats, &task).is_ok()
+    jsonline::write_file(chats, &task).is_ok()
 }
 
 pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
@@ -610,7 +544,9 @@ pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> us
         return 0;
     };
     let before = now - chrono::Duration::days(i64::from(days));
-    let Ok(entries) = checked_dir(chats).and_then(|dir| Ok(std::fs::read_dir(dir)?)) else {
+    let Ok(entries) =
+        jsonline::checked_dir(chats, "tasks").and_then(|dir| Ok(std::fs::read_dir(dir)?))
+    else {
         return 0;
     };
     entries
@@ -618,7 +554,7 @@ pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> us
         .take(MOST_TASKS * 2)
         .map(|entry| entry.path())
         .filter(|path| {
-            read_file(chats, path).is_some_and(|task| {
+            jsonline::read_file::<Task>(chats, path).is_some_and(|task| {
                 task.deleted
                     && task.updated_at < before
                     && path.file_stem().and_then(|stem| stem.to_str()) == Some(task.id.as_str())
@@ -630,7 +566,7 @@ pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> us
 
 pub fn metas(chats: &Path) -> Vec<Meta> {
     db_of(chats)
-        .with(|c| {
+        .and_then(|db| db.with(|c| {
             let mut statement = c.prepare("SELECT id, note, text, before, after, kind, promoted, sent_at, description FROM note_tasks LIMIT ?1")?;
             let rows = statement.query_map([MOST_TASKS as i64], |r| {
                 Ok(Meta {
@@ -649,13 +585,13 @@ pub fn metas(chats: &Path) -> Vec<Meta> {
                 })
             })?;
             Ok(rows.flatten().collect::<Vec<_>>())
-        })
+        }))
         .unwrap_or_default()
 }
 
 pub fn put_meta(chats: &Path, meta: &Meta) -> anyhow::Result<()> {
     let sent = meta.sent_at.map(|t| t.to_rfc3339());
-    db_of(chats).with(|c| {
+    db_of(chats)?.with(|c| {
         c.execute(
             "INSERT INTO note_tasks (id, note, text, before, after, kind, promoted, sent_at, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(id) DO UPDATE SET note = excluded.note, text = excluded.text, before = excluded.before, after = excluded.after, kind = excluded.kind, promoted = excluded.promoted, sent_at = excluded.sent_at, description = excluded.description",
             rusqlite::params![meta.id, meta.note, meta.text, meta.before, meta.after, meta.kind, i64::from(meta.promoted), sent, meta.description],
@@ -666,7 +602,7 @@ pub fn put_meta(chats: &Path, meta: &Meta) -> anyhow::Result<()> {
 
 pub fn remove_meta(chats: &Path, id: &str) -> bool {
     db_of(chats)
-        .with(|c| c.execute("DELETE FROM note_tasks WHERE id = ?1", [id]))
+        .and_then(|db| db.with(|c| c.execute("DELETE FROM note_tasks WHERE id = ?1", [id])))
         .is_ok_and(|n| n > 0)
 }
 

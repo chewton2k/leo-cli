@@ -204,7 +204,7 @@ fn many_short_segments_roll_over_cleanly() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "simulates 24 hours of recording; run by hand"]
 fn a_full_day_of_recording() {
     let run = record(24 * 3600, 20_000.0, 300, Some(100));
     println!(

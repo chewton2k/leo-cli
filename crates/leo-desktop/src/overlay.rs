@@ -140,8 +140,8 @@ pub fn hide(app: &AppHandle) {
     });
 }
 pub fn tokens() -> &'static str {
-    let page = include_str!("../../leo-web/src/web/index.html");
-    page.split_once("<style>")
-        .and_then(|(_, s)| s.split_once("* { box-sizing").map(|(s, _)| s))
-        .unwrap_or_default()
+    concat!(
+        "\n",
+        include_str!("../../leo-web/src/web/styles/01-tokens.css")
+    )
 }

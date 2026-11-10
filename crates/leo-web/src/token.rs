@@ -74,23 +74,17 @@ fn check_path(path: &Path) -> std::io::Result<()> {
 pub(crate) fn read_private(path: &Path) -> std::io::Result<Option<String>> {
     use std::io::Read;
     check_path(path)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = match options.open(path) {
+    let refused =
+        || std::io::Error::other("The sign-in file is not a regular file or is too large");
+    let file = match leo_core::paths::open_regular(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::Other => return Err(refused()),
         Err(error) => return Err(error),
     };
     let meta = file.metadata()?;
-    if !meta.is_file() || meta.len() > AUTH_BYTES {
-        return Err(std::io::Error::other(
-            "The sign-in file is not a regular file or is too large",
-        ));
+    if meta.len() > AUTH_BYTES {
+        return Err(refused());
     }
     #[cfg(unix)]
     {

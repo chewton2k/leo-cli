@@ -7,8 +7,9 @@ disposable home's default reading mode at startup, so browser suites don't depen
 Read along default's `since` was first set (2026-11-08); the product default is covered by leo-web's unit tests. Every worker
 entry point dispatches `--leo-speech-worker` before normal startup.
 
-`health::scan` converts doctor checks with external probes disabled to the native
-Health view. Writing CLI sign-in status is bounded and parsed to a boolean; its
+`health::scan` converts the local doctor checks (`leo_services::doctor::scan`;
+there are no probes: no network or AI requests, and the microphone is never
+opened) to the native Health view. Writing CLI sign-in status is bounded and parsed to a boolean; its
 raw output never reaches the page. The host exposes no backup setup or push
 capability; existing user repositories are never changed by app lifecycle events.
 The browser-test engine has a real startup/session-gate integration test, so

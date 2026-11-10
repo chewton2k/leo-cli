@@ -13,6 +13,11 @@ function stop() {
 }
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
+child.on('error', (error) => {
+  console.error(`leo-test-server did not start: ${error.message}`);
+  fs.rmSync(home, { recursive: true, force: true });
+  process.exit(1);
+});
 child.on('exit', (code) => {
   fs.rmSync(process.env.LEO_HOME, { recursive: true, force: true });
   process.exit(code || 0);

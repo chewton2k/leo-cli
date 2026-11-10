@@ -1,12 +1,11 @@
 const { test, expect } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
+const { signIn } = require('./sign-in');
 
 test.beforeEach(async ({ page }) => {
-  const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-  await page.goto(`/?token=${token}`);
-  await expect(page.locator('#app')).not.toBeEmpty();
+  await signIn(page);
 });
+
+const quiet = (page) => expect.poll(() => page.evaluate(() => document.getAnimations().filter((run) => run.playState === 'running' && run.effect && run.effect.getComputedTiming().iterations !== Infinity).length)).toBe(0);
 
 test('note reading modes sit beside the save state, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: 'Reading modes', body: 'Words about a passage.' } })).json();
@@ -16,8 +15,8 @@ test('note reading modes sit beside the save state, work in both orders and reta
   expect((await button.boundingBox()).y).toBeGreaterThan((await page.locator('#title').boundingBox()).y);
   for (const [key, label] of [['Home', 'Reads along'], ['End', 'When you ask'], ['Home', 'Reads along'], ['End', 'When you ask']]) {
     await button.click();
-    await page.waitForTimeout(300);
     await expect(page.getByRole('menu', { name: 'Note reading mode' })).toBeVisible();
+    await quiet(page);
     await page.keyboard.press(key);
     await page.keyboard.press('Enter');
     await expect(button).toHaveText(label);
@@ -148,7 +147,8 @@ test('a reading mode picked on a new note is saved with the note', async ({ page
   const button = page.locator('#margin-mode');
   await expect(button).toBeEnabled();
   await button.click();
-  await page.waitForTimeout(300);
+  await expect(page.getByRole('menuitemradio', { name: 'Reads along' })).toBeVisible();
+  await quiet(page);
   await page.getByRole('menuitemradio', { name: 'Reads along' }).click();
   await expect(button).toHaveText('Reads along');
   const persona = page.locator('#margin-persona');
@@ -210,7 +210,7 @@ test('the Tasks window leaves every outline tick reachable and the preview sits 
   await page.reload();
   await expect(page.locator('#tasks-window')).toBeVisible();
   await expect(page.locator('.outline-ticks span')).toHaveCount(12);
-  await page.waitForTimeout(400);
+  await quiet(page);
   const hits = await page.evaluate(() => [...document.querySelectorAll('.outline-ticks span')].map((tick) => {
     const r = tick.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + 4, r.top + r.height / 2);
@@ -229,7 +229,7 @@ test('lit passages join across the blank line between them without a seam', asyn
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc .blk')).toHaveCount(5);
   await page.evaluate(() => [0, 2, 4].forEach(i => document.querySelectorAll('#doc .blk')[i].classList.add('blk-glow')));
-  await page.waitForTimeout(800);
+  await quiet(page);
   const paint = await page.evaluate(() => [...document.querySelectorAll('#doc .blk')].map(el => {
     const style = getComputedStyle(el);
     return { fill: style.backgroundColor !== 'rgba(0, 0, 0, 0)', top: style.borderTopLeftRadius, bottom: style.borderBottomLeftRadius };
@@ -280,7 +280,7 @@ test('the note toolbar moves clear of an overlaying Felix panel instead of hidin
   await expect(page.locator('nav.actions')).toBeVisible();
   await page.locator('#chat-toggle').click();
   await expect(page.locator('#chat')).toBeVisible();
-  await page.waitForTimeout(500);
+  await quiet(page);
   const gap = await page.evaluate(() => ({ pill: document.querySelector('nav.actions').getBoundingClientRect(), chat: document.querySelector('#chat').getBoundingClientRect() }));
   expect(gap.pill.left).toBeGreaterThanOrEqual(0);
   expect(gap.pill.right).toBeLessThanOrEqual(gap.chat.left + 1);

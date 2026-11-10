@@ -7,12 +7,13 @@
 //! Deleting writes a tombstone line, never removes the file.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::jsonline::{load, read_all, write_file, Line};
 
 pub const MOST_BOARDS: usize = 100;
 pub const MOST_COLUMNS: usize = 12;
@@ -26,7 +27,6 @@ pub const PRIORITIES: [&str; 4] = ["", "low", "medium", "high"];
 pub const DEFAULT_COLUMNS: [&str; 3] = ["To do", "In progress", "Done"];
 /// The gap left between neighbouring cards, so most moves rewrite only the moved card.
 const STEP: f64 = 1024.0;
-const MOST_FILE_BYTES: u64 = 256 * 1024;
 
 /// One change at a time: a move reads a column's order and then writes it.
 pub static WRITING: Mutex<()> = Mutex::new(());
@@ -72,13 +72,6 @@ pub struct Card {
     pub deleted: bool,
 }
 
-/// What the file helpers need from a board or a card.
-trait Line: Serialize + DeserializeOwned {
-    const DIR: &'static str;
-    fn id(&self) -> &str;
-    fn stamp(&self) -> DateTime<Utc>;
-}
-
 impl Line for Board {
     const DIR: &'static str = "boards";
     fn id(&self) -> &str {
@@ -99,9 +92,7 @@ impl Line for Card {
     }
 }
 
-pub fn valid_id(id: &str) -> bool {
-    (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
+pub use crate::jsonline::valid_id;
 
 pub fn new_id(prefix: char) -> String {
     format!("{prefix}{}", uuid::Uuid::new_v4().simple())
@@ -200,109 +191,9 @@ pub fn new_board(name: &str, now: DateTime<Utc>) -> Board {
     }
 }
 
-fn root(chats: &Path) -> &Path {
-    chats.parent().unwrap_or(chats)
-}
-
-fn checked_dir(chats: &Path, kind: &str) -> anyhow::Result<PathBuf> {
-    leo_core::paths::contained_path(root(chats), &Path::new("notes/.leo").join(kind))
-}
-
-fn file_path(chats: &Path, kind: &str, name: &str) -> anyhow::Result<PathBuf> {
-    let dir = checked_dir(chats, kind)?;
-    leo_core::paths::contained_path(&dir, Path::new(name))
-}
-
-fn read_file<T: Line>(chats: &Path, path: &Path) -> Option<T> {
-    use std::io::Read;
-    let checked = file_path(chats, T::DIR, path.file_name()?.to_str()?).ok()?;
-    if checked != path {
-        return None;
-    }
-    let meta = std::fs::symlink_metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MOST_FILE_BYTES {
-        return None;
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path).ok()?;
-    if !file.metadata().ok()?.is_file() {
-        return None;
-    }
-    let mut text = String::new();
-    file.take(MOST_FILE_BYTES + 1)
-        .read_to_string(&mut text)
-        .ok()?;
-    if text.len() as u64 > MOST_FILE_BYTES {
-        return None;
-    }
-    text.lines()
-        .filter_map(|line| serde_json::from_str::<T>(line.trim()).ok())
-        .max_by_key(|item| item.stamp())
-}
-
-fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> {
-    use std::io::Write;
-    anyhow::ensure!(valid_id(item.id()), "That id is not valid.");
-    let dir = checked_dir(chats, T::DIR)?;
-    std::fs::create_dir_all(&dir)?;
-    let line = serde_json::to_string(item)? + "\n";
-    anyhow::ensure!(
-        line.len() as u64 <= MOST_FILE_BYTES,
-        "That is too large to save. Shorten its description and try again."
-    );
-    let path = file_path(chats, T::DIR, &format!("{}.json", item.id()))?;
-    // Keep temporary files hidden beside their destination.
-    let mut temp = tempfile::Builder::new()
-        .prefix(".")
-        .suffix(".tmp")
-        .tempfile_in(&dir)?;
-    temp.write_all(line.as_bytes())?;
-    temp.as_file().sync_all()?;
-    temp.persist(&path).map_err(|e| e.error)?;
-    Ok(())
-}
-
-/// Every file of one kind, tombstones included. A file counts only when its
-/// name is its id, so a copied or renamed file cannot pose as another item.
-/// There is no cap on the scan: deletes leave a tombstone behind (so a backup
-/// merge cannot bring the item back), and a cap counted before tombstones are
-/// dropped could silently hide live items. Each file read is size-bounded, and
-/// the live limits (`MOST_BOARDS`, `MOST_CARDS`) apply after tombstones go.
-fn read_all<T: Line>(chats: &Path) -> Vec<T> {
-    let Ok(dir) = checked_dir(chats, T::DIR) else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let id = name.strip_suffix(".json")?.to_string();
-            (!name.starts_with('.') && valid_id(&id)).then(|| (id, entry.path()))
-        })
-        .filter_map(|(id, path)| read_file::<T>(chats, &path).filter(|item| item.id() == id))
-        .collect()
-}
-
-fn load<T: Line>(chats: &Path, id: &str) -> Option<T> {
-    if !valid_id(id) {
-        return None;
-    }
-    let path = file_path(chats, T::DIR, &format!("{id}.json")).ok()?;
-    read_file::<T>(chats, &path).filter(|item| item.id() == id)
-}
-
 /// Boards, oldest first, so the tabs keep their places.
 pub fn boards(chats: &Path) -> Vec<Board> {
-    let mut all: Vec<Board> = read_all::<Board>(chats)
+    let mut all: Vec<Board> = read_all::<Board>(chats, None)
         .into_iter()
         .filter(|b| !b.deleted)
         .collect();
@@ -320,7 +211,7 @@ pub fn card(chats: &Path, id: &str) -> Option<Card> {
 }
 
 pub fn all_cards(chats: &Path) -> Vec<Card> {
-    read_all::<Card>(chats)
+    read_all::<Card>(chats, None)
         .into_iter()
         .filter(|c| !c.deleted)
         .collect()

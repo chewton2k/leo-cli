@@ -61,15 +61,39 @@ pub fn write_chain(doc: &mut DocumentMut, task: Task, chain: &[String]) {
     }
 }
 
+static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HOLDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) struct Saving {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for Saving {
+    fn drop(&mut self) {
+        HOLDING.set(false);
+    }
+}
+
+pub(crate) fn saving() -> Option<Saving> {
+    if HOLDING.get() {
+        return None;
+    }
+    let guard = SAVING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    HOLDING.set(true);
+    Some(Saving { _guard: guard })
+}
+
 /// Write a document back, atomically enough that a crash mid-write cannot leave
 /// a truncated config: the new text lands in a sibling file first, then
 /// replaces the original in one rename.
 pub fn save_document(path: &std::path::Path, doc: &DocumentMut) -> Result<()> {
-    let tmp = path.with_extension("toml.new");
-    std::fs::write(&tmp, doc.to_string())
-        .with_context(|| format!("could not write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("could not replace {}", path.display()))?;
-    Ok(())
+    leo_core::paths::write_atomic(path, doc.to_string())
+        .with_context(|| format!("could not replace {}", path.display()))
 }
 
 #[cfg(test)]

@@ -5,15 +5,20 @@ is laid out, and what a change needs before it can be merged.
 
 ## Getting set up
 
-You need Rust 1.90 or newer on macOS or Windows ([rustup.rs](https://rustup.rs)) and git. SoX
+You need Rust 1.88 or newer for the workspace, and 1.90 or newer for the app
+(`crates/leo-desktop`), on macOS or Windows ([rustup.rs](https://rustup.rs)) and git. SoX
 (`brew install sox` on macOS) is optional: without it the audio tests
 skip themselves.
 
 ```sh
 git clone https://github.com/chewton2k/leo-cli
 cd leo-cli
-cargo test
+cargo check
+cargo test -p leo-core
 ```
+
+Run one crate or one test locally; CI runs the whole suite on every push and
+pull request.
 
 To try your changes without touching your real notes, point leo at a scratch
 directory. `LEO_HOME` keeps notes, settings and keys all in one place:
@@ -30,7 +35,7 @@ reaching upward:
 
 | Crate | Holds |
 |-------|-------|
-| `crates/leo-core` | Notes, the on-disk store and undo, and retention choices. No terminal and no network. |
+| `crates/leo-core` | Notes, the on-disk store, and retention choices. No terminal and no network. |
 | `crates/leo-services` | AI providers and their fallback chains, prompts, config and credentials, recording, and health checks. |
 | `crates/leo-web` | leo's pages and the engine behind them. |
 | `crates/leo-host` | Gives the engine its AI, speech, settings, recording housekeeping and import powers; the Playwright test server. |
@@ -52,8 +57,8 @@ Every change comes with tests, and a bug fix comes with a test that failed
 before the fix. Write the test first where you can.
 
 ```sh
-cargo test                                        # everything
 cargo test -p leo-core                            # one crate
+cargo test -p leo-core <name>                     # one test
 cargo test --test e2e                             # end-to-end only
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
@@ -67,10 +72,11 @@ What each part covers:
 - **`tests/install_app.rs`** runs the app installers into a throwaway home directory.
 - **`tests/release.rs`** checks the scripts that pick and set the next
   version.
-- **`crates/leo-web/tests/markdown.test.js`** checks the page's Markdown
-  renderer (run by `cargo test` through Node; skipped if Node is missing).
-- **`crates/leo-web/tests/saving.test.js`** checks durable drafts, failed saves,
-  concurrent edits, and conflict recovery (also run by `cargo test`).
+- **`crates/leo-web/tests/*.test.js`** are Node tests of the page code, such as
+  `markdown.test.js` (the Markdown renderer) and `saving.test.js` (durable
+  drafts, failed saves, concurrent edits, conflict recovery). CI's node job runs
+  them all with `node --test crates/leo-web/tests/*.test.js`; locally run one
+  file, e.g. `node --test crates/leo-web/tests/markdown.test.js`.
 - **Browser flows** run against leo's real engine (`leo-test-server`) with isolated notes. After
   `cargo build -p leo-host --bin leo-test-server`, run `pnpm --dir crates/leo-web/tests/browser install`,
   `pnpm --dir crates/leo-web/tests/browser exec playwright install chromium`,
@@ -109,7 +115,8 @@ commit to one change.
 
 Before opening a pull request:
 
-- [ ] `cargo test` passes, including any new tests for your change
+- [ ] The tests for the crates you changed pass locally, and CI (the full
+      suite) is green, including any new tests for your change
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean
 - [ ] `cargo fmt --all` has been run
 - [ ] If the change is something a user would notice: the README says so

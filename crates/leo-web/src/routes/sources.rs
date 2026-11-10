@@ -1,3 +1,4 @@
+use crate::reply::error;
 use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -38,14 +39,6 @@ async fn outside<R: Send + 'static>(
     tokio::task::spawn_blocking(move || work(notes, note))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-}
-
-fn error(code: StatusCode, message: impl ToString) -> Response {
-    (
-        code,
-        Json(serde_json::json!({"error": message.to_string()})),
-    )
-        .into_response()
 }
 
 #[derive(Default, Deserialize)]

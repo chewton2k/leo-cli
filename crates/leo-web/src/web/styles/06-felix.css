@@ -1,0 +1,215 @@
+.glass {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid var(--line);
+}
+.btn.sm { padding: 7px 13px; font-size: 13.5px; border-radius: 9px; }
+.badge { font-style: normal; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.badge.across { background: var(--accent-soft); color: var(--accent); }
+.sub.class { display: flex; align-items: center; gap: 6px; color: var(--faint); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 5px; }
+.sub.class .dot { margin-top: 0; }
+.dot.idea { background: var(--bg); border: 2px solid var(--accent); }
+.chat-btn { width: 48px; }
+.chat-btn .felix { display: block; }
+.felix { overflow: visible; display: inline-block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.felix .felix-body rect { fill: #b4cfe7; }
+.felix .felix-eyes rect { fill: #19191b; }
+.felix .felix-spark rect { fill: #b4cfe7; opacity: 0; }
+.felix .felix-heart rect { fill: #f28ba8; }
+.felix .felix-heart, .felix .felix-thought, .felix .felix-z, .felix .felix-cheeks, .felix .felix-sweat { opacity: 0; }
+.felix .felix-thought rect { fill: #8fb3d6; }
+.felix .felix-z text { fill: var(--muted); }
+.felix .felix-body .felix-cheeks rect { fill: #f4a3b9; }
+.felix .felix-body .felix-sweat rect { fill: #7cc4f0; }
+.felix .felix-body, .felix .felix-eyes, .felix .felix-gaze, .felix .felix-arm, .felix .felix-heart, .felix .felix-thought rect, .felix .felix-z, .felix .felix-sweat { transform-box: fill-box; }
+.felix .felix-body { transform-origin: 50% 100%; }
+.felix .felix-eyes { transform-origin: 50% 50%; transition: transform .2s; }
+.felix .felix-gaze { transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px)); transition: transform .25s ease-out; }
+.felix .felix-arm { transform-origin: 50% 100%; }
+.felix .felix-heart { transform-origin: 50% 100%; }
+.felix.idle .felix-body { animation: felix-bob 2.8s ease-in-out infinite; }
+#chat-toggle .felix.idle .felix-body { animation: none; }
+.felix.blink .felix-eyes { animation: felix-blink .2s ease-in-out; }
+.felix.think .felix-eyes { animation: felix-look 1.6s ease-in-out infinite; }
+.felix.think .felix-body { animation: felix-bob 1.2s ease-in-out infinite; }
+.felix.think .felix-thought { opacity: 1; }
+.felix.think .felix-thought rect { animation: felix-pop 1.2s ease-in-out infinite; opacity: .2; }
+.felix.think .felix-thought rect:nth-child(2) { animation-delay: .2s; }
+.felix.think .felix-thought rect:nth-child(3) { animation-delay: .4s; }
+.felix.talk .felix-left { animation: felix-type .36s steps(2, jump-none) infinite; }
+.felix.talk .felix-right { animation: felix-type .36s steps(2, jump-none) .18s infinite; }
+.felix.talk .felix-body { animation: felix-bob .9s ease-in-out infinite; }
+.felix.nod .felix-body { animation: felix-nod .45s ease-out 1; }
+.felix.wave .felix-right { animation: felix-arm 0.32s steps(2, jump-none) 4; }
+.felix.dance .felix-body { animation: felix-dance .9s ease-in-out 2; }
+.felix.dance .felix-left { animation: felix-arm .3s steps(2, jump-none) 6; }
+.felix.dance .felix-right { animation: felix-arm .3s steps(2, jump-none) .15s 6; }
+.felix.dance .felix-eyes, .felix.cheer .felix-eyes { transform: scaleY(.3); }
+.felix.dance .felix-cheeks, .felix.cheer .felix-cheeks, .felix.giggle .felix-cheeks, .felix.boop .felix-cheeks, .felix.wake .felix-cheeks { opacity: 1; transition: opacity .2s; }
+.felix.dance .felix-heart { animation: felix-float 1.6s ease-out 1; }
+.felix.cheer .felix-heart { animation: felix-float 1.2s ease-out 2; }
+.felix.cheer .felix-body { animation: felix-jump .5s cubic-bezier(.3, 1.6, .5, 1) 4; }
+.felix.cheer .felix-left, .felix.cheer .felix-right { animation: felix-arm .25s steps(2, jump-none) 8; }
+.felix.cheer .felix-spark rect { animation: felix-spark .6s ease-out 4; }
+.felix.droop .felix-eyes { transform: translateY(2px) scaleY(.7); }
+.felix.droop .felix-body { animation: felix-sag 1.6s ease-in-out 1; }
+.felix.droop .felix-sweat { animation: felix-drip 1.5s ease-in 1; }
+.felix.droop .felix-left, .felix.droop .felix-right { transform: translateY(2px); }
+.felix.perk .felix-body { animation: felix-jump .55s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.perk .felix-left { animation: felix-arm .3s steps(2, jump-none) 2; }
+.felix.boop .felix-body { animation: felix-squish .5s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.boop .felix-eyes { transform: scaleY(.25); }
+.felix.hop .felix-body { animation: felix-jump .6s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.hop .felix-left, .felix.hop .felix-right { animation: felix-arm .3s steps(2, jump-none) 2; }
+.felix.spin .felix-body { animation: felix-spin .8s cubic-bezier(.5, 0, .3, 1) 1; transform-origin: 50% 50%; }
+.felix.giggle .felix-body { animation: felix-shake .18s ease-in-out 4; }
+.felix.giggle .felix-eyes { transform: scaleY(.3); }
+.felix.tickle .felix-body { animation: felix-tickle .14s ease-in-out 8; }
+.felix.tickle .felix-eyes { transform: scaleY(.22); }
+.felix.tickle .felix-cheeks { opacity: 1; transition: opacity .15s; }
+.felix.tickle .felix-left { animation: felix-arm .14s steps(2, jump-none) 8; }
+.felix.tickle .felix-right { animation: felix-arm .14s steps(2, jump-none) .07s 8; }
+.felix.tickle .felix-spark rect { animation: felix-spark .45s ease-out 2; }
+.felix.tickle .felix-heart { animation: felix-float 1.1s ease-out 1; }
+.felix .felix-monster, .felix .felix-rawr { opacity: 0; }
+.felix .felix-monster .felix-horns rect { fill: #f3e2b3; }
+.felix .felix-monster .felix-spikes rect { fill: #4b318f; }
+.felix .felix-monster .felix-brows rect, .felix .felix-monster .felix-maw { fill: #19191b; }
+.felix .felix-monster .felix-fangs rect { fill: #ffffff; }
+.felix .felix-body .felix-claws rect { fill: #f3e2b3; }
+.felix .felix-claws { opacity: 0; }
+.felix .felix-rawr text { fill: #e5484d; stroke: var(--bg); stroke-width: 2px; paint-order: stroke; stroke-linejoin: round; }
+.felix.monster { overflow: visible; position: relative; z-index: 60; transform-origin: 50% 100%; animation: felix-monster 2.8s cubic-bezier(.3, 1.4, .5, 1) 1; }
+.felix.monster.grow-down { transform-origin: 50% 0%; }
+.felix.monster .felix-body { animation: felix-rumble .09s linear 30; }
+.felix.monster .felix-skin, .felix.monster .felix-arm-skin { animation: felix-monster-skin 2.8s ease-in-out 1; }
+.felix.monster .felix-eyes rect { animation: felix-monster-eyes 2.8s ease-in-out 1; }
+.felix.monster .felix-monster, .felix.monster .felix-claws { animation: felix-monster-parts 2.8s ease-in-out 1; }
+.felix.monster .felix-rawr { transform-box: fill-box; transform-origin: 0% 100%; animation: felix-monster-rawr 2.8s ease-out 1; }
+.felix.monster .felix-left, .felix.monster .felix-right { animation: felix-arm .2s steps(2, jump-none) .5s 8; }
+.felix.monster .felix-spark rect { animation: felix-spark .5s ease-out 2.2s 1; }
+.felix .felix-hehe, .felix .felix-hi, .felix .felix-slash, .felix .felix-flames { opacity: 0; }
+.felix .felix-hehe text { fill: #9d7bff; stroke: var(--bg); stroke-width: 2px; paint-order: stroke; stroke-linejoin: round; }
+.felix .felix-hi text { fill: #f28ba8; stroke: var(--bg); stroke-width: 2px; paint-order: stroke; stroke-linejoin: round; }
+.felix .felix-slash rect { fill: #e5484d; }
+.felix .felix-flames .hot { fill: #ff7a1a; }
+.felix .felix-flames .warm { fill: #ffd23f; }
+.felix .felix-flames rect, .felix .felix-maw, .felix .felix-brows, .felix .felix-rawr, .felix .felix-hehe, .felix .felix-hi { transform-box: fill-box; }
+.felix .felix-rawr, .felix .felix-hehe, .felix .felix-hi { transform-origin: 0% 100%; }
+.felix .felix-flames rect { transform-origin: 50% 100%; }
+.felix .felix-maw { transform-origin: 50% 0%; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-skin, :root[data-felix="demon"] .felix:not(.cute-look) .felix-arm-skin, .felix.demon-look .felix-skin, .felix.demon-look .felix-arm-skin { fill: #7b5ccf; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-eyes rect, .felix.demon-look .felix-eyes rect { fill: #ff4d4d; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-monster, :root[data-felix="demon"] .felix:not(.cute-look) .felix-claws, .felix.demon-look .felix-monster, .felix.demon-look .felix-claws { opacity: 1; }
+:root[data-felix="demon"] .felix:not(.sweet):not(.cute-look) .felix-cheeks, :root[data-felix="demon"] .felix:not(.sweet):not(.cute-look) .felix-heart, .felix.demon-look .felix-cheeks, .felix.demon-look .felix-heart { opacity: 0 !important; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-spark rect, .felix.demon-look .felix-spark rect { fill: #ff7a1a; }
+.felix.rawr .felix-body { animation: felix-lunge .7s cubic-bezier(.3, 1.5, .5, 1) 1; }
+.felix.rawr .felix-maw { animation: felix-chomp .7s ease-out 1; }
+.felix.rawr .felix-rawr { animation: felix-word .9s ease-out 1; }
+.felix.rawr .felix-left, .felix.rawr .felix-right { animation: felix-arm .2s steps(2, jump-none) 3; }
+.felix.cackle .felix-body { animation: felix-shake .12s ease-in-out 7; }
+.felix.cackle .felix-eyes { transform: scaleY(.3); }
+.felix.cackle .felix-hehe { animation: felix-word .9s ease-out 1; }
+.felix.blaze .felix-flames { animation: felix-flare .9s ease-out 1; }
+.felix.blaze .felix-flames rect { animation: felix-flicker .15s steps(2, jump-none) 6; }
+.felix.blaze .felix-flames rect:nth-child(even) { animation-delay: .07s; }
+.felix.blaze .felix-body { animation: felix-jump .6s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.glare .felix-body { animation: felix-loom .9s ease-in-out 1; }
+.felix.glare .felix-eyes { transform: scale(1.3); }
+.felix.glare .felix-eyes rect { animation: felix-glow .9s ease-in-out 1; }
+.felix.glare .felix-brows { transform: translateY(1px); }
+.felix.swipe .felix-left { animation: felix-swipe .6s cubic-bezier(.5, 0, .3, 1) 1; }
+.felix.swipe .felix-right { animation: felix-swipe .6s cubic-bezier(.5, 0, .3, 1) .08s 1; }
+.felix.swipe .felix-slash { animation: felix-slashed .9s ease-out 1; }
+.felix.sweet { overflow: visible; position: relative; z-index: 60; transform-origin: 50% 100%; animation: felix-monster 2.8s cubic-bezier(.3, 1.4, .5, 1) 1; }
+.felix.sweet.grow-down { transform-origin: 50% 0%; }
+.felix.sweet .felix-body { animation: felix-jump .6s cubic-bezier(.3, 1.6, .5, 1) .5s 3; }
+.felix.sweet .felix-skin, .felix.sweet .felix-arm-skin { animation: felix-sweet-skin 2.8s ease-in-out 1; }
+.felix.sweet .felix-eyes rect { animation: felix-sweet-eyes 2.8s ease-in-out 1; }
+.felix.sweet .felix-monster, .felix.sweet .felix-claws { animation: felix-sweet-parts 2.8s ease-in-out 1; }
+.felix.sweet .felix-cheeks { animation: felix-sweet-blush 2.8s ease-in-out 1; }
+.felix.sweet .felix-heart { animation: felix-float 1.1s ease-out .6s 2; }
+.felix.sweet .felix-hi { animation: felix-monster-rawr 2.8s ease-out 1; }
+.felix.sweet .felix-spark rect { fill: #b4cfe7; animation: felix-spark .5s ease-out .6s 3; }
+.felix.sweet .felix-left, .felix.sweet .felix-right { animation: felix-arm .3s steps(2, jump-none) .5s 6; }
+.felix.sleep .felix-eyes { transform: scaleY(.12); transition: transform 1.2s ease-in; }
+.felix.sleep .felix-body { animation: felix-breathe 3.6s ease-in-out infinite; }
+.felix.sleep .felix-z { opacity: 1; animation: felix-snooze 2.4s ease-in-out infinite; }
+.felix.wake .felix-body { animation: felix-jump .5s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix .felix-tool { opacity: 0; transform-box: fill-box; transition: opacity .2s; }
+.felix .felix-tool .metal { fill: #5b6472; }
+.felix .felix-tool .glass { fill: #dff1ff; opacity: .55; }
+.felix .felix-tool .wood { fill: #a0673c; }
+.felix .felix-tool .paper { fill: #ffffff; }
+.felix .felix-tool .paper-old { fill: #f3e2b3; }
+.felix .felix-tool .roll { fill: #d9c08a; }
+.felix .felix-tool .ink { fill: #c7ccd6; }
+.felix .felix-tool .ink-old, .felix .felix-tool .fold { fill: #b59a5c; }
+.felix .felix-tool .pin { fill: #4f46e5; }
+.felix .felix-tool .cap { fill: #f2c94c; }
+.felix .felix-tool .barrel { fill: #4f46e5; }
+.felix .felix-tool .tip { fill: #19191b; }
+.felix .felix-tool .shine { fill: #c9ced8; }
+.felix.tool-search .felix-tool-search, .felix.tool-open .felix-tool-open, .felix.tool-map .felix-tool-map, .felix.tool-edit .felix-tool-edit, .felix.tool-create .felix-tool-create { opacity: 1; }
+.felix[class*="tool-"] .felix-thought { opacity: 0; }
+.felix.tool-search .felix-tool-search { animation: felix-scan 1.6s ease-in-out infinite; }
+.felix.tool-search .felix-eyes { animation: felix-scan 1.6s ease-in-out infinite; }
+.felix.tool-open .felix-tool-open { transform-origin: 50% 50%; animation: felix-unroll 1.8s ease-out infinite; }
+.felix.tool-open .felix-eyes { transform: translateY(2px); }
+.felix.tool-map .felix-tool-map { transform-origin: 0% 100%; animation: felix-tilt 1.4s ease-in-out infinite; }
+.felix.tool-map .felix-eyes { transform: translateX(2px); }
+.felix.tool-edit .pen { transform-box: fill-box; animation: felix-scribble .5s steps(2, jump-none) infinite; }
+.felix.tool-edit .felix-eyes { transform: translate(-1px, 2px); }
+.felix.tool-create .felix-tool-create { transform-origin: 50% 100%; animation: felix-hammer .5s cubic-bezier(.5, 0, .3, 1) infinite; }
+.felix.tool-create .felix-right { animation: felix-arm .5s steps(2, jump-none) infinite; }
+.felix.tool-create .felix-spark rect { animation: felix-spark .5s ease-out infinite; }
+@keyframes felix-scan { 0%, 100% { transform: translateX(-6px); } 50% { transform: translateX(3px); } }
+@keyframes felix-unroll { 0% { transform: scaleX(.25); } 35%, 100% { transform: scaleX(1); } }
+@keyframes felix-tilt { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(5deg); } }
+@keyframes felix-scribble { 0% { transform: translate(-2px, 1px); } 100% { transform: translate(2px, -1px); } }
+@keyframes felix-hammer { 0%, 100% { transform: rotate(-30deg); } 45% { transform: rotate(20deg); } }
+@media (prefers-reduced-motion: reduce) { .felix[class*="tool-"] * { animation: none !important; } }
+@keyframes felix-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
+@keyframes felix-blink { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.1); } }
+@keyframes felix-look { 0%, 100% { transform: translate(0, 0); } 30% { transform: translate(-3px, -1px); } 70% { transform: translate(4px, -2px); } }
+@keyframes felix-arm { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes felix-type { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes felix-pop { 0%, 100% { opacity: .2; transform: scale(.8); } 40% { opacity: 1; transform: scale(1.15); } }
+@keyframes felix-nod { 0%, 100% { transform: translateY(0) scale(1, 1); } 40% { transform: translateY(1px) scale(1.04, .94); } }
+@keyframes felix-dance { 0%, 100% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-5px) rotate(-9deg); } 50% { transform: translateY(0) rotate(0); } 75% { transform: translateY(-5px) rotate(9deg); } }
+@keyframes felix-jump { 0%, 100% { transform: translateY(0) scale(1, 1); } 15% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-8px) scale(.96, 1.05); } }
+@keyframes felix-spark { 0% { opacity: 0; transform: translateY(4px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+@keyframes felix-float { 0% { opacity: 0; transform: translateY(6px) scale(.6); } 25% { opacity: 1; transform: translateY(0) scale(1.1); } 100% { opacity: 0; transform: translateY(-8px) scale(1); } }
+@keyframes felix-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+@keyframes felix-sag { 0% { transform: translateX(0) scale(1, 1); } 10% { transform: translateX(-2px); } 20% { transform: translateX(2px); } 30%, 85% { transform: translateY(1px) scale(1.04, .93); } 100% { transform: translateY(0) scale(1, 1); } }
+@keyframes felix-drip { 0% { opacity: 0; transform: translateY(0); } 15% { opacity: 1; } 80% { opacity: 1; transform: translateY(6px); } 100% { opacity: 0; transform: translateY(8px); } }
+@keyframes felix-squish { 0% { transform: scale(1, 1); } 30% { transform: scale(1.12, .82); } 60% { transform: scale(.94, 1.08); } 100% { transform: scale(1, 1); } }
+@keyframes felix-spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
+@keyframes felix-tickle { 0%, 100% { transform: rotate(0) translateY(0); } 25% { transform: rotate(-7deg) translateY(-1px); } 75% { transform: rotate(7deg) translateY(-1px); } }
+@keyframes felix-monster { 0%, 8% { transform: scale(1); } 22% { transform: scale(2.1); } 30%, 72% { transform: scale(1.9); } 88%, 100% { transform: scale(1); } }
+@keyframes felix-rumble { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-.6px, .3px); } 75% { transform: translate(.6px, -.3px); } }
+@keyframes felix-monster-skin { 0%, 8% { fill: #b4cfe7; } 20%, 76% { fill: #7b5ccf; } 92%, 100% { fill: #b4cfe7; } }
+@keyframes felix-monster-eyes { 0%, 8% { fill: #19191b; } 20%, 76% { fill: #ff4d4d; } 92%, 100% { fill: #19191b; } }
+@keyframes felix-monster-parts { 0%, 12% { opacity: 0; } 22%, 76% { opacity: 1; } 86%, 100% { opacity: 0; } }
+@keyframes felix-monster-rawr { 0%, 26% { opacity: 0; transform: scale(.4); } 34% { opacity: 1; transform: scale(1.15); } 40%, 66% { opacity: 1; transform: scale(1); } 74%, 100% { opacity: 0; transform: scale(.9); } }
+@keyframes felix-lunge { 0%, 100% { transform: translateY(0) scale(1); } 35% { transform: translateY(-2px) scale(1.16); } 60% { transform: translateY(-1px) scale(1.1); } }
+@keyframes felix-chomp { 0%, 100% { transform: scaleY(1); } 30%, 60% { transform: scaleY(1.8); } }
+@keyframes felix-word { 0% { opacity: 0; transform: scale(.4); } 25% { opacity: 1; transform: scale(1.15); } 35%, 75% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.9); } }
+@keyframes felix-flare { 0% { opacity: 0; } 15%, 75% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes felix-flicker { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.45); } }
+@keyframes felix-loom { 0%, 100% { transform: translateY(0) scale(1); } 40%, 70% { transform: translateY(-1px) scale(1.08); } }
+@keyframes felix-glow { 0%, 100% { fill: #ff4d4d; } 30%, 70% { fill: #ffd23f; } }
+@keyframes felix-swipe { 0%, 100% { transform: translateY(0); } 30% { transform: translateY(-9px); } 55% { transform: translateY(2px); } }
+@keyframes felix-slashed { 0%, 45% { opacity: 0; transform: translate(-2px, -2px); } 55% { opacity: 1; transform: translate(0, 0); } 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes felix-sweet-skin { 0%, 8% { fill: #7b5ccf; } 20%, 76% { fill: #b4cfe7; } 92%, 100% { fill: #7b5ccf; } }
+@keyframes felix-sweet-eyes { 0%, 8% { fill: #ff4d4d; } 20%, 76% { fill: #19191b; } 92%, 100% { fill: #ff4d4d; } }
+@keyframes felix-sweet-parts { 0%, 12% { opacity: 1; } 22%, 76% { opacity: 0; } 86%, 100% { opacity: 1; } }
+@keyframes felix-sweet-blush { 0%, 14% { opacity: 0; } 24%, 76% { opacity: 1; } 86%, 100% { opacity: 0; } }
+@keyframes felix-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.03, .97); } }
+@keyframes felix-snooze { 0% { opacity: 0; transform: translate(0, 2px) scale(.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(3px, -4px) scale(1.1); } }
+@media (prefers-reduced-motion: reduce) {
+  .felix *, .felix .felix-body, .felix .felix-eyes, .felix.monster, .felix.sweet { animation: none !important; transition: none !important; }
+  .felix.think .felix-thought, .felix.sleep .felix-z, .felix.think .felix-thought rect { opacity: 1; }
+}
+

@@ -1288,8 +1288,12 @@ mod tests {
         let mut cache = cache(&ids);
         cache.notes.get_mut(&ids[0]).unwrap().concepts =
             vec!["breadth-first search".into(), "queue".into()];
+        let words = leo_core::notes::question_words("explain breadth first search");
         assert!(
-            store.relevant("explain breadth first search", 8).is_empty(),
+            !store.notes.iter().any(|n| {
+                let text = format!("{} {}", n.title, n.body).to_lowercase();
+                words.iter().any(|w| text.contains(w.as_str()))
+            }),
             "the note's own words never say it"
         );
         let found = matches(&store, &cache, "explain breadth first search", 8);

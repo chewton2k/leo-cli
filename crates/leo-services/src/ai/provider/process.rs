@@ -103,6 +103,28 @@ pub(crate) fn line(reader: &mut impl BufRead) -> std::io::Result<Option<String>>
         .map_err(|_| std::io::Error::other("the agent sent unreadable output"))
 }
 
+pub(crate) fn lines<T: Send + 'static>(
+    reader: impl Read + Send + 'static,
+    messages: std::sync::mpsc::SyncSender<T>,
+    map: impl Fn(std::io::Result<Option<String>>) -> Option<T> + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(reader);
+        loop {
+            let line = line(&mut reader);
+            let ended = !matches!(&line, Ok(Some(_)));
+            if let Some(message) = map(line) {
+                if messages.send(message).is_err() {
+                    break;
+                }
+            }
+            if ended {
+                break;
+            }
+        }
+    })
+}
+
 pub(crate) fn output(reader: impl Read) -> (String, bool) {
     let mut bytes = Vec::new();
     let failed = reader
@@ -183,7 +205,7 @@ impl Watchdog {
                         signal(&child);
                         return;
                     }
-                    std::thread::sleep(Duration::from_millis(25));
+                    std::thread::park_timeout(Duration::from_millis(25));
                 }
             })
         };
@@ -215,6 +237,7 @@ impl Drop for Watchdog {
     fn drop(&mut self) {
         self.finished.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
             let _ = thread.join();
         }
     }

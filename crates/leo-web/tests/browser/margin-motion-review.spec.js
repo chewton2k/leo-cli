@@ -2,10 +2,11 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss, pageHtml } = require('../page-source');
 
 const web = path.resolve(__dirname, '../../src/web');
 const read = (name) => fs.readFileSync(path.join(web, name), 'utf8');
-const css = () => read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+const css = () => pageCss();
 
 const WORDS = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ');
 const SHORT = 'The password is stored as plain text.';
@@ -63,12 +64,10 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     window.dots=id=>[...document.querySelectorAll('.margin-ink path.squiggle[data-id="'+id+'"]')].sort((a,b)=>a.dataset.line-b.dataset.line).map(p=>{const cs=getComputedStyle(p);const m=cs.clipPath.match(/inset\\(([^)]*)\\)/);let progress=1;if(m){const right=m[1].trim().split(/\\s+/)[1];progress=right.endsWith('%')?1-parseFloat(right)/100:1;}const dash=cs.strokeDasharray.split(/[ ,]+/).map(parseFloat);const n=Math.floor(p.getTotalLength()/4)+1;const pts=[];for(let k=0;k<n&&pts.length<400;k++){const pt=p.getPointAtLength(Math.min(k*4,p.getTotalLength()));pts.push([+pt.x.toFixed(2),+pt.y.toFixed(2)]);}return {progress,dash,d:p.getAttribute('d'),pts,clip:cs.clipPath,anim:cs.animationName};});
     window.start().catch(fail);`;
   const server = http.createServer((req, res) => {
-    const type = { '/fixture.js': 'text/javascript', '/style.css': 'text/css' }[req.url];
     if (req.url === '/fixture.js') { res.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return res.end(fixtureScript); }
     if (req.url === '/style.css') { res.setHeader('Content-Type', 'text/css; charset=utf-8'); return res.end(css()); }
     const lib = req.url.match(/^\/lib\/(.+)$/);
     if (lib) { res.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return res.end(read(lib[1])); }
-    void type;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body class="on-note"><header class="bar" id="bar"><div class="bar-row">Leo</div></header><main id="app"></main><script src="/lib/markdown.js"></script><script src="/lib/editing.js"></script><script src="/lib/doc.js"></script><script src="/lib/margin.js"></script><script src="/fixture.js"></script></body></html>');
   });
@@ -108,6 +107,24 @@ function frames(page, ms, probe, between = []) {
   }), [ms, probe.toString(), between]);
 }
 
+function wipeFrames(page, thread) {
+  return page.evaluate(async (arriving) => {
+    window.arrive(arriving);
+    await new Promise((found) => {
+      const look = () => (document.querySelector(`.margin-ink path.squiggle.arriving[data-id="${arriving.id}"]`) ? found() : requestAnimationFrame(look));
+      look();
+    });
+    const runs = document.getAnimations().filter((run) => run.animationName === 'margin-wipe');
+    for (const run of runs) run.pause();
+    const out = [];
+    for (let t = 0; t <= WIPE_MS + 100; t += 10) {
+      for (const run of runs) run.currentTime = t;
+      out.push({ t, dots: window.dots(arriving.id) });
+    }
+    return out;
+  }, thread);
+}
+
 const stateOf = (id) => {
   const get = (selector) => document.querySelector(selector);
   const solid = get(`.margin-ink path.solid[data-id="${id}"]`);
@@ -140,10 +157,8 @@ test.describe('arriving underline', () => {
   for (const [name, options] of [['wide', {}], ['compact', { width: 390, height: 844, layout: 'marks', context: { hasTouch: true, isMobile: true } }]]) {
     test(`${name}: each measured line is revealed left to right over about 500ms while the dots never move`, async ({ browser }) => {
       await fixture(browser, async (page) => {
-        const lines = await page.evaluate(() => rectsOf('t1').length || 1);
         const long = { ...THREADS.long, id: 't3', quote: WORDS.slice(0, 200), suffix: WORDS.slice(200, 224) };
-        const after = await frames(page, 1700, () => ({ dots: window.dots('t3') }), [[40, `window.arrive(${JSON.stringify(long)})`]]);
-        void lines;
+        const after = await wipeFrames(page, long);
         const seen = after.filter((f) => f.dots.length);
         expect(seen.length).toBeGreaterThan(10);
         const count = seen[seen.length - 1].dots.length;
@@ -176,8 +191,7 @@ test.describe('arriving underline', () => {
         const took = done.t - began.t;
         expect(took).toBeGreaterThan(350);
         expect(took).toBeLessThan(700);
-        const rest = await page.evaluate(() => window.dots('t3').map((l) => l.clip));
-        expect(rest.every((c) => c === 'none')).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.dots('t3').map((l) => l.clip).every((c) => c === 'none'))).toBe(true);
       }, options);
     });
   }
@@ -456,9 +470,8 @@ test.describe('reading-mode menu', () => {
         setTimeout(() => button.click(), 60);
         setTimeout(() => button.click(), 120);
       });
-      await page.waitForTimeout(600);
-      const settled = await page.evaluate(() => ({ hidden: document.querySelector('#margin-mode-menu').hidden, expanded: document.querySelector('#margin-mode').getAttribute('aria-expanded'), running: document.querySelector('#margin-mode-menu').getAnimations().length }));
-      expect(settled.running).toBe(0);
+      await expect.poll(() => page.evaluate(() => document.querySelector('#margin-mode-menu').getAnimations().length)).toBe(0);
+      const settled = await page.evaluate(() => ({ hidden: document.querySelector('#margin-mode-menu').hidden, expanded: document.querySelector('#margin-mode').getAttribute('aria-expanded') }));
       expect(settled.hidden).toBe(settled.expanded !== 'true');
     });
     await fixture(browser, async (page) => {
@@ -499,7 +512,8 @@ test.describe('chat history list', () => {
       expect(title.weight).toBeGreaterThanOrEqual(450);
       expect(title.weight).toBeLessThanOrEqual(560);
     });
-    expect(read('index.html')).not.toContain('.chat-history-new');
+    expect(pageHtml()).toContain('.chat-history-row');
+    expect(pageHtml()).not.toContain('.chat-history-new');
   });
 
   test('Delete grows from the cross in width while the labels cross-fade, reversing cleanly', async ({ browser }) => {
@@ -601,7 +615,8 @@ test('margin replies expand as borderless retained controls and collapse out of 
     await expect(note.locator('textarea')).toBeFocused();
     expect(await note.locator('textarea').evaluate(el => getComputedStyle(el).outlineStyle)).toBe('none');
     expect(await note.locator('.margin-surface').count()).toBe(0);
-    await page.waitForTimeout(800);
+    await expect(more).toHaveAttribute('aria-hidden', 'false');
+    await expect.poll(() => more.evaluate((el) => el.getAnimations().length)).toBe(0);
     const closing = await frames(page, 500, () => {
       const el = document.querySelector('.margin-note[data-id="t1"] .margin-more');
       return { height: el.getBoundingClientRect().height, opacity: Number(getComputedStyle(el).opacity) };

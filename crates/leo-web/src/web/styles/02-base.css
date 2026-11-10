@@ -1,0 +1,72 @@
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+@media (min-width: 1000px) { html { scrollbar-gutter: stable; } }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font: 16px/1.55 var(--note-font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  --side: 0px;
+  --right: 0px;
+  --bar-row-height: 40px;
+  --bar-height: calc(var(--top) + var(--bar-row-height) + 21px);
+  --mid: calc(var(--side) + (100% - var(--side) - var(--right)) / 2);
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button, label, summary, [role="button"], [role="tab"], [draggable="true"], .bar, .actions, .select-bar, .activity-head, .set-label, .kanban-col-head {
+  -webkit-user-select: none; user-select: none;
+}
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable], .doc, .prose .task > span, .prose, pre, code, .bubble, .msg-error, .msg-passage-text, .margin-felix, .margin-you, .margin-pending, .margin-problem, .proposal-old, .proposal-new, .msg-step, .set-note.warn, .set-path, .sched-about, .rec-transcript, .rec-points, .rec-error-details, .upload-error, .diagram-error, .toast { -webkit-user-select: text; user-select: text; }
+input:not(:focus), textarea:not(:focus) { -webkit-user-select: none; user-select: none; }
+.doc-tail, .blk:has(.blank) { -webkit-user-select: none; user-select: none; }
+a, img { -webkit-user-drag: none; }
+a { color: var(--accent); }
+[hidden] { display: none !important; }
+
+.bar {
+  position: sticky; top: 0; z-index: 30;
+  padding: calc(var(--top) + 10px) 16px 11px;
+  background: var(--page);
+}
+.bar::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 20px; pointer-events: none;
+  background: var(--page); opacity: 0; transition: opacity var(--t-follow);
+  -webkit-mask-image: linear-gradient(#000, transparent); mask-image: linear-gradient(#000, transparent);
+}
+.bar.scrolled::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .bar::after { transition: none; } }
+.bar-row { max-width: 728px; margin: 0 auto; display: flex; align-items: center; gap: 6px; min-height: var(--bar-row-height); }
+.brand { font-weight: 750; font-size: var(--fs-xl); letter-spacing: -.02em; border: 0; background: none; padding: 4px 6px 4px 2px; }
+.crumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: var(--fs-md); }
+.crumbs button { border: 0; background: none; padding: 4px 6px; border-radius: var(--r-tile); color: var(--muted); max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
+.crumbs button:last-child { color: var(--text); font-weight: 600; }
+.crumbs .sep { color: var(--faint); }
+.icon-btn {
+  width: 40px; height: 40px; flex: none; display: grid; place-items: center;
+  border: 0; border-radius: 12px; background: transparent; color: var(--text);
+}
+.icon-btn:hover { background: var(--surface-2); }
+.icon-btn.danger { color: var(--danger); }
+.icon-btn.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.icon-btn svg { width: 20px; height: 20px; }
+svg[stroke-width="1.8"]:not(.felix *) :is(path, circle, rect, line, polyline) { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
+.search {
+  max-width: 760px; margin: 8px auto 0; display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px;
+}
+.search svg { width: 16px; height: 16px; color: var(--faint); flex: none; }
+.search input { flex: 1; border: 0; outline: 0; background: none; padding: 10px 0; font-size: 16px; }
+
+main { max-width: 760px; margin: 0 auto; padding: 8px 16px calc(var(--bottom) + 110px); }
+:root { --note-width: 980px; }
+:root[data-note-width="comfortable"] { --note-width: 760px; }
+:root[data-note-width="full"] { --note-width: 100%; }
+[data-text-size="medium"] { --read: 1; }
+[data-text-size="small"] { --read: .9; }
+[data-text-size="large"] { --read: 1.12; }
+:root[data-felix-letters="notes"] { --felix-letters: var(--note-font); }
+body.on-note main { max-width: none; margin-inline: 0; }

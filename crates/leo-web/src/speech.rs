@@ -1,3 +1,4 @@
+use crate::reply::error;
 use crate::AppState;
 use anyhow::Result;
 use axum::{
@@ -6,16 +7,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::Arc;
 
 pub trait SpeechApi: Send + Sync {
     fn view(&self) -> Result<Value>;
     fn change(&self, change: Value) -> Result<Value>;
-}
-
-fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({ "error": message }))).into_response()
 }
 
 async fn call(api: Option<Arc<dyn SpeechApi>>, change: Option<Value>) -> Response {
@@ -32,7 +29,7 @@ async fn call(api: Option<Arc<dyn SpeechApi>>, change: Option<Value>) -> Respons
     .await
     {
         Ok(Ok(view)) => Json(view).into_response(),
-        Ok(Err(problem)) => error(StatusCode::BAD_REQUEST, &problem.to_string()),
+        Ok(Err(problem)) => error(StatusCode::BAD_REQUEST, problem.to_string()),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Speech models could not be opened. Try again in a moment.",
@@ -41,7 +38,7 @@ async fn call(api: Option<Arc<dyn SpeechApi>>, change: Option<Value>) -> Respons
 }
 
 pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    call(state.speech, None).await
+    call(state.speech.clone(), None).await
 }
 
 pub(crate) async fn change(
@@ -54,5 +51,5 @@ pub(crate) async fn change(
             "This model change could not be read. Choose an action in Speech models.",
         );
     };
-    call(state.speech, Some(change)).await
+    call(state.speech.clone(), Some(change)).await
 }

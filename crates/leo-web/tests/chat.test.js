@@ -453,6 +453,59 @@ test('conversation rows display only escaped titles, including search results', 
 
 
 
+test('removing a document keeps the chip gone when the server no longer has it and restores it on a real failure', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('    async function removeFile(id) {');
+  const removeFile = source.slice(start, source.indexOf('\n    let pickTimer', start));
+  for (const [status, kept, notices] of [[200, false, 0], [404, false, 0], [401, false, 0], [500, true, 1]]) {
+    const state = { id: 'c1', files: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }] };
+    const noted = [];
+    const context = vm.createContext({ state, drawRefs() {}, notify: (message) => noted.push(message), encodeURIComponent, request: async () => ({ ok: status === 200, status }) });
+    vm.runInContext(removeFile, context);
+    await context.removeFile('b');
+    assert.equal(state.files.map((f) => f.id).join(), kept ? 'a,b,c' : 'a,c', String(status));
+    assert.equal(noted.length, notices, String(status));
+  }
+});
+
+test('the request wrapper sends same-origin credentials and reports a locked session', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('    const request = async (url, init = {}) => {');
+  const wrapper = source.slice(start, source.indexOf('\n    };\n', start) + 7);
+  for (const [status, locked] of [[401, 1], [200, 0]]) {
+    const sent = [];
+    let locks = 0;
+    const context = vm.createContext({ onLocked: () => { locks += 1; }, fetch: async (url, init) => { sent.push([url, init]); return { ok: status === 200, status }; } });
+    vm.runInContext(`${wrapper}\nthis.request = request;`, context);
+    const response = await context.request('/api/review', { method: 'POST', body: '{}' });
+    assert.equal(response.status, status);
+    assert.equal(locks, locked, String(status));
+    assert.deepEqual(JSON.parse(JSON.stringify(sent)), [['/api/review', { credentials: 'same-origin', method: 'POST', body: '{}' }]]);
+  }
+});
+
+test('a failed review-done post puts the sent items back without dropping a newer list', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('    async function startReview() {');
+  const startReview = source.slice(start, source.indexOf('\n    const TOOL_ICONS', start));
+  const due = { key: 'a', due: true, notes: [] };
+  const later = { key: 'b', due: false, notes: [] };
+  const newer = [{ key: 'c', due: true, notes: [] }];
+  for (const [ok, reload, expected] of [[false, true, 'a,c'], [false, false, 'a,b'], [true, true, 'c'], [true, false, 'b']]) {
+    const state = { review: [due, later], busy: null, refs: [] };
+    const context = vm.createContext({ state, MOST_REFS: 8, drawRefs() {}, send() {}, reviewPrompt: () => '', request: async () => { if (reload) state.review = newer; return { ok }; } });
+    vm.runInContext(startReview, context);
+    await context.startReview();
+    assert.equal(state.review.map((m) => m.key).join(), expected, `${ok} ${reload}`);
+  }
+});
+
 function chatSendFixture(id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');
@@ -471,7 +524,7 @@ function chatSendFixture(id = 'practice', access = 'ask', before = async () => t
     pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
     onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),
-    fetch: async (_url, options) => {
+    request: async (_url, options) => {
       requests.push(JSON.parse(options.body));
       const reply = stream.replies ? stream.replies[requests.length - 1] || {} : stream;
       let read = false;
@@ -885,7 +938,7 @@ function answers(messages, { busy = null, send = () => {}, clipboard = null, fet
     root: { navigator: { clipboard } }, upload: Promise.resolve(), openTraces: new Set(), working: new Map(), tick() {}, workingFor: () => '', writer: () => '', writerOf: () => '',
     stepChevron: '', MOST_REPLY_STEPS: 64, clipped: (t) => t, stored: () => messages.filter((m) => !m.pending), fit() {}, persist() {}, draw() {}, send,
     notify: (text) => calls.push(`notify:${text}`), setTimeout: () => 0,
-    fetch: async (url, init) => { calls.push(['fetch', url, JSON.parse(init.body)]); return { ok: fetchOk }; },
+    request: async (url, init) => { calls.push(['fetch', url, JSON.parse(init.body)]); return { ok: fetchOk }; },
   };
   vm.createContext(context);
   for (let tries = 0; tries < 40; tries++) {

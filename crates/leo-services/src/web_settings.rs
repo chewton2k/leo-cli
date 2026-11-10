@@ -254,6 +254,7 @@ pub fn apply(
     store: &dyn SecretStore,
     local: &Local,
 ) -> Result<String> {
+    let _saving = edit::saving();
     match text(change, "set")? {
         "provider" => {
             let task = task_named(text(change, "task")?).context("no such task")?;

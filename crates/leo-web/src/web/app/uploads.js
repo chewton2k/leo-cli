@@ -348,16 +348,21 @@ async function viewOriginal(id, name, page = null) {
   scrim.querySelector('.sheet').classList.add('viewer');
   state.viewerZoom = 1;
   if (kind === 'text') {
-    const box = scrim.querySelector('.viewer-text');
-    try {
-      const response = await fetch(url, { credentials: 'same-origin' });
-      if (!response.ok) throw new Error();
-      const text = await response.text();
-      if (!box.isConnected) return;
-      box.innerHTML = /\.md$/i.test(name) ? md.render(text) : `<pre>${esc(text)}</pre>`;
-    } catch (e) {
-      box.textContent = 'This file could not be shown. Download it instead.';
-    }
+    await fillTextFile(scrim.querySelector('.viewer-text'), url, name);
+  }
+}
+
+async function fillTextFile(box, url, name) {
+  try {
+    const response = await fetch(url, { credentials: 'same-origin' });
+    if (response.status === 401) throw new Locked();
+    if (!response.ok) throw new Error();
+    const text = await response.text();
+    if (!box.isConnected) return;
+    box.innerHTML = /\.md$/i.test(name) ? md.render(text) : `<pre>${esc(text)}</pre>`;
+  } catch (e) {
+    if (e instanceof Locked) showLocked();
+    else box.textContent = 'This file could not be shown. Download it instead.';
   }
 }
 

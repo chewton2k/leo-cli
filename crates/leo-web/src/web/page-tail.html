@@ -1,0 +1,33 @@
+</style>
+</head>
+<body>
+<aside class="side" id="side" aria-label="leo"></aside>
+<header class="bar" id="bar" data-tauri-drag-region="deep">
+  <div class="bar-row">
+    <button class="icon-btn" id="back" data-action="back" aria-label="Back" hidden></button>
+    <button class="brand" data-action="home">leo</button>
+    <nav class="crumbs" id="crumbs" aria-label="Folder"></nav>
+    <button class="icon-btn chat-btn" id="chat-toggle" data-action="chat" aria-label="Ask Felix" title="Ask Felix"></button>
+    <button class="icon-btn" id="search-toggle" data-action="toggle-search" aria-label="Search"></button>
+    <button class="icon-btn" id="menu" data-action="menu" aria-haspopup="menu" aria-expanded="false" aria-label="More"></button>
+  </div>
+  <label class="search" id="search" hidden>
+    <span id="search-icon"></span>
+    <input id="search-input" type="search" placeholder="Search every note" autocomplete="off" enterkeyhint="search">
+  </label>
+</header>
+<div id="app-update-banner" class="app-update-banner" role="status" data-print-off hidden></div>
+<main id="app" aria-live="polite"></main>
+<div id="floating"></div>
+<script src="/markdown.js"></script>
+<script src="/editing.js"></script>
+<script src="/doc.js"></script>
+<script src="/saving.js"></script>
+<script src="/margin.js"></script>
+<script src="/schedule.js"></script>
+<script src="/pane-resize.js"></script>
+<script src="/chat.js"></script>
+<script src="/recording.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

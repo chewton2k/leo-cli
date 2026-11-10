@@ -131,15 +131,22 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
         .flat_map(|dir| std::fs::read_dir(root().join(dir)).unwrap())
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|e| e == "js"));
+    let mut styles: Vec<_> = std::fs::read_dir(root().join("crates/leo-web/src/web/styles"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "css"))
+        .collect();
+    styles.sort();
     let docs = [
         "README.md",
         "CONTRIBUTING.md",
         "install.sh",
         "install.ps1",
-        "crates/leo-web/src/web/index.html",
+        "crates/leo-web/src/web/page-head.html",
+        "crates/leo-web/src/web/page-tail.html",
     ]
     .map(|doc| root().join(doc));
-    for path in docs.into_iter().chain(page_parts) {
+    for path in docs.into_iter().chain(page_parts).chain(styles) {
         let lines: Vec<(usize, String)> = std::fs::read_to_string(&path)
             .unwrap()
             .lines()

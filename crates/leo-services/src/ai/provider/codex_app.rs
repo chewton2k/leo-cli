@@ -1,4 +1,4 @@
-use std::io::{BufReader, Write};
+use std::io::Write;
 use std::process::Stdio;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -113,24 +113,10 @@ impl CodexThread {
         let child = Process::new(child);
         let stdout = stdout.ok_or_else(|| fail("could not read codex".into()))?;
         let (tx, messages) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                match process::line(&mut reader) {
-                    Ok(Some(line)) => {
-                        if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                            if tx.send(Ok(message)).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        break;
-                    }
-                }
-            }
+        process::lines(stdout, tx, |line| match line {
+            Ok(Some(line)) => serde_json::from_str::<Value>(&line).ok().map(Ok),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
         });
         let mut thread = CodexThread {
             name: name.clone(),

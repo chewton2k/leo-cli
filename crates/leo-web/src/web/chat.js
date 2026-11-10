@@ -856,7 +856,12 @@
 
   const retiredPractice = (p) => typeof p?.kind === 'string' && p.kind.includes('interview');
 
-  function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
+  function create({ render, escape, icons = {}, onOpen = () => {}, onCite = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onAdd = () => {}, onOrganized = () => {}, onLocked = () => {} }) {
+    const request = async (url, init = {}) => {
+      const response = await fetch(url, { credentials: 'same-origin', ...init });
+      if (response.status === 401) onLocked();
+      return response;
+    };
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
     const state = { open: false, id: saved.id || newId(), messages: saved.messages, refs: saved.refs, context: null, dropped: null, fresh: false, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
@@ -933,8 +938,6 @@
       if (!onScreen()) return;
       blinkTimer = setTimeout(() => {
         for (const f of faces()) {
-          f.classList.remove('blink');
-          void f.getBoundingClientRect();
           f.classList.add('blink');
           setTimeout(() => f.classList.remove('blink'), 200);
         }
@@ -1077,7 +1080,7 @@
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), PERMISSION_MS);
       try {
-        const reply = await fetch(`/api/chat/${encodeURIComponent(work.answerId)}/access`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ access: wanted }), signal: controller.signal });
+        const reply = await request(`/api/chat/${encodeURIComponent(work.answerId)}/access`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ access: wanted }), signal: controller.signal });
         if (!reply.ok && reply.status !== 410) throw new Error('Permissions could not be changed for the current reply. Send your message again with the access you want.');
         work.permissionPosted = wanted;
       } catch (e) {
@@ -1351,7 +1354,7 @@
       const messages = modelHistory(state.messages.filter((m) => !m.pending));
       if (messages.length < COMPACT_LEAST_TURNS) return;
       try {
-        await fetch('/api/chat/compact', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: id, messages }) });
+        await request('/api/chat/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: id, messages }) });
       } catch (e) {}
     }
 
@@ -1368,9 +1371,8 @@
       const sending = { refs: chat.refs, messages: messages.map(({ pending, ...m }) => m) };
       upload = upload.then(async () => {
         try {
-          const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+          const response = await request(`/api/chats/${encodeURIComponent(id)}`, {
             method: 'PUT',
-            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sending),
           });
@@ -1396,7 +1398,7 @@
 
     async function loadChats() {
       try {
-        const response = await fetch('/api/chats', { credentials: 'same-origin' });
+        const response = await request('/api/chats');
         if (response.ok) state.chats = await response.json();
       } catch (e) {
         state.chats = state.chats || [];
@@ -1414,7 +1416,7 @@
         return;
       }
       try {
-        const response = await fetch(`/api/chats?q=${encodeURIComponent(query.trim())}`, { credentials: 'same-origin' });
+        const response = await request(`/api/chats?q=${encodeURIComponent(query.trim())}`);
         if (!response.ok || turn !== findTurn) return;
         state.found = await response.json();
       } catch (e) {
@@ -1490,7 +1492,7 @@
       const mine = ++resumeSeq;
       let chat;
       try {
-        const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+        const response = await request(`/api/chats/${encodeURIComponent(id)}`);
         if (mine !== resumeSeq) return null;
         if (response.status === 404) {
           state.chats = (state.chats || []).filter((c) => c.id !== id);
@@ -1547,7 +1549,7 @@
       if (button) button.disabled = true;
       deleting.add(id);
       try {
-        const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+        const response = await request(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
         if (!response.ok) throw new Error('delete failed');
       } catch (e) {
         notify('Leo could not delete that conversation. Try again.');
@@ -1584,7 +1586,7 @@
     function excerptOf(r) {
       if (excerpts.has(r.id)) return excerpts.get(r.id);
       excerpts.set(r.id, '');
-      fetch(`/api/notes/${encodeURIComponent(r.id)}`, { credentials: 'same-origin' })
+      request(`/api/notes/${encodeURIComponent(r.id)}`)
         .then((response) => (response.ok ? response.json() : null))
         .then((note) => {
           if (!note || typeof note.body !== 'string') return;
@@ -1612,7 +1614,7 @@
       const chat = state.id;
       state.filesFor = chat;
       try {
-        const response = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, { credentials: 'same-origin' });
+        const response = await request(`/api/chats/${encodeURIComponent(chat)}/files`);
         if (!response.ok || state.id !== chat) return;
         const split = splitFiles(await response.json(), state.messages);
         const known = new Set([...split.waiting, ...split.sent].map((d) => d.id));
@@ -1667,9 +1669,8 @@
       let reply;
       try {
         const body = await prepare(file);
-        reply = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, {
+        reply = await request(`/api/chats/${encodeURIComponent(chat)}/files`, {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
@@ -1712,20 +1713,30 @@
 
     async function removeFile(id) {
       const chat = state.id;
+      const at = state.files.findIndex((f) => f.id === id);
+      const file = state.files[at];
       state.files = state.files.filter((f) => f.id !== id);
       drawRefs();
+      let removed = false;
       try {
-        await fetch(`/api/chats/${encodeURIComponent(chat)}/files/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+        const response = await request(`/api/chats/${encodeURIComponent(chat)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        removed = response.ok || response.status === 404 || response.status === 401;
       } catch (e) {
-        return;
+        removed = false;
       }
+      if (removed) return;
+      if (file && state.id === chat && !state.files.some((f) => f.id === id)) {
+        state.files = [...state.files.slice(0, at), file, ...state.files.slice(at)];
+        drawRefs();
+      }
+      notify(`Leo could not remove ${file?.name || 'that document'}. Try again.`);
     }
 
     let pickTimer = 0;
     let pickSeq = 0;
     async function findNotes(query) {
       const url = query.trim() ? `/api/search?q=${encodeURIComponent(query.trim())}` : '/api/notes?limit=12';
-      const response = await fetch(url, { credentials: 'same-origin' });
+      const response = await request(url);
       if (!response.ok) return [];
       const notes = await response.json();
       return notes.filter((n) => !state.refs.some((r) => r.id === n.id)).slice(0, 8);
@@ -2023,7 +2034,7 @@
 
     async function loadReview() {
       try {
-        const response = await fetch('/api/review', { credentials: 'same-origin' });
+        const response = await request('/api/review');
         if (!response.ok) return;
         state.review = await response.json();
       } catch (e) {
@@ -2043,15 +2054,19 @@
       const keys = items.map((m) => m.key);
       state.review = all.filter((m) => !keys.includes(m.key));
       send(reviewPrompt(items));
+      let marked = false;
       try {
-        await fetch('/api/review', {
+        marked = (await request('/api/review', {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ done: keys }),
-        });
+        })).ok;
       } catch (e) {
-        return;
+        marked = false;
+      }
+      if (!marked) {
+        const now = state.review || [];
+        state.review = [...items.filter((m) => !now.some((r) => r.key === m.key)), ...now];
       }
     }
 
@@ -2209,7 +2224,7 @@
         draw();
         let mark = null;
         try {
-          const response = await fetch('/api/quiz/mark', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: String(q.question || ''), answer: String(q.answer || ''), given: text, explain: String(q.explain || ''), confidence: SURE[q.sure] ? q.sure : '', thinking }) });
+          const response = await request('/api/quiz/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: String(q.question || ''), answer: String(q.answer || ''), given: text, explain: String(q.explain || ''), confidence: SURE[q.sure] ? q.sure : '', thinking }) });
           if (response.ok) mark = await response.json();
         } catch (e) {}
         checking.delete(q);
@@ -2264,9 +2279,8 @@
       if (!work.answerId || m.posted) return;
       m.posted = true;
       try {
-        const response = await fetch(`/api/chat/${encodeURIComponent(work.answerId)}/steer`, {
+        const response = await request(`/api/chat/${encodeURIComponent(work.answerId)}/steer`, {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: m.text }),
         });
@@ -2317,9 +2331,8 @@
         : [`/api/notes/${encodeURIComponent(p.note)}/suggestion`, { find: p.find || '', replace: p.replace || '' }];
       let note;
       try {
-        const response = await fetch(post[0], {
+        const response = await request(post[0], {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(post[1]),
         });
@@ -2357,7 +2370,7 @@
       const previous = p.state;
       try {
         {
-          const response = await fetch('/api/felix/act', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
+          const response = await request('/api/felix/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
           done = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(done.error || 'That could not be done.');
         }
@@ -2396,7 +2409,7 @@
         : [`/api/notes/${encodeURIComponent(p.note)}`, 'PATCH', JSON.stringify({ body: p.before, base: p.after })];
       let response;
       try {
-        response = await fetch(url, { method, credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : {}, body });
+        response = await request(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body });
       } catch (e) {
         notify("Can't reach leo. Quit leo and open it again.");
         return;
@@ -2505,9 +2518,8 @@
       const directory = typeof m.folder === 'string' ? m.folder : (state.context && state.context.directory) || '';
       let made;
       try {
-        const response = await fetch('/api/notes', {
+        const response = await request('/api/notes', {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...note, directory }),
         });
@@ -2550,7 +2562,7 @@
       state.preparingSend = true;
       try {
         await upload;
-        const response = await fetch(`/api/chats/${encodeURIComponent(id)}/drop`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 2, total: stored().length }) });
+        const response = await request(`/api/chats/${encodeURIComponent(id)}/drop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 2, total: stored().length }) });
         if (!response.ok) throw new Error();
       } catch (e) {
         notify('Leo could not take back that reply. Try again.');
@@ -2605,7 +2617,7 @@
       }
       let folders = [];
       try {
-        const response = await fetch('/api/folders', { credentials: 'same-origin' });
+        const response = await request('/api/folders');
         if (response.ok) folders = (await response.json()).map((f) => f.name).filter((n) => n && !n.includes('/'));
       } catch (e) {
         folders = [];
@@ -2624,7 +2636,20 @@
       send(all ? (a.starter.text === 'Quiz me across my classes' ? 'Quiz me across all my classes' : `${a.starter.text} for all my classes`) : starterWords(a.starter, picked));
     }
 
-    function draw(stick = true, live = false) {
+    let liveFrame = 0;
+
+    function draw(stick = true, live = false, later = false) {
+      if (later && root.requestAnimationFrame) {
+        if (!liveFrame) {
+          liveFrame = root.requestAnimationFrame(() => {
+            liveFrame = 0;
+            draw(false, true);
+          });
+        }
+        return;
+      }
+      if (liveFrame) root.cancelAnimationFrame?.(liveFrame);
+      liveFrame = 0;
       const near = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
       const typing = document.activeElement && document.activeElement.classList && document.activeElement.matches('.quiz-input, .quiz-thinking') && body.contains(document.activeElement)
         ? { box: document.activeElement.className.split(' ')[0], i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
@@ -2773,9 +2798,8 @@
       if (passage && passage.note && !sentRefs.includes(passage.note)) sentRefs.unshift(passage.note);
       try {
         access = state.access; work.permissionPosted = access;
-        const response = await fetch('/api/chat', {
+        const response = await request('/api/chat', {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: history, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && !card.predict && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
           signal: controller.signal,
@@ -2856,7 +2880,7 @@
             }
             if (e.error) answer.error = e.error;
           }
-          draw(false, true);
+          draw(false, true, true);
         }
       } catch (e) {
         if (e.name === 'AbortError') controller.abort();

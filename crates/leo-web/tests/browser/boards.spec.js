@@ -2,13 +2,14 @@ const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { pageCss } = require('../page-source');
 
 // The Boards page with its real CSS, icons, sheets and boards.js over an in-memory API
 // that behaves like routes/boards.rs (order by position, same-name columns across boards).
 async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
-  const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const css = pageCss();
   const core = read('app/core.js');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const sheets = read('app/sheets.js');
@@ -749,5 +750,25 @@ test('new board setup has a full-width named field and a readable column preview
     await page.keyboard.press('Enter');
     await expect(page.locator('.kanban-tab.on .kanban-title')).toHaveValue('Coursework 文字');
     expect(await page.evaluate(()=>db.boards.at(-1).columns.map(c=>c.name))).toEqual(['To do','In progress','Done']);
+  });
+});
+
+test('clicking anywhere in an empty card description shows it as a field with the caret in it', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.locator('[data-card="cread00001"]').click();
+    const description = page.locator('#kanban-panel #kanban-card-description');
+    await expect(description).toHaveText('Add details, steps or links…');
+    const editing = () => page.evaluate(() => {
+      const el = document.activeElement;
+      return Boolean(el && el.matches('#kanban-card-description textarea') && el.selectionStart === el.value.length);
+    });
+    for (const spot of [{ x: 40, y: 12 }, { x: 40, y: 160 }]) {
+      await page.locator('#kanban-card-title').click();
+      await description.click({ position: spot });
+      await expect.poll(editing).toBe(true);
+      expect(await description.evaluate(el => { const probe = document.createElement('i'); probe.style.color = 'var(--accent)'; el.append(probe); const accent = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(el).borderTopColor === accent; })).toBe(true);
+    }
+    await page.keyboard.type('Bring the reading list');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Bring the reading list');
   });
 });

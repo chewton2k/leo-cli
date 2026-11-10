@@ -134,11 +134,14 @@ pub fn ollama_models(base_url: &str) -> Vec<String> {
         return Vec::new();
     }
     let root = crate::ollama::root(base_url);
-    let Ok(client) = reqwest::blocking::Client::builder()
-        .connect_timeout(std::time::Duration::from_millis(300))
-        .timeout(std::time::Duration::from_millis(1500))
-        .build()
-    else {
+    static CLIENT: std::sync::LazyLock<reqwest::Result<reqwest::blocking::Client>> =
+        std::sync::LazyLock::new(|| {
+            reqwest::blocking::Client::builder()
+                .connect_timeout(std::time::Duration::from_millis(300))
+                .timeout(std::time::Duration::from_millis(1500))
+                .build()
+        });
+    let Ok(client) = CLIENT.as_ref() else {
         return Vec::new();
     };
     client

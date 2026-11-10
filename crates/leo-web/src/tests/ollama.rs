@@ -1,5 +1,7 @@
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+static PULLS_ENDED: AtomicUsize = AtomicUsize::new(0);
 
 struct Fake;
 impl crate::ollama::OllamaApi for Fake {
@@ -23,6 +25,7 @@ impl crate::ollama::OllamaApi for Fake {
         while !stop.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+        PULLS_ENDED.fetch_add(1, Ordering::SeqCst);
         anyhow::bail!("Download cancelled.")
     }
 }
@@ -77,9 +80,15 @@ fn ollama_pulls_refuse_too_big_models_and_a_second_download() {
     let (status, body) = act(&state, serde_json::json!({"action":"cancel"}));
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["pull"]["state"], "cancelled");
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let view = json_of(run(crate::ollama::get(State(state.clone()))));
-    assert_eq!(view["pull"]["state"], "cancelled");
+    let started = std::time::Instant::now();
+    let view = loop {
+        let view = json_of(run(crate::ollama::get(State(state.clone()))));
+        if PULLS_ENDED.load(Ordering::SeqCst) > 0 && view["pull"]["state"] == "cancelled" {
+            break view;
+        }
+        assert!(started.elapsed().as_secs() < 5, "the pull never stopped");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
     assert!(view["pull"]["error"].is_null());
     let (status, _) = act(
         &state,

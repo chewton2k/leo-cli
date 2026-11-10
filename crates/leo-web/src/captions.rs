@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,10 +18,12 @@ pub type Seer = Arc<dyn Fn(&str, &str, Vec<Picture>) -> Result<String> + Send + 
 pub const DESCRIBE: &str = "You describe pictures from someone's study notes for a reader who cannot see them. Say what kind of picture it is, then its content: any text, labels and numbers, the structure of a diagram, a chart's axes and trend, code, or the steps shown, and what it explains. Use interpretable language. Two to six sentences. Reply with the description only.";
 const MOST_PICTURE_BYTES: u64 = 20 * 1024 * 1024;
 const RETRY_FAILED_AFTER: Duration = Duration::from_secs(60 * 60);
+const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 
 pub struct Captions {
     db: Arc<crate::db::Db>,
     failed: Mutex<HashMap<String, Instant>>,
+    pruned: Mutex<Option<Instant>>,
 }
 
 impl Captions {
@@ -53,6 +55,7 @@ impl Captions {
         Captions {
             db,
             failed: Mutex::default(),
+            pruned: Mutex::default(),
         }
     }
 
@@ -89,6 +92,47 @@ impl Captions {
                 "INSERT OR REPLACE INTO captions (key, caption) VALUES (?1, ?2)",
                 [&key, &caption],
             )
+        });
+    }
+
+    fn keys(&self) -> HashSet<String> {
+        self.db
+            .with(|c| {
+                let mut statement = c.prepare("SELECT key FROM captions")?;
+                let keys = statement
+                    .query_map([], |r| r.get(0))?
+                    .collect::<rusqlite::Result<HashSet<String>>>();
+                keys
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn forget_stale(&self) {
+        {
+            let mut pruned = self.pruned.lock().unwrap_or_else(|e| e.into_inner());
+            if pruned.is_some_and(|at| at.elapsed() < PRUNE_EVERY) {
+                return;
+            }
+            *pruned = Some(Instant::now());
+        }
+        let stored = self.keys();
+        let stale: Vec<&String> = stored
+            .iter()
+            .filter(|key| {
+                key.rsplitn(3, ':')
+                    .nth(2)
+                    .is_none_or(|path| key_of(Path::new(path)).as_ref() != Some(*key))
+            })
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        let _ = self.db.with(|c| {
+            let tx = c.transaction()?;
+            for key in stale {
+                tx.execute("DELETE FROM captions WHERE key = ?1", [key])?;
+            }
+            tx.commit()
         });
     }
 
@@ -166,20 +210,27 @@ pub fn picture(path: &Path) -> Option<Picture> {
 }
 
 pub fn uncaptioned(store: &Store, captions: &Captions, most: usize) -> Vec<PathBuf> {
+    let stored = captions.keys();
     let mut out: Vec<PathBuf> = Vec::new();
     for note in &store.notes {
         for (_, path) in pictures_of(&store.notes_dir, &note.directory, &note.body) {
-            if out.len() >= most {
-                return out;
-            }
-            let missing = key_of(&path)
-                .is_some_and(|key| !captions.failed_lately(&key) && captions.get(&key).is_none());
-            if missing && !out.contains(&path) {
+            let Some(key) = key_of(&path) else {
+                continue;
+            };
+            if out.len() < most
+                && !stored.contains(&key)
+                && !captions.failed_lately(&key)
+                && !out.contains(&path)
+            {
                 out.push(path);
             }
         }
     }
     out
+}
+
+pub fn may_forget(store: &Store) -> bool {
+    !store.notes.is_empty() && store.unreadable.is_empty()
 }
 
 pub fn describe(path: &Path, seer: &Seer, question: &str) -> Result<String> {
@@ -263,6 +314,40 @@ mod tests {
         assert_eq!(caption_some(&store, &captions, &failing, 10), 0);
         assert!(uncaptioned(&store, &captions, 10).is_empty());
         assert!(captions.waiting(), "the loop comes back for them");
+    }
+
+    #[test]
+    fn stale_captions_are_dropped_and_current_ones_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        let mut store = Store::load_from(&notes).unwrap();
+        let attachments = notes.join("attachments");
+        std::fs::create_dir_all(&attachments).unwrap();
+        let shown = attachments.join("a.png");
+        let unshown = attachments.join("b.png");
+        let deleted = attachments.join("c.png");
+        for path in [&shown, &unshown, &deleted] {
+            std::fs::write(path, png()).unwrap();
+        }
+        store
+            .create_note("One", "![a](attachments/a.png)", vec![], "")
+            .unwrap();
+        let captions = Captions::for_notes(&notes);
+        let live = key_of(&shown).unwrap();
+        let elsewhere = key_of(&unshown).unwrap();
+        let gone = key_of(&deleted).unwrap();
+        std::fs::remove_file(&deleted).unwrap();
+        captions.put(live.clone(), "kept".into());
+        captions.put(elsewhere.clone(), "trashed note".into());
+        captions.put(gone.clone(), "deleted".into());
+        captions.put(format!("{}:1:0", shown.display()), "changed".into());
+        assert!(uncaptioned(&store, &captions, 10).is_empty());
+        assert!(may_forget(&store));
+        captions.forget_stale();
+        assert_eq!(captions.get(&live).as_deref(), Some("kept"));
+        assert_eq!(captions.get(&elsewhere).as_deref(), Some("trashed note"));
+        assert_eq!(captions.get(&gone), None);
+        assert_eq!(captions.len(), 2);
     }
 
     #[test]

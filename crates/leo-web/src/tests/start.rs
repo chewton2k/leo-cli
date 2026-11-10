@@ -68,6 +68,23 @@ async fn showing_the_window_reconciles_external_edits_before_the_watcher_deliver
 }
 
 #[tokio::test]
+async fn start_returns_an_error_when_the_database_cannot_open() {
+    let (places, dir) = places();
+    std::fs::create_dir(dir.path().join(crate::db::FILE)).unwrap();
+    let failed = start_in(
+        places,
+        StartOptions {
+            port: 0,
+            token: "t".into(),
+        },
+        Powers::default(),
+    )
+    .await;
+    let said = format!("{:#}", failed.err().unwrap());
+    assert!(said.contains(crate::db::FILE), "{said}");
+}
+
+#[tokio::test]
 async fn start_binds_loopback_only() {
     let (places, _dir) = places();
     let running = start_in(
@@ -113,7 +130,7 @@ async fn start_takes_the_next_port_when_one_is_busy() {
 async fn stop_returns_within_the_drain_deadline_while_a_request_is_still_arriving() {
     use tokio::io::AsyncReadExt;
     let (places, _dir) = places();
-    let running = start_in(
+    let mut running = start_in(
         places,
         StartOptions {
             port: 0,
@@ -123,6 +140,7 @@ async fn stop_returns_within_the_drain_deadline_while_a_request_is_still_arrivin
     )
     .await
     .unwrap();
+    running.grace = Duration::from_millis(300);
     let port = running.port();
     let mut signing_in = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -153,14 +171,15 @@ async fn stop_returns_within_the_drain_deadline_while_a_request_is_still_arrivin
     .await
     .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
+    let running_grace = running.grace;
     let began = Instant::now();
     running.stop().await;
     let took = began.elapsed();
+    assert!(took >= running_grace, "nothing was in flight ({took:?})");
     assert!(
-        took >= Duration::from_secs(4),
-        "nothing was in flight ({took:?})"
+        took < running_grace + Duration::from_secs(2),
+        "quitting hung ({took:?})"
     );
-    assert!(took < Duration::from_secs(7), "quitting hung ({took:?})");
 }
 
 #[tokio::test]

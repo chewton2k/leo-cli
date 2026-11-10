@@ -207,19 +207,14 @@ fn read_original(notes_dir: &std::path::Path, note: &str, name: &str) -> std::io
     let path = original_path(notes_dir, note, name).ok_or_else(|| {
         std::io::Error::other("Original files must stay inside the attachments folder")
     })?;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    let meta = file.metadata()?;
-    if !meta.is_file() || meta.len() > IMPORT_BYTES as u64 {
-        return Err(std::io::Error::other(
-            "The original file is too large or is not a regular file",
-        ));
+    let refused =
+        || std::io::Error::other("The original file is too large or is not a regular file");
+    let file = match leo_core::paths::open_regular(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::Other => return Err(refused()),
+        opened => opened?,
+    };
+    if file.metadata()?.len() > IMPORT_BYTES as u64 {
+        return Err(refused());
     }
     let mut bytes = Vec::new();
     file.take(IMPORT_BYTES as u64 + 1).read_to_end(&mut bytes)?;
@@ -230,10 +225,13 @@ fn read_original(notes_dir: &std::path::Path, note: &str, name: &str) -> std::io
 }
 
 fn set_job(state: &AppState, id: &str, change: impl FnOnce(&mut ImportJob)) {
-    if let Ok(mut jobs) = state.imports.lock() {
-        if let Some(job) = jobs.get_mut(id) {
-            change(job);
-        }
+    if let Some(job) = state
+        .imports
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(id)
+    {
+        change(job);
     }
 }
 
@@ -575,7 +573,7 @@ fn run_each(
 
 pub(crate) async fn start_import(
     State(state): State<AppState>,
-    Json(body): Json<ImportBody>,
+    Json(mut body): Json<ImportBody>,
 ) -> Response {
     let Some(importer) = state.importer.clone() else {
         return (
@@ -635,67 +633,82 @@ pub(crate) async fn start_import(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let id = uuid::Uuid::new_v4().to_string();
-    let reserved = state
-        .imports
-        .lock()
-        .map(|mut jobs| {
-            reserve_import(
-                &mut jobs,
-                id.clone(),
-                ImportJob {
-                    state: "working",
-                    label: "Preparing an upload".into(),
-                    dir: dir.clone(),
-                    step: "Uploading".into(),
-                    done: 0,
-                    total: 1,
-                    note: None,
-                    notes: Vec::new(),
-                    error: None,
-                    section: None,
-                },
-            )
-        })
-        .unwrap_or(false);
+    let reserved = reserve_import(
+        &mut state.imports.lock().unwrap_or_else(|e| e.into_inner()),
+        id.clone(),
+        ImportJob {
+            state: "working",
+            label: "Preparing an upload".into(),
+            dir: dir.clone(),
+            step: "Uploading".into(),
+            done: 0,
+            total: 1,
+            note: None,
+            notes: Vec::new(),
+            error: None,
+            section: None,
+        },
+    );
     if !reserved {
         return import_busy();
     }
-    let decoded = (|| -> Result<Vec<UploadFile>, (StatusCode, String)> {
-        let mut files = Vec::new();
-        let mut size = 0usize;
-        for file in body.files {
-            use base64::Engine;
-            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(file.data.as_bytes())
-            else {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!("{} did not arrive intact; try again.", file.name),
-                ));
-            };
-            size = size.saturating_add(bytes.len());
-            if size > MOST_UPLOAD_BYTES {
-                return Err((
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "Upload up to 90 MB at a time. Choose fewer files and try again.".into(),
-                ));
+    type Jobs = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, ImportJob>>>;
+    struct Reservation(Option<(Jobs, String)>);
+    impl Drop for Reservation {
+        fn drop(&mut self) {
+            if let Some((imports, id)) = self.0.take() {
+                imports
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
             }
-            files.push(UploadFile {
-                name: safe_file_name(&file.name),
-                mime: file.mime,
-                bytes,
-            });
         }
-        Ok(files)
-    })();
+    }
+    let mut reservation = Reservation(Some((std::sync::Arc::clone(&state.imports), id.clone())));
+    let uploads = std::mem::take(&mut body.files);
+    let decoded =
+        tokio::task::spawn_blocking(move || -> Result<Vec<UploadFile>, (StatusCode, String)> {
+            let mut files = Vec::new();
+            let mut size = 0usize;
+            for file in uploads {
+                use base64::Engine;
+                let Ok(bytes) =
+                    base64::engine::general_purpose::STANDARD.decode(file.data.as_bytes())
+                else {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        format!("{} did not arrive intact; try again.", file.name),
+                    ));
+                };
+                size = size.saturating_add(bytes.len());
+                if size > MOST_UPLOAD_BYTES {
+                    return Err((
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "Upload up to 90 MB at a time. Choose fewer files and try again.".into(),
+                    ));
+                }
+                files.push(UploadFile {
+                    name: safe_file_name(&file.name),
+                    mime: file.mime,
+                    bytes,
+                });
+            }
+            Ok(files)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "leo hit a problem.".into(),
+            ))
+        });
     let files = match decoded {
         Ok(files) => files,
         Err((code, error)) => {
-            if let Ok(mut jobs) = state.imports.lock() {
-                jobs.remove(&id);
-            }
             return (code, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
+    reservation.0 = None;
     let into = body.into.clone();
     let each = body.each && files.len() > 1 && into.is_none();
     set_job(&state, &id, |job| {
@@ -739,9 +752,11 @@ pub(crate) async fn start_import(
         })
         .is_err()
     {
-        if let Ok(mut jobs) = state.imports.lock() {
-            jobs.remove(&id);
-        }
+        state
+            .imports
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
         return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": "The upload could not start. Close another busy task and try again." }))).into_response();
     }
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id }))).into_response()
@@ -762,8 +777,9 @@ pub(crate) async fn import_status(
     let job = state
         .imports
         .lock()
-        .ok()
-        .and_then(|jobs| jobs.get(&id).cloned());
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&id)
+        .cloned();
     match job {
         Some(job) => Json(job).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),

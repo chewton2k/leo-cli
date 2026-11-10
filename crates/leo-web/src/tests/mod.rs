@@ -38,8 +38,8 @@ use crate::routes::felix::{
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, excerpt, get_note, list_dirs, list_folders, list_notes,
-    move_note, tasks_in, update_note, CreateBody, CreateDirBody, DirParams, ListParams, MoveBody,
-    MoveDirBody, NoteResponse, UpdateBody, EXCERPT_CHARS,
+    move_dir, move_note, tasks_in, update_note, CreateBody, CreateDirBody, DirParams, ListParams,
+    MoveBody, MoveDirBody, NoteResponse, UpdateBody, EXCERPT_CHARS,
 };
 use crate::routes::pictures::{add_picture, get_picture, NewPicture, PictureAt};
 use crate::routes::trash::{
@@ -61,10 +61,10 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
     store.save().unwrap();
     let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, None));
     let state = AppState {
-        toolless: None,
-        toolless_chat: None,
-        light_chat: None,
-        lighter: Some(Arc::new(|| true)),
+        powers: Powers {
+            lighter: Some(Arc::new(|| true)),
+            ..Default::default()
+        },
         margin: Default::default(),
         visible: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         shown: Default::default(),
@@ -81,45 +81,25 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
             sessions::Sessions::in_memory(),
         )),
         graphs,
-        quick: None,
-        housekeeping: None,
-        usage: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         work: Default::default(),
-        chat: None,
-        settings: None,
-        speech: None,
-        ollama: None,
         ollama_pulls: Default::default(),
-        dictation: None,
-        app_settings: None,
         usage_refreshes: Arc::new(tokio::sync::Semaphore::new(1)),
-        importer: None,
         imports: Default::default(),
         import_slots: Default::default(),
         zip_slots: routes::downloads::zip_slots(),
         combines: Default::default(),
-        listener: None,
-        regenerator: None,
-        calendar_access: None,
         recording: Default::default(),
         capture_activity: leo_core::activity::Gate::default(),
         discarded_recordings: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),
         chats: dir.path().join("chats"),
-        housekeeper: None,
-        reader: None,
-        room: None,
-        context: None,
-        converse: None,
-        seer: None,
         captions: Arc::new(captions::Captions::at(dir.path().join("captions.json"))),
         originals: Default::default(),
         activity: Default::default(),
         steering: Default::default(),
-        meaning: None,
         vectors: Arc::new(vectors::Vectors::at(dir.path().join("meaning.json"))),
     };
     (state, dir, ids)

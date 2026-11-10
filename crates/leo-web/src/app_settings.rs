@@ -1,3 +1,4 @@
+use crate::reply::error;
 use crate::AppState;
 use anyhow::Result;
 use axum::{
@@ -22,9 +23,6 @@ pub trait AppApi: Send + Sync {
     fn change(&self, value: Value) -> Result<Value>;
     fn health(&self, notes: &Path) -> Result<Value>;
     fn event_starting(&self, _event: EventStarting) {}
-}
-fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({"error":message}))).into_response()
 }
 async fn call(
     api: Option<Arc<dyn AppApi>>,
@@ -67,7 +65,7 @@ async fn call(
     .await
     {
         Ok(Ok(view)) => Json(view).into_response(),
-        Ok(Err(e)) => error(StatusCode::BAD_REQUEST, &e.to_string()),
+        Ok(Err(e)) => error(StatusCode::BAD_REQUEST, e.to_string()),
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "App settings could not be opened. Try again in a moment.",
@@ -75,7 +73,7 @@ async fn call(
     }
 }
 pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    call(state.app_settings, None, None, None).await
+    call(state.app_settings.clone(), None, None, None).await
 }
 pub(crate) async fn change(
     State(state): State<AppState>,
@@ -87,7 +85,7 @@ pub(crate) async fn change(
             "This app setting could not be read. Choose an option in Settings.",
         );
     };
-    call(state.app_settings, Some(value), None, None).await
+    call(state.app_settings.clone(), Some(value), None, None).await
 }
 pub(crate) async fn health(State(state): State<AppState>) -> Response {
     let notes = match state.read_store(|s| Ok(s.notes_dir.clone())).await {
@@ -95,7 +93,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Response {
         Err(status) => return status.into_response(),
     };
     call(
-        state.app_settings,
+        state.app_settings.clone(),
         None,
         Some(notes),
         state.margin.problem(),

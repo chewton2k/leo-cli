@@ -263,6 +263,10 @@ const MOST_OPEN: usize = 32;
 static OPEN: OnceLock<Mutex<HashMap<PathBuf, Arc<Db>>>> = OnceLock::new();
 
 pub fn at(path: &Path) -> Arc<Db> {
+    try_at(path).unwrap_or_else(|e| panic!("{e:#}"))
+}
+
+pub fn try_at(path: &Path) -> Result<Arc<Db>> {
     let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let all = OPEN.get_or_init(Default::default);
     let cached = all
@@ -272,17 +276,17 @@ pub fn at(path: &Path) -> Arc<Db> {
         .cloned();
     if let Some(db) = &cached {
         if db.path.exists() {
-            return Arc::clone(db);
+            return Ok(Arc::clone(db));
         }
     }
-    let db =
-        Arc::new(Db::open(&key).unwrap_or_else(|e| {
-            panic!("leo could not open its database at {}: {e}", key.display())
-        }));
+    let db = Arc::new(
+        Db::open(&key)
+            .with_context(|| format!("leo could not open its database at {}", key.display()))?,
+    );
     let mut held = all.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(current) = held.get(&key) {
         if cached.as_ref().is_none_or(|old| !Arc::ptr_eq(old, current)) {
-            return Arc::clone(current);
+            return Ok(Arc::clone(current));
         }
     }
     let mut removed = Vec::new();
@@ -306,7 +310,7 @@ pub fn at(path: &Path) -> Arc<Db> {
     }
     drop(held);
     drop(removed);
-    db
+    Ok(db)
 }
 
 pub fn beside(file: &Path) -> Arc<Db> {
@@ -314,12 +318,19 @@ pub fn beside(file: &Path) -> Arc<Db> {
 }
 
 pub fn for_chats(chats_dir: &Path) -> Arc<Db> {
-    let data = if chats_dir.file_name().is_some_and(|n| n == "chats") {
+    try_for_chats(chats_dir).unwrap_or_else(|e| panic!("{e:#}"))
+}
+
+pub fn data_dir(chats_dir: &Path) -> &Path {
+    if chats_dir.file_name().is_some_and(|n| n == "chats") {
         chats_dir.parent().unwrap_or(chats_dir)
     } else {
         chats_dir
-    };
-    at(&data.join(FILE))
+    }
+}
+
+pub fn try_for_chats(chats_dir: &Path) -> Result<Arc<Db>> {
+    try_at(&data_dir(chats_dir).join(FILE))
 }
 
 pub fn put_aside(path: &Path) {
