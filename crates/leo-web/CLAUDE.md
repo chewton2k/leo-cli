@@ -219,6 +219,9 @@ Decided: the owner's motion list (2026-11-06); only quick functional motion.
   or sheet; moving or trashing the open note's folder flushes its draft first.
   Never two rows highlighted. Saved open folders (`leo-side-folders`) hold only
   folders the user opened; reveals (`side.revealed`) are never saved.
+- Quick Leo opens with Cmd/Ctrl+K only (Cmd/Ctrl+F removed 2026-11-09); Cmd/Ctrl+N
+  makes a note in the current folder, never inside a sheet, an inline edit, while
+  composing or when locked.
   `leo-last-place` restores only on a new window session.
 - Explorer reads: 100 per page, four concurrent reads with ten-second aborts, 64
   cached folders, 32 automatic visible reads; late reads check generation and
@@ -237,6 +240,10 @@ Decided: the owner's motion list (2026-11-06); only quick functional motion.
   character and at least its length with no trailing text. Two combines at once,
   15-minute between-request deadline; any failed part leaves both notes
   unchanged. Saving copies the other note's transcripts (`recording::copy_to`).
+  In the explorer a note dropped on a note moves it unless held on that row for
+  `SPRING_MS` (arms Combine: `.combine-wait`, then `.combine-armed`; the folder
+  is not lit); the note menu's Combine into… (`explorerCombineMenu`) lists at
+  most 1000 notes (2026-11-09).
 - Search (`search.rs`): titles and acronyms, text, graph concepts and summaries,
   then meaning (`vectors.rs`, `CLOSE_ENOUGH`); hits carry `why`. Reading
   position `/api/notes/{id}/reading`; related notes `/api/notes/{id}/related`.
@@ -283,9 +290,24 @@ the web (root CLAUDE.md).
   steps and `MOST_PROPOSALS` (8) changes (every change tool counts). The text
   manual stays under 14,500 bytes; manuals keep every parameter/return contract,
   and all permitted tools stay discoverable (no keyword filtering). Broken JSON
-  is repaired when it can be (`tools::repaired`) before refusal. A broken agent
+  is repaired when it can be (`tools::repaired`) before refusal, then
+  `Call::normalized` repairs what keeps its meaning (tool-name case, `options`
+  joined with ` | `, quiz kind synonyms, a multiple-choice answer matched to
+  its option, fewer than 2 options as free response, a fill-in blanked on a
+  whole-word match); it never adds an option, a no-match answer stays refused,
+  `quiz_from` stays strict (missing explain, give-away longest option), a
+  second question in one reply or after a finished session gets an empty step
+  that is never sent, and a covered idea stays refused. On the page a failed
+  step is hidden once the same tool (quiz and ask_user count as one) later
+  succeeds (`fixedSteps`). While Felix works the reply shows only his newest
+  step, in one `.msg-status` row at the top of the reply. A broken agent
   session sends `{"reset"}` and is redone through the text protocol
   (`FALLBACK_TRIES`). Felix has no web tool of leo's own.
+- Panel layout: docked beside the note (1200 px and up) the note's page ends at
+  the panel with an 8 px `--ground` strip between them. Attached notes, passages
+  and files stay above the composer (`#chat-refs`; files are 52 px tiles, notes
+  `noteCard`s); the note finder (`#chat-pick`) is a popover at the paperclip and
+  never pushes the layout (2026-11-09).
 - Change tools become `Proposal` cards, validate against the store, run through
   POST `/api/felix/act` (reusing normal routes) and return the inverse as `undo`.
   edit_note/create_note Apply POSTs `/api/notes/{id}/suggestion` (409 unless
@@ -298,7 +320,9 @@ the web (root CLAUDE.md).
 - Quizzes: marking never waits for a Felix reply. Multiple choice (needs
   `explain`) and matching fill-ins are marked by the page; the rest POST
   `/api/quiz/mark` (quick model, `MARK`; `confidence` validated, `thinking`
-  bounded to `MOST_THINKING`). Hidden grading accepts only the exact verdict
+  bounded to `MOST_THINKING`). How sure is a 0–100% bar (`q.surePct`; `sureOf`
+  maps ≥75 sure, ≥40 think, else guess for `SURE`); thinking is sent only while
+  its switch is on (2026-11-09). Hidden grading accepts only the exact verdict
   words; a hidden check is authoritative for the card; an invalid check leaves
   the answer ungraded and releases the warm session. Predictions (`predict:
   yes`) are never marked, scored or counted. `quiz_from` shuffles options and
@@ -315,6 +339,10 @@ the web (root CLAUDE.md).
 - Files for Felix (`chat_files`): ≤10 per chat, text only, deleted with the
   chat. Add to note (`routes/insert.rs`) is version-checked and request ids
   dedupe. Chat titles are local; history shows titles only.
+- Felix draws one diagram unasked once a reply, lesson step or quiz has three
+  or more steps, linked parts, a layout in space or memory, or a comparison of
+  three or more things, never with text characters; margin reads and replies
+  use the same threshold (2026-11-09). `BASE` stays under 4,500 bytes.
 - `REPLY_STYLE` is not changed by prompt-size work. Escape belongs to the owner
   inside the page first; an open sheet always wins.
 
@@ -328,6 +356,8 @@ Felix (2026-10-19).
   (24) open threads per note (held inside the INSERT and on reopening) and
   `MOST_CLOSED` (48). Replies only while open, never two at once for a thread
   (`MOST_REPLY` 4,000, `MOST_MESSAGES`, the last 8 sent).
+- A thread whose passage is gone is not shown (2026-11-09; there is no lost-place
+  box).
 - Deletes: a trashed note keeps its threads; deleting from the trash removes them
   (`forget_notes`). `sweep_store` waits `SWEEP_AFTER_DAYS` (7) and never runs
   while no notes loaded or a file is unreadable. Export adds `leo/margin.json`
@@ -380,7 +410,8 @@ Felix (2026-10-19).
 - Tests: `src/tests/margin.rs` drives the real engine over TCP with fake powers.
 
 Decided: margin threads never in files (2026-11-04); read-along default for new
-notes (2026-11-08); one note per sentence (2026-11-09).
+notes (2026-11-08); one note per sentence (2026-11-09); no lost-place box
+(2026-11-09).
 
 ## Uploads, originals, recording
 
@@ -453,6 +484,8 @@ is hidden or the capture activity gate is busy.
 - Calendar page lays out in normal flow beside the rail and explorer, never
   `position: fixed` over `--side`. Saved task times never change for layout;
   a zero-height resize never writes an end. Polls wait during drags (`cal.stale`).
+- A folded Tasks pill in `#dock` opens on hover (`tasksWin.hovering`, never
+  saved); a click within `TASKS_PIN_MS` of that opening pins it open.
 - Export adds `tasks.json`; POST `/api/tasks/import` (ids dedupe; a newer local
   copy is kept).
 

@@ -15,7 +15,7 @@ document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
   const chord = (ON_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey;
   const letter = e.key.toLowerCase();
-  if (chord && (letter === 'k' || letter === 'f' && state.view !== 'note')) {
+  if (chord && letter === 'k') {
     e.preventDefault();
     toggleQuickLeo();
     return;

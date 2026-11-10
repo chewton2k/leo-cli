@@ -59,7 +59,7 @@ function control(page, action) {
   return page.locator(`.new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
-async function dragBetween(page, source, target) {
+async function dragBetween(page, source, target, hold = '') {
   for (let tries = 0; ; tries++) {
     try {
       await source.scrollIntoViewIfNeeded();
@@ -85,6 +85,12 @@ async function dragBetween(page, source, target) {
     expect(await target.evaluate((el, point) => el.contains(document.elementFromPoint(point.x, point.y)), end), 'the drop target is visible above fixed controls').toBe(true);
     await page.mouse.move(end.x, end.y, { steps: 3 });
     await page.mouse.move(end.x, end.y);
+    let nudge = 0;
+    if (hold) await expect.poll(async () => {
+      nudge = 1 - nudge;
+      await page.mouse.move(end.x + nudge, end.y);
+      return target.evaluate((el, name) => el.classList.contains(name), hold);
+    }).toBe(true);
   } finally {
     await page.mouse.up();
   }
@@ -734,6 +740,42 @@ test.describe('drag and drop', () => {
     await expect.poll(where).toBe('');
   });
 
+  test('holding a note on another note in the explorer opens Combine, and a quick drop still moves it', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const tag = Date.now().toString(36);
+    const top = `hold-${tag}`;
+    const inner = `${top}/inner`;
+    await page.request.post('/api/dirs', { data: { path: inner } });
+    const make = async (title, directory) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory } })).json();
+    const a = await make(`Hold A ${tag}`, top);
+    const b = await make(`Hold B ${tag}`, top);
+    const c = await make(`Hold C ${tag}`, inner);
+    await page.goto(`/#/n/${c.id}`);
+    const row = (note) => page.locator(`#side .side-note[data-id="${note.id}"]`);
+    await expect(row(b)).toBeVisible();
+    await dragBetween(page, row(a), row(b), 'combine-armed');
+    const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
+    await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+    await expect(sheet).toContainText(`“${b.title}” keeps its title`);
+    await expect(page.locator('.combine-wait, .combine-armed')).toHaveCount(0);
+    await sheet.locator('[data-action="close"]').click();
+    await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+
+    await row(c).scrollIntoViewIfNeeded();
+    await page.evaluate(([from, to]) => {
+      const pick = (id) => document.querySelector(`#side .side-note[data-id="${id}"]`);
+      const data = new DataTransfer();
+      const fire = (el, type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data }));
+      fire(pick(from), 'dragstart');
+      fire(pick(to), 'dragover');
+      fire(pick(to), 'drop');
+      fire(pick(from), 'dragend');
+    }, [a.id, c.id]);
+    await expect(page.locator('.toast'), 'a drop that was not held moves the note into that note’s folder').toContainText(`Moved “${a.title}” to inner`);
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${a.id}`)).json()).directory).toBe(inner);
+    await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+  });
+
   test('files dropped on the page make a note, and on Felix go to him', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
     await page.goto('/');
@@ -750,7 +792,7 @@ test.describe('drag and drop', () => {
     await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
     await dragBetween(page, page.locator(`.side-note[data-id="${note.id}"]`), chat.locator('#chat-input'));
-    await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
+    await expect(chat.locator('.note-card', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
 });
 
@@ -925,7 +967,7 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').press('Enter');
     const predict = chat.locator('.quiz-card').first();
     await expect(predict.locator('.quiz-kind')).toHaveText('Predict · a guess, not marked');
-    await expect(predict.locator('[data-chat="quiz-sure"]')).toHaveCount(0);
+    await expect(predict.locator('.quiz-sure')).toHaveCount(0);
     await predict.locator('.quiz-input').fill('the order');
     await predict.locator('[data-chat="quiz-check"]').click();
     await expect(chat.locator('.quiz-card')).toHaveCount(2);
@@ -934,24 +976,41 @@ test.describe('Felix', () => {
     await expect(predict).not.toHaveClass(/right|wrong/);
 
     const check = chat.locator('.quiz-card').nth(1);
-    const sure = check.locator('[data-chat="quiz-sure"]', { hasText: 'Guessing' });
-    await sure.click();
-    await expect(sure).toHaveAttribute('aria-pressed', 'true');
+    await expect(check.locator('.quiz-sure-pct'), 'nothing is said about confidence until the bar is moved').toHaveText('–');
+    await check.locator('.quiz-sure-range').fill('30');
+    await expect(check.locator('.quiz-sure-pct')).toHaveText('30%');
+    await expect(check.locator('[data-chat="quiz-think"]')).toHaveAttribute('role', 'switch');
     await check.locator('[data-chat="quiz-think"]').click();
     await expect(check.locator('.quiz-thinking')).toBeFocused();
     await page.keyboard.type('fairness maybe');
     await check.locator('.quiz-input').fill('so nobody waits forever');
     await check.locator('[data-chat="quiz-check"]').click();
-    await expect(check.locator('.quiz-own')).toHaveText('Guessing · fairness maybe');
+    await expect(check.locator('.quiz-own')).toHaveText('30% sure · fairness maybe');
     expect(marks[0]).toMatchObject({ confidence: 'guess', thinking: 'fairness maybe' });
     await check.locator('[data-chat="quiz-next"]').click();
     await expect.poll(() => asked.length).toBe(3);
-    expect(asked[2].messages.at(-1).text).toContain('(how sure I felt: guessing) My thinking: fairness maybe');
+    expect(asked[2].messages.at(-1).text).toContain('(how sure I felt: 30%) My thinking: fairness maybe');
 
     const choice = chat.locator('.quiz-card').last();
-    await choice.locator('[data-chat="quiz-sure"]', { hasText: 'Sure' }).click();
+    await choice.locator('.quiz-sure-range').fill('90');
+    await choice.locator('[data-chat="quiz-think"]').click();
+    await page.keyboard.type('not sure I want this sent');
+    await choice.locator('[data-chat="quiz-think"]').click();
+    await expect(choice.locator('.quiz-thinking'), 'switching thinking off hides it').toHaveCount(0);
     await choice.locator('.quiz-option', { hasText: 'the front' }).click();
-    await expect(choice.locator('.quiz-own')).toHaveText('Sure');
+    await expect(choice.locator('.quiz-own'), 'thinking switched off is not sent').toHaveText('90% sure');
+    expect(marks, 'a multiple-choice answer with no thinking is marked by the page alone').toHaveLength(1);
+
+    await choice.locator('[data-chat="quiz-next"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveCount(4);
+    const reasoned = chat.locator('.quiz-card').last();
+    await reasoned.locator('[data-chat="quiz-think"]').click();
+    await page.keyboard.type('a queue is first in, first out');
+    await reasoned.locator('.quiz-option', { hasText: 'the back' }).click();
+    await expect.poll(() => marks.length, 'thinking on a multiple-choice answer goes to the marker too').toBe(2);
+    expect(marks[1]).toMatchObject({ given: 'the back', thinking: 'a queue is first in, first out' });
+    await expect(reasoned.locator('.quiz-verdict'), 'the page keeps its own verdict for a choice').toHaveText('Not quite');
+    await expect(reasoned.locator('.quiz-explain').first()).toContainText('Yes: the oldest item leaves first.');
   });
 
   test('a growing reply keeps its finished words, and a citation lights its passage in the open note', async ({ page }) => {
@@ -1050,7 +1109,7 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');
-    await expect(chat.locator('.chat-ref')).toHaveCount(1);
+    await expect(chat.locator('#chat-refs .note-card')).toHaveCount(1);
     await expect(chat.locator('#chat-input')).toHaveValue('compare ');
     await expect(chat.locator('.chat-pick')).toBeHidden();
 
@@ -1058,18 +1117,18 @@ test.describe('Felix', () => {
     await chat.locator('[data-chat="attach-note"]').click();
     await chat.locator('#chat-pick-search').fill(`Binary heaps ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Binary heaps ${tag}` }).click();
-    await expect(chat.locator('.chat-ref')).toHaveCount(2);
+    await expect(chat.locator('#chat-refs .note-card')).toHaveCount(2);
 
     await chat.locator('#chat-input').fill('compare these two');
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo').last()).toContainText('Both use a heap.');
     expect(asked[0].refs).toEqual([dijkstra.id, heaps.id]);
-    await expect(chat.locator('.msg.user .msg-refs .cite')).toHaveCount(2);
-    await expect(chat.locator('#chat-refs .chat-ref'), 'sent notes leave the box').toHaveCount(0);
+    await expect(chat.locator('.msg.user .note-card'), 'sent notes show as cards in the message').toHaveCount(2);
+    await expect(chat.locator('#chat-refs .note-card'), 'sent notes leave the box').toHaveCount(0);
 
     await page.reload();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat #chat-refs .chat-ref')).toHaveCount(0);
+    await expect(page.locator('#chat #chat-refs .note-card')).toHaveCount(0);
     await page.locator('#chat-input').fill('and now?');
     await page.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(2);
@@ -1446,7 +1505,7 @@ test.describe('Felix', () => {
     await expect(chip.locator('.file-page')).toContainText('Heaps keep the minimum at the root.');
     const card = await chip.boundingBox();
     expect(card.width).toBeGreaterThan(card.height);
-    expect(card.height).toBeGreaterThan(90);
+    expect(card.height, 'a short tile in the composer, so the chat is not pushed down').toBeLessThanOrEqual(60);
     await expect(chip).not.toHaveClass(/reading/);
     await chat.locator('#chat-input').fill('what does my file say?');
     await chat.locator('#chat-input').press('Enter');
@@ -1704,7 +1763,7 @@ test.describe('Felix', () => {
     await expect(search).toBeFocused();
     await expect(chat.locator('.chat-pick-row').first()).toContainText(`Dijkstra picker ${tag}`);
     await chat.locator('.chat-pick-row').first().click();
-    await expect(chat.locator('#chat-refs .chat-ref')).toContainText(`Dijkstra picker ${tag}`);
+    await expect(chat.locator('#chat-refs .note-card')).toContainText(`Dijkstra picker ${tag}`);
   });
 
   test('says plainly when no AI is set up', async ({ page }) => {
@@ -3494,7 +3553,7 @@ test('dropping one note on another combines them in the background with progress
   percent = 70;
   await expect(panel).toContainText('· 70%');
   Object.assign(job, { state: 'ready', result: { title: b.title, with_title: a.title, body: '## Graphs\nA graph has nodes and edges.\n\n## BFS\nBFS uses a queue.', added: ['![Tree](tree.png)'], kept: 0.7, kept_enough: false, base: await versions(b.id), with_base: await versions(a.id) } });
-  await expect(page.locator('.toast')).toContainText('are combined');
+  await expect(page.locator('.toast')).toContainText('are ready to review');
   await expect(panel).toContainText('Ready to review');
   await expect(panel).toContainText('Ready in the background');
   await panel.locator('.activity-row').click();
@@ -3509,6 +3568,54 @@ test('dropping one note on another combines them in the background with progress
   await page.locator('.toast button', { hasText: 'Undo' }).click();
   await expect(page.locator('.toast')).toContainText('Both notes are back');
   expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toBe('A graph has nodes and edges.');
+});
+
+test('Combine into… in the explorer menu and a “merge” line in Quick Leo pick the other note from a list', async ({ page }) => {
+  test.skip(test.info().project.name === 'phone', 'the explorer is beside the page on wider screens');
+  const tag = Date.now().toString(36);
+  const folder = `pick-${tag}`;
+  await page.request.post('/api/dirs', { data: { path: folder } });
+  const make = async (title) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory: folder } })).json();
+  const a = await make(`Pick A ${tag}`);
+  const b = await make(`Pick B ${tag}`);
+  await page.goto(`/#/n/${a.id}`);
+  const row = page.locator(`#side .side-note[data-id="${a.id}"]`);
+  await expect(row).toBeVisible();
+  await row.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Combine into…' }).click();
+  const picker = page.getByRole('menu', { name: `Combine “${a.title}” into` });
+  await expect(picker.locator('input')).toBeFocused();
+  await picker.locator('input').fill(b.title);
+  await expect(picker.getByRole('menuitem')).toHaveCount(1);
+  await picker.getByRole('menuitem', { name: b.title }).click();
+  const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
+  await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+  await expect(sheet).toContainText(`“${b.title}” keeps its title and is rewritten with everything from both notes; “${a.title}” goes to the trash.`);
+  await sheet.locator('[data-action="close"]').click();
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+
+  await page.keyboard.press('ControlOrMeta+k');
+  const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
+  const input = box.locator('#quick-input');
+  await input.fill('merge');
+  const first = box.locator('.quick-row.on');
+  await expect(first).toContainText(`Combine “${a.title}” into…`);
+  await expect(first).toContainText('Combine notes');
+  await input.press('Enter');
+  await expect(box).toHaveCount(0);
+  await expect(picker.locator('input')).toBeFocused();
+  await picker.locator('input').fill(b.title);
+  await picker.getByRole('menuitem', { name: b.title }).click();
+  await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+  await sheet.locator('[data-action="close"]').click();
+
+  await page.goto('/');
+  await page.keyboard.press('ControlOrMeta+k');
+  await input.fill('combine');
+  await expect(first).toContainText('Open a note to combine it');
+  await input.press('Enter');
+  await expect(box).toBeVisible();
+  await expect(page.getByRole('menu')).toHaveCount(0);
 });
 
 test('PDF export leaves out the tasks panel and every overlay, with the same full-width page on any screen', async ({ page }) => {
@@ -4101,7 +4208,7 @@ test.describe('passages', () => {
     await touch.close();
   });
 
-  test('a lost margin note moves to the Felix panel and Settings starts with read-along off', async ({ page }) => {
+  test('a margin note whose words are gone stays out of the page and the Felix panel, and Settings starts with read-along off', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
     const note = await (await page.request.post('/api/notes', { data: { title: 'Lost place', body: 'Nothing like it here.' } })).json();
     const lost = { id: 'stub-lost', note: note.id, quote: 'words that went away', prefix: 'nothing near ', suffix: ' nothing after', status: 'open', source: 'read', messages: [{ from: 'felix', text: 'This passage has gone.', at: '2026-11-04T10:00:00Z' }], created_at: '2026-11-04T10:00:00Z', updated_at: '2026-11-04T10:00:00Z' };
@@ -4109,8 +4216,8 @@ test.describe('passages', () => {
     await page.goto(`/#/n/${note.id}`);
     await expect(page.locator('#margin-mode')).toBeVisible();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat-lost')).toBeVisible();
-    await expect(page.locator('#chat-lost summary')).toHaveText('A margin note lost its place');
+    await expect(page.locator('#chat .chat-hello-lead')).toBeVisible();
+    await expect(page.locator('#chat')).not.toContainText('lost its place');
     await expect(page.locator('.margin-note')).toHaveCount(0);
 
     await page.goto('/#/settings/felix');
@@ -4498,6 +4605,13 @@ test.describe('beside the note', () => {
     expect(small.width).toBeLessThan(wide / 4);
     await page.reload();
     await expect(page.locator('#dock #tasks-window .tasks-pill')).toBeVisible();
+    await box.locator('.tasks-pill').hover();
+    await expect(box.locator('.tasks-body'), 'hovering the pill opens the panel').toBeVisible();
+    await box.locator('.tasks-body').hover();
+    await expect(box.locator('.tasks-body'), 'it stays open while the pointer is over it').toBeVisible();
+    await page.mouse.move(640, 300);
+    await expect(box.locator('.tasks-pill'), 'leaving folds it again').toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('1');
     const opening = await box.evaluate((el) => {
       el.querySelector('.tasks-pill').click();
       return { runs: el.getAnimations().filter((run) => !run.animationName).length, body: Boolean(el.querySelector('.tasks-body')) };
@@ -4510,9 +4624,14 @@ test.describe('beside the note', () => {
       return { runs: el.getAnimations().filter((run) => !run.animationName).length, pill: Boolean(el.querySelector('.tasks-pill')) };
     });
     expect(still).toEqual({ runs: 0, pill: true });
-    await box.locator('.tasks-pill').click();
+    const spot = await box.locator('.tasks-pill').boundingBox();
+    await page.mouse.click(spot.x + spot.width / 2, spot.y + spot.height / 2);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await expect(page.locator('#dock #tasks-window [data-action="tasks-fold"]')).toContainText('Hide');
+    await expect(page, 'a click as the pill opens pins the panel, not the row now under the pointer').not.toHaveURL(/#\/calendar/);
+    await page.mouse.move(640, 300);
+    await expect(box.locator('.tasks-body'), 'a pinned panel stays open after the pointer leaves').toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
     await page.goto('/#/calendar');
     await expect(page.locator('#tasks-window')).toBeHidden();
   });
@@ -4721,6 +4840,7 @@ test('Felix shows one live step, then one line, and marks an answer from outside
     { step: 'Worked out the numbers', tool: 'calculate', found: [] },
     { wait: 700 },
     { t: 'Wear goggles.' },
+    { wait: 700 },
     { done: true },
   ];
   await page.addInitScript((script) => {
@@ -4748,7 +4868,14 @@ test('Felix shows one live step, then one line, and marks an answer from outside
   await expect(answer.locator('.msg-step')).toHaveText(['Searched your notes for “lab safety”']);
   await expect(answer.locator('.msg-step')).toHaveText(['Worked out the numbers']);
   await expect(answer.locator('.msg-trace')).toHaveCount(0);
+  await expect(answer.locator('.prose')).toHaveText('Wear goggles.');
+  const inReply = () => answer.evaluate((el) => Math.round(el.querySelector('.prose').getBoundingClientRect().y - el.getBoundingClientRect().y));
+  const status = await answer.locator('.msg-status').boundingBox();
+  const words = await answer.locator('.prose').boundingBox();
+  expect(status.y, 'the live step sits above the words, where the summary will be').toBeLessThan(words.y);
+  const before = await inReply();
   await expect(answer.locator('.msg-trace > summary')).toHaveText('Searched your notes');
+  expect(await inReply(), 'the words do not move inside the reply when Felix finishes').toBe(before);
   await expect(answer.locator('.msg-steps .msg-step').first()).toBeHidden();
   await expect(answer.locator('.msg-outside')).toHaveText('Not from your notes');
 });
@@ -5062,6 +5189,8 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/new/${dir}`);
   await page.goto('/#/calendar');
   await page.keyboard.press('ControlOrMeta+f');
+  await expect(page.locator('.quick-leo'), 'only Cmd/Ctrl+K opens Quick Leo').toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+k');
   await expect(page.locator('.quick-leo')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('.quick-leo')).toHaveCount(0);
@@ -5109,7 +5238,8 @@ test('the Tasks panel stays usable beside a long note on short and tall screens'
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await panel.locator('[data-action="tasks-fold"]').first().click();
   await expect(panel.locator('.tasks-pill')).toBeVisible();
-  await panel.locator('.tasks-pill').click();
+  const pill = await panel.locator('.tasks-pill').boundingBox();
+  await page.mouse.click(pill.x + pill.width / 2, pill.y + pill.height / 2);
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(panel.locator('.tasks-body')).toBeVisible();

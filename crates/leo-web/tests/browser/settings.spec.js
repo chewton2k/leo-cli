@@ -147,7 +147,7 @@ test('note mention picker scrolls within its list and keeps the composer caret',
   const end = chat.indexOf('  function felix(', start);
   const reveal = chat.slice(start, end);
   await page.setViewportSize({ width: 390, height: 700 });
-  await page.setContent(`<style>${css}</style><main style="height:1800px;padding:250px 20px"><section id="picker" class="chat-pick"><input id="composer" value="@note text"><div id="list" class="chat-pick-list" role="listbox"></div></section></main>`);
+  await page.setContent(`<style>${css}</style><main style="height:1800px;padding:500px 20px"><form class="chat-compose"><section id="picker" class="chat-pick"><input id="composer" value="@note text"><div id="list" class="chat-pick-list" role="listbox"></div></section></form></main>`);
   await page.addScriptTag({ content: `${reveal} window.revealChatPick = revealChatPick; window.containChatPickWheel = containChatPickWheel;` });
   await page.evaluate(() => {
     document.querySelector('#list').innerHTML = Array.from({ length: 20 }, (_, i) => `<button class="chat-pick-row${i === 0 ? ' on' : ''}" role="option" aria-selected="${i === 0}"><b>Note ${i}</b><span>Folder</span></button>`).join('');
@@ -185,7 +185,8 @@ test('note mention picker scrolls within its list and keeps the composer caret',
   await page.evaluate(() => { const rows=[...document.querySelectorAll('.chat-pick-row')]; rows.forEach((row,i)=>row.classList.toggle('on',i===0)); revealChatPick(document.querySelector('#list')); });
   expect(await list.evaluate(el => el.scrollTop)).toBe(0);
   await list.evaluate(el => { el.innerHTML = '<button class="chat-pick-row on"><b>One</b></button><button class="chat-pick-row"><b>Two</b></button>'; });
-  await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + 8);
+  const shortBox = await list.boundingBox();
+  await page.mouse.move(shortBox.x + shortBox.width / 2, shortBox.y + 8);
   await page.mouse.wheel(0, 150);
   expect(await page.evaluate(() => scrollY)).toBe(150);
   expect(await list.evaluate(el => el.scrollTop)).toBe(0);

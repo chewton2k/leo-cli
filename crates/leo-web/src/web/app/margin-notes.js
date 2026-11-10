@@ -82,7 +82,6 @@ function marginLeave() {
   columns?.style.removeProperty('--anchor-gutter');
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
-  chat.setLost([]);
   Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
@@ -692,13 +691,10 @@ function marginDraw() {
   const source = s.doc.source();
   const threads = marginPage.draft ? [...marginPage.threads, marginPage.draft] : marginPage.threads;
   const placed = [];
-  const lost = [];
   for (const t of threads) {
     const at = marginKit.find(source, t);
     if (at) placed.push({ t, at });
-    else if (t.id !== 'draft') lost.push(t);
   }
-  chat.setLost(lost);
   const layout = marginLayout(columns);
   if (columns.dataset.margin !== layout) columns.dataset.margin = layout;
   const margins = layout === 'right' || layout === 'both';
@@ -1407,16 +1403,6 @@ async function marginThrough(s, parts, spread) {
   else marginSetStatus(spread ? 'This note is long, so Felix read parts from all through it.' : '');
   if (count) toast(`${run.stop ? 'Stopped. ' : ''}Felix added ${marginNotes(count)}`, { action: 'Undo', run: marginThroughUndo(s, run.added) });
   if (marginPage.mode === 'along') marginPage.timer = setTimeout(() => marginRead(s).catch(fail), Math.max(READ_PAUSE.regular, marginPage.nextRead - Date.now()));
-}
-
-function marginLostOpen(el) {
-  const t = marginPage.threads.find((old) => old.id === el.dataset.id);
-  if (t) chat.attachSelection({ note: marginPage.s.note.id, title: marginPage.s.note.title || 'Untitled', from: 0, to: 0, text: t.quote });
-}
-
-function marginLostDismiss(el) {
-  const t = marginPage.threads.find((old) => old.id === el.dataset.id);
-  if (t) return marginStatus(t, 'dismissed');
 }
 
 const MARGIN_DIAGRAMS = {

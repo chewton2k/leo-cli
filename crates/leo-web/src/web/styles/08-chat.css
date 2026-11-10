@@ -29,7 +29,8 @@
 @media (min-width: 1200px) {
   :root { --chat-w: clamp(520px, 38vw, 760px); }
   body.chat-open { --right: var(--chat-w); padding-right: var(--right); }
-  .chat { box-shadow: none; }
+  .chat { box-shadow: none; padding-left: 8px; }
+  body.chat-open::after { right: var(--right); border-radius: 16px; }
 }
 .chat-resize { display: none; }
 html.page-bar-on { scrollbar-width: none; scrollbar-gutter: auto; }
@@ -194,15 +195,15 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-ref-open { border: 0; background: none; color: inherit; font: inherit; padding: 4px 4px 4px 9px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-ref-x { border: 0; background: none; color: inherit; font-size: var(--fs-md); line-height: 1; padding: 2px 8px 4px 2px; opacity: .7; }
 .chat-ref-x:hover { opacity: 1; }
-.chat-pick { margin: 0 0 8px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow); overflow: hidden; }
-.chat-pick-search { display: block; width: 100%; border: 0; outline: 0; background: none; padding: 10px 12px; font-size: 14.5px; color: var(--text); }
-.chat-pick-list { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; }
-.chat-pick-row { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; border: 0; background: none; text-align: left; padding: 8px 12px; color: var(--text); }
-.chat-pick-row b { font-size: var(--fs-base); font-weight: 600; overflow-wrap: anywhere; }
-.chat-pick-row span { font-size: var(--fs-xs); color: var(--muted); }
+.chat-pick { position: absolute; z-index: 5; left: 4px; bottom: calc(100% + 6px); width: min(320px, calc(100% - 8px)); padding: 4px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow); overflow: hidden; }
+.chat-pick[hidden] { display: none; }
+.chat-pick-search { display: block; width: 100%; border: 0; outline: 0; border-radius: var(--r-tile); background: var(--tint); padding: 7px 10px; margin-bottom: 4px; font-size: 13.5px; color: var(--text); }
+.chat-pick-list { max-height: 200px; overflow-y: auto; overscroll-behavior: contain; }
+.chat-pick-row { display: flex; align-items: baseline; gap: 8px; width: 100%; border: 0; border-radius: var(--r-tile); background: none; text-align: left; padding: 7px 10px; color: var(--text); }
+.chat-pick-row b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.chat-pick-row span { flex: none; max-width: 45%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--muted); }
 .chat-pick-row.on, .chat-pick-row:hover { background: var(--tint); }
-.chat-pick-none { padding: 10px 12px; font-size: 13.5px; color: var(--muted); }
-.msg-refs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
+.chat-pick-none { padding: 7px 10px; font-size: 13.5px; color: var(--muted); }
 .link-btn { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 html:has(> body.on-boards) { scrollbar-gutter: auto; }
 body.on-boards main { max-width: none; padding: 0 20px calc(var(--bottom) + 20px); }

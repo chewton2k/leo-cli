@@ -1503,6 +1503,7 @@ const TASKS_FOLDED = 'leo-tasks-folded';
 const TASKS_AHEAD_DAYS = 7;
 const TASK_DONE_MS = 1200;
 const TASKS_LEAST_ROOM = 150;
+const TASKS_PIN_MS = 400;
 const MOST_TASK_FEEDBACK = 80;
 
 function dock() {
@@ -1595,7 +1596,7 @@ function drawTasksWindow() {
   // Calendar lists these tasks itself, and on Boards the panel would cover the columns.
   const here = /^#\/(?:calendar|boards)(?:\/|$)/.test(location.hash);
   tasksBox.hidden = !open || here || state.view === 'locked';
-  if (tasksBox.hidden) { fitTasksWindow(); return; }
+  if (tasksBox.hidden) { tasksWin.hovering = false; fitTasksWindow(); return; }
   const late = groups.find(([name]) => name === 'Overdue');
   const active = tasksBox.contains(document.activeElement) ? document.activeElement : null;
   const focus = active ? {action: active.dataset.action, id: active.dataset.id, on: active.dataset.on} : null;
@@ -1625,7 +1626,7 @@ function drawTasksWindow() {
 }
 
 function tasksFolded() {
-  return Boolean(tasksWin.folded || (tasksWin.cramped && !tasksWin.opened));
+  return !tasksWin.hovering && Boolean(tasksWin.folded || (tasksWin.cramped && !tasksWin.opened));
 }
 
 function fitTasksWindow() {
@@ -1659,6 +1660,7 @@ new MutationObserver(() => {
 window.addEventListener('resize', fitTasksWindow);
 
 function setTasksFolded(folded) {
+  tasksWin.hovering = false;
   tasksWin.opened = !folded;
   if (!(folded && tasksWin.cramped && !tasksWin.folded)) {
     tasksWin.folded = folded;
@@ -1670,13 +1672,13 @@ function setTasksFolded(folded) {
   tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
 }
 
-function toggleTasksWindow() {
+function toggleTasksWindow(apply = setTasksFolded) {
   if (tasksBox.dataset.folding) return;
   for (const run of tasksBox.getAnimations()) if (!run.animationName) run.cancel();
   const folding = !tasksFolded();
   const before = tasksBox.getBoundingClientRect();
   if (stillMotion() || tasksBox.hidden || !before.width) {
-    setTasksFolded(folding);
+    apply(folding);
     return;
   }
   const pill = (box) => `inset(${Math.max(0, box.height - 46)}px ${Math.max(0, box.width - 46)}px 0 0 round 23px)`;
@@ -1685,14 +1687,31 @@ function toggleTasksWindow() {
     const run = tasksBox.animate([{ clipPath: 'inset(0 0 0 0 round 14px)' }, { clipPath: pill(before) }], { duration: MOTION_MS * EXIT_SHARE, easing: EASE_EXIT });
     run.onfinish = run.oncancel = () => {
       delete tasksBox.dataset.folding;
-      setTasksFolded(true);
+      apply(true);
     };
     return;
   }
-  setTasksFolded(false);
+  apply(false);
   const after = tasksBox.getBoundingClientRect();
   tasksBox.animate([{ clipPath: `inset(${Math.max(0, after.height - before.height)}px ${Math.max(0, after.width - before.width)}px 0 0 round 23px)` }, { clipPath: 'inset(0 0 0 0 round 14px)' }], { duration: MOTION_MS, easing: EASE_OUT });
 }
+
+function hoverTasks(e, on) {
+  if (e.pointerType !== 'mouse' || e.buttons || (on ? !tasksFolded() : !tasksWin.hovering || tasksBox.contains(e.relatedTarget))) return;
+  toggleTasksWindow((folded) => {
+    tasksWin.hovering = !folded;
+    tasksWin.hoverAt = folded ? 0 : performance.now();
+    drawTasksWindow();
+  });
+}
+tasksBox.addEventListener('pointerover', (e) => hoverTasks(e, true));
+tasksBox.addEventListener('click', (e) => {
+  if (!tasksWin.hovering || performance.now() - tasksWin.hoverAt > TASKS_PIN_MS) return;
+  e.preventDefault();
+  e.stopPropagation();
+  setTasksFolded(false);
+}, true);
+tasksBox.addEventListener('pointerleave', (e) => hoverTasks(e, false));
 
 async function loadTasksWindow() {
   clearTimeout(tasksWin.timer);

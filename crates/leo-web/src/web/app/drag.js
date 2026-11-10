@@ -3,15 +3,19 @@ const FOLDER_DRAG = 'application/x-leo-folder';
 const FILE_VIEWS = ['workspace', 'search', 'note'];
 const SPRING_MS = 600;
 const EDGE_PX = 32;
-const dragging = { note: null, folder: null, filesTimer: 0, spring: null };
+const dragging = { note: null, folder: null, filesTimer: 0, spring: null, armed: null };
 
 const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes(type));
 const parentOf = (path) => path.split('/').slice(0, -1).join('/');
 const dropTargetOf = (el) => (el && el.closest ? el.closest('[data-action="open-folder"][data-dir], [data-action="home"], [data-drop-dir]') : null);
 const dirOf = (target) => (Object.hasOwn(target.dataset, 'dropDir') ? target.dataset.dropDir : target.dataset.action === 'home' ? '' : target.dataset.dir);
 const noteCardOf = (el) => (el && el.closest ? el.closest('.card[data-id][data-action="open-note"]') : null);
+const armedRowOf = (el) => {
+  const row = el && el.closest ? el.closest('.side-tree .side-note[data-id]') : null;
+  return row && row.dataset.id === dragging.armed ? row : null;
+};
 const combinesWith = (e) => {
-  const card = dragging.note && carries(e, NOTE_DRAG) ? noteCardOf(e.target) : null;
+  const card = dragging.note && carries(e, NOTE_DRAG) ? noteCardOf(e.target) || armedRowOf(e.target) : null;
   return card && card.dataset.id !== dragging.note.id ? card : null;
 };
 
@@ -42,15 +46,36 @@ function markDrop(target) {
   if (kids) kids.classList.add('drop-in');
 }
 
+function markCombine(row) {
+  const armed = Boolean(row) && row.dataset.id === dragging.armed;
+  for (const el of document.querySelectorAll('.combine-wait, .combine-armed')) if (el !== row) el.classList.remove('combine-wait', 'combine-armed');
+  if (!row) return;
+  row.style.setProperty('--spring', `${SPRING_MS}ms`);
+  row.classList.toggle('combine-wait', !armed);
+  row.classList.toggle('combine-armed', armed);
+}
+
 function springFolder(e) {
   const row = e.target.closest ? e.target.closest('.side-tree .side-folder[data-drop-dir]') : null;
-  const dir = row && (carries(e, NOTE_DRAG) || carries(e, FOLDER_DRAG)) ? row.dataset.dropDir : null;
-  if (dragging.spring && dragging.spring.dir === dir) return;
+  const note = !row && e.target.closest && dragging.note && carries(e, NOTE_DRAG) ? e.target.closest('.side-tree .side-note[data-id]') : null;
+  const kind = row && (carries(e, NOTE_DRAG) || carries(e, FOLDER_DRAG)) ? 'folder' : note && note.dataset.id !== dragging.note.id ? 'note' : null;
+  const key = kind === 'folder' ? row.dataset.dropDir : kind === 'note' ? note.dataset.id : null;
+  if (dragging.spring && dragging.spring.kind === kind && dragging.spring.key === key) {
+    markCombine(note);
+    return;
+  }
   clearTimeout(dragging.spring?.timer);
   dragging.spring = null;
+  dragging.armed = null;
+  markCombine(kind === 'note' ? note : null);
+  if (kind === 'note') {
+    dragging.spring = { key, kind, timer: setTimeout(() => { dragging.armed = key; markCombine(note); }, SPRING_MS) };
+    return;
+  }
+  const dir = key;
   const from = dragging.folder;
   if (dir === null || folderShown(dir) || (from !== null && (dir === from || dir.startsWith(`${from}/`)))) return;
-  dragging.spring = { dir, timer: setTimeout(() => { if (!folderShown(dir)) twistFolder(dir, null, false); }, SPRING_MS) };
+  dragging.spring = { key, kind, timer: setTimeout(() => { if (!folderShown(dir)) twistFolder(dir, null, false); }, SPRING_MS) };
 }
 
 function scrollTreeNear(e) {
@@ -72,6 +97,8 @@ function endDrag() {
   dragging.folder = null;
   clearTimeout(dragging.spring?.timer);
   dragging.spring = null;
+  dragging.armed = null;
+  markCombine(null);
   document.body.classList.remove('dragging');
   markDrop(null);
   filesOver(false);
@@ -111,7 +138,7 @@ document.addEventListener('dragover', (e) => {
   scrollTreeNear(e);
   const onto = combinesWith(e);
   if (onto) {
-    markDrop(onto);
+    markDrop(onto.closest('.side-tree') ? null : onto);
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     return;
@@ -167,8 +194,8 @@ document.addEventListener('drop', (e) => {
 function combineSheet(from, into) {
   const box = sheet(`<div class="combine">
     <h3>Combine these notes?</h3>
-    <p>Felix writes one note with everything from “${esc(from.title)}” and “${esc(into.title)}”. What both say is written once; nothing unique is left out. Recording transcripts stay separate, each labelled with the note it came from.</p>
-    <p class="hint">It runs in the background with a progress bar, so you can keep working. You see the result before anything changes; then “${esc(from.title)}” goes to the trash and Undo brings both back.</p>
+    <p>“${esc(into.title)}” keeps its title and is rewritten with everything from both notes; “${esc(from.title)}” goes to the trash. What both say is written once; nothing unique is left out. Recording transcripts stay separate, each labelled with the note it came from.</p>
+    <p class="hint">It runs in the background with a progress bar, so you can keep working. You see the result before anything changes, and Undo brings both back.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="combine-go">Combine</button></div>
   </div>`);
   $('#combine-go', box).addEventListener('click', () => combineNow(from, into).catch(fail));
@@ -207,7 +234,7 @@ function watchCombine(id) {
     if (job.state === 'working') { setTimeout(look, 1500); return; }
     combinesWatched.delete(id);
     checkActivity();
-    if (job.state === 'ready') toast(`“${job.with_title}” and “${job.into_title}” are combined`, { action: 'Review', run: () => reviewCombine(id).catch(fail) });
+    if (job.state === 'ready') toast(`“${job.with_title}” and “${job.into_title}” are ready to review`, { action: 'Review', run: () => reviewCombine(id).catch(fail) });
     else toast(job.error || 'The notes could not be combined.', { bad: true });
   };
   setTimeout(look, 1500);

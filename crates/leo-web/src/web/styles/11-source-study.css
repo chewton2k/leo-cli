@@ -101,8 +101,7 @@ body.source-resizing iframe { pointer-events: none; }
 .chat-send svg { width: 18px; height: 18px; }
 .chat-send.stop { background: var(--text); color: var(--bg); }
 .chat-perch { position: absolute; right: 22px; bottom: 100%; margin-bottom: -3px; }
-.chat-pick { position: relative; z-index: 2; }
-.chat-foot:has(.chat-pick:not([hidden])) .chat-perch { visibility: hidden; }
+.chat.slim .chat-foot:has(.chat-pick:not([hidden])) .chat-perch { visibility: hidden; }
 .chat-refs { padding-right: 104px; }
 .chat.perched .chat-review { padding-right: 116px; }
 .chat-below:empty { display: none; }
