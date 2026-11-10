@@ -126,11 +126,10 @@ impl FileStore {
                 error
             }
         })?;
-        let metadata = file.metadata()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if metadata.nlink() != 1 {
+            if file.metadata()?.nlink() != 1 {
                 return Err(std::io::Error::other(
                     "credentials must have no hard links; restore a private copy",
                 ));
