@@ -16,7 +16,7 @@ function harness() {
     window: { leoMargin: kit }, document: { hidden: false, addEventListener() {}, documentElement: { addEventListener() {} } },
     chat: { isBusy: () => false }, saving: { unsaved: () => false },
     flush: async () => {}, api: () => new Promise((resolve, reject) => { settle = { resolve, reject }; }),
-    enc: encodeURIComponent, Locked: class extends Error {},
+    enc: encodeURIComponent, Locked: class extends Error {}, AbortController,
     setTimeout: (fn, delay) => { const id = ++next; fn.delay = delay; timers.set(id, fn); return id; },
     clearTimeout: (id) => timers.delete(id), cancelAnimationFrame() {},
     $: () => null, svg: (paths) => paths, ICON: { book: '' }, stillMotion: () => false, fail: (e) => { throw e; }, ON_MAC: true, MOTION_MS: 180, POP_FROM: .95,
@@ -347,7 +347,7 @@ function through(mode = 'ask') {
   const waiting = [];
   Object.assign(h.context, {
     toast: (text, options) => toasts.push([text, options]), stillMotion: () => false, ICON: {}, iconSwap: (host, change) => change(),
-    api: (url, options = {}) => { calls.push([url, options.body]); return new Promise((resolve, reject) => waiting.push({ resolve, reject })); },
+    api: (url, options = {}) => { calls.push([url, options.body]); return new Promise((resolve, reject) => { waiting.push({ resolve, reject }); options.signal?.addEventListener('abort', () => reject(new Error('aborted'))); }); },
   });
   const thread = (id, n) => ({ id, quote: `Paragraph number ${n} has`, prefix: '', suffix: '', messages: [] });
   const answer = async (value) => { await new Promise(setImmediate); waiting.shift().resolve(value); await new Promise(setImmediate); };
@@ -366,17 +366,30 @@ test('a read-through whose note is left draws nothing', async () => {
   assert.equal(h.state.through, null);
 });
 
-test('Stop ends after the in-flight part and keeps and reveals what it saved', async () => {
+test('Stop aborts the in-flight part at once and keeps and reveals what earlier parts saved', async () => {
+  const h = through();
+  const run = h.context.marginThroughClick();
+  await h.answer({ notes: [h.thread('t1', 1)] });
+  await new Promise(setImmediate);
+  h.state.through.started = 0;
+  await h.context.marginThroughClick();
+  await run;
+  assert.equal(h.calls.length, 2);
+  assert.equal(JSON.stringify(h.state.threads.map((t) => t.id)), JSON.stringify(['t1']));
+  assert.equal(h.toasts[0][0], 'Stopped. Felix added 1 margin note');
+  assert.equal(h.state.through, null);
+});
+
+test('Stop during the only part ends the run with nothing added', async () => {
   const h = through();
   const run = h.context.marginThroughClick();
   await new Promise(setImmediate);
   h.state.through.started = 0;
   await h.context.marginThroughClick();
-  await h.answer({ notes: [h.thread('t1', 1)] });
   await run;
   assert.equal(h.calls.length, 1);
-  assert.equal(JSON.stringify(h.state.threads.map((t) => t.id)), JSON.stringify(['t1']));
-  assert.equal(h.toasts[0][0], 'Stopped. Felix added 1 margin note');
+  assert.equal(h.state.threads.length, 0);
+  assert.equal(h.toasts.length, 0);
   assert.equal(h.state.through, null);
 });
 
@@ -548,7 +561,7 @@ test('read through shows the server sentence for a missing writing AI and passes
     const h = harness();
     h.context.marginThroughControl = () => {};
     h.context.marginSetStatus = (text) => { h.state.status = text; };
-    const run = { started: Date.now(), stop: false, added: [] };
+    const run = { started: Date.now(), stop: false, added: [], abort: new AbortController() };
     const part = { blocks: ['A changed paragraph long enough to read.'], from: 0, to: 1 };
     h.state.s.doc.glow = () => {};
     h.state.s.doc.source = () => 'A changed paragraph long enough to read.';

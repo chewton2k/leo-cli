@@ -808,6 +808,23 @@ test('a usage period adds up tokens, states the cache share and drops garbage', 
   assert.ok(quarter.models.some((m) => m.name === 'old'));
 });
 
+test('a 24 hour period has one bar per hour and crosses midnight', () => {
+  const hours = { models: [
+    { day: '2026-11-07 01', name: 'big', calls: 2, input: 100, cached: 50, output: 10 },
+    { day: '2026-11-06 03', name: 'big', calls: 1, input: 10, cached: 0, output: 1 },
+    { day: '2026-11-06 01', name: 'gone', calls: 9, input: 9, cached: 0, output: 9 },
+  ], kinds: [{ day: '2026-11-07 01', name: 'answer', calls: 2 }] };
+  const day = C.usagePeriod(hours, 1, '2026-11-07 02');
+  assert.equal(day.length, 1);
+  assert.equal(day.bars.length, 24);
+  assert.equal(day.bars[0].from, '2026-11-06 03');
+  assert.equal(day.bars[23].to, '2026-11-07 02');
+  assert.equal(day.bars[22].calls, 2);
+  assert.deepEqual(day.totals, { calls: 3, input: 110, cached: 50, output: 11, share: 50 / 110 });
+  assert.deepEqual(day.kinds.map((k) => [k.name, k.calls]), [['answer', 2]]);
+  assert.deepEqual(C.usagePeriod(hours, 1, '2026-11-07').bars, []);
+});
+
 test('an empty or unreadable usage period is empty and never throws', () => {
   for (const days of [null, undefined, {}, { models: 'x', kinds: 5 }, { models: [], kinds: [] }]) {
     const none = C.usagePeriod(days, 30, '2026-11-07');

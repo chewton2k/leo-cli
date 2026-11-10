@@ -614,6 +614,33 @@ test('page toolbars share geometry', async ({ page }) => {
   }
 });
 
+test('Felix activity over 24 hours draws hourly bars and detail for that day', async ({ page }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const read = name => fs.readFileSync(path.join(web, name), 'utf8');
+  await page.setContent(`<style>${pageCss()}</style><main id="app"></main>`);
+  await page.addScriptTag({ content: `var app=document.querySelector('#app'), esc=t=>String(t), ICON=new Proxy({}, {get:()=>'<svg></svg>'}), svg=p=>'<svg>'+p+'</svg>', segmented=()=>'', stillMotion=()=>true;` });
+  await page.addScriptTag({ content: read('chat.js') });
+  await page.addScriptTag({ content: read('app/settings.js').replace(/^(const|let) /gm, 'var ') });
+  await page.evaluate(() => {
+    felixActivity.span = 1;
+    const hour = faToday(true);
+    const answer = { purpose: 'answer', calls: 2, failures: 1, median_ms: 1500, p95_ms: 3000 };
+    app.innerHTML = felixUsageInner({
+      felix_days: { models: [{ day: faToday(), name: 'gpt-6.1-sol', calls: 9, input: 900, cached: 0, output: 90 }], kinds: [] },
+      felix_recent: {
+        hours: { models: [{ day: hour, name: 'gpt-6.1-sol', calls: 2, input: 200, cached: 0, output: 20 }], kinds: [{ day: hour, name: 'answer', calls: 2 }] },
+        spans: { 1: { kinds: [answer], tools: { calls: 4, failures: 0, reused: 1 } }, 30: { kinds: [], tools: {} } },
+      },
+    });
+  });
+  await expect(page.locator('.fa-day')).toHaveCount(24);
+  await expect(page.locator('.fa-xl span').last()).toHaveText('Now');
+  await expect(page.locator('.fa-hero b')).toHaveText('2');
+  await expect(page.locator('.fa-more .fa-h')).toHaveText('In the last 24 hours');
+  await expect(page.locator('.fa-kc')).toHaveText('2 calls');
+  await expect(page.locator('.fa-tools')).toContainText('4 calls');
+});
+
 test('Felix activity draws gridlines and colours bars by maker', async ({ page }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
@@ -625,7 +652,7 @@ test('Felix activity draws gridlines and colours bars by maker', async ({ page }
   await page.evaluate(() => {
     const today = faToday();
     const row = (name, input) => ({ day: today, name, calls: 1, input, cached: 0, output: 10 });
-    app.innerHTML = felixUsageInner({ felix_days: { models: [row('gpt-6.1-sol', 400), row('claude-sonnet-5-5', 300)], kinds: [] }, felix_usage: [], felix_tools: {} });
+    app.innerHTML = felixUsageInner({ felix_days: { models: [row('gpt-6.1-sol', 400), row('claude-sonnet-5-5', 300)], kinds: [] } });
   });
   await expect(page.locator('.fa-grid')).toHaveCount(3);
   const colours = await page.locator('.fa-day:last-child .fa-stack i').evaluateAll(els => els.map(el => getComputedStyle(el).backgroundColor));

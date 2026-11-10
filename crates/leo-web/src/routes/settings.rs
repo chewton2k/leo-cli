@@ -29,12 +29,11 @@ async fn settings_page(state: AppState, note: Option<String>) -> Response {
     let described = tokio::task::spawn_blocking(move || {
         let mut page = settings.describe(&notes_dir);
         page["felix_days"] = serde_json::json!(usage.days());
+        page["felix_recent"] = serde_json::json!(usage.recent());
         page
     });
     match described.await {
         Ok(mut page) => {
-            page["felix_usage"] = serde_json::json!(state.usage.snapshot());
-            page["felix_tools"] = serde_json::json!(state.usage.tools());
             if let Some(note) = note {
                 page["note"] = serde_json::json!(note);
             }
@@ -103,8 +102,7 @@ pub(crate) async fn change_setting(
             warm.clear();
             let mut page = settings.describe(&notes_dir);
             page["felix_days"] = serde_json::json!(usage.days());
-            page["felix_usage"] = serde_json::json!(usage.snapshot());
-            page["felix_tools"] = serde_json::json!(usage.tools());
+            page["felix_recent"] = serde_json::json!(usage.recent());
             (message, page)
         })
     })

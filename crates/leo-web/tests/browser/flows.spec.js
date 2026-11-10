@@ -756,7 +756,7 @@ test.describe('drag and drop', () => {
     await dragBetween(page, row(a), row(b), 'combine-armed');
     const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
     await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-    await expect(sheet).toContainText(`“${b.title}” keeps its title`);
+    await expect(sheet).toContainText(`“${a.title}” will be merged into “${b.title}”.`);
     await expect(page.locator('.combine-wait, .combine-armed')).toHaveCount(0);
     await sheet.locator('[data-action="close"]').click();
     await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
@@ -3542,7 +3542,7 @@ test('dropping one note on another combines them in the background with progress
   await dragBetween(page, page.locator(`.card[data-id="${a.id}"]`), page.locator(`.card[data-id="${b.id}"]`));
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-  await expect(sheet).toContainText('runs in the background with a progress bar');
+  await expect(sheet).toContainText(`“${a.title}” will be merged into “${b.title}”.`);
   await sheet.locator('#combine-go').click();
   await expect(sheet).toHaveCount(0);
   await expect(page.locator('.toast')).toContainText('Combining in the background');
@@ -3590,7 +3590,8 @@ test('Combine into… in the explorer menu and a “merge” line in Quick Leo p
   await picker.getByRole('menuitem', { name: b.title }).click();
   const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-  await expect(sheet).toContainText(`“${b.title}” keeps its title and is rewritten with everything from both notes; “${a.title}” goes to the trash.`);
+  await expect(sheet).toContainText(`“${a.title}” will be merged into “${b.title}”.`);
+  await expect(sheet).toContainText('may not be fully accurate');
   await sheet.locator('[data-action="close"]').click();
   await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
 
@@ -4036,6 +4037,22 @@ test.describe('passages', () => {
     const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
     await expect.poll(left).toBe(0);
     await expect(page.locator('#margin-mode')).toHaveText('When you ask');
+  });
+
+  test('Stop ends a Read through at once, even while Felix is still reading', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Stopped note', body: 'Then login just checks if it matches, I think' } })).json();
+    await page.route('**/margin/analyze', () => {});
+    await page.goto(`/#/n/${note.id}`);
+    const through = page.locator('#margin-through');
+    await through.click();
+    await expect(through).toHaveText('Stop');
+    await expect(page.locator('#margin-status')).toContainText('Reading through');
+    await page.waitForTimeout(500);
+    await through.click();
+    await expect(through).toHaveText('Read through', { timeout: 2000 });
+    await expect(page.locator('#margin-status')).not.toContainText('Reading through');
+    await expect(page.locator('.margin-note')).toHaveCount(0);
   });
 
   for (const [title, later, says] of [

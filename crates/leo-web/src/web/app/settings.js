@@ -570,10 +570,12 @@ const FA_HEIGHT = 118;
 const FA_RING = 2 * Math.PI * 52;
 const FA_NEUTRAL = 'color-mix(in srgb, var(--text) 45%, transparent)';
 
-function faToday() {
+function faToday(hourly) {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return hourly ? `${day} ${String(now.getHours()).padStart(2, '0')}` : day;
 }
+function faSpanName(span) { return span === 1 ? 'last 24 hours' : `last ${span} days`; }
 function faCompact(n) {
   if (n >= 999950) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1e3).toFixed(1)}k`;
@@ -582,7 +584,9 @@ function faCompact(n) {
 function faExact(n) { return n.toLocaleString('en-US'); }
 function faSeconds(ms) { return `${(ms / 1000).toFixed(1)} s`; }
 function faDate(day, long) {
-  const [y, m, d] = day.split('-').map(Number);
+  const [date, hour] = day.split(' ');
+  const [y, m, d] = date.split('-').map(Number);
+  if (hour !== undefined) return new Date(y, m - 1, d, Number(hour)).toLocaleString('en-US', long ? { weekday: 'short', hour: 'numeric' } : { hour: 'numeric' });
   return new Date(y, m - 1, d).toLocaleDateString('en-US', long ? { weekday: 'short', month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric' });
 }
 function faBarName(bar, weekly) { return weekly ? `${faDate(bar.from)} – ${faDate(bar.to)}` : faDate(bar.from, true); }
@@ -691,15 +695,17 @@ function faPeriod(period, ranks, span) {
     }).join('');
     return `<div class="fa-day${i === at ? ' on' : ''}" data-i="${i}"><div class="fa-stack">${segments}</div></div>`;
   }).join('');
-  const step = period.length === 7 ? 1 : weekly ? 4 : 7;
-  const labels = bars.map((bar, i) => [i, bar]).filter(([i]) => i === latest || ((latest - i) % step === 0 && (step === 1 || latest - i >= 3))).map(([i, bar]) => `<span style="left:${((i + 0.5) / bars.length * 100).toFixed(2)}%">${i === latest ? 'Today' : faDate(bar.from)}</span>`).join('');
+  const hourly = period.length === 1;
+  const step = period.length === 7 ? 1 : weekly ? 4 : hourly ? 6 : 7;
+  const labels = bars.map((bar, i) => [i, bar]).filter(([i]) => i === latest || ((latest - i) % step === 0 && (step === 1 || latest - i >= 3))).map(([i, bar]) => `<span style="left:${((i + 0.5) / bars.length * 100).toFixed(2)}%">${i === latest ? (hourly ? 'Now' : 'Today') : faDate(bar.from)}</span>`).join('');
   const grid = [[0, faCompact(scale).replace('.0', '')], [FA_HEIGHT / 2, faCompact(scale / 2).replace('.0', '')], [FA_HEIGHT, '0']].map(([at, text]) => `<div class="fa-grid${at === FA_HEIGHT ? ' base' : ''}" style="top:${at}px"><span>${text}</span></div>`).join('');
-  const stats = `<div class="fa-stats"><div class="fa-top"><div class="fa-tile fa-hero"><span class="fa-lab">Requests</span><b title="${faExact(t.calls)}">${faCompact(t.calls)}</b></div><span class="fa-cap">in the last ${span} days</span></div>
+  const stats = `<div class="fa-stats"><div class="fa-top"><div class="fa-tile fa-hero"><span class="fa-lab">Requests</span><b title="${faExact(t.calls)}">${faCompact(t.calls)}</b></div><span class="fa-cap">in the ${faSpanName(span)}</span></div>
     <div class="fa-tile"><span class="fa-lab">Tokens in</span><b title="${faExact(t.input)}">${faCompact(t.input)}</b></div>
     <div class="fa-tile"><span class="fa-lab">Tokens out</span><b title="${faExact(t.output)}">${faCompact(t.output)}</b></div>
     <div class="fa-tile"><span class="fa-lab">From cache</span><b>${Math.round(t.share * 100)}%</b><span class="fa-meter"><i style="width:${Math.round(t.share * 100)}%"></i></span></div></div>`;
-  const chart = bars.length ? `<div class="fa-block"><div class="fa-h">Tokens per day</div>
-    <div class="fa-chart" tabindex="0" role="group" aria-roledescription="chart" aria-label="Tokens per day" aria-describedby="fa-hint">${grid}<div class="fa-days">${days}</div><div class="fa-xl">${labels}</div></div>
+  const per = hourly ? 'Tokens per hour' : 'Tokens per day';
+  const chart = bars.length ? `<div class="fa-block"><div class="fa-h">${per}</div>
+    <div class="fa-chart" tabindex="0" role="group" aria-roledescription="chart" aria-label="${per}" aria-describedby="fa-hint">${grid}<div class="fa-days">${days}</div><div class="fa-xl">${labels}</div></div>
     <span id="fa-hint" class="fa-sr">Use arrow keys to move between days</span><div id="fa-say" class="fa-sr" aria-live="polite"></div>
     <div class="fa-readout">${faReadout(at)}</div></div>` : '';
   const models = faFold(period.models.map((row) => ({ name: row.name, value: row.tokens, calls: row.calls })), ranks);
@@ -759,18 +765,21 @@ function felixUsageInner(page) {
   const today = faToday();
   const span = felixActivity.span;
   const ranks = faRanks(page, today);
-  const period = chat.usagePeriod(page.felix_days, span, today);
+  const recent = page.felix_recent || {};
+  const period = span === 1 ? chat.usagePeriod(recent.hours, 1, faToday(true)) : chat.usagePeriod(page.felix_days, span, today);
   felixActivity.view = { period, ranks };
-  const kinds = chat.usageKinds(page.felix_usage);
-  const tools = page.felix_tools || {};
+  const detail = (recent.spans && recent.spans[span]) || {};
+  const kinds = chat.usageKinds(detail.kinds);
+  const tools = detail.tools || {};
   const empty = !period.totals.calls && !period.models.length;
-  return `<header><h3>Felix activity</h3>${segmented({ label: 'Activity period', choices: [['7', '7 days'], ['30', '30 days'], ['90', '90 days']], current: String(span), field: 'id="fa-span"' })}</header>
-    <div class="fa-body" role="group" aria-label="Last ${span} days">${empty ? '<p class="set-note">No AI requests recorded yet.</p>' : faPeriod(period, ranks, span)}</div>
+  const name = faSpanName(span);
+  return `<header><h3>Felix activity</h3>${segmented({ label: 'Activity period', choices: [['1', '24 hours'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days']], current: String(span), field: 'id="fa-span"' })}</header>
+    <div class="fa-body" role="group" aria-label="${name[0].toUpperCase()}${name.slice(1)}">${empty ? `<p class="set-note">No AI requests in the ${name}.</p>` : faPeriod(period, ranks, span)}</div>
     <div class="fa-block fa-run">${faRunning()}</div>
-    <details class="source-more fa-more"><summary>${ICON.chevron}More detail</summary><div class="fa-block"><div class="fa-h">Since leo started</div>
+    <details class="source-more fa-more"><summary>${ICON.chevron}More detail</summary><div class="fa-block"><div class="fa-h">In the ${name}</div>
       ${kinds.length ? `<div class="fa-kinds">${faKindRows(kinds)}</div>` : ''}
       <div class="fa-tools"><span class="fa-lab">Tools</span><span>${faCompact(Number(tools.calls) || 0)} calls · ${faCompact(Number(tools.reused) || 0)} unchanged reads reused · ${faCompact(Number(tools.failures) || 0)} failed</span></div>
-      <p class="fa-foot">Cache is part of input, not your subscription balance. Provider retries may be unreported. Timing is the latest 64 requests of each kind.</p></div></details>`;
+      <p class="fa-foot">Cache is part of input, not your subscription balance. Provider retries may be unreported.</p></div></details>`;
 }
 
 function felixUsageCard(page) {
@@ -962,7 +971,7 @@ function activityShown(section) {
 document.addEventListener('change', (e) => {
   if (!e.target || e.target.id !== 'fa-span' || state.view !== 'settings' || !state.settings) return;
   const span = Number(e.target.value);
-  if (![7, 30, 90].includes(span) || span === felixActivity.span) return;
+  if (![1, 7, 30, 90].includes(span) || span === felixActivity.span) return;
   felixActivity.span = span;
   felixActivity.day = null;
   if (felixActivity.pin) faPin(null);

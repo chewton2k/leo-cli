@@ -1278,7 +1278,10 @@ async function marginThroughClick() {
   if (!s || button?.getAttribute('aria-disabled') === 'true') return;
   const run = marginPage.through;
   if (run) {
-    if (Date.now() - run.started >= THROUGH_STOP_GRACE_MS) run.stop = true;
+    if (Date.now() - run.started >= THROUGH_STOP_GRACE_MS) {
+      run.stop = true;
+      run.abort.abort();
+    }
     return;
   }
   if (chat.isBusy()) return marginSetStatus(THROUGH_SAYS.felix);
@@ -1292,6 +1295,7 @@ async function marginThroughPart(s, run, part, label) {
   let busy = 0;
   marginSetStatus(label);
   for (;;) {
+    if (run.stop) return { notes: [] };
     try {
       await flush(s);
       if (marginPage.s !== s) return { gone: true };
@@ -1301,7 +1305,7 @@ async function marginThroughPart(s, run, part, label) {
       s.doc.glow(part.from, part.to);
       let got;
       try {
-        got = await api(`/api/notes/${enc(s.note.id)}/margin/analyze`, { method: 'POST', body: { version: s.note.version, blocks, most: Math.min(3, THROUGH_MOST - run.added.length) } });
+        got = await api(`/api/notes/${enc(s.note.id)}/margin/analyze`, { method: 'POST', signal: run.abort.signal, body: { version: s.note.version, blocks, most: Math.min(3, THROUGH_MOST - run.added.length) } });
       } finally {
         s.doc.glow();
       }
@@ -1309,6 +1313,7 @@ async function marginThroughPart(s, run, part, label) {
     } catch (e) {
       if (e instanceof Locked) throw e;
       if (marginPage.s !== s) return { gone: true };
+      if (run.stop) return { notes: [] };
       const why = e.data?.why;
       if (e.status === 409 && !why && !stale++) continue;
       if (why === 'busy' && busy++ < 3) {
@@ -1374,7 +1379,7 @@ function marginThroughUndo(s, added) {
 }
 
 async function marginThrough(s, parts, spread) {
-  const run = { started: Date.now(), stop: false, added: [] };
+  const run = { started: Date.now(), stop: false, added: [], abort: new AbortController() };
   marginPage.through = run;
   marginThroughControl();
   let say = '';
@@ -1417,8 +1422,12 @@ function marginWait(seconds) {
 
 function felixRhythm(view) {
   const pause = (READ_PAUSE[view.pace] || READ_PAUSE.regular) / 1000;
-  const limit = view.cap ? `up to ${view.cap} times a day` : 'with no daily limit';
-  return `After ${pause} sec of quiet, at most once every ${marginWait(view.gap)}, ${limit}. ${view.today} so far today.`;
+  return `After ${pause} sec of quiet, at most once every ${marginWait(view.gap)}.`;
+}
+
+function felixReads(view) {
+  const label = view.cap ? `${view.today} of ${view.cap} reads today` : `${view.today} reads today, no daily limit`;
+  return `<span class="badge" id="felix-reads" title="${label}" aria-label="${label}">${view.today}/${view.cap || '∞'} today</span>`;
 }
 
 function felixPersonaForm(view, p) {
@@ -1551,7 +1560,7 @@ function felixSettingsCards(view, page) {
     ${felixPersonaCard(view)}
     <section class="set-card" data-find="felix-where"><header><h3>Where notes appear</h3></header>${choiceCards({ label: 'Where notes appear', field: 'data-margin-pref="layout"', current: view.layout, choices: [['both', 'Both margins', 'Your words in the middle.', MARGIN_DIAGRAMS.both], ['right', 'Right margin', 'One column beside you.', MARGIN_DIAGRAMS.right], ['marks', 'Marks only', 'A small mark to open.', MARGIN_DIAGRAMS.marks]] })}</section>
     <section class="set-card" data-find="felix-auto-model"><header><h3>Which model answers</h3></header><div class="set-row"><span class="set-label">Cheaper model for lookups</span>${settingsSwitch('data-margin-pref="auto_model"', view.auto_model !== false, 'Cheaper model for lookups')}</div><p class="hint">Short lookups use the cheapest model of your writing AI. Everything else uses the model you chose, and a chat never moves down while it is open.</p></section>
-    <section class="set-card felix-rhythm"><header><h3>How often he reads</h3></header><p class="hint" id="felix-rhythm" aria-live="polite">${esc(felixRhythm(view))}</p><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['fast', 'Fast'], ['regular', 'Regular'], ['slow', 'Slow']] })}</div>
+    <section class="set-card felix-rhythm"><header><h3>How often he reads</h3>${felixReads(view)}</header><p class="hint" id="felix-rhythm" aria-live="polite">${esc(felixRhythm(view))}</p><div class="set-row" data-find="felix-pace"><span class="set-label">Reading pace</span>${segmented({ label: 'Reading pace', field: 'data-margin-pref="pace"', current: view.pace, choices: [['fast', 'Fast'], ['regular', 'Regular'], ['slow', 'Slow']] })}</div>
     <div class="set-row" data-find="felix-gap"><span class="set-label">Time between reads</span>${segmented({ label: 'Time between reads', field: 'data-margin-pref="gap"', current: String(view.gap), choices: (view.gaps || []).map((gap) => [String(gap), marginWait(gap)]) })}</div>
     <div class="set-row" data-find="felix-cap"><span class="set-label">Reads a day</span>${segmented({ label: 'Reads a day', field: 'data-margin-pref="cap"', current: String(view.cap), choices: (view.caps || []).map((cap) => [String(cap), cap ? String(cap) : 'No limit']) })}</div>
     ${view.problem ? `<p class="set-note warn" role="status">${esc(view.problem)}</p>` : ''}</section>`;
@@ -1569,6 +1578,8 @@ document.addEventListener('change', async (e) => {
     if (key === 'default_persona') felixPersonaRedraw(view, '[name="felix-persona"]:checked');
     const rhythm = $('#felix-rhythm');
     if (rhythm) rhythm.textContent = felixRhythm(view);
+    const reads = $('#felix-reads');
+    if (reads) reads.outerHTML = felixReads(view);
   } catch (error) {
     if (key === 'auto_model') field.checked = !value;
     if (key === 'default_persona' && state.margin) felixPersonaRedraw(state.margin, '[name="felix-persona"]:checked');

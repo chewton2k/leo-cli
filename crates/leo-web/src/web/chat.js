@@ -398,14 +398,17 @@
   }
 
   function usageBack(offset, today) {
-    const [y, m, d] = String(today).split('-').map(Number);
-    return new Date(Date.UTC(y, m - 1, d - offset)).toISOString().slice(0, 10);
+    const [date, hour] = String(today).split(' ');
+    const [y, m, d] = date.split('-').map(Number);
+    if (hour === undefined) return new Date(Date.UTC(y, m - 1, d - offset)).toISOString().slice(0, 10);
+    return new Date(Date.UTC(y, m - 1, d, Number(hour) - offset)).toISOString().slice(0, 13).replace('T', ' ');
   }
 
   function usagePeriod(days, span, today) {
-    const length = [7, 30, 90].includes(span) ? span : 30;
-    const ok = /^\d{4}-\d{2}-\d{2}$/.test(String(today)) && !Number.isNaN(Date.parse(today));
-    const first = ok ? usageBack(length - 1, today) : '';
+    const length = [1, 7, 30, 90].includes(span) ? span : 30;
+    const units = length === 1 ? 24 : length;
+    const ok = (length === 1 ? /^\d{4}-\d{2}-\d{2} \d{2}$/ : /^\d{4}-\d{2}-\d{2}$/).test(String(today)) && !Number.isNaN(Date.parse(String(today).slice(0, 10)));
+    const first = ok ? usageBack(units - 1, today) : '';
     const pick = (list, allowed) => (Array.isArray(list) ? list : []).filter((row) => ok && row && typeof row.day === 'string' && typeof row.name === 'string' && row.day >= first && row.day <= today && allowed(row.name)).map((row) => {
       const input = usageCount(row.input);
       return { day: row.day, name: row.name, calls: usageCount(row.calls), input, cached: Math.min(input, usageCount(row.cached)), output: usageCount(row.output) };
@@ -421,10 +424,10 @@
     }
     totals.share = totals.input ? totals.cached / totals.input : 0;
     const size = length === 90 ? 7 : 1;
-    const count = Math.ceil(length / size);
+    const count = Math.ceil(units / size);
     const bars = ok ? Array.from({ length: count }, (_, b) => {
       const ago = count - 1 - b;
-      const from = usageBack(Math.min(length - 1, ago * size + size - 1), today);
+      const from = usageBack(Math.min(units - 1, ago * size + size - 1), today);
       const to = usageBack(ago * size, today);
       const by = new Map();
       const bar = { from, to, calls: 0, input: 0, output: 0, by: [] };

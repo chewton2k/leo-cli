@@ -169,6 +169,25 @@ CREATE TABLE IF NOT EXISTS usage_days (
     output INTEGER NOT NULL,
     PRIMARY KEY (day, purpose, model)
 );
+CREATE TABLE IF NOT EXISTS usage_calls (
+    at INTEGER NOT NULL,
+    purpose TEXT NOT NULL,
+    model TEXT NOT NULL,
+    failed INTEGER NOT NULL,
+    unreported INTEGER NOT NULL,
+    estimated INTEGER NOT NULL,
+    ms INTEGER NOT NULL,
+    input INTEGER NOT NULL,
+    cached INTEGER NOT NULL,
+    output INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS usage_calls_by_time ON usage_calls(at);
+CREATE TABLE IF NOT EXISTS usage_tools (
+    at INTEGER NOT NULL,
+    failed INTEGER NOT NULL,
+    reused INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS usage_tools_by_time ON usage_tools(at);
 ";
 
 pub struct Db {
