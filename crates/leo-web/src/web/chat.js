@@ -310,7 +310,7 @@
       const name = tag[2].toLowerCase();
       if (tag[1]) {
         if (skipped.at(-1) === name) skipped.pop();
-      } else if (!part.endsWith('/>') && (skipped.length ? /^(?:code|pre|span)$/.test(name) : /^(?:code|pre)$/.test(name) || /^<span class="math/i.test(part))) skipped.push(name);
+      } else if (!part.endsWith('/>') && (skipped.length ? /^(?:code|pre|span|div)$/.test(name) : /^(?:code|pre)$/.test(name) || /^<(?:span|div) class="math/i.test(part))) skipped.push(name);
       return part;
     });
   }

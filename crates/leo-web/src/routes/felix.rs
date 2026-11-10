@@ -25,6 +25,14 @@ fn deliverable(mut event: serde_json::Value) -> serde_json::Value {
         }
     }
     if !fits(&event) {
+        if event["proposal"]["state"] != "applied" {
+            return serde_json::json!({
+                "step": "That change is too large to show, so leo did not suggest it. Ask for a smaller one.",
+                "tool": "",
+                "found": Vec::<String>::new(),
+                "failed": true,
+            });
+        }
         if let Some(shown) = event["proposal"].as_object_mut() {
             shown.retain(|key, _| {
                 matches!(
@@ -1974,7 +1982,7 @@ pub(crate) async fn chat_reply(
         let chats_dir = state.chats.clone();
         let chat = body.chat.clone();
         let files = body.files.clone();
-        tokio::task::spawn_blocking(move || {
+        match tokio::task::spawn_blocking(move || {
             let documents = match &chat {
                 Some(chat) if !files.is_empty() => chat_files::texts(&chats_dir, chat, &files),
                 _ => Vec::new(),
@@ -1986,7 +1994,10 @@ pub(crate) async fn chat_reply(
             (documents, memory)
         })
         .await
-        .unwrap_or_default()
+        {
+            Ok(found) => found,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
     };
     let start = chat::kept_from(&body.messages, room, memory.as_ref());
     let documents_room = if body.practice { note_room } else { room };
@@ -2167,6 +2178,35 @@ pub(crate) async fn chat_reply(
         .headers_mut()
         .insert("x-accel-buffering", HeaderValue::from_static("no"));
     response
+}
+
+#[cfg(test)]
+mod deliverable_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_pending_proposal_is_not_a_card_but_applied_one_is_slimmed() {
+        let big = "x".repeat(MOST_PROPOSAL_BYTES);
+        let pending = serde_json::json!({ "proposal": {
+            "kind": "edit", "note": "n", "title": "t", "state": "new", "find": big, "replace": "y"
+        } });
+        let shown = deliverable(pending);
+        assert!(shown.get("proposal").is_none());
+        assert_eq!(shown["failed"], true);
+        assert!(shown["step"].as_str().unwrap().contains("too large"));
+
+        let applied = serde_json::json!({ "proposal": {
+            "kind": "edit", "note": "n", "title": "t", "state": "applied", "find": big, "replace": "y"
+        } });
+        let shown = deliverable(applied);
+        assert_eq!(shown["proposal"]["state"], "applied");
+        assert!(shown["proposal"].get("find").is_none());
+
+        let small = serde_json::json!({ "proposal": {
+            "kind": "edit", "state": "new", "find": "a", "replace": "b"
+        } });
+        assert_eq!(deliverable(small.clone()), small);
+    }
 }
 
 #[cfg(test)]

@@ -45,6 +45,13 @@ test('citations are only placed in running text, never in attributes, code or ma
   assert.ok(html.includes('data-tex="x[n1]">x[n1]</span>'), html);
 });
 
+test('citations skip block math too', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Heaps' }];
+  const html = C.cite('<div class="math math-block" data-tex="x[n1]"><span class="katex">x[n1]</span></div><p>see [n1]</p>', sources, esc);
+  assert.equal((html.match(/class="cite"/g) || []).length, 1, html);
+  assert.ok(html.includes('<span class="katex">x[n1]</span></div>'), html);
+});
+
 test('numbered citations share a number per place, keep note and line, and leave no stray digits in copied text', () => {
   const sources = [{ n: 1, id: 'a', title: 'Heaps' }, { n: 2, id: 'b', title: 'Queues' }];
   const text = 'Min on top [n1 L4-6]. Again [n1 L4-6]. Queue [n2]. Other lines [n1 L9]. Gone [n9].';

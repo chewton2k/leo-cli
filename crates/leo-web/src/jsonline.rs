@@ -73,7 +73,7 @@ pub(crate) fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> 
     temp.as_file().sync_all()?;
     temp.persist(&path).map_err(|e| e.error)?;
     #[cfg(unix)]
-    std::fs::File::open(&dir)?.sync_all()?;
+    let _ = std::fs::File::open(&dir).and_then(|d| d.sync_all());
     Ok(())
 }
 

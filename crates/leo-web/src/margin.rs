@@ -402,18 +402,20 @@ fn set_state(chats: &Path, key: &str, value: &impl Serialize) -> bool {
 }
 
 pub fn prefs(chats: &Path) -> Prefs {
-    let fresh = || Prefs {
-        since: Some(Utc::now()),
+    static STARTED: std::sync::OnceLock<DateTime<Utc>> = std::sync::OnceLock::new();
+    let fresh = |since: DateTime<Utc>| Prefs {
+        since: Some(since),
         ..Prefs::default()
     };
+    let unreadable = || fresh(*STARTED.get_or_init(Utc::now));
     let mut prefs = match state_row(chats, "prefs") {
         Ok(None) => {
-            let seeded = fresh();
+            let seeded = fresh(Utc::now());
             set_state(chats, "prefs", &seeded);
             seeded
         }
-        Ok(Some(text)) => serde_json::from_str(&text).unwrap_or_else(|_| fresh()),
-        Err(_) => fresh(),
+        Ok(Some(text)) => serde_json::from_str(&text).unwrap_or_else(|_| unreadable()),
+        Err(_) => unreadable(),
     };
     if !READ_GAPS.contains(&prefs.gap) {
         prefs.gap = READ_GAP;

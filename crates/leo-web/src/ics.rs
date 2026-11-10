@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 const MOST_EVENTS: usize = 20_000;
 const MOST_STEPS: usize = 5_000;
+const MOST_PERIODS: i64 = 1_000_000;
 const MOST_SHOWN: usize = 200;
 const CONTEXT_CHARS: usize = 3_000;
 
@@ -374,7 +375,9 @@ fn occurrences(
         (periods / rule.interval - 1).max(0)
     };
     for n in skipped..skipped + MOST_STEPS as i64 {
-        let k = n * rule.interval;
+        let Some(k) = n.checked_mul(rule.interval).filter(|k| *k <= MOST_PERIODS) else {
+            return out;
+        };
         let batch: Vec<NaiveDateTime> = match rule.freq.as_str() {
             "DAILY" => Some(first + Duration::days(k))
                 .filter(|t| rule.days.is_empty() || rule.days.contains(&t.weekday()))
@@ -788,6 +791,19 @@ END:VCALENDAR\r
         assert_eq!(count("Stand-up"), 7);
         assert_eq!(count("Weekly"), 1);
         assert_eq!(count("Counted"), 0);
+    }
+
+    #[test]
+    fn a_huge_interval_ends_the_series_instead_of_overflowing() {
+        for freq in ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"] {
+            let text = format!("BEGIN:VEVENT\nUID:a\nSUMMARY:Odd\nDTSTART:20261019T160000Z\nRRULE:FREQ={freq};INTERVAL=4294967295\nEND:VEVENT\n");
+            let cal = read(
+                &text,
+                at("2026-10-19T00:00:00Z"),
+                at("2030-01-01T00:00:00Z"),
+            );
+            assert!(cal.events.len() <= 1, "{freq}");
+        }
     }
 
     #[test]

@@ -63,6 +63,7 @@ struct Budget {
     limits: Limits,
     entries: usize,
     bytes: u64,
+    skipped: usize,
 }
 
 impl Budget {
@@ -71,6 +72,7 @@ impl Budget {
             limits,
             entries: 0,
             bytes: 0,
+            skipped: 0,
         }
     }
 
@@ -160,6 +162,7 @@ fn add_dir<W: Write + Seek>(
             continue;
         }
         if name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+            budget.skipped += 1;
             continue;
         }
         let kind = entry
@@ -434,6 +437,19 @@ fn write_zip_with_limits<W: Write + Seek>(
             }
         }
     }
+    if budget.skipped > 0 {
+        let note = format!(
+            "{} file or folder name(s) with control characters could not be exported and were skipped.\n",
+            budget.skipped
+        );
+        budget.entry()?;
+        zip.start_file("leo/SKIPPED.txt", SimpleFileOptions::default())?;
+        BudgetWriter {
+            out: &mut zip,
+            budget: &mut budget,
+        }
+        .write_all(note.as_bytes())?;
+    }
     zip.finish()?;
     Ok(packed)
 }
@@ -641,6 +657,27 @@ mod tests {
             "files"
         )
         .is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn names_skipped_for_control_characters_are_counted_in_the_export() {
+        let tmp = tempfile::tempdir().unwrap();
+        let notes = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::write(notes.join("Fine.md"), "ok").unwrap();
+        std::fs::write(notes.join("Bad\u{1}.md"), "no").unwrap();
+        let mut out = std::io::Cursor::new(Vec::new());
+        write_zip(
+            &mut out,
+            &notes,
+            &tmp.path().join("chats"),
+            Parts::default(),
+        )
+        .unwrap();
+        let listed = names(out.into_inner());
+        assert!(listed.iter().any(|n| n == "leo/SKIPPED.txt"), "{listed:?}");
+        assert!(!listed.iter().any(|n| n.contains("Bad")), "{listed:?}");
     }
 
     #[test]

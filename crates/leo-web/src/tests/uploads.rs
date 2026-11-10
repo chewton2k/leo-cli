@@ -736,6 +736,16 @@ fn files_dropped_on_a_note_are_added_to_it_under_their_own_heading() {
 }
 
 #[test]
+fn a_long_cjk_file_name_stays_within_200_bytes_and_keeps_its_extension() {
+    let name = format!("{}.pdf", "论".repeat(120));
+    let safe = safe_file_name(&name);
+    assert!(safe.len() <= 200, "{}", safe.len());
+    assert!(safe.ends_with(".pdf"), "{safe}");
+    assert!(safe.chars().count() > 50);
+    assert_eq!(safe_file_name(&safe), safe);
+}
+
+#[test]
 fn a_long_file_name_keeps_its_extension_and_a_numbered_copy_still_fits() {
     let long = format!(
         "Smith et al. - 2023 - {}.pdf",

@@ -113,7 +113,19 @@ pub(crate) struct ImportBody {
 
 pub(crate) const MOST_WANTS: usize = 2_000;
 const MOST_NAME_CHARS: usize = 120;
+const MOST_NAME_BYTES: usize = 200;
 const MOST_EXTENSION_CHARS: usize = 10;
+
+fn cut(stem: &str, chars: usize, bytes: usize) -> String {
+    let mut out = String::new();
+    for c in stem.chars().take(chars) {
+        if out.len() + c.len_utf8() > bytes {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
 
 fn split_extension(name: &str) -> (&str, &str) {
     match name.rfind('.') {
@@ -156,7 +168,10 @@ fn stored_file_name(name: &str) -> String {
     let cleaned = cleaned.trim().trim_start_matches('.').to_string();
     let (stem, extension) = split_extension(&cleaned);
     let room = MOST_NAME_CHARS.saturating_sub(extension.len());
-    let cleaned = format!("{}{extension}", stem.chars().take(room).collect::<String>());
+    let cleaned = format!(
+        "{}{extension}",
+        cut(stem, room, MOST_NAME_BYTES.saturating_sub(extension.len()))
+    );
     if cleaned.is_empty() {
         "upload".to_string()
     } else {
@@ -357,10 +372,8 @@ fn free_original_name(
         .map(|n| {
             let number = format!(" ({n})");
             let room = MOST_NAME_CHARS.saturating_sub(ext.len() + number.len());
-            format!(
-                "{}{number}{ext}",
-                stem.chars().take(room).collect::<String>()
-            )
+            let bytes = MOST_NAME_BYTES.saturating_sub(ext.len() + number.len());
+            format!("{}{number}{ext}", cut(stem, room, bytes))
         })
         .find(|candidate| !used(candidate))
         .unwrap_or_else(|| name.to_string())

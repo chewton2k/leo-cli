@@ -261,7 +261,9 @@ the web (root CLAUDE.md).
 - POST `/api/chat` streams NDJSON (`answer`, `sources`, `t`, `step`,
   `proposal`, `ask`, `quiz`, `plan`, `spent`, `reset`, `done`/`error`). User
   prompt order: `<selected_passage>`, `<documents>`, notes, the chat, then
-  `<today>` (`chat::today_line`).
+  `<today>` (`chat::today_line`). Notes and documents sit in tags that end in a
+  random per-run suffix (`chat::fence`), so their text cannot forge a closing
+  tag, and tool results cannot close their own `<tool_result>` tag either.
 - One Felix, no modes: `HELPING` makes him decide per message whether to answer,
   teach or test; an open note alone never starts a session. `LEARNING` is not in
   the system prompt: Felix calls `study_rules`, and practice, marking and a
