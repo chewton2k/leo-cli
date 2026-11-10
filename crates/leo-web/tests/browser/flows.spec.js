@@ -756,7 +756,7 @@ test.describe('drag and drop', () => {
     await dragBetween(page, row(a), row(b), 'combine-armed');
     const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
     await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-    await expect(sheet).toContainText(`“${b.title}” keeps its title`);
+    await expect(sheet).toContainText(`“${a.title}” will be merged into “${b.title}”.`);
     await expect(page.locator('.combine-wait, .combine-armed')).toHaveCount(0);
     await sheet.locator('[data-action="close"]').click();
     await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
@@ -3590,7 +3590,8 @@ test('Combine into… in the explorer menu and a “merge” line in Quick Leo p
   await picker.getByRole('menuitem', { name: b.title }).click();
   const sheet = page.locator('.scrim:not(.scrim-gone) .sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-  await expect(sheet).toContainText(`“${b.title}” keeps its title and is rewritten with everything from both notes; “${a.title}” goes to the trash.`);
+  await expect(sheet).toContainText(`“${a.title}” will be merged into “${b.title}”.`);
+  await expect(sheet).toContainText('may not be fully accurate');
   await sheet.locator('[data-action="close"]').click();
   await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
 
@@ -4036,6 +4037,22 @@ test.describe('passages', () => {
     const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
     await expect.poll(left).toBe(0);
     await expect(page.locator('#margin-mode')).toHaveText('When you ask');
+  });
+
+  test('Stop ends a Read through at once, even while Felix is still reading', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Stopped note', body: 'Then login just checks if it matches, I think' } })).json();
+    await page.route('**/margin/analyze', () => {});
+    await page.goto(`/#/n/${note.id}`);
+    await page.getByRole('button', { name: 'Read through' }).click();
+    const stop = page.getByRole('button', { name: 'Stop' });
+    await expect(stop).toBeVisible();
+    await expect(page.locator('#margin-status')).toContainText('Reading through');
+    await page.waitForTimeout(500);
+    await stop.click();
+    await expect(page.getByRole('button', { name: 'Read through' })).toBeVisible({ timeout: 2000 });
+    await expect(page.locator('#margin-status')).not.toContainText('Reading through');
+    await expect(page.locator('.margin-note')).toHaveCount(0);
   });
 
   for (const [title, later, says] of [

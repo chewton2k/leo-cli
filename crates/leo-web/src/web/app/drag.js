@@ -194,8 +194,8 @@ document.addEventListener('drop', (e) => {
 function combineSheet(from, into) {
   const box = sheet(`<div class="combine">
     <h3>Combine these notes?</h3>
-    <p>“${esc(into.title)}” keeps its title and is rewritten with everything from both notes; “${esc(from.title)}” goes to the trash. What both say is written once; nothing unique is left out. Recording transcripts stay separate, each labelled with the note it came from.</p>
-    <p class="hint">It runs in the background with a progress bar, so you can keep working. You see the result before anything changes, and Undo brings both back.</p>
+    <p>“${esc(from.title)}” will be merged into “${esc(into.title)}”.</p>
+    <p class="hint">Heads up: the AI writes the combined note, so it may not be fully accurate.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="combine-go">Combine</button></div>
   </div>`);
   $('#combine-go', box).addEventListener('click', () => combineNow(from, into).catch(fail));

@@ -326,7 +326,7 @@ Highlight, cleared after five seconds or navigation without changing editor DOM.
   the parent folder is not lit) and a drop opens the sheet; a quicker drop still moves. The note menu has
   Combine into… (`explorerCombineMenu`: up to 1000 notes from the brief notes list, " · folder" only on a title clash),
   and a Quick Leo query that is just "merge" or "combine" (optionally followed by this, note, it, into or with) offers Combine “<open note>” into… above the ranked rows
-  (a hint row when no note is open). The sheet names the note that keeps its title; the ready toast says "ready to review". It runs in the background
+  (a hint row when no note is open). The sheet says which note is merged into which and warns the result may not be fully accurate; the ready toast says "ready to review". It runs in the background
   (2026-10-14, the user's call): POST `combine` starts a job on a thread
   (`AppState.combines`, at most 20, kept 6 h) metered as `combine:<id>`
   (streamed characters against the two notes' length); the Background panel
@@ -857,7 +857,7 @@ target. Check the page sequence after loading preferences.
   move for them (free spot on the right, else the left in Both, else below what blocks them), or its gutter mark pulses in Marks only;
   a comment replaces them (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
   failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path.
-- Read through (2026-11-08, the user's call): `#margin-through` beside the mode button reads the whole saved note once, in either mode and on any note. It is free: it never checks or spends Reads a day. `margin.js` `passes` cuts the note into parts of at most 6 blocks and 8,000 characters (blocks of 20+ characters without an open thread; blocks over 4,000 are cut); a note with more than 8 parts keeps 8 spread evenly through it (`spread: true`, status "This note is long, so Felix read parts from all through it."). The page POSTs each part to `.../margin/analyze` (`{version, blocks, most}`) and glows the part being read. The engine keeps the version, streaming-reply, overlap and `MOST_OPEN` guards and skips the along, `edited`, gap and daily checks. A part saves up to `MOST_PER_PASS` (3) `source: "read"` threads through `placed` (`THROUGH_SYSTEM`, `parsed_many`, which checks `notes` first and still takes a single object). A run ends at `THROUGH_MOST` (12, `app/margin-notes.js`) notes (each part's reply is capped at `margin::THROUGH_TOKENS`, 700 tokens), on Stop, or on a refusal or failure; read-along waits while it runs. Threads are held until the run ends, then revealed together top to bottom over the note: 80 ms apart, the whole stagger capped at 640 ms; Reduced Motion shows them at once, still. Leaving mid-run draws nothing. Undo DELETEs the run's threads (`DELETE .../threads/{id}`): 409 `replying` while Felix is answering that thread, 409 `replied` once you have replied.
+- Read through (2026-11-08, the user's call): `#margin-through` beside the mode button reads the whole saved note once, in either mode and on any note. It is free: it never checks or spends Reads a day. `margin.js` `passes` cuts the note into parts of at most 6 blocks and 8,000 characters (blocks of 20+ characters without an open thread; blocks over 4,000 are cut); a note with more than 8 parts keeps 8 spread evenly through it (`spread: true`, status "This note is long, so Felix read parts from all through it."). The page POSTs each part to `.../margin/analyze` (`{version, blocks, most}`) and glows the part being read. The engine keeps the version, streaming-reply, overlap and `MOST_OPEN` guards and skips the along, `edited`, gap and daily checks. A part saves up to `MOST_PER_PASS` (3) `source: "read"` threads through `placed` (`THROUGH_SYSTEM`, `parsed_many`, which checks `notes` first and still takes a single object). A run ends at `THROUGH_MOST` (12, `app/margin-notes.js`) notes (each part's reply is capped at `margin::THROUGH_TOKENS`, 700 tokens), on Stop (the page aborts the part's request at once and shows nothing from it), or on a refusal or failure; read-along waits while it runs. Threads are held until the run ends, then revealed together top to bottom over the note: 80 ms apart, the whole stagger capped at 640 ms; Reduced Motion shows them at once, still. Leaving mid-run draws nothing. Undo DELETEs the run's threads (`DELETE .../threads/{id}`): 409 `replying` while Felix is answering that thread, 409 `replied` once you have replied.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
   `web_search="disabled"`, and the chain is cut to its first provider, so a read fails
@@ -869,7 +869,7 @@ target. Check the page sequence after loading preferences.
   escaped Markdown renderer, strict Mermaid rendering and inert SVG images. Settings says text
   stays here only for a loopback address and a model without `cloud` in its name
   (`ai::reads_stay_here`).
-- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (10 s, 15 s, 30 s, 90 s, 3 min since 2026-11-08, the user's call; default 90 s, `Prefs.gap`; a saved gap no longer offered reads as 90 s; at 10 s, 40 reads can go in under 7 minutes) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). Every read starts a fresh process (`claude -p`,
+- Settings → Felix chooses both limits (2026-11-05, the user's call): the gap (10 s, 15 s, 30 s, 90 s, 3 min since 2026-11-08, the user's call; default 90 s, `Prefs.gap`; a saved gap no longer offered reads as 90 s; at 10 s, 40 reads can go in under 7 minutes) and reads a day (20, 40, 80, No limit; default 40, `NO_CAP` is 0). The card header counts today's reads (`3/40 today`, `3/∞ today` with No limit). Every read starts a fresh process (`claude -p`,
   `codex exec --ephemeral`; no warm session, and one retry on a stall), with at
   most 8,000 characters in and 220 tokens out. At the defaults, 40 reads
   take an hour of writing at least, and a day's worst case is about 90k input
@@ -1356,7 +1356,7 @@ Writing Settings offers Ollama, Codex and Claude Code. Removed AGY/Copilot
 choices and sign-in commands are unavailable; legacy saved profiles stay on disk
 untouched. Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
 
-`usage::Usage` keeps content-free counts in memory since server startup, and saves tokens by day, purpose and model in `usage_days` for 90 days (Settings → Felix activity switches between 7, 30 and 90 days, default 30), separated
+`usage::Usage` keeps content-free counts in memory since server startup, and saves tokens by day, purpose and model in `usage_days` for 90 days (Settings → Felix activity switches between 24 hours, 7, 30 and 90 days, default 30); every request (`usage_calls`: time, purpose, model, tokens, failed, duration) and tool call (`usage_tools`) is also kept 90 days, so the 24 hour view has hourly bars and More detail follows the chosen period (`Usage::recent`), separated
 by answer, continuation, recovery, grading, summary, other writing and quick review.
 Settings shows token/cache counts, unreported/estimated usage, tool failures/reused
 reads, and median/p95 timing from at most 64 samples per category. Native agents
@@ -1409,7 +1409,8 @@ list (the bar says it), no card title repeating the page title, labels on one
 line with controls hugging their content at the right edge; a card under 500 px
 stacks segmented rows (container query), and switch rows stay inline on phones.
 `.set-card` is a tinted group (`--tint`, no border, no shadow, no rule between
-rows: space separates them, except the Felix activity "Since leo started" table, its
+rows: space separates them, except the Felix activity More detail table, speech model
+rows (a hairline between models, 2026-11-09, the user's call), its
 Running now rows (`run-row`) and tools-line hairlines; inputs, selects and plain buttons inside it fill
 with `--raised`). Inputs keep their border; nothing else in Settings' own layout
 has a 1px rule (the Trash list, Calendar form and menus included).
@@ -1438,8 +1439,8 @@ are listed newest release first, then most capable first (the Rust list stays
 cheapest-first: `models.first()` is the quick model); Ollama models largest
 first. Felix activity is a dashboard (period switch, stat tiles, tokens-per-day
 bars scaled to `faNiceMax` with three labelled gridlines and dates under the bars,
-model and purpose donuts, Running now, and "Since leo started" under a closed More
-detail). Models are coloured by maker (2026-11-08, the user's call: `faFamily`, a
+model and purpose donuts, Running now, and the chosen period's timing, failures
+and tools under a closed More detail; 24 hours shows hourly bars, 2026-11-09). Models are coloured by maker (2026-11-08, the user's call: `faFamily`, a
 name with `:` is local first, then GPT, then Claude; `--fam-openai|claude|local-1..3`,
 per-theme ramps at 3:1 or more; a fourth model of one maker and Other are hatched);
 purpose keeps `--chart-*`. Running now is one line when empty and otherwise lists
