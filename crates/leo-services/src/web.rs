@@ -167,12 +167,12 @@ fn protected_client(
 }
 
 #[cfg(not(test))]
-pub(crate) fn model_client(timeout: Duration) -> Result<reqwest::Client> {
+pub(crate) fn model_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .no_proxy()
         .https_only(true)
         .connect_timeout(Duration::from_secs(15))
-        .timeout(timeout)
+        .read_timeout(Duration::from_secs(60))
         .user_agent(AGENT)
         .dns_resolver(Arc::new(PublicOnly))
         .redirect(redirect_policy(true))

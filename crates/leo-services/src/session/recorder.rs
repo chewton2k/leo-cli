@@ -562,7 +562,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
 
         if !capture.paused()
             && controls.preview_enabled()
-            && backlog <= 1
+            && backlog == 0
             && last_roll.elapsed() >= state.interval
             && live_model_ready()
         {

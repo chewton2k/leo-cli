@@ -53,18 +53,90 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn item_end(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = "#[cfg(test)]".len();
+    let mut depth = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                i += text[i..].find('\n').unwrap_or(text.len() - i);
+                continue;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += text[i..].find("*/").map_or(text.len() - i, |e| e + 2);
+                continue;
+            }
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            b'r' if matches!(bytes.get(i + 1), Some(b'#' | b'"')) => {
+                let hashes = text[i + 1..].len() - text[i + 1..].trim_start_matches('#').len();
+                if bytes.get(i + 1 + hashes) == Some(&b'"') {
+                    let close = format!("\"{}", "#".repeat(hashes));
+                    let from = i + 2 + hashes;
+                    i = text[from..]
+                        .find(&close)
+                        .map_or(text.len(), |e| from + e + close.len());
+                    continue;
+                }
+            }
+            b'\'' => {
+                if bytes.get(i + 1) == Some(&b'\\') {
+                    i += 3 + text[i + 3..].find('\'').unwrap_or(0);
+                } else if let Some(c) = text[i + 1..].chars().next() {
+                    if bytes.get(i + 1 + c.len_utf8()) == Some(&b'\'') {
+                        i += 1 + c.len_utf8();
+                    }
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                if depth == 0 {
+                    return i;
+                }
+                depth -= 1;
+                if depth == 0 && bytes[i] == b'}' {
+                    return i + 1;
+                }
+            }
+            b';' | b',' if depth == 0 => return i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    text.len()
+}
+
+fn shipped_part(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("#[cfg(test)]") {
+        out.push_str(&rest[..at]);
+        let end = (at + item_end(&rest[at..])).min(rest.len());
+        out.extend(
+            rest[at..end]
+                .chars()
+                .map(|c| if c == '\n' { c } else { ' ' }),
+        );
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The lines of a source file a user could ever see: not comments, and not
 /// inside a test module (tests name retired commands on purpose).
 fn shipped_lines(path: &Path) -> Vec<(usize, String)> {
     if path.file_name().is_some_and(|n| n == "tests.rs") {
         return Vec::new();
     }
-    let text = std::fs::read_to_string(path).unwrap();
+    let text = shipped_part(&std::fs::read_to_string(path).unwrap());
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        if line.trim_start().starts_with("#[cfg(test)]") {
-            break;
-        }
         let code = line.trim_start();
         if code.starts_with("//") {
             continue;
@@ -186,4 +258,14 @@ fn json_keys_are_not_commands_but_command_values_still_are() {
         r#"json!({"settings":settings,"message":":settings"})"#,
         ":settings"
     ));
+}
+
+#[test]
+fn code_after_a_test_module_is_still_read() {
+    let text = "#[cfg(test)]\nmod tests {\n    const OLD: &str = \"leo serve\";\n}\nconst HINT: &str = \"run leo serve\";\n";
+    let shipped = shipped_part(text);
+    let lines: Vec<&str> = shipped.lines().map(str::trim).collect();
+    assert_eq!(lines.len(), 5);
+    assert_eq!(lines.iter().filter(|l| mentions(l, "leo serve")).count(), 1);
+    assert_eq!(lines[4], "const HINT: &str = \"run leo serve\";");
 }

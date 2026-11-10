@@ -455,6 +455,12 @@ pub fn remove_filler_words(
     for pattern in patterns.iter() {
         filtered = remove_filler_matches(&filtered, pattern);
     }
+    if text.trim_end().ends_with('.') {
+        let trimmed = filtered.trim_end().trim_end_matches(',').trim_end();
+        if !trimmed.is_empty() && !trimmed.ends_with(['.', '!', '?']) {
+            filtered = format!("{trimmed}.");
+        }
+    }
 
     remove_spoken_asides(&filtered)
 }
@@ -644,6 +650,15 @@ mod tests {
         let text = "  Uhm, so I was, uh, thinking about this  ";
         let result = filter_transcription_output(text, "en", &None);
         assert_eq!(result, "So I was, thinking about this");
+    }
+
+    #[test]
+    fn test_filter_final_filler_keeps_the_full_stop() {
+        let result = filter_transcription_output("We should ship it, um.", "en", &None);
+        assert_eq!(result, "We should ship it.");
+        let result = filter_transcription_output("Call me tomorrow uh.", "en", &None);
+        assert_eq!(result, "Call me tomorrow.");
+        assert_eq!(filter_transcription_output("Uh.", "en", &None), "");
     }
 
     #[test]

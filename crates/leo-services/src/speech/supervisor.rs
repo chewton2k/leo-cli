@@ -811,8 +811,14 @@ impl Owner {
                     error!("Live transcription callback panicked");
                 }
             }
-            Ok(other) => warn!("Stream feed failed: {}", unexpected(&other)),
-            Err(Failure::Remote(message)) => warn!("Stream feed failed: {}", message),
+            Ok(other) => {
+                warn!("Stream feed failed: {}", unexpected(&other));
+                self.end_stream();
+            }
+            Err(Failure::Remote(message)) => {
+                warn!("Stream feed failed: {}", message);
+                self.end_stream();
+            }
             Err(Failure::Cancelled) => {}
             Err(failure) => {
                 self.stream = None;
@@ -1364,6 +1370,30 @@ mod fake_tests {
             .map(|p| p.parse::<i32>().unwrap())
         {
             assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
+        }
+        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
+    }
+
+    #[test]
+    fn a_rejected_stream_feed_leaves_the_whole_audio_to_batch_transcription() {
+        let _guard = ENV.lock().unwrap();
+        let dir = fake();
+        let engine = EngineSupervisor::new(false);
+        for (mode, finalized) in [("streaming", true), ("feedfail", false)] {
+            engine
+                .load(LoadSpec {
+                    path: dir.path().join(mode),
+                    backend: Backend::Cpu,
+                    device: DeviceSelector::Auto,
+                })
+                .unwrap();
+            let stream = engine
+                .start_stream(RunOptions::default(), StreamOptions::default(), |_| {})
+                .unwrap();
+            assert!(matches!(stream.feed(vec![0.2; 1600]), Fed::Sent));
+            assert!(matches!(stream.feed(vec![0.2; 1600]), Fed::Sent));
+            assert_eq!(stream.finalize(false).unwrap().is_some(), finalized);
+            engine.unload().wait();
         }
         std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
     }

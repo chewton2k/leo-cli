@@ -331,10 +331,11 @@ fn run(mut feed: Feed, mut writer: Writer, stop: &AtomicBool, pause: &AtomicBool
                 "Could not save the recording ({e}). Is the disk full?"
             ));
         }
+        let tail = shared.tail.lock();
         shared
             .recorded
             .fetch_add(buf.len() as u64, Ordering::Relaxed);
-        if let Ok(mut tail) = shared.tail.lock() {
+        if let Ok(mut tail) = tail {
             tail.extend(buf.iter().copied());
             let extra = tail.len().saturating_sub(limit);
             tail.drain(..extra);
