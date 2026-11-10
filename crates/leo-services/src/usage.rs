@@ -329,8 +329,12 @@ pub fn refresh_codex(cfg: &crate::config::Config) {
     let Some(pc) = cfg.provider("codex") else {
         return;
     };
-    let bin = pc.bin.as_deref().unwrap_or("codex");
-    let Some(program) = crate::ai::provider::agent_cli::locate(bin) else {
+    let cli = crate::ai::provider::agent_cli::AgentCli::new(
+        "codex".into(),
+        crate::ai::provider::agent_cli::Agent::Codex,
+        pc,
+    );
+    let Some(program) = crate::ai::provider::agent_cli::locate(cli.bin()) else {
         return;
     };
     let home = std::env::var_os("CODEX_HOME")

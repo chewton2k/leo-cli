@@ -53,15 +53,14 @@ pub(crate) async fn list_tasks(State(state): State<AppState>) -> Response {
 
 pub(crate) async fn all_listed(state: &AppState) -> Result<Vec<tasks::Listed>, StatusCode> {
     let chats = state.chats.clone();
+    let (metas, stored) =
+        tokio::task::spawn_blocking(move || (tasks::metas(&chats), tasks::load_all(&chats)))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .read_store(move |store| {
-            let metas = tasks::metas(&chats);
             let mut all = tasks::note_tasks(store, &metas);
-            all.extend(
-                tasks::load_all(&chats)
-                    .iter()
-                    .map(|t| tasks::standalone(t, Some(store))),
-            );
+            all.extend(stored.iter().map(|t| tasks::standalone(t, Some(store))));
             Ok(tasks::sorted(all))
         })
         .await

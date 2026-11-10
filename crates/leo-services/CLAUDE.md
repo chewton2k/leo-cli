@@ -74,7 +74,7 @@ simulates 3 h and (ignored) 24 h.
 Live transcript (catalog models marked fast enough): every `ROLL_INTERVAL` (3 s;
 `CLOUD_ROLL_INTERVAL` 8 s) re-transcribe from `settled_at`, at most
 `LIVE_MOST_SECS` (20); at `SETTLE_AFTER_SECS` (12) settle at `live::quietest`
-between 6 s and end − 2 s; only while the backlog is at most one segment. Typed
+between 6 s and end − 2 s; only while no segment is waiting. Typed
 points go through `Controls.points` (`recorder::points_of`) into the manifest.
 Recording needs only speech and a microphone; the writing AI is optional.
 `LEO_NO_MICROPHONE` turns the device off (tests, e2e, CI).

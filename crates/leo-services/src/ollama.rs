@@ -123,7 +123,9 @@ pub(crate) fn root(base_url: &str) -> String {
 
 pub fn view(cfg: &Config) -> Value {
     let url = cfg.provider("ollama").and_then(|p| p.base_url.clone());
-    let running = url.as_deref().is_some_and(crate::health::port_open);
+    let running = url
+        .as_deref()
+        .is_some_and(|url| crate::ai::loopback(url) && crate::health::port_open(url));
     let pulled = match (&url, running) {
         (Some(url), true) => crate::config::choice::ollama_models(url),
         _ => Vec::new(),

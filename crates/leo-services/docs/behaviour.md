@@ -84,7 +84,7 @@ The live transcript, for catalog models marked fast enough, shows finished segme
 8 s cloud) it re-transcribes from `settled_at`, at most `LIVE_MOST_SECS` (20 s),
 and once that is `SETTLE_AFTER_SECS` (12) long it settles at `live::quietest`
 between 6 s and end − 2 s, so the unsettled end is rewritten rather than glued.
-Only while the transcription backlog is at most one segment. Typed points go to
+Only while no segment is waiting for transcription. Typed points go to
 the recorder through `Controls.points` (`recorder::points_of`) and are saved in the manifest. Recording needs
 only speech AI and a microphone; the writing AI is optional. `LEO_NO_MICROPHONE`
 turns the device off (tests, e2e, CI).
