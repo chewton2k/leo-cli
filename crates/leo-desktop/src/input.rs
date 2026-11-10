@@ -154,17 +154,17 @@ pub fn send_paste_ctrl_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), String> 
     enigo
         .key(modifier_key, enigo::Direction::Press)
         .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
+    let click = enigo
         .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
+        .map_err(|e| format!("Failed to click V key: {}", e));
 
     std::thread::sleep(std::time::Duration::from_millis(hold_ms));
 
-    enigo
+    let release = enigo
         .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
+        .map_err(|e| format!("Failed to release modifier key: {}", e));
 
-    Ok(())
+    click.and(release)
 }
 
 #[cfg(test)]

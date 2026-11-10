@@ -45,6 +45,7 @@ pub struct Updates {
     ready: AtomicBool,
     operating: AtomicBool,
     installed: AtomicBool,
+    quit_install: AtomicBool,
     installed_lease: Mutex<Option<leo_core::activity::Lease>>,
 }
 impl Updates {
@@ -58,6 +59,7 @@ impl Updates {
             ready: AtomicBool::new(false),
             operating: AtomicBool::new(false),
             installed: AtomicBool::new(false),
+            quit_install: AtomicBool::new(false),
             installed_lease: Mutex::new(None),
         });
         let worker = this.clone();
@@ -136,9 +138,20 @@ impl Updates {
             self.ready.load(Ordering::Acquire),
             leo_core::activity::global().busy(),
         ) {
-            return self.request_install().is_ok();
+            self.quit_install.store(true, Ordering::Release);
+            let started = self.request_install().is_ok();
+            if !started {
+                self.quit_install.store(false, Ordering::Release);
+            }
+            return started;
         }
         false
+    }
+    fn quit_install_failed(&self) {
+        if self.quit_install.swap(false, Ordering::AcqRel) {
+            self.ready.store(false, Ordering::Release);
+            self.app.exit(0);
+        }
     }
     pub fn stop(&self) {
         let _ = self.tx.try_send(Command::Stop);
@@ -221,11 +234,13 @@ impl Updates {
                                 restart(&self.app);
                             }
                             Err(_) => {
+                                self.quit_install_failed();
                                 self.failed("The update could not be installed. Quit and reopen Leo, then try Restart to update again.");
                             }
                         }
                     } else {
                         drop(lease);
+                        self.quit_install_failed();
                         self.failed("Check and download the update again before restarting.");
                     }
                 }

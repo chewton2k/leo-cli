@@ -253,8 +253,10 @@ pub fn run(yes: bool) -> Result<()> {
 
 fn remove_program(exe: &Path) -> Result<()> {
     if !cfg!(windows) {
-        return std::fs::remove_file(exe)
-            .with_context(|| format!("could not remove {}", exe.display()));
+        return match std::fs::remove_file(exe) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result.with_context(|| format!("could not remove {}", exe.display())),
+        };
     }
     let parked = exe.with_extension("exe.old");
     let _ = std::fs::remove_file(&parked);

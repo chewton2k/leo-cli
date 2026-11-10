@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn fixture() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let app = dir.path().join("stage/Leo.app");
     std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
     for name in ["leo", "leo-app"] {

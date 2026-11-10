@@ -346,7 +346,9 @@ impl Dictation {
         if stop.load(Ordering::Acquire) {
             return Ok(Finish::Done);
         }
-        let (mut mic, rx) = if let Ok(path) = std::env::var("LEO_FAKE_AUDIO") {
+        let (mut mic, rx) = if let Some(path) =
+            replay_path(Self::test_mode(), std::env::var("LEO_FAKE_AUDIO").ok())
+        {
             let pcm = leo_services::session::wav::read(std::path::Path::new(&path))?;
             let (tx, rx) = mpsc::sync_channel(64);
             let flag = self.clone();
@@ -631,6 +633,9 @@ fn chime(enabled: bool, start: bool) {
         });
     }
 }
+fn replay_path(test_mode: bool, variable: Option<String>) -> Option<String> {
+    variable.filter(|_| test_mode)
+}
 fn feed(stream: &DictationStream, pcm: &[f32]) -> bool {
     pcm.chunks(16_000).all(|part| stream.feed(part.to_vec()))
 }
@@ -639,4 +644,15 @@ fn newest(text: &str) -> String {
     text.chars()
         .skip(count.saturating_sub(SHOWN_CHARS))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn replay_audio_is_honored_only_in_test_mode() {
+        let wav = Some("/tmp/words.wav".to_string());
+        assert_eq!(super::replay_path(false, wav.clone()), None);
+        assert_eq!(super::replay_path(true, wav.clone()), wav);
+        assert_eq!(super::replay_path(true, None), None);
+    }
 }

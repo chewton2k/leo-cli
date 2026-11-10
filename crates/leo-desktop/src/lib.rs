@@ -185,7 +185,7 @@ pub fn run() {
             quit::menu(app.handle())?;
             tray::build(app.handle())?;
             open_at_login_once(app.handle(), config.as_deref());
-            app_settings.apply_startup()?;
+            app_settings.apply_startup();
             Ok(())
         })
         .build(tauri::generate_context!())

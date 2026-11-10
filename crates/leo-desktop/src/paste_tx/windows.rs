@@ -229,10 +229,6 @@ unsafe fn settle_clipboard(shared: &WinTxShared) {
 }
 
 unsafe fn restore_snapshot(shared: &WinTxShared) {
-    let mut formats = match shared.snapshot.lock() {
-        Ok(mut saved) => std::mem::take(&mut *saved),
-        Err(_) => return,
-    };
     if OpenClipboard(None).is_err() {
         return;
     }
@@ -244,6 +240,13 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
         let _ = CloseClipboard();
         return;
     }
+    let mut formats = match shared.snapshot.lock() {
+        Ok(mut saved) => std::mem::take(&mut *saved),
+        Err(_) => {
+            let _ = CloseClipboard();
+            return;
+        }
+    };
     let _ = EmptyClipboard();
     for saved in &mut formats {
         let handle = match &saved.data {

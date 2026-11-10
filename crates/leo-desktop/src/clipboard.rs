@@ -22,9 +22,11 @@ pub fn paste(
     let caller = app.clone();
     let text = text.to_owned();
     let (done, finished) = std::sync::mpsc::sync_channel(1);
+    let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let abandoned = timed_out.clone();
     caller
         .run_on_main_thread(move || {
-            if !current() { let _=done.send(Ok(None)); return; }
+            if abandoned.load(std::sync::atomic::Ordering::Acquire) || !current() { let _=done.send(Ok(None)); return; }
             let result = (|| {
                 if app.try_state::<crate::input::EnigoState>().is_none() {
                     app.manage(crate::input::EnigoState::new()?);
@@ -44,5 +46,8 @@ pub fn paste(
         .map_err(|e| e.to_string())?;
     finished
         .recv_timeout(std::time::Duration::from_secs(10))
-        .map_err(|_| "Paste is taking too long. Copy the text from Recent dictations.".to_owned())?
+        .map_err(|_| {
+            timed_out.store(true, std::sync::atomic::Ordering::Release);
+            "Paste is taking too long. Copy the text from Recent dictations.".to_owned()
+        })?
 }
