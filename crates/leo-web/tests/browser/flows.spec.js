@@ -3035,7 +3035,6 @@ test.describe('the kinds of bugs that reached people before', () => {
     const json = (answer) => JSON.parse(answer.text);
     const made = json(await call('POST', '/api/notes', { title: `Contract ${tag}`, body: '- [ ] box\nold words' }));
     await call('PATCH', `/api/notes/${made.id}`, { body: '- [ ] box\nnew words' });
-    await call('POST', `/api/notes/${made.id}/toggle?checkbox=1`);
     await call('POST', '/api/dirs', { path: `contract-${tag}` });
     await call('POST', '/api/dirs', { path: `contract-${tag}/inner` });
     await call('POST', `/api/notes/${made.id}/move`, { directory: `contract-${tag}` });

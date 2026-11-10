@@ -6,8 +6,9 @@ fn a_failed_read_does_not_reload_the_store_and_a_failed_write_does() {
     let missed: Result<(), StatusCode> = run(state.read_store(|_| Err(StatusCode::NOT_FOUND)));
     assert_eq!(missed, Err(StatusCode::NOT_FOUND));
     assert!(!state.store.lock().unwrap().reload);
-    let failed: Result<(), StatusCode> = run(state.with_store(|_| Err(StatusCode::CONFLICT)));
-    assert_eq!(failed, Err(StatusCode::CONFLICT));
+    let failed: Result<(), StatusCode> =
+        run(state.with_store(|_| Err(StatusCode::INTERNAL_SERVER_ERROR)));
+    assert_eq!(failed, Err(StatusCode::INTERNAL_SERVER_ERROR));
     assert!(state.store.lock().unwrap().reload);
 }
 
@@ -534,4 +535,283 @@ fn library_sorting_happens_before_pagination_and_brief_results_include_visuals()
         page("opened", 0, Some("../escape".into())).err(),
         Some(StatusCode::BAD_REQUEST)
     );
+}
+
+#[test]
+fn routine_client_errors_do_not_reload_every_note() {
+    let (state, _dir, _ids) = state_with(&[("One", "")]);
+    for code in [
+        StatusCode::NOT_FOUND,
+        StatusCode::CONFLICT,
+        StatusCode::BAD_REQUEST,
+    ] {
+        let failed: Result<(), StatusCode> = run(state.with_store(move |_| Err(code)));
+        assert_eq!(failed, Err(code));
+        assert!(!state.store.lock().unwrap().reload, "{code}");
+        let now: Result<(), StatusCode> = store_now(&state, |_| Err(code));
+        assert_eq!(now, Err(code));
+        assert!(!state.store.lock().unwrap().reload, "{code}");
+    }
+}
+
+#[test]
+fn a_new_folder_that_windows_cannot_hold_is_refused() {
+    let (state, _dir, _ids) = state_with(&[]);
+    for bad in ["Q&A?", "Week 1.", "CON", "Notes/CON", "Notes/What?"] {
+        let made = run(create_note(
+            State(state.clone()),
+            Json(CreateBody {
+                title: "Idea".into(),
+                body: None,
+                tags: None,
+                directory: Some(bad.into()),
+            }),
+        ));
+        assert_eq!(made.err(), Some(StatusCode::BAD_REQUEST), "{bad}");
+        assert!(!state.fresh().dir_exists(bad), "{bad}");
+    }
+    assert!(state.fresh().notes.is_empty());
+    let fine = run(create_note(
+        State(state.clone()),
+        Json(CreateBody {
+            title: "Idea".into(),
+            body: None,
+            tags: None,
+            directory: Some("Week 1".into()),
+        }),
+    ));
+    assert!(fine.is_ok());
+}
+
+#[test]
+fn a_stale_save_whose_content_already_reached_leo_is_not_a_conflict() {
+    let (state, _dir, ids) = state_with(&[("Draft", "")]);
+    let id = ids[0].clone();
+    let send = |value: serde_json::Value| {
+        run(update_note(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(serde_json::from_value::<UpdateBody>(value).unwrap()),
+        ))
+    };
+    let first = send(serde_json::json!({ "body": "typed words" })).unwrap();
+    let before = first.0.updated_at.clone();
+    let again = send(serde_json::json!({ "body": "typed words", "base": "stale" })).unwrap();
+    assert_eq!(again.0.body, "typed words");
+    assert_eq!(again.0.version, first.0.version);
+    assert_eq!(again.0.updated_at, before);
+    let differing = send(serde_json::json!({ "body": "other words", "base": "stale" }));
+    assert_eq!(differing.err(), Some(StatusCode::CONFLICT));
+    assert_eq!(state.fresh().notes.len(), 1);
+}
+
+#[test]
+fn the_unused_checkbox_toggle_route_is_gone() {
+    run(async {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+        let id = store
+            .create_note("Boxes", "- [ ] one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let running = start_in(
+            Places {
+                store,
+                sessions: dir.path().join("sessions.json"),
+            },
+            StartOptions {
+                port: 0,
+                token: "0123456789abcdef0123456789abcdef".into(),
+            },
+            Powers::default(),
+        )
+        .await
+        .unwrap();
+        let port = running.port();
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let request = format!(
+            "POST /api/notes/{id}/toggle?checkbox=1&token=0123456789abcdef0123456789abcdef HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut reply)
+            .await
+            .unwrap();
+        assert!(reply.starts_with("HTTP/1.1 404"), "{reply}");
+        running.stop().await;
+    });
+}
+
+#[test]
+fn folder_note_counts_include_everything_below_and_ignore_lookalike_names() {
+    let (state, _dir, _ids) = state_with(&[
+        ("A", "cs130"),
+        ("B", "cs130/week1"),
+        ("C", "cs130/week1"),
+        ("D", "cs13"),
+        ("E", ""),
+    ]);
+    let Json(all) = run(list_folders(State(state.clone()))).unwrap();
+    let store = state.fresh();
+    assert!(!all.is_empty());
+    for dir in &all {
+        assert_eq!(dir.notes, store.dir_contents(&dir.name).0, "{}", dir.name);
+    }
+    let count = |name: &str| all.iter().find(|d| d.name == name).unwrap().notes;
+    assert_eq!(
+        (count("cs130"), count("cs130/week1"), count("cs13")),
+        (3, 2, 1)
+    );
+    drop(store);
+    let Json(top) = run(list_dirs(
+        State(state.clone()),
+        Query(DirParams { parent: None }),
+    ))
+    .unwrap();
+    assert_eq!(top.iter().find(|d| d.name == "cs130").unwrap().notes, 3);
+    let Json(nested) = run(list_dirs(
+        State(state),
+        Query(DirParams {
+            parent: Some("cs130".into()),
+        }),
+    ))
+    .unwrap();
+    assert_eq!(nested.iter().find(|d| d.name == "week1").unwrap().notes, 2);
+}
+
+#[test]
+fn renaming_or_moving_a_folder_takes_its_pictures_and_other_files_along() {
+    let (state, _dir, ids) = state_with(&[("Cells", "Bio"), ("Other", "Misc")]);
+    let root = state.fresh().notes_dir.clone();
+    std::fs::write(root.join("Bio/cell.png"), b"png").unwrap();
+    std::fs::create_dir_all(root.join("Bio/img")).unwrap();
+    std::fs::write(root.join("Bio/img/deep.png"), b"deep").unwrap();
+    let renamed = run(crate::routes::notes::rename_dir(
+        State(state.clone()),
+        Json(crate::routes::notes::RenameDirBody {
+            from: "Bio".into(),
+            name: "Biology".into(),
+        }),
+    ))
+    .unwrap();
+    assert_eq!(renamed.0["path"], "Biology");
+    assert_eq!(
+        std::fs::read(root.join("Biology/cell.png")).unwrap(),
+        b"png"
+    );
+    assert_eq!(
+        std::fs::read(root.join("Biology/img/deep.png")).unwrap(),
+        b"deep"
+    );
+    assert!(!root.join("Bio").exists());
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().directory,
+        "Biology"
+    );
+
+    let _ = run(move_dir(
+        State(state.clone()),
+        Json(MoveDirBody {
+            from: "Biology".into(),
+            into: "Misc".into(),
+        }),
+    ))
+    .unwrap();
+    assert_eq!(
+        std::fs::read(root.join("Misc/Biology/cell.png")).unwrap(),
+        b"png"
+    );
+    assert!(!root.join("Biology").exists());
+}
+
+fn organize_call(name: &str, args: serde_json::Value) -> crate::tools::Call {
+    crate::tools::Call {
+        name: name.into(),
+        args,
+    }
+}
+
+#[test]
+fn a_tool_name_organize_does_not_know_is_an_error_not_a_deleted_note() {
+    let (state, _dir, _ids) = state_with(&[("Lecture 3", "")]);
+    run(async {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut desk = crate::tools::Desk::new(vec![], 8000);
+            let done = crate::routes::organize::run(
+                &state,
+                &mut desk,
+                crate::tools::Access::Auto,
+                &organize_call("archive_note", serde_json::json!({ "note": "Lecture 3" })),
+            );
+            assert!(done.proposal.is_none(), "{}", done.result);
+            assert!(done.result.contains("archive_note"), "{}", done.result);
+            assert!(!done.step.contains("delete"), "{}", done.step);
+            let asked = crate::routes::organize::run(
+                &state,
+                &mut desk,
+                crate::tools::Access::Auto,
+                &organize_call("delete_note", serde_json::json!({ "note": "Lecture 3" })),
+            );
+            assert!(matches!(
+                asked.proposal,
+                Some(crate::tools::Proposal::DeleteNote { .. })
+            ));
+        })
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn moving_a_task_in_felix_keeps_its_end_time_and_the_undo_does_too() {
+    let (state, _dir, _ids) = state_with(&[]);
+    let made = run(crate::routes::tasks::create_task(
+        State(state.clone()),
+        Json(
+            serde_json::from_value(serde_json::json!({
+                "title": "Lab",
+                "date": "2026-11-03",
+                "time": "14:00",
+                "end": "15:00"
+            }))
+            .unwrap(),
+        ),
+    ));
+    let made = json_of(made);
+    let id = made["id"].as_str().unwrap().to_string();
+    run(async {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            let moved = crate::tools::Proposal::UpdateTask {
+                summary: "Move the lab".into(),
+                id: id.clone(),
+                description: None,
+                done: None,
+                date: Some("2026-11-05".into()),
+                clear_date: false,
+                time: None,
+                task_kind: None,
+                on: None,
+            };
+            let shown = crate::routes::organize::act_now(&state, &moved).unwrap();
+            let stored = crate::tasks::load(&state.chats, &id).unwrap();
+            assert_eq!(stored.date, chrono::NaiveDate::from_ymd_opt(2026, 11, 5));
+            assert_eq!(stored.end, chrono::NaiveTime::from_hms_opt(15, 0, 0));
+            let undo: crate::tools::Proposal =
+                serde_json::from_value(shown["undo"].clone()).unwrap();
+            crate::routes::organize::act_now(&state, &undo).unwrap();
+            let back = crate::tasks::load(&state.chats, &id).unwrap();
+            assert_eq!(back.date, chrono::NaiveDate::from_ymd_opt(2026, 11, 3));
+            assert_eq!(back.end, chrono::NaiveTime::from_hms_opt(15, 0, 0));
+        })
+        .await
+        .unwrap();
+    });
 }

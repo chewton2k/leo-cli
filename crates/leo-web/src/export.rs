@@ -31,6 +31,7 @@ uploads/  the files you uploaded, in a folder per note (named by the note's id,
 chats/    your conversations with Felix, one JSON file each.
 tasks.json the tasks you added on the Calendar page. Tasks from notes are
           in the notes themselves.
+boards.json your boards and their cards.
 margin.json Felix's margin notes and their replies, included with chats.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
@@ -158,10 +159,9 @@ fn add_dir<W: Write + Seek>(
         if skip_hidden && name.starts_with('.') {
             continue;
         }
-        ensure!(
-            !name.contains(['/', '\\']) && !name.chars().any(char::is_control),
-            "An export filename contains unsupported characters; rename it and try again"
-        );
+        if name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+            continue;
+        }
         let kind = entry
             .file_type()
             .context("An export item could not be checked; check its permissions and try again")?;
@@ -523,6 +523,18 @@ mod tests {
         assert_eq!(
             folder_with_limits(bytes.path(), Limits { bytes: 4, ..LIMITS }).unwrap(),
             Packed { files: 2, bytes: 4 }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_with_a_control_character_in_its_name_is_skipped_not_fatal() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("Icon\r"), "").unwrap();
+        std::fs::write(folder.path().join("Notes.md"), "ab").unwrap();
+        assert_eq!(
+            folder_with_limits(folder.path(), LIMITS).unwrap(),
+            Packed { files: 1, bytes: 2 }
         );
     }
 

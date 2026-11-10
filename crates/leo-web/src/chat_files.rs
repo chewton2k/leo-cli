@@ -186,15 +186,25 @@ pub fn held(dir: &Path) -> Vec<Held> {
 }
 
 pub fn tidy_orphans(dir: &Path, now: DateTime<Utc>) -> usize {
-    let cutoff = now - chrono::Duration::hours(ORPHAN_HOURS);
-    held(dir)
-        .iter()
-        .filter(|h| {
-            crate::chats::load(dir, &h.chat).is_none()
-                && h.last.is_none_or(|last| last < cutoff)
-                && remove_all(dir, &h.chat)
+    let cutoff = (now - chrono::Duration::hours(ORPHAN_HOURS))
+        .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    const ORPHANS: &str = "FROM chat_docs WHERE chat NOT IN (SELECT id FROM chats) GROUP BY chat HAVING MAX(added_at) < ?1";
+    crate::chats::db_of(dir)
+        .with(|c| {
+            let t = c.transaction()?;
+            let orphans: i64 = t.query_row(
+                &format!("SELECT COUNT(*) FROM (SELECT chat {ORPHANS})"),
+                [&cutoff],
+                |r| r.get(0),
+            )?;
+            t.execute(
+                &format!("DELETE FROM chat_docs WHERE chat IN (SELECT chat {ORPHANS})"),
+                [&cutoff],
+            )?;
+            t.commit()?;
+            Ok(orphans as usize)
         })
-        .count()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -305,5 +315,25 @@ mod tests {
         assert_eq!(tidy_orphans(dir, tomorrow), 1);
         let left: Vec<String> = held(dir).into_iter().map(|h| h.chat).collect();
         assert_eq!(left, ["chat-kept-0002"]);
+    }
+
+    #[test]
+    fn a_failed_chat_lookup_never_deletes_documents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        add(dir, "chat-kept-0002", "b.txt", "x", at(1)).unwrap();
+        crate::chats::save(
+            dir,
+            "chat-kept-0002",
+            serde_json::from_value(serde_json::json!({ "mode": "chat", "messages": [] })).unwrap(),
+            at(1),
+        )
+        .unwrap();
+        crate::chats::db_of(dir)
+            .with(|c| c.execute_batch("ALTER TABLE chats RENAME TO chats_busy"))
+            .unwrap();
+        let tomorrow = at(1) + chrono::Duration::hours(25);
+        assert_eq!(tidy_orphans(dir, tomorrow), 0);
+        assert_eq!(list(dir, "chat-kept-0002").len(), 1);
     }
 }

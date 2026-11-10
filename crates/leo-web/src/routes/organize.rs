@@ -92,15 +92,11 @@ fn kind_of(text: &str) -> Result<Option<String>, String> {
 }
 
 pub(crate) fn listed_now(state: &AppState) -> Result<Vec<Listed>, String> {
-    let chats = state.chats.clone();
+    let metas = tasks::metas(&state.chats);
+    let stored = tasks::load_all(&state.chats);
     store_now(state, |store| {
-        let metas = tasks::metas(&chats);
         let mut all = tasks::note_tasks(store, &metas);
-        all.extend(
-            tasks::load_all(&chats)
-                .iter()
-                .map(|t| tasks::standalone(t, Some(store))),
-        );
+        all.extend(stored.iter().map(|t| tasks::standalone(t, Some(store))));
         Ok(tasks::sorted(all))
     })
     .map_err(|_| "leo could not read the tasks".to_string())
@@ -156,7 +152,8 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "add_board" => "Tried to make a board",
         "change_board" => "Tried to change a board",
         "delete_board" => "Tried to delete a board",
-        _ => "Tried to delete a note",
+        "delete_note" => "Tried to delete a note",
+        _ => "Tried to change something",
     };
     if !access.changes() {
         return fail(
@@ -201,7 +198,8 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         name if crate::board_tools::changes(name) => {
             crate::board_tools::propose(&state.chats, call)
         }
-        _ => delete_note(state, desk, call),
+        "delete_note" => delete_note(state, desk, call),
+        other => Err(format!("there is no tool called {other}")),
     };
     match made {
         Ok(proposal) => {
@@ -1102,6 +1100,14 @@ pub(crate) async fn act(
                 let keep = time
                     .clone()
                     .or_else(|| before.time.map(|t| t.format("%H:%M").to_string()));
+                if !*clear_date && keep == before.time.map(|t| t.format("%H:%M").to_string()) {
+                    if let Some(end) = before.end {
+                        change.insert(
+                            "end".into(),
+                            serde_json::json!(end.format("%H:%M").to_string()),
+                        );
+                    }
+                }
                 change.insert(
                     "time".into(),
                     serde_json::json!(if *clear_date { None } else { keep }),
@@ -1758,16 +1764,11 @@ pub(crate) async fn act(
 }
 
 pub(crate) async fn act_route(State(state): State<AppState>, Json(p): Json<Proposal>) -> Response {
-    match act(&state, &p).await {
-        Ok((extra, undo)) => {
-            let mut shown = serde_json::json!(p);
-            if let (Some(shown), Some(extra)) = (shown.as_object_mut(), extra.as_object()) {
-                shown.extend(extra.clone());
-            }
-            shown["state"] = serde_json::json!("applied");
-            shown["undo"] = serde_json::json!(undo);
-            Json(shown).into_response()
-        }
+    let applied = tokio::task::spawn_blocking(move || act_now(&state, &p))
+        .await
+        .unwrap_or_else(|_| Err("leo could not do that".into()));
+    match applied {
+        Ok(shown) => Json(shown).into_response(),
         Err(why) => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({ "error": why })),
