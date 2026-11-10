@@ -5,6 +5,7 @@
   const noAi = (text) => typeof text === 'string' && text.startsWith("leo can't write yet: ");
   const MOST_KEPT = 40;
   const MOST_REFS = 8;
+  const MOST_SAVED = 400;
   const COMPACT_IDLE_MS = 10 * 60 * 1000;
   const COMPACT_LEAST_TURNS = 8;
   const ACCESS = [
@@ -280,7 +281,7 @@
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
     const byF = new Map((files || []).map((f) => [`f${f.n}`, f]));
     const short = (t) => (t.length > 28 ? t.slice(0, 27) + '…' : t);
-    return html.replace(CITED, (whole, list) => {
+    const chip = (whole, list) => {
       const chips = citations(list)
         .map((c) => {
           if (c.file) {
@@ -300,6 +301,17 @@
         })
         .filter(Boolean);
       return chips.length ? `${whole.startsWith(' ') && !chips.every((c) => c.startsWith('<button class="cite cite-n"')) ? ' ' : ''}${chips.join('')}` : '';
+    };
+    const skipped = [];
+    return html.replace(/<[^>]*>|[^<]+/g, (part) => {
+      if (part[0] !== '<') return skipped.length ? part : part.replace(CITED, chip);
+      const tag = /^<(\/?)([a-z0-9]+)/i.exec(part);
+      if (!tag) return part;
+      const name = tag[2].toLowerCase();
+      if (tag[1]) {
+        if (skipped.at(-1) === name) skipped.pop();
+      } else if (!part.endsWith('/>') && (skipped.length ? /^(?:code|pre|span)$/.test(name) : /^(?:code|pre)$/.test(name) || /^<span class="math/i.test(part))) skipped.push(name);
+      return part;
     });
   }
 
@@ -1371,7 +1383,7 @@
       const messages = chat.messages.filter((m) => !m.pending);
       if (!messages.length) return upload;
       const id = chat.id;
-      const sending = { refs: chat.refs, messages: messages.map(({ pending, ...m }) => m) };
+      const sending = { refs: chat.refs, messages: messages.slice(-MOST_SAVED).map(({ pending, ...m }) => m) };
       upload = upload.then(async () => {
         try {
           const response = await request(`/api/chats/${encodeURIComponent(id)}`, {
@@ -1379,7 +1391,14 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sending),
           });
-          if (!response.ok) return;
+          if (!response.ok) {
+            if (!unsaved.has(id)) {
+              unsaved.add(id);
+              notify('Felix could not save this chat, so it may be missing from your history.');
+            }
+            return;
+          }
+          unsaved.delete(id);
           const summary = await response.json();
           if (state.chats) {
             state.chats = [summary, ...state.chats.filter((c) => c.id !== summary.id)].sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0));
@@ -1397,6 +1416,7 @@
     }
 
     const naming = new Set();
+    const unsaved = new Set();
     const NAME_CHECKS = [8000, 25000, 60000];
 
     async function loadChats() {
@@ -2318,10 +2338,12 @@
       }
     }
 
+    const inflight = new WeakSet();
+
     async function decide(i, j, apply) {
       const m = state.messages[i];
       const p = m && m.proposals && m.proposals[j];
-      if (!p || p.state !== 'new') return;
+      if (!p || p.state !== 'new' || inflight.has(p)) return;
       if (!apply) {
         p.state = 'dismissed';
         remember();
@@ -2333,6 +2355,7 @@
         ? ['/api/notes', { title: p.title, body: p.body || '', directory: p.folder || '' }]
         : [`/api/notes/${encodeURIComponent(p.note)}/suggestion`, { find: p.find || '', replace: p.replace || '' }];
       let note;
+      inflight.add(p);
       try {
         const response = await request(post[0], {
           method: 'POST',
@@ -2352,6 +2375,8 @@
       } catch (e) {
         notify(e.message);
         return;
+      } finally {
+        inflight.delete(p);
       }
       p.state = 'applied';
       if (p.kind === 'create') {
@@ -2367,10 +2392,11 @@
     }
 
     async function organize(p, action, forward) {
-      if (retiredPractice(p)) return;
+      if (retiredPractice(p) || inflight.has(p)) return;
       const sending = Object.fromEntries(Object.entries(action || {}).filter(([k]) => !['state', 'undo', 'task', 'path'].includes(k)));
       let done;
       const previous = p.state;
+      inflight.add(p);
       try {
         {
           const response = await request('/api/felix/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
@@ -2381,6 +2407,8 @@
         p.state = previous; draw(false);
         notify(e.message || "Can't reach leo. Quit leo and open it again.");
         return;
+      } finally {
+        inflight.delete(p);
       }
       if (forward) {
         p.state = 'applied';
@@ -2509,7 +2537,7 @@
 
     async function saveAnswer(i) {
       const m = state.messages[i];
-      if (!m || m.role !== 'assistant' || m.saved) return;
+      if (!m || m.role !== 'assistant' || m.saved || inflight.has(m)) return;
       let question = '';
       for (let j = i - 1; j >= 0; j--) {
         if (state.messages[j].role === 'user') {
@@ -2520,6 +2548,7 @@
       const note = asNote(question, m.text, m.sources);
       const directory = typeof m.folder === 'string' ? m.folder : (state.context && state.context.directory) || '';
       let made;
+      inflight.add(m);
       try {
         const response = await request('/api/notes', {
           method: 'POST',
@@ -2531,6 +2560,8 @@
       } catch (e) {
         notify('Felix could not save that answer as a note.');
         return;
+      } finally {
+        inflight.delete(m);
       }
       m.saved = made.id;
       remember();
@@ -2670,6 +2701,7 @@
       if (hello || (live && body.querySelector(':scope > .msg'))) settle(body, next);
       else body.innerHTML = html;
       panel.classList.toggle('perched', perched);
+      body.setAttribute('aria-busy', String(Boolean(state.busy)));
       drawBelow();
       if (land) land();
       drawTitle();

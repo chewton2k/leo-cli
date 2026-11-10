@@ -304,6 +304,7 @@ async function render() {
     if (generation !== renderGeneration || (hash !== decodeURI(location.hash || '#/') && !(kind === 'f' && location.hash === '#/'))) return;
     rememberPlace();
     loadSideFolders();
+    $('#route-say').textContent = document.title;
     if (prepared && state.session?.note.id === prepared.id) state.session.doc.editStart();
   } catch (e) {
     if (generation !== renderGeneration || (hash !== decodeURI(location.hash || '#/') && !(kind === 'f' && location.hash === '#/'))) return;
@@ -378,7 +379,10 @@ async function warnUnsaved() {
   } catch (e) {}
 }
 window.leoFromApp = async (what, which) => {
-  if (what === 'quit') return toast(await quitText());
+  if (what === 'quit') {
+    saveWebsiteWork();
+    return toast(await quitText());
+  }
   if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
   if (what === 'event') {
     const [kind, ...uid] = String(which).split(':');

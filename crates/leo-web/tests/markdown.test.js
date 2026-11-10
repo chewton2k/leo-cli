@@ -355,6 +355,27 @@ test('a small svg and the paragraph after it become a drawing row only when rows
   assert.ok(!rows(`${svg(120)}\n**\nGreen`).includes('drawing-title'));
 });
 
+test('placeholders inside links, images and math resolve, and attributes only ever get plain text', () => {
+  const code = render('See [`Vec::push`](https://doc.rust-lang.org/x)');
+  assert.ok(code.includes('><code>Vec::push</code></a>'), code);
+  const image = render('[![x](a.png)](https://x.com)');
+  assert.ok(image.includes('<a href="https://x.com"') && image.includes('<img class="note-img"'), image);
+  const alt = render('![$a$](foo.png)');
+  assert.ok(alt.includes('alt="$a$"') && !alt.includes('<span'), alt);
+  const tex = render('$x \\[y\\] z$');
+  assert.ok(tex.includes('data-tex="x \\[y\\] z"'), tex);
+  const wiki = render('[[note|`c`]]');
+  assert.ok(wiki.includes('><code>c</code></a>'), wiki);
+  for (const html of [code, image, alt, tex, wiki]) assert.ok(!html.includes('\u0000'), html);
+  assert.ok(!render('a\u00000\u0000b `c`').includes('\u0000'));
+});
+
+test('a long run of unmatched ![[ openers stays fast', () => {
+  const started = Date.now();
+  render('![['.repeat(7000));
+  assert.ok(Date.now() - started < 1000);
+});
+
 setImmediate(() => {
   for (const [name, fn] of cases) {
     try {

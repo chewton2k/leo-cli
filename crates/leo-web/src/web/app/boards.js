@@ -669,9 +669,13 @@ async function kanbanCardPanel(id) {
   const doc = leoDoc.mount(description, { source: card.description || '', placeholder: 'Add details, steps or links…', onChange: () => { tellOver(); queue('description'); } });
   const valueOf = (name) => name === 'description' ? doc.source().trim() : fields[name].value.replace(/\s+/g, ' ').trim();
   const dirty = () => names.some((name) => valueOf(name) !== (card[name] || '') && (name !== 'title' || valueOf(name)));
-  const save = async (name) => {
+  const running = {};
+  const save = (name) => {
     clearTimeout(timers[name]);
     timers[name] = 0;
+    return (running[name] = (running[name] || Promise.resolve()).catch(() => {}).then(() => write(name)));
+  };
+  const write = async (name) => {
     const value = valueOf(name);
     if (value === (card[name] || '')) return true;
     if (name === 'title' && !value) { title.value = card.title; fit(title); return true; }

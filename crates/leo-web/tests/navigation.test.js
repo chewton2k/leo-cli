@@ -93,3 +93,10 @@ test('the page is assembled from every stylesheet in order, between the head and
   const page = parts.slice(0, parts.indexOf('page-tail.html') + 1);
   assert.deepEqual(page, ['page-head.html', ...onDisk, 'page-tail.html']);
 });
+
+test('the app container is not a live region, and a separate status line announces the page', () => {
+  const html = pageHtml();
+  assert.doesNotMatch(html, /<main id="app"[^>]*aria-live/);
+  assert.match(html, /<div id="route-say" class="fa-sr" role="status"><\/div>/);
+  assert.match(read('web/app/events.js'), /\$\('#route-say'\)\.textContent = document\.title/);
+});

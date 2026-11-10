@@ -191,7 +191,7 @@ async function drawDiagrams() {
   }
   const scheme = diagramScheme();
   if (diagrams.scheme !== scheme) {
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: diagramTheme(scheme === 'dark') });
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges', 'themeCSS'], theme: 'base', themeVariables: diagramTheme(scheme === 'dark') });
     diagrams.scheme = scheme;
   }
   for (const fig of waitingDiagrams()) {
