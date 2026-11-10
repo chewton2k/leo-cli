@@ -1,0 +1,12 @@
+reviews:
+  path_filters:
+    - "!**/*.md"
+    - "!crates/leo-web/src/web/styles/**"
+    - "!crates/leo-web/src/web/page-head.html"
+    - "!crates/leo-web/src/web/page-tail.html"
+    - "!crates/leo-web/src/web/index.html"
+    - "!crates/leo-web/tests/browser/**"
+    - "!crates/leo-web/tests/markdown.rs"
+    - "!crates/leo-desktop/gen/**"
+    - "!scripts/felix-eval/**"
+    - "!Cargo.lock"
