@@ -210,7 +210,7 @@ test('R1 the real Felix @ picker scrolls on its own at both ends and in the midd
 
   const title = await page.locator('#chat-pick .chat-pick-row.on b').innerText();
   await page.keyboard.press('Enter');
-  await expect(page.locator('#chat-refs .chat-ref')).toContainText(title);
+  await expect(page.locator('#chat-refs .note-card')).toContainText(title);
   await expect(page.locator('#chat-pick')).toBeHidden();
   expect(sent.length, 'choosing a note does not send the message').toBe(posted);
   log.chosen = title;

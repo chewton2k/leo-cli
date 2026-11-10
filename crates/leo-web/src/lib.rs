@@ -13,6 +13,7 @@ pub mod chats;
 mod combine;
 pub mod db;
 pub mod dictation;
+mod drawing;
 pub mod export;
 pub mod graph;
 mod ics;

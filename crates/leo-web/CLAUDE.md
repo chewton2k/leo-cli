@@ -74,8 +74,8 @@ lighter).
   outline gutter. Full width fills the remaining column. Reading tests scroll
   over a note block, independently of the explorer’s own scroll area.
 
-- Quick Leo (2026-10-19, the user's request; keys changed 2026-11-07): Cmd/Ctrl+K
-  anywhere, Cmd/Ctrl+F outside a note (inside a note it is left alone), and
+- Quick Leo (2026-10-19, the user's request; keys changed 2026-11-07, Cmd/Ctrl+F removed 2026-11-09:
+  one shortcut, the user's call): Cmd/Ctrl+K anywhere opens it, and
   Cmd/Ctrl+N makes a note in the current folder (never inside a sheet, an inline
   edit, while composing or when locked). The explorer starts with a New note row,
   has a Filter field (`#side-filter`, survives repaints) and arrow, Home/End and
@@ -346,7 +346,13 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (`drag.js`) moves notes and folders (`Store::move_dir` refuses itself, its
   own subfolder, or a taken name), files dropped open the upload sheet.
   Dropping a note on another opens Combine (`combine.rs`: the AI writes one
-  note, leo puts back anything it dropped). It runs in the background
+  note, leo puts back anything it dropped). In the explorer (2026-11-09, the user's call, after a 6-persona
+  simulation) a note held on another note's row for `SPRING_MS` arms it (the folder spring's timer slot, keyed
+  `{key, kind}`; `.combine-wait` "Hold to combine" with a line growing over the hold, then `.combine-armed` "Combine";
+  the parent folder is not lit) and a drop opens the sheet; a quicker drop still moves. The note menu has
+  Combine into… (`explorerCombineMenu`: up to 1000 notes from the brief notes list, " · folder" only on a title clash),
+  and a Quick Leo query that is just "merge" or "combine" (optionally followed by this, note, it, into or with) offers Combine “<open note>” into… above the ranked rows
+  (a hint row when no note is open). The sheet names the note that keeps its title; the ready toast says "ready to review". It runs in the background
   (2026-10-14, the user's call): POST `combine` starts a job on a thread
   (`AppState.combines`, at most 20, kept 6 h) metered as `combine:<id>`
   (streamed characters against the two notes' length); the Background panel
@@ -380,7 +386,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   (2026-11-02, the user's call): every explorer row means its folder (the folder
   row and chevron, its open children `.side-kids`, a note row means the note's
   folder, empty tree space the top level), so a note dropped on a note in the
-  explorer moves there (combining stays on Search cards). The destination
+  explorer moves there unless held to combine (below). The destination
   folder's row gets `drop-ok` and its open children `drop-in`; holding a note or
   folder drag over a closed folder for `SPRING_MS` (600) opens it for that visit
   (`side.revealed`, never saved); the tree scrolls near its
@@ -494,9 +500,12 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   prediction is `quiz` with `predict: yes`: free_response only, shown as Predict,
   never marked (`quizSay` says so, the request sends `mark: false`), never scored,
   not counted in `session.asked` and never a missed question in review. Other
-  cards offer How sure (`SURE`: sure, think, guess; pick before answering, since
-  a choice submits at once) and Add your thinking (up to `MOST_THINKING`, a
-  separate `think:i:k` draft). Both go to `/api/quiz/mark` (`confidence` is
+  cards offer How sure, a 0–100% bar the user drags (`q.surePct`; untouched says nothing;
+  `sureOf` maps it to `SURE`'s sure ≥75, think ≥40, else guess for marking and scoring, and Felix
+  hears the percent; set it before answering, since a choice submits at once) and an Add your
+  thinking switch (up to `MOST_THINKING`, a separate `think:i:k` draft, sent only while the switch
+  is on; with thinking, a multiple-choice answer also goes to `/api/quiz/mark` for feedback that opens by
+  answering the thinking, while the page keeps its own verdict) (2026-11-09, the user's call). Both go to `/api/quiz/mark` (`confidence` is
   validated, `thinking` bounded and sealed) and to Felix inside the answer line
   (`aside`), which must stay one line: `send` folds held results by taking their
   first three lines. A right guess leaves its idea open for one retest. A typed
@@ -542,7 +551,16 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   text protocol. A hand-written call that is not valid
   JSON is repaired when it can be (`tools::repaired`: raw line breaks, quotes
   that do not end a string, trailing commas, missing closing braces) before it
-  is refused; a refused call shows as "Retried open note: <reason>" (or
+  is refused. `Call::normalized` then repairs what keeps its meaning (2026-11-09, the user's call: "tool calls never
+  fail"): a tool name in another case or with spaces/hyphens, `options`/`ideas` arrays joined with ` | ` (unless an item
+  contains `|`), quiz kind synonyms (mcq, cloze, short answer…), a prediction made free response, a multiple-choice answer
+  matched to its option (case, trailing punctuation when exactly one option fits, a lone letter or "option N" when options
+  are not single letters; never an added option; no match stays refused), fewer than 2 options asked as free response, a fill-in's answer blanked on a whole-word match or else free
+  response. `quiz_from` stays strict (missing explain, a give-away longest option are refused and retried). A second question
+  in one reply and a finished session answer Felix with an empty step, which is never sent; a session quiz with no idea uses the one
+  open idea (a covered idea stays refused). On the page a failed step is hidden once the same tool (quiz and ask_user count as one)
+  later succeeds, and an unfixed failed quiz or ask_user step reads "Felix couldn't make that question. Ask again." once the
+  reply ends. Otherwise a refused call shows as "Retried open note: <reason>" (or
   "Rewrote a tool call: <reason>" when it was not readable), the reason
   inline (`why_it_failed`). Steps say what was read ("Read part 2 of 5 of
   “X” (lines 40–80)"), a read the cache found unchanged says "again
@@ -551,7 +569,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   unclear). Text written
   before a tool call is kept (a paragraph break, not a restart). A broken
   agent session sends `{"reset"}` and is redone through the text protocol
-  (`FALLBACK_TRIES`). While Felix works the reply shows only his newest step; a
+  (`FALLBACK_TRIES`). While Felix works the reply shows only his newest step, in one `.msg-status` row at the top of the reply where the summary will be, so the words never move; a refused call that Felix then makes again successfully with the same tool is left out (`fixedSteps`; 2026-11-09, the user's call); a
   finished reply folds every step into one `.msg-trace` line (`traceSummary`,
   2026-11-06, the user's call from a six-persona simulation: citations and change
   cards are what catch mistakes, and the count must agree with the sources). An
@@ -603,7 +621,9 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   tone step off the note (`--raised`; its own `--field`/`--field-hi` mixes for
   the composer, user bubbles, pills, popups and the Chats column) with no
   left border, header rule, footer rule or column rule; a soft shadow shows
-  only where it overlays the note (under 1200 px). The Chats column is closed
+  only where it overlays the note (under 1200 px); docked beside it (1200 px and up), the note's page
+  ends at the panel and an 8 px strip of `--ground` separates them, as the explorer is set apart
+  (2026-11-09, the user's call: the edge was invisible in dark mode). The Chats column is closed
   until opened (`leo-chat-sidebar` still remembers an explicit choice, and closing the list as an overlay keeps it closed until it is opened again, so a resize near the overlay width cannot reopen it;
   `leo-chat-history-width` and the grip are unchanged). The header holds the
   history toggle, face, `Felix` over one subtitle line (`#chat-context`: `On
@@ -630,7 +650,7 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
   cancels on Escape or leaving the control, and keeps the chat on a failed request;
   Reduced Motion snaps the width and label.
 
-- Perch (2026-11-06, the user's call: "i like A. perch best flow and it's simple"; replaces the header and surface description above): the Chats list sits on `--ground`, the chat on `--page` with the 16 px corner, the composer, selected row and user bubble on `--raised`; `--field` and `--field-hi` are gone, pills and circles are 9 to 16 px rounded rectangles. An empty chat is `.chat.perched`: the greeting, composer and starters are one block centred in the panel at any height (`display: contents` on the body and hello, DOM order (`#chat-below` holds the starters after the footer) and two flex spacers), Felix perched on the composer's top edge with his `hi!!`. The first send docks the composer to the bottom (`leoMotion.dock`, `DRAWER_MS`, snaps under Reduced Motion) and it stays docked while the chat has messages. Felix lives in `#chat-face` inside the composer, so his state classes still apply (`mood` finds every `.felix`). The header is toggle, chat title (or "New chat") and close; New chat is in the Chats heading while Chats is open and in the header otherwise (one `[data-chat="new"]` shows at a time; specs use `:visible`). The composer holds paperclip, the note chip (the `data-chat="drop"` eye toggle, hidden with no note, `.off` when not reading), the access chip (no indigo for Auto; "⇧Tab to switch" is only its tooltip) and send.
+- Perch (2026-11-06, the user's call: "i like A. perch best flow and it's simple"; replaces the header and surface description above): the Chats list sits on `--ground`, the chat on `--page` with the 16 px corner, the composer, selected row and user bubble on `--raised`; `--field` and `--field-hi` are gone, pills and circles are 9 to 16 px rounded rectangles. An empty chat is `.chat.perched`: the greeting, composer and starters are one block centred in the panel at any height (`display: contents` on the body and hello, DOM order (`#chat-below` holds the starters after the footer) and two flex spacers), Felix perched on the composer's top edge with his `hi!!`. Attached notes, passages and files stay above the composer (`#chat-refs`); there files are 52 px tiles (a 40 px page or picture, name, kind) so they never push the chat far down, while sent files in messages keep the full cards. Attached notes are the same cards (`noteCard`: a Note badge and the note's first lines, fetched once per note and cached), in the composer and in the sent message. The note finder (`#chat-pick`) is a small popover at the paperclip inside the composer, like the attach menu, and never pushes the layout (2026-11-09, the user's call). The first send docks the composer to the bottom (`leoMotion.dock`, `DRAWER_MS`, snaps under Reduced Motion) and it stays docked while the chat has messages. Felix lives in `#chat-face` inside the composer, so his state classes still apply (`mood` finds every `.felix`). The header is toggle, chat title (or "New chat") and close; New chat is in the Chats heading while Chats is open and in the header otherwise (one `[data-chat="new"]` shows at a time; specs use `:visible`). The composer holds paperclip, the note chip (the `data-chat="drop"` eye toggle, hidden with no note, `.off` when not reading), the access chip (no indigo for Auto; "⇧Tab to switch" is only its tooltip) and send.
 - Chat titles (2026-11-06): a short question is told apart as `<question>: <note>` only by the open
   note (a source with `why: "open"`, `chats::note_of`), so the row reads the same while Felix answers
   (`draftTitle` uses the same rule, including attached notes and chat references, and the same clip of 80
@@ -789,8 +809,8 @@ target. Check the page sequence after loading preferences.
   room or Felix open centre the note with a left gutter reserved before the first
   comment arrives. A mark centered vertically on the passage (24 px to hit,
   44 px on touch) opens the note inline, with
-  `.margin-room` holding the space under its block. A lost anchor goes to `#chat-lost`
-  in the panel.
+  `.margin-room` holding the space under its block. A thread whose passage is gone
+  is not shown (2026-11-09, the user's call: the "lost its place" box in Felix was confusing).
 - The reading-mode menu, the Read through button and status sit on the line under the title, beside the save state, so a status never moves the note. Saving a mode keeps the
   last confirmed value on failure. Its own menu class keeps generic select-menu
   click and close handlers from dismissing it. Each note remains a labelled article with an
@@ -904,7 +924,9 @@ target. Check the page sequence after loading preferences.
   marks anything else `position: fixed` with `data-print-off`.
 
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
-  top).
+  top). A folded Tasks pill opens while the mouse is over it and folds when it
+  leaves (`tasksWin.hovering`, never saved); a click within `TASKS_PIN_MS` of that
+  opening pins it open, so the click never lands on the row under the pill.
 
 ## Note connections (`graph.rs`; "map" in storage)
 
@@ -1510,7 +1532,7 @@ and Settings. Every Settings section uses the same Settings / section breadcrumb
 Keeping and Trash keep their routes and controllers inside that frame.
 Usage opens from the rail above Settings and shows remaining subscription windows,
 with unknown and expired readings explicit. The combined Quick Leo uses
-Cmd/Ctrl+K (and Cmd/Ctrl+F outside a note) and retains task/search/question/navigation ranking. Explicit named
+Cmd/Ctrl+K and retains task/search/question/navigation ranking. Explicit named
 month dates and ISO dates keep their deadline; omitted years use the next date.
 The calendar tray puts its mini calendar before tasks, and all-day/timed grids
 share the full width without scrollbar gutters shifting their day boundaries.
@@ -1619,4 +1641,4 @@ Chats history keeps its list mounted while the desktop column or compact overlay
 animates; collapsed content is inert, the toggle exposes its expanded state, and
 Escape cancelling delete confirmation stops later same-panel abort handlers.
 
-The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Diagram replies prefer sparse monochrome SVG sketches with serif labels for pictorial subjects; Mermaid stays strict and SVG stays an inert image.
+The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Diagram replies prefer sparse monochrome SVG sketches with serif labels for pictorial subjects; Mermaid stays strict and SVG stays an inert image. Felix draws one diagram without being asked once a reply, lesson step or quiz has three or more steps, three or more linked parts, a layout in space or memory, or a comparison of three or more things, and never draws with text characters; margin reads and replies follow the same threshold (2026-11-09, the user's call: "a complexity threshold"). `BASE` stays under 4,500 bytes.

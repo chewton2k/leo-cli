@@ -846,6 +846,8 @@ test('how sure the user felt and their thinking reach Felix on the answer line',
   assert.match(C.heldSay(mc, false).split('\n').slice(0, 3).join('\n'), /first second/, 'a held result keeps them when it is folded into the next message');
   assert.match(C.quizSay({ ...mc, sure: null, thinking: undefined }, 'b', false), /My answer: b\n/);
   assert.deepEqual(Object.keys(C.SURE), ['sure', 'think', 'guess']);
+  assert.match(C.quizSay({ ...mc, surePct: 35, thinking: undefined }, 'b', false), /My answer: b \(how sure I felt: 35%\)\n/);
+  assert.deepEqual([0, 39, 40, 74, 75, 100].map(C.sureOf), ['guess', 'guess', 'think', 'think', 'sure', 'sure']);
 });
 
 test('a streamed list marker waits until it has text', () => {
@@ -1026,4 +1028,21 @@ test('a refused or busy take-back keeps the chat as it is', async () => {
   await busy.retryAnswer();
   assert.deepEqual(busy.calls, []);
   assert.equal(messages.length, 2);
+});
+
+test('a step Felix got wrong and then fixed with the same tool is not shown', () => {
+  const tried = { text: 'Tried to ask you something', tool: 'quiz', failed: true };
+  const asked = { text: 'Asked you a practice question', tool: 'quiz', failed: false };
+  const read = { text: 'Opened “Heaps”', tool: 'open_note', failed: false };
+  assert.deepEqual(C.fixedSteps([tried, read, asked]), [read, asked]);
+  assert.deepEqual(C.fixedSteps([read, tried]), [read, tried], 'a failure Felix never fixed stays visible');
+  assert.deepEqual(C.fixedSteps([asked, tried]), [asked, tried], 'only a later success hides it');
+  const choice = { text: 'Asked you a question', tool: 'ask_user', failed: false };
+  assert.deepEqual(C.fixedSteps([tried, read, choice]), [read, choice], 'a question card fixes a failed quiz');
+  const lost = { text: 'Retried ask user: "question" is empty', tool: 'ask_user', failed: true };
+  assert.deepEqual(C.fixedSteps([read, lost]), [read, lost], 'while Felix works the step keeps its words');
+  const said = "Felix couldn't make that question. Ask again.";
+  assert.deepEqual(C.fixedSteps([read, lost, tried], true).map((s) => s.text), [read.text, said, said]);
+  const broken = { text: 'Retried open note: no such note', tool: 'open_note', failed: true };
+  assert.deepEqual(C.fixedSteps([broken], true), [broken], 'other failures keep their words');
 });

@@ -36,7 +36,7 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
     const cleanTitle=text=>text;
     const requestId=()=>'r1';
     const felix={felix:(size,cls)=>'<span class="felix '+cls+'" data-mascot></span>'};
-    const chat={isOpen:()=>false,isBusy:()=>false,setLost(){},attachSelection(){}};
+    const chat={isOpen:()=>false,isBusy:()=>false,attachSelection(){}};
     const saving={unsaved:()=>false};
     const flush=async()=>{};
     const showNote=async()=>{};

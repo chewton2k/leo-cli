@@ -251,6 +251,7 @@ function quickWhen(date, time) {
 }
 
 function quickLook(row) {
+  if (row.kind === 'combine') return { icon: ICON.note, label: row.id ? `Combine “${row.title || 'Untitled'}” into…` : 'Open a note to combine it', hint: 'Combine notes' };
   if (row.kind === 'ask') return { icon: chat.button(20), label: row.text, hint: 'Ask Felix' };
   if (row.kind === 'task') return { icon: ICON.check, label: row.title, hint: row.date ? `Reminder · ${quickWhen(row.date, row.time)}` : 'Add to tasks' };
   if (row.kind === 'open') return { icon: ICON.note, label: row.title, hint: 'Open note' };
@@ -267,6 +268,8 @@ function drawQuick() {
   const text = (inQuick('#quick-input')?.value || '').trim();
   const fresh = quick.asked && text.toLowerCase().startsWith(quick.asked.toLowerCase());
   quick.rows = S.quickRank(text, { notes: fresh ? quick.notes : [], chats: fresh ? quick.chats : [], folders: quick.folders, places: QUICK_PLACES });
+  const open = state.view === 'note' && state.session?.note;
+  if (/^(merge|combine)(\s+(this|this note|note|notes|it|into|with))?$/i.test(text)) quick.rows.unshift(open ? { kind: 'combine', id: open.id, title: open.title, dir: open.directory } : { kind: 'combine' });
   const picked = quick.picked ? quick.rows.findIndex((row) => JSON.stringify(row) === quick.picked) : -1;
   if (picked >= 0) quick.at = picked;
   quick.at = Math.min(quick.at, Math.max(0, quick.rows.length - 1));
@@ -324,6 +327,12 @@ async function quickGo(at) {
   }
   const row = quick.rows[at];
   if (!row) return;
+  if (row.kind === 'combine') {
+    if (!row.id) return;
+    closeSheet();
+    setTimeout(() => explorerAction('combine', { kind: 'note', id: row.id, dir: row.dir || '' }).catch(fail), LEAVE_MS);
+    return;
+  }
   if (row.kind === 'ask') {
     closeSheet();
     if (!chat.askNew(row.text)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });

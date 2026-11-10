@@ -28,8 +28,6 @@ const actions = {
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
   'ask-selection': () => askAboutSelection(),
-  'margin-lost-open': marginLostOpen,
-  'margin-lost-dismiss': marginLostDismiss,
   calendar: () => {
     closeSheet();
     go('#/calendar');
