@@ -545,7 +545,7 @@ a modal.
 - Usage: ordinary Settings reads never refresh coding-plan limits; POST
   `/api/settings/usage` (`{}` Codex only, `{ "claude": true }` also Claude)
   behind one refresh slot; a failed refresh keeps saved meters. `usage::Usage`
-  keeps content-free counts and `usage_days` (90 days), never prompt or reply
+  keeps content-free counts, `usage_days`, `usage_calls` and `usage_tools` (90 days), never prompt or reply
   text; `/api/processes` never sends arguments to the page.
 - Keeping (`keeping.rs`, `app/keeping.js`, `/api/keep`): one list (7/30/90 days,
   1 year, Forever) for Trash, Chats, Uploaded files, Recording transcripts,
