@@ -110,10 +110,15 @@ fn tags_from(value: serde_yaml::Value) -> Vec<String> {
 }
 
 fn date_from(value: serde_yaml::Value) -> Option<DateTime<Utc>> {
-    value
-        .as_str()
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+    let text = value.as_str()?;
+    DateTime::parse_from_rfc3339(text)
         .map(|d| d.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
+                .ok()
+                .map(|d| d.and_time(chrono::NaiveTime::MIN).and_utc())
+        })
 }
 
 fn text_from(value: Option<serde_yaml::Value>) -> Option<String> {
@@ -152,7 +157,11 @@ fn parse_note_from_markdown(
         .unwrap_or("note")
         .to_string();
 
-    let id = text_from(props.remove("id")).unwrap_or_else(|| stable_id(relative_path));
+    let id = match props.remove("id") {
+        Some(serde_yaml::Value::Number(n)) => Some(n.to_string()),
+        other => text_from(other),
+    }
+    .unwrap_or_else(|| stable_id(relative_path));
     let header_title = text_from(props.remove("title")).unwrap_or_else(|| stem.clone());
     let title =
         if uuid::Uuid::parse_str(&stem).is_ok() || filename::matches_title(&stem, &header_title) {
@@ -428,6 +437,33 @@ fn tidy_trash(notes_dir: &Path, live: &HashSet<&str>) {
             }
         }
     }
+}
+
+fn stamp_deleted(path: &Path) -> std::io::Result<()> {
+    let stamp = || {
+        fs::File::options()
+            .write(true)
+            .open(path)?
+            .set_modified(std::time::SystemTime::now())
+    };
+    let Err(error) = stamp() else {
+        return Ok(());
+    };
+    let original = fs::metadata(path)?.permissions();
+    let mut writable = original.clone();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        writable.set_mode(original.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    #[allow(clippy::permissions_set_readonly_false)]
+    writable.set_readonly(false);
+    if writable == original {
+        return Err(error);
+    }
+    fs::set_permissions(path, writable)?;
+    stamp().and(fs::set_permissions(path, original))
 }
 
 fn add_with_parents(directories: &mut Vec<String>, dir: &str) {
@@ -721,7 +757,7 @@ impl Store {
             };
             let path = crate::paths::contained_path(&self.notes_dir, &entry.path)?;
             if is_clean(&path, entry.disk) {
-                self.move_to_trash(&path)?;
+                self.move_to_trash(&path, &id)?;
             }
             seen.remove(&id);
         }
@@ -769,7 +805,7 @@ impl Store {
         Ok(())
     }
 
-    fn move_to_trash(&self, path: &Path) -> Result<()> {
+    fn move_to_trash(&self, path: &Path, id: &str) -> Result<()> {
         let relative = path
             .strip_prefix(&self.notes_dir)
             .context("path outside notes_dir")?;
@@ -780,11 +816,18 @@ impl Store {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
+        let mut note = parse_note_from_markdown(&fs::read_to_string(path)?, relative, Utc::now())?;
+        if note.id != id {
+            note.id = id.to_string();
+            write_atomic(&dest, note_to_markdown(&note)?)?;
+            fs::remove_file(path)?;
+            return Ok(());
+        }
         fs::rename(path, &dest)?;
-        fs::File::options()
-            .write(true)
-            .open(&dest)?
-            .set_modified(std::time::SystemTime::now())?;
+        if let Err(e) = stamp_deleted(&dest) {
+            fs::rename(&dest, path)?;
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -926,6 +969,9 @@ impl Store {
 
     /// Find a note by full ID or unique prefix.
     pub fn find_note(&self, id_prefix: &str) -> Option<&Note> {
+        if let Some(note) = self.notes.iter().find(|n| n.id == id_prefix) {
+            return Some(note);
+        }
         let matches: Vec<&Note> = self
             .notes
             .iter()
@@ -940,6 +986,9 @@ impl Store {
 
     /// Find a mutable note by full ID or unique prefix.
     pub fn find_note_mut(&mut self, id_prefix: &str) -> Option<&mut Note> {
+        if let Some(i) = self.notes.iter().position(|n| n.id == id_prefix) {
+            return Some(&mut self.notes[i]);
+        }
         let mut found = self
             .notes
             .iter_mut()
@@ -2850,6 +2899,111 @@ mod tests {
         let bodies: HashSet<String> = reloaded.notes.iter().map(|n| n.body.clone()).collect();
         assert!(bodies.contains("the original, edited in leo"), "{bodies:?}");
         assert!(bodies.contains("the copy, edited"), "{bodies:?}");
+    }
+
+    #[test]
+    fn a_deleted_copy_sharing_its_originals_id_waits_in_the_trash_and_comes_back() {
+        let (mut store, _tmp) = temp_store();
+        store
+            .create_note("Lecture 4", "the original", vec![], "")
+            .unwrap();
+        store.save().unwrap();
+        let original = store.notes_dir.join("Lecture 4.md");
+        let copied_text = fs::read_to_string(&original)
+            .unwrap()
+            .replace("the original", "the copy, edited");
+        fs::write(store.notes_dir.join("Lecture 4 1.md"), copied_text).unwrap();
+        set_mtime_to_the_past(&original);
+
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        let copy = store
+            .notes
+            .iter()
+            .find(|n| n.body == "the copy, edited")
+            .unwrap()
+            .id
+            .clone();
+        store.delete_notes(std::slice::from_ref(&copy));
+        store.save().unwrap();
+        store.tidy_trash_now();
+
+        let mut reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let trashed: Vec<String> = reloaded.trashed().into_iter().map(|t| t.id).collect();
+        assert_eq!(trashed, vec![copy.clone()]);
+        assert!(reloaded.restore(&copy).is_some());
+        reloaded.save().unwrap();
+        let bodies: HashSet<String> = Store::load_from(&store.notes_dir)
+            .unwrap()
+            .notes
+            .into_iter()
+            .map(|n| n.body)
+            .collect();
+        assert!(bodies.contains("the original"), "{bodies:?}");
+        assert!(bodies.contains("the copy, edited"), "{bodies:?}");
+    }
+
+    #[test]
+    fn a_read_only_note_last_edited_long_ago_keeps_its_days_in_the_trash() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old", "keep me", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let path = store.notes_dir.join("Old.md");
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(
+                std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 24 * 3600),
+            )
+            .unwrap();
+        let mut read_only = fs::metadata(&path).unwrap().permissions();
+        read_only.set_readonly(true);
+        fs::set_permissions(&path, read_only).unwrap();
+
+        store.delete_notes(std::slice::from_ref(&id));
+        store.save().unwrap();
+        store.tidy_trash_now();
+
+        let trashed: Vec<String> = store.trashed().into_iter().map(|t| t.id).collect();
+        assert_eq!(trashed, vec![id]);
+        let left = trash_files(&store);
+        assert!(fs::metadata(&left[0]).unwrap().permissions().readonly());
+    }
+
+    #[test]
+    fn an_id_that_begins_another_id_still_finds_its_own_note() {
+        let (mut store, _tmp) = temp_store();
+        for id in ["2023", "20231"] {
+            let mut note = make_note();
+            note.id = id.into();
+            store.notes.push(note);
+        }
+        assert_eq!(store.find_note("2023").unwrap().id, "2023");
+        assert_eq!(store.find_note_mut("2023").unwrap().id, "2023");
+        assert_eq!(store.find_note("20231").unwrap().id, "20231");
+        assert!(store.find_note("202").is_none());
+    }
+
+    #[test]
+    fn a_date_only_creation_date_and_a_numeric_id_survive_an_edit_in_leo() {
+        let (store, _tmp) = temp_store();
+        fs::write(
+            store.notes_dir.join("Imported.md"),
+            "---\nid: 12345\ntitle: Imported\ncreated_at: 2024-01-05\n---\n\nbody\n",
+        )
+        .unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        store.find_note_mut("12345").unwrap().body = "edited".into();
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let note = reloaded.find_note("12345").unwrap();
+        assert_eq!(note.body, "edited");
+        assert_eq!(note.created_at.to_rfc3339(), "2024-01-05T00:00:00+00:00");
     }
     #[test]
     fn folders_cannot_escape_notes_or_use_reserved_hidden_paths() {

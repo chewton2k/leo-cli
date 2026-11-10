@@ -56,7 +56,17 @@ pub fn load(notes_dir: &Path) -> Keep {
         None => otherwise,
     };
     Keep {
-        trash_days: offered("trash_days", default_trash_days()),
+        trash_days: match read.get("trash_days").and_then(serde_json::Value::as_u64) {
+            Some(days) => CHOICES
+                .into_iter()
+                .find(|choice| {
+                    choice.is_none_or(|c| {
+                        u64::from(c) == days || u64::from(c) >= days.max(DEFAULT_TRASH_DAYS.into())
+                    })
+                })
+                .flatten(),
+            None => offered("trash_days", default_trash_days()),
+        },
         chat_days: offered("chat_days", None),
         upload_days: offered("upload_days", None),
         transcript_days: offered("transcript_days", None),
@@ -202,6 +212,24 @@ mod tests {
         assert_eq!(keep.upload_days, None);
         assert_eq!(keep.transcript_days, None);
         assert_eq!(keep.audio_days, None);
+    }
+
+    #[test]
+    fn a_trash_period_outside_the_choices_rounds_up_to_the_next_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        for (stored, kept) in [
+            ("180", Some(365)),
+            ("1", Some(30)),
+            ("45", Some(90)),
+            ("7", Some(7)),
+            ("400", None),
+            ("4000000000", None),
+            ("\"180\"", Some(30)),
+        ] {
+            std::fs::write(path_for(&notes), format!(r#"{{"trash_days":{stored}}}"#)).unwrap();
+            assert_eq!(load(&notes).trash_days, kept, "{stored}");
+        }
     }
 
     #[test]
