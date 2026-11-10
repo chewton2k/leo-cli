@@ -215,7 +215,7 @@ and are removed after.
 
 `writing_budget(cfg)` takes the tightest budget over the chat chain (agents three
 parts at once, Ollama one); context/output limits bound actual part sizes. `window_of`: Claude Code 200k, Codex 256k,
-Ollama/local 8k (a valid `context` overrides). `note_tokens` reserves 45% (≤120k
+Ollama/local 8k (a valid `context` overrides; leo never sends `num_ctx`, so this assumes the server runs at least 8k, decided 2026-11-10). `note_tokens` reserves 45% (≤120k
 for plan providers). `felix_room` caps Felix's notes at 32,000 characters after
 `FELIX_PROMPT_TOKENS` (4,200); `felix_context` caps warm retention at 480,000.
 Effort is passed only in the provider's own format (`--effort`,
