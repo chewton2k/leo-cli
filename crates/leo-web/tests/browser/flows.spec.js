@@ -3542,7 +3542,7 @@ test('dropping one note on another combines them in the background with progress
   await dragBetween(page, page.locator(`.card[data-id="${a.id}"]`), page.locator(`.card[data-id="${b.id}"]`));
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-  await expect(sheet).toContainText('runs in the background with a progress bar');
+  await expect(sheet).toContainText(`“${a.title}” will be merged into “${b.title}”.`);
   await sheet.locator('#combine-go').click();
   await expect(sheet).toHaveCount(0);
   await expect(page.locator('.toast')).toContainText('Combining in the background');
@@ -4044,13 +4044,13 @@ test.describe('passages', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Stopped note', body: 'Then login just checks if it matches, I think' } })).json();
     await page.route('**/margin/analyze', () => {});
     await page.goto(`/#/n/${note.id}`);
-    await page.getByRole('button', { name: 'Read through' }).click();
-    const stop = page.getByRole('button', { name: 'Stop' });
-    await expect(stop).toBeVisible();
+    const through = page.locator('#margin-through');
+    await through.click();
+    await expect(through).toHaveText('Stop');
     await expect(page.locator('#margin-status')).toContainText('Reading through');
     await page.waitForTimeout(500);
-    await stop.click();
-    await expect(page.getByRole('button', { name: 'Read through' })).toBeVisible({ timeout: 2000 });
+    await through.click();
+    await expect(through).toHaveText('Read through', { timeout: 2000 });
     await expect(page.locator('#margin-status')).not.toContainText('Reading through');
     await expect(page.locator('.margin-note')).toHaveCount(0);
   });
