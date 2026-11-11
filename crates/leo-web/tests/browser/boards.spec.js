@@ -772,3 +772,39 @@ test('clicking anywhere in an empty card description shows it as a field with th
     await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').description)).toBe('Bring the reading list');
   });
 });
+
+test('a card saved from its panel while it is being dragged leaves no copy behind', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    await page.locator('[data-card="cread00001"]').click();
+    await page.locator('#kanban-card-sub').click();
+    await page.keyboard.type("Jonathan's work");
+    await page.evaluate(() => { window.slow = 150; });
+    const a = await page.locator('[data-card="cread00001"]').boundingBox();
+    const away = await page.locator('.kanban-cards[data-col="kdone00001"]').boundingBox();
+    await page.mouse.move(a.x + 20, a.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 30, a.y + 30, { steps: 3 });
+    await expect(page.locator('.kanban-ghost')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => window.db.cards.find((c) => c.id === 'cread00001').subheading)).toBe("Jonathan's work");
+    await page.mouse.move(away.x + 40, away.y + 20, { steps: 6 });
+    await page.mouse.move(a.x + 20, a.y + 10, { steps: 6 });
+    await page.mouse.up();
+    await settled(page);
+    await expect(page.locator('.kanban-card-title', { hasText: 'Read chapter 3' })).toHaveCount(1);
+    await expect(page.locator('[data-card="cread00001"] .kanban-card-sub')).toHaveText("Jonathan's work");
+    expect(await titles(page, 'ktodo00001')).toEqual(['Write essay', 'Read chapter 3']);
+
+    const card = await page.locator('[data-card="cread00001"]').boundingBox();
+    await page.mouse.move(card.x + 20, card.y + 10);
+    await page.mouse.down();
+    const doing = await page.locator('.kanban-cards[data-col="kdoing0001"]').boundingBox();
+    await page.mouse.move(doing.x + 40, doing.y + doing.height - 20, { steps: 6 });
+    expect(await titles(page, 'kdoing0001')).toEqual(['Email tutor <b>now</b>', 'Read chapter 3']);
+    await page.evaluate(() => kanbanRedrawCard(kanbanCard('cread00001')));
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await expect(page.locator('.kanban-ghost')).toHaveCount(0);
+    expect(await titles(page, 'ktodo00001')).toEqual(['Write essay', 'Read chapter 3']);
+    expect(await titles(page, 'kdoing0001')).toEqual(['Email tutor <b>now</b>']);
+  });
+});

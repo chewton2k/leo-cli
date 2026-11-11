@@ -1727,7 +1727,43 @@
         } catch (e) {
           return [];
         }
-        return [...range.getClientRects()].filter((box) => box.width > 0).slice(0, 24).map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
+        const boxes = () => [...range.getClientRects()].filter((box) => box.width > 0).slice(0, 24).map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
+        const found = boxes();
+        if (found.length) return found;
+        const index = blockAtLine(lineOf(from));
+        const blk = index < 0 ? null : container.querySelector(`.blk[data-i="${index}"]`);
+        if (!blk) return [];
+        const source = lines.join('\n');
+        const wanted = source.slice(from, to).trim();
+        const texts = [];
+        const walker = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node);
+        const shown = texts.map((node) => node.data).join('');
+        let earlier = 0;
+        for (let seen = wanted ? source.indexOf(wanted, lineStart(blocks[index].start)) : -1; seen >= 0 && seen < from; seen = source.indexOf(wanted, seen + 1)) earlier++;
+        let at = -1;
+        for (let i = 0; wanted && i <= earlier; i++) {
+          const next = shown.indexOf(wanted, at + 1);
+          if (next < 0) break;
+          at = next;
+        }
+        const spot = (n) => {
+          for (const node of texts) {
+            if (n <= node.data.length) return [node, n];
+            n -= node.data.length;
+          }
+          return null;
+        };
+        const start = at >= 0 && spot(at);
+        const end = at >= 0 && spot(at + wanted.length);
+        if (start && end) {
+          range.setStart(...start);
+          range.setEnd(...end);
+          const inside = boxes();
+          if (inside.length) return inside;
+        }
+        const { left, right, top, bottom } = blk.getBoundingClientRect();
+        return right > left ? [{ left, right, top, bottom }] : [];
       },
       blockAt(at) {
         const index = blockAtLine(lineOf(at));

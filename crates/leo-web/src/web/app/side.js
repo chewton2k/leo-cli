@@ -2,7 +2,7 @@ const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
 const sideActive = () => sideWide() && !side.mini || Boolean(document.querySelector('#folders-sheet'));
 const creationDir = (explicit) => explicit ?? side.target ?? (state.view === 'note' ? state.dir || '' : '');
-const side = { filter: '', focusKey: '', folders: [], loaded: false, mini: false, open: new Set(), revealed: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0, sig: [], lastSig: '', pill: '', closing: new Set(), growing: null };
+const side = { sort: 'title', flip: false, tasks: false, filter: '', focusKey: '', folders: [], loaded: false, mini: false, open: new Set(), revealed: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0, sig: [], lastSig: '', pill: '', closing: new Set(), growing: null };
 // Folders the user opened with their own hands, kept across restarts. Folders
 // unfolded only to show the open note or folder (`side.revealed`) are not
 // kept, so the explorer reopens exactly as the user left it, closed by default.
@@ -22,6 +22,16 @@ try {
 
 try {
   side.mini = localStorage.getItem(SIDE_KEY) === 'mini';
+} catch (e) {}
+
+const SIDE_ORDER_KEY = 'leo-side-order';
+const SIDE_SORTS = { title: { text: 'Name', orders: ['title', 'title-desc'], ways: ['A to Z', 'Z to A'] }, updated: { text: 'Last edited', orders: ['updated', 'oldest'], ways: ['Newest first', 'Oldest first'] }, created: { text: 'Created', orders: ['created', 'created-asc'], ways: ['Newest first', 'Oldest first'] } };
+
+try {
+  const kept = JSON.parse(localStorage.getItem(SIDE_ORDER_KEY) || '{}');
+  if (Object.hasOwn(SIDE_SORTS, kept.sort)) side.sort = kept.sort;
+  side.flip = kept.flip === true;
+  side.tasks = kept.tasks === true;
 } catch (e) {}
 document.body.classList.toggle('side-mini', side.mini);
 
@@ -136,7 +146,7 @@ function drawSide() {
     <div class="side-explorer" id="side-explorer">
       <button class="side-row side-new" data-action="new" data-dir="${esc(actionDir)}" aria-label="New note" aria-keyshortcuts="${ON_MAC ? 'Meta+N' : 'Control+N'}" title="New note${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.filePlus}<span class="side-label">New note</span><kbd aria-hidden="true">${newNoteLabel}</kbd></button>
       <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><span class="side-group-tools"><button class="side-add" data-action="new-folder" data-parent="${esc(actionDir)}" aria-label="New folder" title="New folder${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.folderPlus}</button></span></div>
-      <label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label>
+      <div class="side-filter-row"><label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label><button class="side-add side-sort${side.sort !== 'title' || side.tasks ? ' on' : ''}" data-action="side-sort" aria-label="Sort notes" title="${esc(`Sorted by ${SIDE_SORTS[side.sort].text.toLowerCase()}${side.tasks ? ', open tasks only' : ''}`)}" aria-haspopup="menu" aria-expanded="${Boolean(popup?.owner.matches('[data-action="side-sort"]'))}">${ICON.sort}</button><button class="side-add side-flip${side.flip ? ' on' : ''}" data-action="side-flip" aria-label="Reverse order" aria-pressed="${side.flip}" title="${esc(SIDE_SORTS[side.sort].ways[side.flip ? 1 : 0])}">${ICON.flip}</button></div>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="" tabindex="0">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
@@ -374,8 +384,8 @@ function sideNoteRows(path, depth) {
   const selected = state.view === 'note' ? state.session?.note?.id : null;
   const held = Boolean(side.target);
   for (const note of entry.items) side.sig.push(`n:${note.id}`);
-  const rows = entry.items.map((note) => `<div class="side-note-wrap" data-refresh-key="n:${esc(note.id)}"><button class="side-row side-note${selected === note.id ? (held ? ' open' : ' on') : ''}" data-action="open-note" tabindex="-1" data-id="${esc(note.id)}" data-from="${esc(path)}" data-drop-dir="${esc(path)}" data-title="${esc(note.title)}" draggable="true" style="--depth:${depth}" title="${esc(note.title)}"${selected === note.id ? ' aria-current="page"' : ''}>${selected === note.id && !held ? '<span class="side-pill" aria-hidden="true"></span>' : ''}${ICON.note}<span class="side-label">${esc(note.title || 'Untitled')}</span></button><button class="side-add side-sub" tabindex="-1" data-action="explorer-menu" data-kind="note" data-id="${esc(note.id)}" data-dir="${esc(path)}" aria-label="Options for ${esc(note.title || 'Untitled')}" title="Note options" aria-haspopup="menu">${ICON.more}</button></div>`).join('');
-  const status = entry.loading && !entry.refreshing ? '<span>Opening notes…</span>' : entry.error ? `Notes could not be opened. ${action('Try again', entry.offset)}` : !entry.items.length && !side.folders.some((folder) => folder.name.startsWith(path ? `${path}/` : '')) ? (path === '' ? `<span>No notes yet.</span> <button class="side-note-page" data-action="new" data-dir="">Write your first note</button>` : '<span>Empty folder</span>') : '';
+  const rows = entry.items.map((note) => `<div class="side-note-wrap" data-refresh-key="n:${esc(note.id)}"><button class="side-row side-note${selected === note.id ? (held ? ' open' : ' on') : ''}" data-action="open-note" tabindex="-1" data-id="${esc(note.id)}" data-from="${esc(path)}" data-drop-dir="${esc(path)}" data-title="${esc(note.title)}" draggable="true" style="--depth:${depth}" title="${esc(note.title)}"${selected === note.id ? ' aria-current="page"' : ''}>${selected === note.id && !held ? '<span class="side-pill" aria-hidden="true"></span>' : ''}${ICON.note}<span class="side-label">${esc(note.title || 'Untitled')}</span>${sideNoteWhen(note)}</button><button class="side-add side-sub" tabindex="-1" data-action="explorer-menu" data-kind="note" data-id="${esc(note.id)}" data-dir="${esc(path)}" aria-label="Options for ${esc(note.title || 'Untitled')}" title="Note options" aria-haspopup="menu">${ICON.more}</button></div>`).join('');
+  const status = entry.loading && !entry.refreshing ? '<span>Opening notes…</span>' : entry.error ? `Notes could not be opened. ${action('Try again', entry.offset)}` : !entry.items.length && side.tasks ? '<span>No open tasks here</span>' : !entry.items.length && !side.folders.some((folder) => folder.name.startsWith(path ? `${path}/` : '')) ? (path === '' ? `<span>No notes yet.</span> <button class="side-note-page" data-action="new" data-dir="">Write your first note</button>` : '<span>Empty folder</span>') : '';
   const pages = !entry.error ? `${entry.offset ? action('Previous notes', Math.max(0, entry.offset - SIDE_NOTES_PAGE)) : ''}${entry.offset + entry.items.length < entry.total ? action('Next notes', entry.offset + SIDE_NOTES_PAGE) : ''}` : '';
   return rows + (status || pages ? `<div class="side-note-status" data-drop-dir="${esc(path)}" style="--depth:${depth}">${status}${pages}</div>` : '');
 }
@@ -389,12 +399,13 @@ function loadSideNotes(path, offset = 0, force = false) {
   if (path !== '' && !side.folders.some((folder) => folder.name === path)) return;
   if (!Number.isSafeInteger(offset) || offset < 0) return;
   const previous = side.notes.get(path);
-  if (previous?.seq === seq && (!force || (previous.loading && previous.offset === offset))) return;
+  const order = `${SIDE_SORTS[side.sort].orders[side.flip ? 1 : 0]} ${side.tasks ? 'tasks' : 'all'}`;
+  if (previous?.seq === seq && previous.order === order && (!force || (previous.loading && previous.offset === offset))) return;
   if (!previous && side.notes.size >= SIDE_NOTES_FOLDERS) {
     const oldest = [...side.notes.keys()].find((key) => !side.automatic.has(key));
     side.notes.delete(oldest);
   }
-  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, loaded: Boolean(previous?.loaded), refreshing: Boolean(previous?.loaded && previous.offset === offset), error: false, seq };
+  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, loaded: Boolean(previous?.loaded), refreshing: Boolean(previous?.loaded && previous.offset === offset), error: false, seq, order, reordered: Boolean(previous && previous.order !== order) };
   side.notes.set(path, entry);
   side.pending = side.pending.filter((read) => side.notes.get(read.path) === read.entry);
   side.pending.push({ path, entry });
@@ -415,20 +426,49 @@ async function readSideNotes(path, entry) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SIDE_NOTES_TIMEOUT);
   try {
-    const query = new URLSearchParams({ dir: path, offset: String(entry.offset), limit: String(SIDE_NOTES_PAGE), brief: 'true', sort: 'title', show: 'all' });
+    const [sort, show] = entry.order.split(' ');
+    const query = new URLSearchParams({ dir: path, offset: String(entry.offset), limit: String(SIDE_NOTES_PAGE), brief: 'true', sort, show });
     const page = await api(`/api/notes?${query}`, { total: true, signal: controller.signal });
     if (side.notes.get(path) !== entry || entry.seq !== seq) return;
     if (!Array.isArray(page.items)) throw new Error('Notes could not be opened.');
     entry.items = page.items.slice(0, SIDE_NOTES_PAGE).filter((note) => typeof note.id === 'string' && typeof note.title === 'string');
     entry.total = Number.isSafeInteger(page.total) && page.total >= 0 ? page.total : entry.items.length;
     entry.loaded = true;
+    if (!entry.items.length && entry.offset && entry.total) setTimeout(() => loadSideNotes(path, Math.floor((entry.total - 1) / SIDE_NOTES_PAGE) * SIDE_NOTES_PAGE, true));
   } catch (e) {
-    if (side.notes.get(path) === entry && entry.seq === seq) entry.error = true;
+    if (side.notes.get(path) === entry && entry.seq === seq) {
+      entry.error = true;
+      if (entry.reordered) entry.items = [];
+    }
   } finally {
     clearTimeout(timeout);
     entry.loading = false;
     if (side.notes.get(path) === entry && entry.seq === seq) drawSide();
   }
+}
+
+function sideNoteWhen(note) {
+  const when = side.sort === 'created' ? note.created_at : side.sort === 'updated' ? note.updated_at : '';
+  return when ? `<span class="side-count">${esc(rel(when))}</span>` : '';
+}
+
+function sideOrder(change) {
+  Object.assign(side, change);
+  try { localStorage.setItem(SIDE_ORDER_KEY, JSON.stringify({ sort: side.sort, flip: side.flip, tasks: side.tasks })); } catch (e) {}
+  for (const path of [...side.notes.keys()]) loadSideNotes(path, 0, true);
+  drawSide();
+}
+
+function sideSortMenu(el) {
+  popupMenu(el, {
+    label: 'Sort notes',
+    rows: [
+      { note: 'Sort by' },
+      ...Object.entries(SIDE_SORTS).map(([sort, { text }]) => ({ text, checked: side.sort === sort, run: () => sideOrder({ sort, flip: false }) })),
+      { line: true },
+      { text: 'Only notes with open tasks', checked: side.tasks, toggle: true, run: () => sideOrder({ tasks: !side.tasks }) },
+    ],
+  });
 }
 
 function drawFoldersSheet() {

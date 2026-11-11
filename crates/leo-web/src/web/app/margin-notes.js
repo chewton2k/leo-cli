@@ -703,12 +703,23 @@ function marginDraw() {
   for (const id of [...marginPage.els.keys(), ...marginPage.marks.keys()]) if (!keep.has(id)) marginDropThread(id);
   const origin = columns.getBoundingClientRect();
   const page = $('article.note', columns).getBoundingClientRect();
-  const boxes = placed.map(({ t, at }) => {
-    const rects = s.doc.spanRects(at.from, at.to).map((r) => ({ left: r.left - origin.left, right: r.right - origin.left, top: r.top - origin.top, bottom: r.bottom - origin.top }));
-    const el = marginPage.els.get(t.id) || (margins || marginPage.open === t.id ? marginElement(t) : null);
-    if (el) marginFill(el, t, marginPage.arriving.has(t.id));
-    return { t, at, rects, el };
-  }).filter(({ rects }) => rects.length);
+  const boxes = placed.map(({ t, at }) => ({ t, at, rects: s.doc.spanRects(at.from, at.to).map((r) => ({ left: r.left - origin.left, right: r.right - origin.left, top: r.top - origin.top, bottom: r.bottom - origin.top })) })).filter(({ rects }) => rects.length).map((box) => {
+    const el = marginPage.els.get(box.t.id) || (margins || marginPage.open === box.t.id ? marginElement(box.t) : null);
+    if (el) marginFill(el, box.t, marginPage.arriving.has(box.t.id));
+    return { ...box, el };
+  });
+  const shown = new Set(boxes.map(({ t }) => t.id));
+  for (const [id, el] of marginPage.els) if (!shown.has(id)) el.hidden = true;
+  for (const { t } of placed) {
+    if (shown.has(t.id)) continue;
+    marginPage.marks.get(t.id)?.remove();
+    marginPage.marks.delete(t.id);
+    marginPage.rects.delete(t.id);
+    for (const [key, path] of marginThreadPaths(t.id)) {
+      path.remove();
+      marginPage.paths.delete(key);
+    }
+  }
   const reading = marginReadingBox(origin);
   if (reading) boxes.push(reading);
   marginPage.roomy?.classList.remove('margin-room');
