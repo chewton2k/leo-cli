@@ -321,3 +321,25 @@ test('turning the eye off hides the starters that need the open note', async ({ 
   await page.locator('[data-chat="drop"]').click();
   await expect(page.locator('.starter')).toHaveCount(5);
 });
+
+test('margin notes on passages inside tables, code and quotes sit beside their passage without overlapping', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const quotes = ['Seek time dominates small reads.', 'rotation = 60 / rpm / 2', 'Flash wears out after many writes.', 'Optane sat between DRAM and flash.'];
+  const body = `Opening words about storage.\n\n| Part | Cost |\n| --- | --- |\n| Disk | ${quotes[0]} |\n\nMiddle words.\n\n\`\`\`\n${quotes[1]}\n\`\`\`\n\nMore words.\n\n> ${quotes[2]}\n\nLast words. ${quotes[3]}`;
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Storage gap', body } })).json();
+  for (const quote of quotes) expect((await page.request.post(`/api/notes/${note.id}/margin/threads`, { data: { version: note.version, quote, question: 'Why?' } })).ok()).toBe(true);
+  await page.goto(`/#/n/${note.id}`);
+  const cards = page.locator('.margin-note');
+  await expect(cards).toHaveCount(4);
+  await expect.poll(async () => {
+    const boxes = await cards.evaluateAll((els) => els.filter((el) => !el.hidden).map((el) => el.getBoundingClientRect()).map(({ top, bottom, left, right }) => ({ top, bottom, left, right })));
+    if (boxes.length !== 4) return `shown ${boxes.length}`;
+    const clash = boxes.some((a, i) => boxes.some((b, j) => i < j && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom));
+    return clash ? 'overlap' : 'apart';
+  }).toBe('apart');
+  const title = await page.locator('#title').boundingBox();
+  for (const [i, quote] of quotes.entries()) {
+    const card = await cards.nth(i).boundingBox();
+    expect(card.y, quote).toBeGreaterThan(title.y + title.height);
+  }
+});
