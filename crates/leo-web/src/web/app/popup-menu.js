@@ -16,7 +16,7 @@ function popupRow(row, index) {
   if (row.line) return '<hr>';
   if (row.note) return `<p>${esc(row.note)}</p>`;
   const action = row.action ? ` data-action="${row.action}"${row.dir === undefined ? '' : ` data-dir="${esc(row.dir)}"`}` : '';
-  const radio = row.checked === undefined ? 'role="menuitem"' : `role="menuitemradio" aria-checked="${row.checked}"`;
+  const radio = row.checked === undefined ? 'role="menuitem"' : `role="${row.toggle ? 'menuitemcheckbox' : 'menuitemradio'}" aria-checked="${row.checked}"`;
   return `<button type="button" ${radio} data-row="${index}"${action}${row.danger ? ' class="danger"' : ''}${row.off ? ' disabled' : ''}>${row.icon || ''}<span class="grow">${esc(row.text)}</span>${row.after || (row.checked ? ICON.check : '')}</button>`;
 }
 

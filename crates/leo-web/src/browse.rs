@@ -18,7 +18,7 @@ pub(crate) fn order(
     let sort = sort.unwrap_or("updated");
     if !matches!(
         sort,
-        "updated" | "oldest" | "created" | "opened" | "folder" | "title" | "title-desc"
+        "updated" | "oldest" | "created" | "created-asc" | "opened" | "folder" | "title" | "title-desc"
     ) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -45,6 +45,7 @@ pub(crate) fn order(
         let by = match sort {
             "oldest" => a.updated_at.cmp(&b.updated_at),
             "created" => b.created_at.cmp(&a.created_at),
+            "created-asc" => a.created_at.cmp(&b.created_at),
             "title" => title(a).cmp(&title(b)),
             "title-desc" => title(b).cmp(&title(a)),
             "folder" => {
@@ -192,6 +193,8 @@ mod tests {
         assert_eq!(titles(&list), ["Cherry", "Apple", "banana", "Date"]);
         order(&mut list, Some("created"), None).unwrap();
         assert_eq!(titles(&list), ["banana", "Cherry", "Apple", "Date"]);
+        order(&mut list, Some("created-asc"), None).unwrap();
+        assert_eq!(titles(&list), ["Date", "Apple", "Cherry", "banana"]);
         order(&mut list, Some("title"), None).unwrap();
         assert_eq!(titles(&list), ["Apple", "banana", "Cherry", "Date"]);
         order(&mut list, Some("title-desc"), None).unwrap();

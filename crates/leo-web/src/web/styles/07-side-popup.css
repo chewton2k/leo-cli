@@ -86,8 +86,8 @@ html[data-app="mac"]:not([data-fullscreen]) body.side-mini .side-rail { padding-
 .side-filter input { padding: 7px 0; font-size: 13.5px; }
 .side-filter-row { display: flex; align-items: center; gap: 4px; margin: 0 0 8px; }
 .side-filter-row .side-filter { flex: 1; margin: 0; }
-.side-sort { width: 32px; height: 32px; }
-.side-sort.on { color: var(--accent); }
+.side-filter-row .side-add { width: 32px; height: 32px; }
+.side-filter-row .side-add.on { color: var(--accent); }
 .side-note .side-count { flex: none; padding-left: 8px; }
 .side-tree .side-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .side-count { margin-left: auto; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
