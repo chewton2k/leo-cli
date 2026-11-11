@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::chat::Streamer;
 use crate::graph::Writer;
 
 const MOST_SHOWN: f64 = 0.97;
@@ -223,24 +222,11 @@ impl Board {
     }
 }
 
-pub fn metered(writer: Writer, streamer: Option<Streamer>, meter: Arc<Meter>) -> Writer {
-    Arc::new(move |system: &str, user: &str, most: u32| match &streamer {
-        Some(stream) => {
-            let reply = stream(
-                system,
-                user,
-                most,
-                &mut |piece| meter.add(piece),
-                &mut || meter.restart(),
-                &|| false,
-            )?;
-            Ok(reply.text)
-        }
-        None => {
-            let text = writer(system, user, most)?;
-            meter.add(&text);
-            Ok(text)
-        }
+pub fn metered(writer: Writer, meter: Arc<Meter>) -> Writer {
+    Arc::new(move |system: &str, user: &str, most: u32| {
+        let text = writer(system, user, most)?;
+        meter.add(&text);
+        Ok(text)
     })
 }
 
@@ -324,26 +310,15 @@ mod tests {
     }
 
     #[test]
-    fn a_metered_writer_counts_streamed_text() {
+    fn a_metered_writer_counts_written_text() {
         let board = Arc::new(Board::default());
         let ticket = board
             .start_sized("combine:note-2".into(), COMBINE, None)
             .unwrap();
         let plain: Writer = Arc::new(|_: &str, _: &str, _| Ok("y".repeat(3_000)));
-        let streamer: Streamer = Arc::new(|_: &str, _: &str, _, piece, _, _| {
-            piece(&"z".repeat(3_000));
-            Ok("z".repeat(3_000).into())
-        });
-        let streamed = metered(
-            Arc::clone(&plain),
-            Some(streamer),
-            Arc::clone(&ticket.meter),
-        );
-        assert_eq!(streamed("s", "u", 10).unwrap().len(), 3_000);
+        let metered = metered(plain, Arc::clone(&ticket.meter));
+        assert_eq!(metered("s", "u", 10).unwrap().len(), 3_000);
         assert!((ticket.meter.fraction_at(0.0) - 0.5).abs() < 0.05);
-        let without = metered(plain, None, Arc::clone(&ticket.meter));
-        without("s", "u", 10).unwrap();
-        assert!(ticket.meter.fraction_at(0.0) > 0.9);
     }
 
     #[test]

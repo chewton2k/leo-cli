@@ -386,10 +386,6 @@ fn delta_text(payload: &str) -> Option<Delta> {
 }
 
 impl OpenAiChat {
-    fn streams_plain_answers(&self) -> bool {
-        crate::ai::loopback(&self.base_url)
-    }
-
     fn send(
         &self,
         req: &ChatRequest,
@@ -525,7 +521,7 @@ impl ChatProvider for OpenAiChat {
     }
 
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
-        if self.streams_plain_answers() {
+        if crate::ai::loopback(&self.base_url) {
             self.complete_streaming(req, &mut |_| {})
         } else {
             self.send(req, self.body(req, false), &CLIENT_120)
@@ -711,12 +707,6 @@ mod tests {
         let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" stay ordered.\"}}]}\n\ndata: [DONE]\n\n";
         let provider = local(refuse_once("200 OK", stream));
         assert_eq!(provider.complete(&ask()).unwrap(), "Heaps stay ordered.");
-    }
-
-    #[test]
-    fn only_a_local_server_streams_a_plain_answer() {
-        assert!(local("http://127.0.0.1:11434/v1".into()).streams_plain_answers());
-        assert!(!local("https://api.example.com/v1".into()).streams_plain_answers());
     }
 
     #[test]

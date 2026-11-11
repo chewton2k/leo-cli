@@ -170,7 +170,7 @@ pub(crate) async fn start(
                 Ok(reply?.text)
             })
         }
-        (Some(t), None) => progress::metered(writer, None, std::sync::Arc::clone(&t.meter)),
+        (Some(t), None) => progress::metered(writer, std::sync::Arc::clone(&t.meter)),
         (None, _) => writer,
     };
     let request_chars = state.graphs.scale().batch_chars;
