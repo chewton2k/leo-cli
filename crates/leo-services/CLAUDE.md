@@ -233,7 +233,8 @@ OpenAI-compatible tool calls when the model supports them. Codex native sessions
 are scoped by `codex_scope(program, sub, room)`: `--ignore-user-config
 --ignore-rules` when `sub --help` lists both, else every enabled MCP server from
 `codex mcp list --json` (never cached; a non-bare-key name is a named failure) is
-switched off, plus `notify=[]`, `skills.include_instructions=false`,
+switched off (`enabled=false` plus a dummy `url`/`command` of its listed transport:
+plugin servers have no config table, and a table without a transport is refused), plus `notify=[]`, `skills.include_instructions=false`,
 `model_provider="openai"`; a Codex that cannot be scoped is skipped for native
 sessions. Every call goes through the validated `Turn.call`; malformed arguments
 get a repair message, never execution. If a native path fails, the text protocol

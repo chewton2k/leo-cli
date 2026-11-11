@@ -648,6 +648,7 @@ done
         assert_eq!(lines[0], "app-server");
         assert!(!lines.contains(&"--ignore-user-config"));
         assert!(lines.contains(&"mcp_servers.srv.enabled=false"));
+        assert!(lines.contains(&"mcp_servers.srv.command=\"false\""));
         assert!(!lines.contains(&"mcp_servers.off.enabled=false"));
         assert!(lines.contains(&"notify=[]"));
         assert!(lines.contains(&"web_search=\"cached\""));

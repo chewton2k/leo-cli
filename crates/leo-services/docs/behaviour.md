@@ -432,7 +432,11 @@ every native session): `--ignore-user-config --ignore-rules` when `sub --help` l
 else every `enabled` MCP server from `codex --disable <CODEX_OFF> mcp list --json` (run in
 the room, never cached, ~0.9 s, `enabled: true` names only; a name that is not a bare TOML
 key is a named failure the user sees) is switched off with `-c
-mcp_servers.<name>.enabled=false`, plus `notify=[]`, `skills.include_instructions=false`
+mcp_servers.<name>.enabled=false` and a dummy transport of its listed type
+(`url="http://127.0.0.1:9/"` for `streamable_http`, else `command="false"`; never run, the
+server is off): servers a Codex plugin provides have no table in config.toml, and
+`enabled=false` alone makes one with no transport, which `app-server` and `mcp list` refuse
+("invalid transport", seen 2026-11-11), plus `notify=[]`, `skills.include_instructions=false`
 `model_provider="openai"` and `web_search="cached"`. Help and feature caches key on canonical path and mtime.
 `memories` is in `CODEX_OFF`. A failed native start is logged through `diag` and shown in
 Health ("Felix and Codex"). `ask_codex` runs a bare `app-server`: no thread, no tools.
