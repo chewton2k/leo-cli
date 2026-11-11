@@ -58,9 +58,12 @@ const THEIRS: [&str; 18] = [
     "today",
     "tomorrow",
 ];
-const DEEPER: [&str; 47] = [
+const DEEPER: [&str; 50] = [
     "why",
     "explain",
+    "tell",
+    "describe",
+    "understand",
     "teach",
     "quiz",
     "practice",
@@ -151,6 +154,7 @@ pub fn light(asked: &Asked<'_>) -> bool {
         && !words
             .iter()
             .any(|word| DEEPER.iter().any(|deep| word.starts_with(deep)))
+        && !words.iter().skip(1).any(|word| *word == "how")
 }
 
 #[cfg(test)]
@@ -223,6 +227,9 @@ mod tests {
             "is there a mistake in my proof",
             "find the bug in my code",
             "which of my notes contradict each other",
+            "find my notes on recursion and tell me how it works",
+            "find my notes on recursion and how it works",
+            "show my notes that describe recursion",
             "wann ist meine prüfung",
             "",
             "show $x^2$",

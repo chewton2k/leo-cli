@@ -346,7 +346,10 @@ impl Dictation {
         if stop.load(Ordering::Acquire) {
             return Ok(Finish::Done);
         }
-        let (mut mic, rx) = if let Ok(path) = std::env::var("LEO_FAKE_AUDIO") {
+        let (mut mic, rx) = if let Some(path) = std::env::var("LEO_FAKE_AUDIO")
+            .ok()
+            .filter(|_| Self::test_mode())
+        {
             let pcm = leo_services::session::wav::read(std::path::Path::new(&path))?;
             let (tx, rx) = mpsc::sync_channel(64);
             let flag = self.clone();

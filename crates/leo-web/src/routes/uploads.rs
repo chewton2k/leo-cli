@@ -112,6 +112,33 @@ pub(crate) struct ImportBody {
 }
 
 pub(crate) const MOST_WANTS: usize = 2_000;
+const MOST_NAME_CHARS: usize = 120;
+const MOST_NAME_BYTES: usize = 200;
+const MOST_EXTENSION_CHARS: usize = 10;
+
+fn cut(stem: &str, chars: usize, bytes: usize) -> String {
+    let mut out = String::new();
+    for c in stem.chars().take(chars) {
+        if out.len() + c.len_utf8() > bytes {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(at)
+            if at > 0
+                && (2..=MOST_EXTENSION_CHARS + 1).contains(&(name.len() - at))
+                && name[at + 1..].bytes().all(|b| b.is_ascii_alphanumeric()) =>
+        {
+            name.split_at(at)
+        }
+        _ => (name, ""),
+    }
+}
 
 pub fn safe_file_name(name: &str) -> String {
     let cleaned = stored_file_name(name);
@@ -139,7 +166,12 @@ fn stored_file_name(name: &str) -> String {
         })
         .collect();
     let cleaned = cleaned.trim().trim_start_matches('.').to_string();
-    let cleaned: String = cleaned.chars().take(120).collect();
+    let (stem, extension) = split_extension(&cleaned);
+    let room = MOST_NAME_CHARS.saturating_sub(extension.len());
+    let cleaned = format!(
+        "{}{extension}",
+        cut(stem, room, MOST_NAME_BYTES.saturating_sub(extension.len()))
+    );
     if cleaned.is_empty() {
         "upload".to_string()
     } else {
@@ -198,7 +230,7 @@ fn save_original(
     std::io::copy(staged.as_file_mut(), &mut out)?;
     out.as_file().sync_all()?;
     original_path(notes_dir, note, name).ok_or_else(invalid)?;
-    out.persist(path).map_err(|error| error.error)?;
+    out.persist_noclobber(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -328,10 +360,7 @@ fn free_original_name(
     name: &str,
     taken: &[String],
 ) -> String {
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
-        _ => (name.to_string(), String::new()),
-    };
+    let (stem, ext) = split_extension(name);
     let used = |candidate: &str| {
         taken.iter().any(|t| t == candidate)
             || original_path(notes_dir, note, candidate).is_some_and(|p| p.exists())
@@ -340,7 +369,12 @@ fn free_original_name(
         return name.to_string();
     }
     (2..1000)
-        .map(|n| format!("{stem} ({n}){ext}"))
+        .map(|n| {
+            let number = format!(" ({n})");
+            let room = MOST_NAME_CHARS.saturating_sub(ext.len() + number.len());
+            let bytes = MOST_NAME_BYTES.saturating_sub(ext.len() + number.len());
+            format!("{}{number}{ext}", cut(stem, room, bytes))
+        })
         .find(|candidate| !used(candidate))
         .unwrap_or_else(|| name.to_string())
 }
@@ -372,23 +406,27 @@ fn write_upload(
         body,
         figures,
     } = importer(files, wants, step).map_err(|e| missed(None, &e.to_string()))?;
-    // Originals added to an existing note take free names, so an earlier
-    // upload's file of the same name (and its citations) stays as it was.
-    if let Some(id) = into {
-        let notes_dir = store_now(state, |store| {
-            if store.notes.iter().any(|n| n.id == id) {
-                Ok(store.notes_dir.clone())
-            } else {
-                Err(StatusCode::NOT_FOUND)
-            }
-        })
-        .map_err(|_| missed(None, gone))?;
-        let mut taken = Vec::new();
-        for (name, _) in originals.iter_mut() {
-            let free = free_original_name(&notes_dir, id, name, &taken);
-            taken.push(free.clone());
-            *name = free;
+    // Originals take free names, so a file of the same name in this upload or
+    // an earlier one (and its citations) stays as it was.
+    let (notes_dir, id) = match into {
+        Some(id) => {
+            let notes_dir = store_now(state, |store| {
+                if store.notes.iter().any(|n| n.id == id) {
+                    Ok(store.notes_dir.clone())
+                } else {
+                    Err(StatusCode::NOT_FOUND)
+                }
+            })
+            .map_err(|_| missed(None, gone))?;
+            (notes_dir, id)
         }
+        None => (std::path::PathBuf::new(), ""),
+    };
+    let mut taken = Vec::new();
+    for (name, _) in originals.iter_mut() {
+        let free = free_original_name(&notes_dir, id, name, &taken);
+        taken.push(free.clone());
+        *name = free;
     }
     let names: Vec<String> = originals.iter().map(|(name, _)| name.clone()).collect();
     let title = title
@@ -860,7 +898,11 @@ pub(crate) async fn get_original(
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
-    match read_original(&notes_dir, &id, &name) {
+    let read = {
+        let (id, name) = (id.clone(), name.clone());
+        tokio::task::spawn_blocking(move || read_original(&notes_dir, &id, &name)).await
+    };
+    match read.unwrap_or_else(|_| Err(std::io::Error::other("The original could not be read"))) {
         Ok(bytes) => {
             let ascii: String = name
                 .chars()

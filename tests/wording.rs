@@ -6,6 +6,9 @@
 //! plus the README and the web page — for commands that are gone or hidden, so
 //! a change to the vocabulary cannot leave a stale instruction behind.
 
+mod common;
+
+use common::shipped_part;
 use std::path::{Path, PathBuf};
 
 /// What users must no longer be told to type, and what replaced it.
@@ -59,12 +62,9 @@ fn shipped_lines(path: &Path) -> Vec<(usize, String)> {
     if path.file_name().is_some_and(|n| n == "tests.rs") {
         return Vec::new();
     }
-    let text = std::fs::read_to_string(path).unwrap();
+    let text = shipped_part(&std::fs::read_to_string(path).unwrap());
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        if line.trim_start().starts_with("#[cfg(test)]") {
-            break;
-        }
         let code = line.trim_start();
         if code.starts_with("//") {
             continue;
@@ -186,4 +186,14 @@ fn json_keys_are_not_commands_but_command_values_still_are() {
         r#"json!({"settings":settings,"message":":settings"})"#,
         ":settings"
     ));
+}
+
+#[test]
+fn code_after_a_test_module_is_still_read() {
+    let text = "#[cfg(test)]\nmod tests {\n    const OLD: &str = \"leo serve\";\n}\nconst HINT: &str = \"run leo serve\";\n";
+    let shipped = shipped_part(text);
+    let lines: Vec<&str> = shipped.lines().map(str::trim).collect();
+    assert_eq!(lines.len(), 5);
+    assert_eq!(lines.iter().filter(|l| mentions(l, "leo serve")).count(), 1);
+    assert_eq!(lines[4], "const HINT: &str = \"run leo serve\";");
 }

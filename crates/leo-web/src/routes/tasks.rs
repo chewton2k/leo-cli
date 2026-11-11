@@ -23,6 +23,9 @@ where
 const NO_OLD_DATE: &str =
     "leo could not find the old date to replace. Check the change, then confirm it.";
 
+const NOT_DELETED: &str =
+    "leo could not delete that task. Check that the notes folder can be written to, then try again.";
+
 async fn writing(work: impl FnOnce() -> Response + Send + 'static) -> Response {
     tokio::task::spawn_blocking(move || {
         let _writing = tasks::writing();
@@ -50,15 +53,14 @@ pub(crate) async fn list_tasks(State(state): State<AppState>) -> Response {
 
 pub(crate) async fn all_listed(state: &AppState) -> Result<Vec<tasks::Listed>, StatusCode> {
     let chats = state.chats.clone();
+    let (metas, stored) =
+        tokio::task::spawn_blocking(move || (tasks::metas(&chats), tasks::load_all(&chats)))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .read_store(move |store| {
-            let metas = tasks::metas(&chats);
             let mut all = tasks::note_tasks(store, &metas);
-            all.extend(
-                tasks::load_all(&chats)
-                    .iter()
-                    .map(|t| tasks::standalone(t, Some(store))),
-            );
+            all.extend(stored.iter().map(|t| tasks::standalone(t, Some(store))));
             Ok(tasks::sorted(all))
         })
         .await
@@ -408,13 +410,17 @@ pub(crate) async fn delete_task(State(state): State<AppState>, Path(id): Path<St
     let chats = state.chats.clone();
     writing(move || {
         if let Some(task) = tasks::load(&chats, &id) {
-            tasks::remove(&chats, &id);
+            if !tasks::remove(&chats, &id) {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, NOT_DELETED);
+            }
             return Json(serde_json::json!(task)).into_response();
         }
         let metas = tasks::metas(&chats);
         match metas.iter().find(|m| m.id == id) {
             Some(meta) if meta.promoted => {
-                tasks::remove_meta(&chats, &id);
+                if !tasks::remove_meta(&chats, &id) {
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, NOT_DELETED);
+                }
                 StatusCode::NO_CONTENT.into_response()
             }
             Some(_) | None if id.starts_with('n') => error(

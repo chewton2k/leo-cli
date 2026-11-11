@@ -1,6 +1,6 @@
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{io::Write, path::Path};
+use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,10 +123,7 @@ impl Settings {
         self.save(path)?;
         if let Err(error) = apply() {
             if let Some(bytes) = original {
-                let mut file = tempfile::NamedTempFile::new_in(folder)?;
-                file.write_all(&bytes)?;
-                file.as_file().sync_all()?;
-                file.persist(path).map_err(|e| e.error)?;
+                leo_core::paths::write_atomic(path, bytes)?;
             } else {
                 std::fs::remove_file(path)?;
             }
@@ -138,11 +135,7 @@ impl Settings {
         self.validate()?;
         let folder = path.parent().context("Dictation settings need a folder.")?;
         std::fs::create_dir_all(folder)?;
-        let mut tmp = tempfile::NamedTempFile::new_in(folder)?;
-        tmp.write_all(&serde_json::to_vec_pretty(self)?)?;
-        tmp.as_file().sync_all()?;
-        tmp.persist(path).map_err(|e| e.error)?;
-        Ok(())
+        leo_core::paths::write_atomic(path, serde_json::to_vec_pretty(self)?)
     }
 }
 

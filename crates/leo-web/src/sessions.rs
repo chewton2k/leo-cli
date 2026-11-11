@@ -19,6 +19,15 @@ pub struct Session {
     pub last_seen: DateTime<Utc>,
 }
 
+fn off_worker<R>(work: impl FnOnce() -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(work)
+        }
+        _ => work(),
+    }
+}
+
 pub struct Sessions {
     path: Option<PathBuf>,
     list: Mutex<Vec<Session>>,
@@ -73,7 +82,7 @@ impl Sessions {
         let mut updated = list.clone();
         let (out, changed) = work(&mut updated);
         if changed {
-            self.save(&updated)?;
+            off_worker(|| self.save(&updated))?;
             *list = updated;
         }
         Ok(out)
@@ -213,6 +222,24 @@ mod tests {
             std::fs::metadata(&path).unwrap().modified().unwrap(),
             written
         );
+    }
+
+    #[test]
+    fn a_touch_that_writes_works_inside_either_kind_of_runtime() {
+        let tmp = tempfile::tempdir().unwrap();
+        for multi in [false, true] {
+            let sessions = Sessions::load(&tmp.path().join(format!("{multi}.json"))).unwrap();
+            let id = sessions.start(at(0)).unwrap();
+            let mut builder = if multi {
+                tokio::runtime::Builder::new_multi_thread()
+            } else {
+                tokio::runtime::Builder::new_current_thread()
+            };
+            let runtime = builder.build().unwrap();
+            assert!(runtime.block_on(async { sessions.check(&id, at(6)) }));
+            let again = Sessions::load(&tmp.path().join(format!("{multi}.json"))).unwrap();
+            assert!(again.check(&id, at(7)));
+        }
     }
 
     #[cfg(unix)]

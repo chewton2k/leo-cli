@@ -6,8 +6,6 @@ use crate::ai::provider::{ChatProvider, ChatRequest, Sink, Spent};
 use crate::config::provider::ProviderConfig;
 use crate::config::secret::Secret;
 
-const DEFAULT_MAX_TOKENS: u32 = 4096;
-
 type Http = std::sync::LazyLock<reqwest::Result<reqwest::blocking::Client>>;
 
 fn http(secs: u64) -> reqwest::Result<reqwest::blocking::Client> {
@@ -50,7 +48,7 @@ pub struct OpenAiChat {
     key: Option<Secret>,
     /// Whether this endpoint needs a key at all. Local servers do not.
     needs_key: bool,
-    max_tokens: u32,
+    max_tokens: Option<u32>,
     reasoning: bool,
     effort: Option<String>,
     spent: std::sync::Mutex<Option<Spent>>,
@@ -76,7 +74,7 @@ impl OpenAiChat {
             key,
             // A provider that names no key_env is a local server needing none.
             needs_key: cfg.key_env.is_some(),
-            max_tokens: cfg.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            max_tokens: cfg.max_tokens,
             reasoning: cfg.reasoning.unwrap_or(false),
             effort,
             spent: std::sync::Mutex::new(None),
@@ -406,7 +404,10 @@ impl OpenAiChat {
             return Err(self.refused(resp));
         }
 
-        let json: serde_json::Value = resp.json().map_err(|e| {
+        let text = resp.text().map_err(|e| {
+            ProviderError::Retryable(format!("{}: the answer stopped arriving: {e}", self.name))
+        })?;
+        let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
             ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name))
         })?;
 
@@ -520,7 +521,11 @@ impl ChatProvider for OpenAiChat {
     }
 
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
-        self.send(req, self.body(req, false), &CLIENT_120)
+        if crate::ai::loopback(&self.base_url) {
+            self.complete_streaming(req, &mut |_| {})
+        } else {
+            self.send(req, self.body(req, false), &CLIENT_120)
+        }
     }
 
     fn complete_with_images(
@@ -558,7 +563,7 @@ impl ChatProvider for OpenAiChat {
     }
 
     fn max_tokens(&self) -> Option<u32> {
-        Some(self.max_tokens)
+        self.max_tokens
     }
 }
 
@@ -675,6 +680,58 @@ mod tests {
         };
         let provider = OpenAiChat::new("ollama".to_string(), &cfg, None);
         assert_eq!(ChatProvider::max_tokens(&provider), Some(777));
+        let unset = OpenAiChat::new("mine".to_string(), &ProviderConfig::default(), None);
+        assert_eq!(ChatProvider::max_tokens(&unset), None);
+    }
+
+    fn local(base_url: String) -> OpenAiChat {
+        let cfg = ProviderConfig {
+            base_url: Some(base_url),
+            model: Some("qwen3:8b".to_string()),
+            ..Default::default()
+        };
+        OpenAiChat::new("ollama".to_string(), &cfg, None)
+    }
+
+    fn ask() -> ChatRequest {
+        ChatRequest {
+            system: None,
+            prompt: "hi".to_string(),
+            temperature: 0.0,
+            max_tokens: 16,
+        }
+    }
+
+    #[test]
+    fn a_plain_answer_streams_so_a_slow_local_model_is_bounded_by_silence_not_length() {
+        let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" stay ordered.\"}}]}\n\ndata: [DONE]\n\n";
+        let provider = local(refuse_once("200 OK", stream));
+        assert_eq!(provider.complete(&ask()).unwrap(), "Heaps stay ordered.");
+    }
+
+    #[test]
+    fn an_answer_cut_off_mid_body_lets_the_chain_try_the_next_provider() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 8192];
+                let _ = stream.read(&mut buffer);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{{\"choices\":"
+                );
+            }
+        });
+        let provider = local(format!("http://127.0.0.1:{port}/v1"));
+        let req = ask();
+        match provider.send(&req, provider.body(&req, false), &CLIENT_300) {
+            Err(ProviderError::Retryable(message)) => {
+                assert!(message.contains("stopped arriving"), "{message}")
+            }
+            other => panic!("expected a retryable failure, got {other:?}"),
+        }
     }
 
     /// Instructions travel as a system message and the material as the user's,

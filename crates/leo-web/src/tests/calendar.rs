@@ -127,3 +127,48 @@ fn the_schedule_shows_a_month_of_events_with_all_day_items_and_tasks_linked_by_m
         StatusCode::BAD_REQUEST
     );
 }
+
+struct Flipping {
+    inside: Arc<Fake>,
+    settings: std::path::PathBuf,
+}
+
+impl crate::CalendarAccess for Flipping {
+    fn fetch(&self, url: &str) -> anyhow::Result<Vec<u8>> {
+        self.inside.fetch(url)
+    }
+    fn get(&self, account: &str) -> anyhow::Result<Option<String>> {
+        self.inside.get(account)
+    }
+    fn set(&self, account: &str, value: &str) -> anyhow::Result<()> {
+        self.inside.set(account, value)
+    }
+    fn delete(&self, account: &str) -> anyhow::Result<()> {
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&self.settings).unwrap()).unwrap();
+        saved["offer"] = serde_json::json!(false);
+        std::fs::write(&self.settings, saved.to_string()).unwrap();
+        self.inside.delete(account)
+    }
+}
+
+#[test]
+fn removing_a_calendar_does_not_undo_a_switch_flipped_while_it_was_removed() {
+    let (mut state, dir, _ids) = state_with(&[]);
+    let fake = Arc::new(Fake::default());
+    fake.pages.lock().unwrap().insert(LINK.into(), feed());
+    state.calendar_access = Some(fake.clone());
+    let page = json_of(add(&state, LINK));
+    let id = page["calendars"][0]["id"].as_str().unwrap().to_string();
+    let settings = dir.path().join("calendars.json");
+    state.calendar_access = Some(Arc::new(Flipping {
+        inside: fake,
+        settings: settings.clone(),
+    }));
+    let gone = json_of(run(crate::calendar::remove(State(state.clone()), Path(id))));
+    assert_eq!(gone["connected"], false);
+    assert_eq!(gone["offer"], false);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(saved["offer"], false);
+}

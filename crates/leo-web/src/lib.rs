@@ -447,7 +447,11 @@ impl AppState {
                 store.reload = false;
             }
             let result = work(&mut store);
-            if writing && result.is_err() {
+            if writing
+                && result
+                    .as_ref()
+                    .is_err_and(|status| !status.is_client_error())
+            {
                 store.reload = true;
             }
             result
@@ -696,7 +700,8 @@ async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
     let mut last = None;
     for port in wanted..wanted.saturating_add(20) {
         if port != 0 {
-            if let Err(e) = std::net::TcpListener::bind(("0.0.0.0", port)) {
+            let probe = tokio::net::TcpSocket::new_v4()?;
+            if let Err(e) = probe.bind(std::net::SocketAddr::from(([0, 0, 0, 0], port))) {
                 if e.kind() == std::io::ErrorKind::AddrInUse {
                     last = Some(e);
                     continue;
@@ -745,7 +750,10 @@ fn store_now<R>(
         store.reload = false;
     }
     let result = work(&mut store);
-    if result.is_err() {
+    if result
+        .as_ref()
+        .is_err_and(|status| !status.is_client_error())
+    {
         store.reload = true;
     }
     result
@@ -793,5 +801,22 @@ mod activity_tests {
         assert!(activity.idle() >= std::time::Duration::from_millis(30));
         activity.touch();
         assert!(activity.idle() < std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(test)]
+mod bind_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_port_held_on_every_address_is_skipped() {
+        let held = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let busy = held.local_addr().unwrap().port();
+        let (listener, port) = bind(busy).await.unwrap();
+        assert_ne!(port, busy);
+        assert_eq!(
+            listener.local_addr().unwrap().ip(),
+            std::net::Ipv4Addr::LOCALHOST
+        );
     }
 }

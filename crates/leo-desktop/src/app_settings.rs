@@ -169,6 +169,14 @@ impl PreferenceStore {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
+    fn record(&self, apply: impl FnOnce() -> Result<()>) {
+        if let Err(error) = apply() {
+            self.problem
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(|| format!("Leo could not apply a startup setting: {error:#}"));
+        }
+    }
     fn change(&self, change: PreferenceChange) -> Result<()> {
         let (done, answer) = std::sync::mpsc::sync_channel(1);
         self.tx
@@ -220,19 +228,24 @@ impl AppSettings {
     pub fn preferences(&self) -> Preferences {
         self.preferences.view()
     }
-    pub fn apply_startup(&self) -> Result<()> {
+    pub fn apply_startup(&self) {
         let preferences = self.preferences();
-        if let Some(tray) = self.app.tray_by_id("leo") {
-            tray.set_visible(preferences.show_tray)?;
-        }
-        if self.path.exists() && self.preferences.problem().is_none() && !cfg!(debug_assertions) {
-            if preferences.open_at_login {
-                self.app.autolaunch().enable()?;
-            } else {
-                self.app.autolaunch().disable()?;
+        self.preferences.record(|| {
+            if let Some(tray) = self.app.tray_by_id("leo") {
+                tray.set_visible(preferences.show_tray)?;
             }
+            Ok(())
+        });
+        if self.path.exists() && !cfg!(debug_assertions) {
+            self.preferences.record(|| {
+                if preferences.open_at_login {
+                    self.app.autolaunch().enable()?;
+                } else {
+                    self.app.autolaunch().disable()?;
+                }
+                Ok(())
+            });
         }
-        Ok(())
     }
     fn permission_view(&self) -> Value {
         json!({"microphone":crate::permissions::microphone(),"accessibility":crate::permissions::accessibility()})
@@ -360,6 +373,20 @@ mod tests {
             .is_err());
         assert_eq!(Preferences::load(&path).unwrap(), saved);
         assert_eq!(failed.view(), saved);
+    }
+    #[test]
+    fn a_failing_startup_effect_is_recorded_instead_of_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferenceStore::new(
+            dir.path().join("app-settings.json"),
+            std::sync::Arc::new(|_, _| Ok(())),
+        );
+        store.record(|| Ok(()));
+        assert!(store.problem().is_none());
+        store.record(|| anyhow::bail!("login item blocked"));
+        assert!(store.problem().unwrap().contains("login item blocked"));
+        store.record(|| anyhow::bail!("tray blocked"));
+        assert!(store.problem().unwrap().contains("login item blocked"));
     }
     #[test]
     fn app_preferences_default_to_safe_updates_and_independent_onboarding_steps() {

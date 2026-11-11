@@ -55,6 +55,28 @@ async fn a_foreign_host_is_refused() {
 }
 
 #[tokio::test]
+async fn a_wrong_token_is_refused_without_a_session() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let host = format!("127.0.0.1:{port}");
+    for path in [
+        "/?token=0123456789abcdef0123456789abcdee",
+        "/?token=0123456789abcdef0123456789abcde",
+        "/?token=0123456789abcdef0123456789abcdef0",
+        "/?token=",
+        "/api/notes?token=nope",
+    ] {
+        let reply = ask(port, path, &host).await;
+        assert!(reply.starts_with("HTTP/1.1 401"), "{path}: {reply}");
+        assert!(
+            !reply.to_ascii_lowercase().contains("set-cookie"),
+            "{path}: {reply}"
+        );
+    }
+    running.stop().await;
+}
+
+#[tokio::test]
 async fn the_window_signs_in_with_a_strict_cookie() {
     let (running, _dir) = running().await;
     let port = running.port();

@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
-use crate::routes::notes::{directory, save, NoteResponse};
+use crate::routes::notes::{directory, remove_emptied, save, NoteResponse};
 use crate::AppState;
 
 #[derive(serde::Serialize)]
@@ -124,6 +124,9 @@ pub(crate) async fn move_to_trash(
                 store.delete_notes(&ids);
             }
             save(store)?;
+            for dir in &body.dirs {
+                remove_emptied(&store.notes_dir.join(dir.trim().trim_matches('/')));
+            }
             Ok(Json(serde_json::json!({
                 "notes": notes,
                 "folders": folders,

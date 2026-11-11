@@ -38,7 +38,7 @@ use crate::routes::felix::{
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
-    move_note, rename_dir, search_notes, toggle_checkbox, update_note,
+    move_note, rename_dir, search_notes, update_note,
 };
 use crate::routes::pictures::{add_picture, get_picture, PICTURE_BYTES};
 use crate::routes::settings::{change_setting, get_settings, test_setting};
@@ -58,7 +58,6 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/notes/{id}",
             get(get_note).patch(update_note).delete(delete_note),
         )
-        .route("/api/notes/{id}/toggle", post(toggle_checkbox))
         .route(
             "/api/calendar",
             get(crate::calendar::get)

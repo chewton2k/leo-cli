@@ -166,11 +166,19 @@ async fn stop_returns_within_the_drain_deadline_while_a_request_is_still_arrivin
         .await
         .unwrap();
     slow.write_all(
-        format!("POST /api/notes HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n{{\"title\": \"").as_bytes(),
+        format!("POST /api/notes HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\nContent-Type: application/json\r\nExpect: 100-continue\r\nContent-Length: 100000\r\n\r\n{{\"title\": \"").as_bytes(),
     )
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut said = [0u8; 64];
+    let heard = tokio::time::timeout(Duration::from_secs(10), slow.read(&mut said))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&said[..heard]).starts_with("HTTP/1.1 100 Continue"),
+        "the engine never began reading the request"
+    );
     let running_grace = running.grace;
     let began = Instant::now();
     running.stop().await;

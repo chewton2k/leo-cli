@@ -84,7 +84,7 @@ The live transcript, for catalog models marked fast enough, shows finished segme
 8 s cloud) it re-transcribes from `settled_at`, at most `LIVE_MOST_SECS` (20 s),
 and once that is `SETTLE_AFTER_SECS` (12) long it settles at `live::quietest`
 between 6 s and end − 2 s, so the unsettled end is rewritten rather than glued.
-Only while the transcription backlog is at most one segment. Typed points go to
+Only while no segment is waiting for transcription. Typed points go to
 the recorder through `Controls.points` (`recorder::points_of`) and are saved in the manifest. Recording needs
 only speech AI and a microphone; the writing AI is optional. `LEO_NO_MICROPHONE`
 turns the device off (tests, e2e, CI).
@@ -161,7 +161,7 @@ never picks or pulls one by itself. `ollama_models.json` is the vendored catalog
 and free disk in the home folder, where Ollama keeps models. `fit` is TooBig when
 memory needed exceeds total memory by more than 10% (an "8 GB" laptop reports under 8 GiB) or size + 2 GB exceeds free disk; unknown values
 never block. `recommended` is the largest fitting entry, and none while memory is
-unknown. `pull` streams loopback `POST /api/pull` NDJSON as `Progress` (only a connect timeout and the stop flag, no total deadline) and says disk
+unknown. `pull` streams loopback `POST /api/pull` NDJSON as `Progress` (a 300 ms connect timeout, a six-hour total bound and the stop flag) and says disk
 and memory errors in one plain sentence (`plain_error`).
 
 `config/choice.rs` keeps writing model/effort choices and the single local
@@ -288,7 +288,8 @@ calling thread. Note synthesis/gap-filling stay unchanged.
 
 When Felix offers tools, `session::open` starts Claude Code with
 `AgentCli::claude_native`: a `Bridge` (an MCP server over HTTP on
-127.0.0.1, one per answer, its address carrying a random 64-hex secret;
+127.0.0.1, one per answer, its address carrying a random 64-hex secret and
+passed in a 0600 file in the room, never on the command line;
 requests with an `Origin` header or another path get 404) lists the tools
 with their JSON schemas and forwards each `tools/call` to the running turn
 (`Incoming::Call` on the same channel as Claude's stdout lines), where
@@ -432,7 +433,7 @@ else every `enabled` MCP server from `codex --disable <CODEX_OFF> mcp list --jso
 the room, never cached, ~0.9 s, `enabled: true` names only; a name that is not a bare TOML
 key is a named failure the user sees) is switched off with `-c
 mcp_servers.<name>.enabled=false`, plus `notify=[]`, `skills.include_instructions=false`
-and `model_provider="openai"`. Help and feature caches key on canonical path and mtime.
+`model_provider="openai"` and `web_search="cached"`. Help and feature caches key on canonical path and mtime.
 `memories` is in `CODEX_OFF`. A failed native start is logged through `diag` and shown in
 Health ("Felix and Codex"). `ask_codex` runs a bare `app-server`: no thread, no tools.
 `provider-contract.yml` (weekly and manual, alert only, never the release gate) runs the

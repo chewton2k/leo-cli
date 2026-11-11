@@ -399,7 +399,7 @@ fn take_stdout_for_protocol() -> io::Result<File> {
 
 #[cfg(windows)]
 fn take_stdout_for_protocol() -> io::Result<File> {
-    use std::os::windows::io::FromRawHandle;
+    use std::os::windows::io::BorrowedHandle;
     unsafe {
         let fd = libc::dup(1);
         if fd < 0 {
@@ -412,6 +412,8 @@ fn take_stdout_for_protocol() -> io::Result<File> {
         if handle == -1 {
             return Err(io::Error::last_os_error());
         }
-        Ok(File::from_raw_handle(handle as _))
+        let owned = BorrowedHandle::borrow_raw(handle as _).try_clone_to_owned()?;
+        libc::close(fd);
+        Ok(File::from(owned))
     }
 }

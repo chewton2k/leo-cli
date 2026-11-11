@@ -354,7 +354,10 @@ pub(crate) async fn create_card(
         let column = match body.column {
             Some(column) if board.columns.iter().any(|c| c.id == column) => column,
             Some(_) => return error(StatusCode::BAD_REQUEST, "That column is not on this board."),
-            None => board.columns[0].id.clone(),
+            None => match board.columns.first() {
+                Some(column) => column.id.clone(),
+                None => return error(StatusCode::BAD_REQUEST, "That board has no columns."),
+            },
         };
         if boards::all_cards(chats).len() >= boards::MOST_CARDS {
             return error(

@@ -102,8 +102,10 @@ fn task_view(
         _ => Value::Null,
     };
     let signin = agent.map(|agent| {
-        let bin = pc.and_then(|p| p.bin.as_deref()).unwrap_or(agent.program());
-        let located = agent_cli::locate(bin).is_some();
+        let located = pc
+            .map(|p| AgentCli::new(provider.clone(), agent, p))
+            .map_or_else(|| agent_cli::locate(agent.program()), |cli| agent_cli::locate(cli.bin()))
+            .is_some();
         let installed = pc.is_some_and(|p| AgentCli::new(provider.clone(), agent, p).available());
         json!({
             "installed": installed,

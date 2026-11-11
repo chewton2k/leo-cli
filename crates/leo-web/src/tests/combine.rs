@@ -305,3 +305,34 @@ fn a_later_chunk_failure_and_the_total_limit_leave_both_notes_untouched() {
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
+
+#[test]
+fn a_streamed_combine_is_counted_in_usage() {
+    let (mut state, _d, ids) = state_with(&[("Graphs", ""), ("BFS", "")]);
+    bodies(&state, &ids, ["A graph has nodes.", "BFS uses a queue."]);
+    with_writer(&mut state, "unused");
+    state.chat = Some(Arc::new(
+        |_: &str,
+         _: &str,
+         _: u32,
+         piece: &mut dyn FnMut(&str),
+         _: &mut dyn FnMut(),
+         _: &dyn Fn() -> bool| {
+            let text = "## Graphs\nA graph has nodes.\n\n## BFS\nBFS uses a queue.";
+            piece(text);
+            Ok(chat::Reply {
+                text: text.into(),
+                spent: Some(chat::Spent {
+                    input: 1_200,
+                    output: 300,
+                    ..Default::default()
+                }),
+            })
+        },
+    ));
+    assert_eq!(state.usage.line(), "No AI requests since Leo started");
+    let job = json_of(started(&state, &ids[0], &ids[1]));
+    let done = finished(&state, job["id"].as_str().unwrap());
+    assert_eq!(done["state"], "ready", "{done}");
+    assert_eq!(state.usage.line(), "1 AI request · 1k tokens");
+}

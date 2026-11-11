@@ -201,6 +201,17 @@ impl Db {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("could not make {}", parent.display()))?;
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(path)
+                .with_context(|| format!("could not open {}", path.display()))?;
+        }
         let mut conn =
             Connection::open(path).with_context(|| format!("could not open {}", path.display()))?;
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
@@ -243,7 +254,11 @@ impl Db {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            for end in ["", "-wal", "-shm"] {
+                let mut name = path.as_os_str().to_owned();
+                name.push(end);
+                let _ = std::fs::set_permissions(name, std::fs::Permissions::from_mode(0o600));
+            }
         }
         Ok(Db {
             path: path.to_path_buf(),
@@ -384,6 +399,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_database_and_its_journal_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let db = Db::open(&path).unwrap();
+        for end in ["", "-wal", "-shm"] {
+            let mut name = path.as_os_str().to_owned();
+            name.push(end);
+            let mode = std::fs::metadata(&name).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "{end}");
+        }
+        drop(db);
+    }
 
     #[test]
     fn database_cache_is_bounded_while_existing_users_keep_their_handles() {

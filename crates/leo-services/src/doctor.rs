@@ -60,8 +60,12 @@ fn leo_checks(config_path: &Path) -> Vec<Check> {
         Check::missing(
             "leo on your PATH",
             "running `leo` from any terminal",
-            "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> ~/.zshrc && source ~/.zshrc\n\
-             (bash on a Mac: ~/.bash_profile instead of ~/.zshrc)",
+            if cfg!(windows) {
+                "Add %LOCALAPPDATA%\\Leo\\bin to your PATH, then open a new terminal."
+            } else {
+                "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc && source ~/.zshrc\n\
+                 (bash on a Mac: ~/.bash_profile instead of ~/.zshrc)"
+            },
         )
     });
 

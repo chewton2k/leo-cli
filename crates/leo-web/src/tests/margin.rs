@@ -1872,3 +1872,25 @@ async fn custom_personas_are_listed_and_the_default_follows_the_list() {
     );
     engine.stop().await;
 }
+
+#[tokio::test]
+async fn a_thread_is_claimed_before_it_is_read_for_a_reply_or_forget() {
+    let (engine, _) = reading(SAYS).await;
+    let (id, _) = engine.plain(PASSAGE).await;
+    let held = engine.running.state.margin.replying("claimed-thread");
+    assert!(held.is_some());
+    let path = format!("/api/notes/{id}/margin/threads/claimed-thread");
+    let (status, why) = engine.send_as(&engine.cookie, "DELETE", &path, None).await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("replying")));
+    let (status, why) = engine
+        .post(
+            &format!("{path}/reply"),
+            serde_json::json!({ "text": "why?" }),
+        )
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("busy")));
+    drop(held);
+    let (status, _) = engine.send_as(&engine.cookie, "DELETE", &path, None).await;
+    assert_eq!(status, 404);
+    engine.stop().await;
+}

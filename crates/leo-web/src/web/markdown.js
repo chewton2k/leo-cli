@@ -122,34 +122,41 @@
 
   function inline(text) {
     const slots = [];
-    const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
-    let s = text;
-    s = s.replace(/`([^`]+)`/g, (_, code) => keep(`<code>${escape(code)}</code>`));
-    const shown = (tex, block) => keep(`<span class="math${block ? ' math-block' : ''}" data-tex="${escape(tex.trim())}">${escape(tex.trim())}</span>`);
-    s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => shown(tex, true));
-    s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => shown(tex, false));
-    s = s.replace(/(^|[^\\])\$\$([^$\n]+?)\$\$/g, (_, lead, tex) => lead + shown(tex, true));
-    s = s.replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, lead, tex) => lead + keep(`<span class="math" data-tex="${escape(tex)}">${escape(tex)}</span>`));
-    s = s.replace(/!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (whole, name, option) => {
-      const img = picture(name.trim(), option && /^\s*\d/.test(option) ? `${name.trim()}|${option}` : name.trim());
-      return img ? keep(img) : whole;
+    const MARK = /\u0000(\d+)\u0000/g;
+    const raw = (t) => t.replace(MARK, (_, i) => slots[Number(i)].raw);
+    const keep = (html, source = '') => `\u0000${slots.push({ html, raw: raw(source) }) - 1}\u0000`;
+    let s = text.replace(/\u0000/g, '');
+    s = s.replace(/`([^`]+)`/g, (whole, code) => keep(`<code>${escape(code)}</code>`, whole));
+    const shown = (tex, block, whole) => {
+      const source = raw(tex).trim();
+      return keep(`<span class="math${block ? ' math-block' : ''}" data-tex="${escape(source)}">${escape(source)}</span>`, whole);
+    };
+    s = s.replace(/\\\[([\s\S]+?)\\\]/g, (whole, tex) => shown(tex, true, whole));
+    s = s.replace(/\\\(([\s\S]+?)\\\)/g, (whole, tex) => shown(tex, false, whole));
+    s = s.replace(/(^|[^\\])\$\$([^$\n]+?)\$\$/g, (whole, lead, tex) => lead + shown(tex, true, whole.slice(lead.length)));
+    s = s.replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (whole, lead, tex) => lead + shown(tex, false, whole.slice(lead.length)));
+    s = s.replace(/!\[\[([^\]|\[]+)(?:\|([^\]]*))?\]\]/g, (whole, name, option) => {
+      const file = raw(name).trim();
+      const img = picture(file, option && /^\s*\d/.test(option) ? `${file}|${raw(option)}` : file);
+      return img ? keep(img, whole) : whole;
     });
-    s = s.replace(/(?<!!)\[\[([^\[\]|#]+)(?:#[^\[\]|]*)?(?:\|([^\[\]]+))?\]\]/g, (_, title, label) => {
-      const name = title.trim();
-      return keep(`<a class="wiki-link" href="#/search/${encodeURIComponent(name)}" data-action="open-title" data-title="${escape(name)}">${escape((label || name).trim())}</a>`);
+    s = s.replace(/(?<!!)\[\[([^\[\]|#]+)(?:#[^\[\]|]*)?(?:\|([^\[\]]+))?\]\]/g, (whole, title, label) => {
+      const name = raw(title).trim();
+      return keep(`<a class="wiki-link" href="#/search/${encodeURIComponent(name)}" data-action="open-title" data-title="${escape(name)}">${label ? escape(label.trim()) : escape(name)}</a>`, whole);
     });
     s = s.replace(/!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)/g, (whole, alt, target) => {
-      const img = picture(target, alt);
-      return img ? keep(img) : whole;
+      const img = picture(raw(target), raw(alt));
+      return img ? keep(img, whole) : whole;
     });
     s = s.replace(/!?\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (whole, label, url) => {
-      const safe = safeUrl(url);
-      return safe ? keep(link(safe, emphasis(escape(label || safe)))) : whole;
+      const safe = safeUrl(raw(url));
+      return safe ? keep(link(safe, emphasis(escape(label || safe))), whole) : whole;
     });
-    s = s.replace(/\bhttps?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]]/g, (url) => keep(link(url, escape(url))));
-    s = s.replace(/:([a-z]+):/g, (whole, name, at, all) => (Object.hasOwn(NOTE_ICONS, name) && !/[\w:]/.test(all[at - 1] || '') && !/[\w:]/.test(all[at + whole.length] || '') ? keep(noteIcon(name)) : whole));
+    s = s.replace(/\bhttps?:\/\/[^\s<>()]+[^\s<>().,;:!?'"\]]/g, (whole) => keep(link(raw(whole), escape(raw(whole))), whole));
+    s = s.replace(/:([a-z]+):/g, (whole, name, at, all) => (Object.hasOwn(NOTE_ICONS, name) && !/[\w:]/.test(all[at - 1] || '') && !/[\w:]/.test(all[at + whole.length] || '') ? keep(noteIcon(name), whole) : whole));
     s = emphasis(escape(s));
-    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[Number(i)]);
+    const fill = (t) => t.replace(MARK, (_, i) => fill(slots[Number(i)].html));
+    return fill(s);
   }
 
   const FENCE = /^\s*(```|~~~)\s*([\w+-]*)/;
@@ -159,6 +166,8 @@
   const ITEM = new RegExp(String.raw`^(\s*)(${MARKER})\s+(?<text>.*)$`);
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
   const BOX = new RegExp(String.raw`^(?:${MARKER}) {1,4}\[( |x|X)\](?: |$)`);
+
+  const MATH_ENV = /^\\begin\{((?:equation|align|aligned|gather|gathered|multline|alignat|flalign|split|cases|matrix|pmatrix|bmatrix|vmatrix|array)\*?)\}/;
 
   const isBox = (line) => BOX.test(line.trimStart());
 
@@ -263,7 +272,7 @@
       }
 
       const math = line.trim();
-      const env = math.match(/^\\begin\{((?:equation|align|aligned|gather|gathered|multline|alignat|flalign|split|cases|matrix|pmatrix|bmatrix|vmatrix|array)\*?)\}/);
+      const env = math.match(MATH_ENV);
       if (env || (math.startsWith('\\[') && !math.slice(2).includes('\\]') && !math.slice(2).trim())) {
         const end = env ? `\\end{${env[1]}}` : '\\]';
         const body = [env ? math : math.slice(2)];
@@ -437,7 +446,7 @@
       .trim();
   }
 
-  const api = { render, plain, escape, MARKER, listKind, listable, NOTE_ICONS, noteIcon };
+  const api = { render, plain, escape, MARKER, MATH_ENV, listKind, listable, NOTE_ICONS, noteIcon };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoMarkdown = api;
 })(typeof window !== 'undefined' ? window : globalThis);

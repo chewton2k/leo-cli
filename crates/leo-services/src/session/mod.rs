@@ -217,7 +217,7 @@ fn process_alive(pid: u32) -> bool {
         return true;
     }
     if cfg!(unix) {
-        std::process::Command::new("kill")
+        leo_core::children::quiet_command("kill")
             .args(["-0", &pid.to_string()])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -225,7 +225,7 @@ fn process_alive(pid: u32) -> bool {
             .status()
             .is_ok_and(|s| s.success())
     } else if cfg!(windows) {
-        std::process::Command::new("tasklist")
+        leo_core::children::quiet_command("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

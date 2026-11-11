@@ -134,6 +134,22 @@ test('new-note drafts work on HTTP origins without randomUUID', async () => {
   assert.equal(local.length, 2);
 });
 
+test('a discard during a save that then fails does not bring the draft back', async () => {
+  const local = storage();
+  let fail;
+  const scheduled = [];
+  const m = manager(() => new Promise((_, reject) => { fail = reject; }), local, { schedule: (fn) => scheduled.push(fn), retryable: () => true });
+  const s = m.open(note());
+  m.changed(s, edit('Throw this away'));
+  const pending = m.flush(s);
+  assert.equal(m.discardAll(), 1);
+  fail(Object.assign(new Error('offline'), { status: 500 }));
+  await pending;
+  assert.equal(m.unsaved(), false);
+  assert.equal(local.length, 0);
+  assert.equal(scheduled.length, 1, 'only the first edit timer, no retry');
+});
+
 test('clearing drafts forgets every unsaved edit in this browser and nothing else', async () => {
   const local = storage();
   local.setItem('other-app', 'keep');

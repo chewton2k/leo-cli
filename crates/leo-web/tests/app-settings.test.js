@@ -102,7 +102,7 @@ function tail(extra) {
   const window = {};
   const messages = [];
   const calls = [];
-  const scope = { window, toast: (text, options) => messages.push([text, options]), go: (hash) => calls.push(hash), location: { hash: '#/' }, setTimeout, ...extra };
+  const scope = { window, toast: (text, options) => messages.push([text, options]), go: (hash) => calls.push(hash), location: { hash: '#/' }, setTimeout, saveWebsiteWork() {}, ...extra };
   vm.runInNewContext(events.slice(events.indexOf('const APP_SETTINGS =')) + '\nwindow.warnUnsaved = warnUnsaved;', scope);
   return { window, messages, calls };
 }
@@ -111,6 +111,12 @@ test('a native quit confirmation explains both ways to quit without navigating',
   await window.leoFromApp('quit', '');
   assert.equal(messages.length, 1);
   assert.ok(messages[0][0].includes('⌘Q again') && messages[0][0].includes('Quit again') && messages[0][0].includes('3 seconds'));
+});
+test('a native quit flushes pending autosaves before it toasts', async () => {
+  const order = [];
+  const { window } = tail({ saveWebsiteWork: () => order.push('save'), toast: () => order.push('toast'), api: async () => ({ job: null }) });
+  await window.leoFromApp('quit', '');
+  assert.deepEqual(order, ['save', 'toast']);
 });
 test('quitting says what is lost while a recording is live or its note is being written', async () => {
   const text = async (api) => { const { window, messages } = tail({ api }); await window.leoFromApp('quit', ''); return messages[0][0]; };

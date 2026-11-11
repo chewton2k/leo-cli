@@ -3,7 +3,12 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 pub fn stays_inside(url: &Url, port: u16) -> bool {
-    if url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost") {
+    let own = match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        "http" | "https" => url.host_str() == Some("tauri.localhost") && url.port().is_none(),
+        _ => false,
+    };
+    if own {
         return true;
     }
     url.scheme() == "http"
@@ -56,6 +61,26 @@ mod tests {
         assert!(!stays_inside(&"mailto:a@b.c".parse().unwrap(), 47318));
         assert!(stays_inside(
             &"tauri://localhost/index.html".parse().unwrap(),
+            47318
+        ));
+        assert!(stays_inside(
+            &"http://tauri.localhost/index.html".parse().unwrap(),
+            47318
+        ));
+        assert!(stays_inside(
+            &"https://tauri.localhost/".parse().unwrap(),
+            47318
+        ));
+        assert!(!stays_inside(
+            &"http://tauri.localhost:3000/".parse().unwrap(),
+            47318
+        ));
+        assert!(!stays_inside(
+            &"ftp://tauri.localhost/".parse().unwrap(),
+            47318
+        ));
+        assert!(!stays_inside(
+            &"tauri://evil.example/".parse().unwrap(),
             47318
         ));
     }

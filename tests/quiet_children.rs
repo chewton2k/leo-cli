@@ -1,3 +1,6 @@
+mod common;
+
+use common::shipped_part;
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -29,11 +32,14 @@ fn shipped_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn shipped_part(text: &str) -> &str {
-    match text.find("#[cfg(test)]") {
-        Some(at) => &text[..at],
-        None => text,
-    }
+#[test]
+fn only_test_items_are_skipped() {
+    let text = "#[cfg(test)]\nconst A: &str = \"}\";\nfn a() { Command::new(\"x\"); }\n#[cfg(test)]\nmod tests {\n    fn b() { let c = '{'; Command::new(r#\"}\"#); }\n}\nfn d() { Command::new(\"y\"); }\n";
+    let shipped = shipped_part(text);
+    assert_eq!(shipped.lines().count(), text.lines().count());
+    assert_eq!(shipped.matches("Command::new(").count(), 2);
+    assert!(shipped.contains("fn a()") && shipped.contains("fn d()"));
+    assert!(!shipped.contains("fn b()") && !shipped.contains("const A"));
 }
 
 fn statement_from(text: &str, at: usize) -> &str {
@@ -49,7 +55,7 @@ fn every_child_process_is_started_quietly() {
     let mut missing = Vec::new();
     for file in &files {
         let text = std::fs::read_to_string(file).unwrap();
-        let shipped = shipped_part(&text);
+        let shipped = &shipped_part(&text);
         let mut from = 0;
         while let Some(found) = shipped[from..].find("Command::new(") {
             let at = from + found;

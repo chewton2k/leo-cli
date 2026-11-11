@@ -382,6 +382,7 @@ impl CodexThread {
                         self.model = Some(model.to_string());
                     }
                 }
+                "error" if params["willRetry"] == true => {}
                 "error" => {
                     return Err(ProviderError::Retryable(format!(
                         "{}: codex failed: {}",
@@ -577,6 +578,42 @@ done
         assert_eq!(approval["result"]["decision"], "decline");
     }
 
+    #[test]
+    fn a_codex_error_it_will_retry_does_not_end_the_turn() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = fake(dir.path());
+        let completed = r#"      printf '%s\n' '{"jsonrpc":"2.0","method":"turn/completed""#;
+        let retrying = r#"      printf '%s\n' '{"jsonrpc":"2.0","method":"error","params":{"error":{"message":"Reconnecting... 1/5"},"willRetry":true}}'"#;
+        let body = std::fs::read_to_string(&bin).unwrap();
+        assert!(body.contains(completed));
+        std::fs::write(
+            &bin,
+            body.replacen(completed, &format!("{retrying}\n{completed}"), 1),
+        )
+        .unwrap();
+        let cfg = ProviderConfig {
+            kind: Some(ProviderKind::Codex),
+            bin: Some(bin),
+            ..ProviderConfig::default()
+        };
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        let mut thread = CodexThread::start(&agent, "x", &[]).unwrap();
+        let (answer, _) = thread
+            .say(
+                "what is a heap?",
+                CodexTurn {
+                    stopped: &|| false,
+                    tools_done: &|| false,
+                    most_calls: 12,
+                    sink: &mut |_| {},
+                    restart: &mut || {},
+                    call: &mut |_, _| String::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(answer, "Heaps keep the minimum on top.");
+    }
+
     fn fallback_agent(dir: &std::path::Path, listing: &str) -> AgentCli {
         let bin = fake(dir);
         let body = std::fs::read_to_string(&bin)
@@ -613,6 +650,7 @@ done
         assert!(lines.contains(&"mcp_servers.srv.enabled=false"));
         assert!(!lines.contains(&"mcp_servers.off.enabled=false"));
         assert!(lines.contains(&"notify=[]"));
+        assert!(lines.contains(&"web_search=\"cached\""));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use super::catalog::{catalog, Catalog, DEFAULT_MODEL};
 
 const MOST_DOWNLOADS: usize = 2;
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(3600);
+const PARTIAL: &str = ".leo-download-";
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 const CANCEL_POLL: Duration = Duration::from_millis(50);
 
@@ -156,15 +156,18 @@ impl Library {
             .context(
             "The speech model choice could not be read. Choose a model again in Settings.",
         )?;
-        if selected.id.is_empty() {
+        if selected.id.is_empty()
+            || self
+                .catalog
+                .get(&selected.id)
+                .is_ok_and(|model| model.language(&selected.language))
+        {
             return Ok(selected);
         }
-        let model = self.catalog.get(&selected.id)?;
-        ensure!(
-            model.language(&selected.language),
-            "Choose a language supported by this speech model."
-        );
-        Ok(selected)
+        Ok(Selection {
+            id: String::new(),
+            language: "auto".into(),
+        })
     }
 
     fn verify(&self, id: &str) -> Result<PathBuf> {
@@ -372,10 +375,14 @@ impl Library {
                 !jobs.get(id).is_some_and(|j| j.state == "downloading"),
                 "This model is already downloading."
             );
+            let downloading = jobs.values().filter(|j| j.state == "downloading").count();
             ensure!(
-                jobs.values().filter(|j| j.state == "downloading").count() < MOST_DOWNLOADS,
+                downloading < MOST_DOWNLOADS,
                 "Let a model download finish or cancel one first."
             );
+            if downloading == 0 {
+                self.drop_partials();
+            }
             jobs.insert(
                 id.into(),
                 Download {
@@ -433,15 +440,17 @@ impl Library {
         let model = self.catalog.get(id)?;
         self.folders()?;
         let target = self.model_path(id)?;
-        let mut tmp = tempfile::NamedTempFile::new_in(&self.models)?;
+        let mut tmp = tempfile::Builder::new()
+            .prefix(PARTIAL)
+            .tempfile_in(&self.models)?;
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
             .block_on(async {
             #[cfg(not(test))]
-            let client = crate::web::model_client(DOWNLOAD_TIMEOUT)?;
+            let client = crate::web::model_client()?;
             #[cfg(test)]
-            let client = reqwest::Client::builder().no_proxy().timeout(DOWNLOAD_TIMEOUT).build()?;
+            let client = reqwest::Client::builder().no_proxy().build()?;
             let transfer = async {
                 let mut response = client.get(url).send().await.context("The model download could not start. Check your connection and try again.")?
                     .error_for_status().context("The model download failed. Check your connection and try again.")?;
@@ -476,10 +485,33 @@ impl Library {
             "The model download location changed. Try again."
         );
         tmp.persist(&target).map_err(|e| e.error)?;
-        self.change_verified(|verified| {
-            verified.remove(&target);
+        let stamp = std::fs::symlink_metadata(&target).and_then(|m| Ok((m.len(), m.modified()?)));
+        self.change_verified(|verified| match stamp {
+            Ok(stamp) => {
+                verified.insert(target.clone(), stamp);
+            }
+            Err(_) => {
+                verified.remove(&target);
+            }
         });
         Ok(())
+    }
+
+    pub(crate) fn drop_partials(&self) {
+        if safe_root(&self.models).is_err() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(&self.models) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(PARTIAL)
+                && entry.file_type().is_ok_and(|t| t.is_file())
+                && crate::providers::older_than(&entry, Duration::from_secs(600))
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     fn extra_name(name: &str) -> bool {

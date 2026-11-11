@@ -13,7 +13,8 @@ pub fn scan(notes: &Path) -> Result<Value> {
     let sections = doctor::scan(&config, secrets.as_ref(), notes, &path);
     let sign_in=config.chat.chain.first().and_then(|name|config.provider(name)).and_then(|provider| {
         let agent=leo_services::ai::provider::agent_cli::Agent::of(provider)?;
-        let signed_in=leo_services::ai::provider::agent_cli::signed_in(agent,provider.bin.as_deref().unwrap_or(agent.program()));
+        let cli=leo_services::ai::provider::agent_cli::AgentCli::new(agent.program().into(),agent,provider);
+        let signed_in=leo_services::ai::provider::agent_cli::signed_in(agent,cli.bin());
         Some(json!({"title":"Writing AI sign-in","checks":[{"name":format!("{} sign-in",agent.program()),"state":match signed_in { Some(true)=>"ready",Some(false)=>"missing",None=>"warn" },"fix":format!("If sign-in is needed, {}. You can also use Test in Writing AI.",agent.sign_in()),"section":"writing"}]}))
     });
     let mut sections:Vec<Value>=sections.into_iter().map(|section| {

@@ -103,6 +103,7 @@
           mark(s, 'Saving…');
           try {
             s.note = await send(s, edit);
+            if (s.discarded) return;
             if (s.revision !== revision || s.dirty) {
               s.dirty = true;
               persist(s);
@@ -112,6 +113,7 @@
               mark(s, 'Saved');
             }
           } catch (error) {
+            if (s.discarded) return;
             s.dirty = true;
             persist(s);
             mark(s, s.persisted ? 'Not saved to leo · draft kept on this browser' : 'Not saved · keep this page open');
@@ -142,6 +144,7 @@
           if (s.timer) cancel(s.timer);
           s.timer = null;
           s.dirty = false;
+          s.discarded = true;
           remove(s);
         }
         return all.length;

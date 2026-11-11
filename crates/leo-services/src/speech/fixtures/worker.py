@@ -8,6 +8,7 @@ import time
 cpu = '--cpu-only' in sys.argv
 mode = ''
 folder = None
+feeds = 0
 
 def read_exact(length):
     out = b''
@@ -32,6 +33,7 @@ try:
         elif 'Load' in request:
             path = pathlib.Path(request['Load']['path'])
             mode = path.name
+            feeds = 0
             folder = path.parent
             with (folder / 'pids').open('a') as file:
                 file.write(str(os.getpid()) + '\n')
@@ -51,6 +53,14 @@ try:
                 sys.stdout.buffer.flush()
                 os._exit(8)
             send({'Transcript': {'text': 'local words'}})
+        elif request == 'Feed':
+            feeds += 1
+            if mode == 'feedfail' and feeds == 1:
+                send({'Error': 'feed failed'})
+            else:
+                send({'Fed': {'update': {}, 'text': None}})
+        elif 'Finalize' in request:
+            send({'Finalized': {'update': {}, 'text': {'committed': 'local words'}, 'language': None}})
         else:
             send('Ok')
 except EOFError:

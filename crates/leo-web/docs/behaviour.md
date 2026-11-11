@@ -518,6 +518,9 @@ The heading disclosure opens on mouse hover without taking focus, stays open acr
   `proposal`, `ask`, `quiz`, `plan`, `spent`, `reset`, `done`/`error`). The
   user prompt is `<selected_passage>` (when given), `<documents>`, notes,
   the chat, then `<today>` (date, time and IANA zone, `chat::today_line`).
+  Notes and documents sit in tags that end in a random per-run suffix
+  (`chat::fence`), so their text cannot forge a closing tag, and tool results
+  cannot close their own `<tool_result>` tag either.
 
 - Warm sessions (`warm.rs`): up to three recent conversations, sharing a
   480,000-character context ceiling. Switching chats keeps eligible sessions;

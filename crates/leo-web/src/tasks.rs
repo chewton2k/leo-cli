@@ -411,13 +411,20 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
         format!("SUMMARY:{}", escape(&task.title)),
     ];
     if let Some(date) = task.date {
-        lines.extend(when_lines(date, task.time, task.end, "DTSTART", "DTEND"));
+        lines.extend(when_lines(
+            date,
+            task.time,
+            task.end,
+            "DTSTART",
+            "DTEND",
+            rrule_of(&task.repeat).is_none(),
+        ));
     }
     let mut moves = Vec::new();
     if let Some(rule) = rrule_of(&task.repeat) {
         lines.push(rule);
         for (on, slot) in &task.moved {
-            let [was, _] = when_lines(*on, task.time, task.end, "", "");
+            let [was, _] = when_lines(*on, task.time, task.end, "", "", false);
             lines.push(format!("EXDATE{was}"));
             moves.push("BEGIN:VEVENT".to_string());
             moves.push(format!("UID:{}@leo", task.id));
@@ -425,7 +432,7 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
             moves.push(format!("RECURRENCE-ID{was}"));
             moves.push(format!("SUMMARY:{}", escape(&task.title)));
             moves.extend(when_lines(
-                slot.date, slot.time, slot.end, "DTSTART", "DTEND",
+                slot.date, slot.time, slot.end, "DTSTART", "DTEND", false,
             ));
             moves.push("END:VEVENT".into());
         }
@@ -456,12 +463,16 @@ fn when_lines(
     end: Option<NaiveTime>,
     start_name: &str,
     end_name: &str,
+    lead_in: bool,
 ) -> [String; 2] {
     match time {
         Some(time) => {
             let at = date.and_time(time);
-            let start = end.map_or(at - chrono::Duration::minutes(30), |_| at);
-            let stop = end.map_or(at, |e| date.and_time(e));
+            let half_hour = chrono::Duration::minutes(30);
+            let start = end.map_or(if lead_in { at - half_hour } else { at }, |_| at);
+            let stop = end.map_or(if lead_in { at } else { at + half_hour }, |e| {
+                date.and_time(e)
+            });
             [
                 format!("{start_name}:{}", start.format("%Y%m%dT%H%M%S")),
                 format!("{end_name}:{}", stop.format("%Y%m%dT%H%M%S")),
@@ -502,7 +513,7 @@ impl jsonline::Line for Task {
 }
 
 fn read_all(chats: &Path) -> Vec<Task> {
-    let mut out: Vec<Task> = jsonline::read_all(chats, Some(MOST_TASKS * 2));
+    let mut out: Vec<Task> = jsonline::read_all(chats, None);
     out.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
     out
 }
@@ -543,25 +554,9 @@ pub fn forget_deleted(chats: &Path, days: Option<u32>, now: DateTime<Utc>) -> us
     let Some(days) = days else {
         return 0;
     };
-    let before = now - chrono::Duration::days(i64::from(days));
-    let Ok(entries) =
-        jsonline::checked_dir(chats, "tasks").and_then(|dir| Ok(std::fs::read_dir(dir)?))
-    else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .take(MOST_TASKS * 2)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            jsonline::read_file::<Task>(chats, path).is_some_and(|task| {
-                task.deleted
-                    && task.updated_at < before
-                    && path.file_stem().and_then(|stem| stem.to_str()) == Some(task.id.as_str())
-            })
-        })
-        .filter(|path| std::fs::remove_file(path).is_ok())
-        .count()
+    jsonline::forget_deleted::<Task>(chats, now - chrono::Duration::days(i64::from(days)), |t| {
+        t.deleted
+    })
 }
 
 pub fn metas(chats: &Path) -> Vec<Meta> {
@@ -733,6 +728,30 @@ mod tests {
             moved: BTreeMap::new(),
             deleted: false,
         }
+    }
+
+    #[test]
+    fn live_tasks_are_listed_however_many_tombstones_sit_beside_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let now = Utc::now();
+        let folder = dir.path().join("notes/.leo/tasks");
+        std::fs::create_dir_all(&folder).unwrap();
+        for n in 0..MOST_TASKS * 3 {
+            let id = format!("gone-{n:06}");
+            let mut gone = plain(&id, "Gone", now);
+            gone.deleted = true;
+            std::fs::write(
+                folder.join(format!("{id}.json")),
+                serde_json::to_string(&gone).unwrap(),
+            )
+            .unwrap();
+        }
+        for n in 0..100 {
+            put(&chats, &plain(&format!("live-{n:06}"), "Live", now)).unwrap();
+        }
+        assert_eq!(load_all(&chats).len(), 100);
+        assert_eq!(count(&chats), 100);
     }
 
     #[test]
@@ -923,6 +942,39 @@ mod tests {
             "{ics}"
         );
         assert_eq!(ics.matches("BEGIN:VEVENT").count(), 2);
+    }
+
+    #[test]
+    fn a_midnight_deadline_that_repeats_stays_on_its_weekday_and_a_single_one_keeps_its_lead_in() {
+        let monday = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let mut task = plain("task-0014", "Problem set due", Utc::now());
+        task.repeat = vec![0];
+        task.date = Some(monday);
+        task.time = NaiveTime::from_hms_opt(0, 0, 0);
+        let next = monday + chrono::Duration::weeks(1);
+        move_occurrence(
+            &mut task,
+            next,
+            Slot {
+                date: next + chrono::Duration::days(1),
+                time: NaiveTime::from_hms_opt(0, 0, 0),
+                end: None,
+            },
+        );
+        let ics = ics_of(&standalone(&task, None), Utc::now());
+        assert!(
+            ics.contains("DTSTART:20261102T000000\r\nDTEND:20261102T003000\r\n"),
+            "{ics}"
+        );
+        assert!(ics.contains("EXDATE:20261109T000000\r\n"), "{ics}");
+        assert!(ics.contains("RECURRENCE-ID:20261109T000000\r\n"), "{ics}");
+        task.repeat.clear();
+        task.moved.clear();
+        let once = ics_of(&standalone(&task, None), Utc::now());
+        assert!(
+            once.contains("DTSTART:20261101T233000\r\nDTEND:20261102T000000"),
+            "{once}"
+        );
     }
 }
 

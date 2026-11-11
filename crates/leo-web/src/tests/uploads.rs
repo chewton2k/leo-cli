@@ -734,3 +734,128 @@ fn files_dropped_on_a_note_are_added_to_it_under_their_own_heading() {
         ["sheet (2).pdf", "sheet.pdf", "slides (2).pdf", "slides.pdf"]
     );
 }
+
+#[test]
+fn a_long_cjk_file_name_stays_within_200_bytes_and_keeps_its_extension() {
+    let name = format!("{}.pdf", "论".repeat(120));
+    let safe = safe_file_name(&name);
+    assert!(safe.len() <= 200, "{}", safe.len());
+    assert!(safe.ends_with(".pdf"), "{safe}");
+    assert!(safe.chars().count() > 50);
+    assert_eq!(safe_file_name(&safe), safe);
+}
+
+#[test]
+fn a_long_file_name_keeps_its_extension_and_a_numbered_copy_still_fits() {
+    let long = format!(
+        "Smith et al. - 2023 - {}.pdf",
+        "a very long paper title ".repeat(8)
+    );
+    assert!(long.chars().count() > 120);
+    let safe = safe_file_name(&long);
+    assert!(safe.ends_with(".pdf"), "{safe}");
+    assert_eq!(safe.chars().count(), 120);
+    assert_eq!(safe_file_name(&safe), safe);
+    let legacy = "x".repeat(116) + ".pdf";
+    assert_eq!(safe_file_name(&legacy), legacy);
+    let unrelated = format!("{}.{}", "y".repeat(60), "z".repeat(80));
+    assert_eq!(safe_file_name(&unrelated).chars().count(), 120);
+}
+
+#[test]
+fn same_named_originals_never_overwrite_each_other_or_overrun_the_name_limit() {
+    use base64::Engine;
+    let (mut state, _d, _ids) = state_with(&[]);
+    state.importer = Some(Arc::new(
+        |files: Vec<UploadFile>, _: &str, _: &mut dyn FnMut(&str, usize, usize)| {
+            assert_eq!(files.len(), 2);
+            Ok(Made {
+                title: "Slides".into(),
+                body: "Body".into(),
+                figures: vec![],
+            })
+        },
+    ));
+    let file = |name: &str, text: &str| ImportFileBody {
+        name: name.into(),
+        mime: "application/pdf".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(text.as_bytes()),
+    };
+    let import = |state: &AppState, body: ImportBody| {
+        let response = run(start_import(State(state.clone()), Json(body)));
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+        let id = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let job = wait_for(state, &id);
+        assert_eq!(job.state, "done", "{job:?}");
+        assert_eq!(job.error, None);
+        job
+    };
+    let job = import(
+        &state,
+        ImportBody {
+            directory: String::new(),
+            title: None,
+            wants: String::new(),
+            files: vec![file("slides.pdf", "first"), file("slides.pdf", "second")],
+            each: false,
+            into: None,
+        },
+    );
+    let note = job.note.unwrap();
+    let names = |state: &AppState, note: &str| -> Vec<String> {
+        json_of(run(list_originals(State(state.clone()), Path(note.into()))))
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(names(&state, &note), ["slides (2).pdf", "slides.pdf"]);
+    assert!(state
+        .fresh()
+        .find_note(&note)
+        .unwrap()
+        .body
+        .contains("*From slides.pdf, slides (2).pdf, uploaded"));
+    let read = |name: &str| {
+        let response = run(get_original(
+            State(state.clone()),
+            Path((note.clone(), name.to_string())),
+            Query(OriginalView::default()),
+        ));
+        assert_eq!(response.status(), StatusCode::OK, "{name}");
+        run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap()
+    };
+    assert_eq!(&read("slides.pdf")[..], b"first");
+    assert_eq!(&read("slides (2).pdf")[..], b"second");
+
+    let wide = format!("{}.pdf", "w".repeat(116));
+    let target = state
+        .fresh()
+        .create_note("Target", "", vec![], "")
+        .unwrap()
+        .id
+        .clone();
+    for _ in 0..2 {
+        import(
+            &state,
+            ImportBody {
+                directory: String::new(),
+                title: None,
+                wants: String::new(),
+                files: vec![file(&wide, "one"), file("other.pdf", "two")],
+                each: false,
+                into: Some(target.clone()),
+            },
+        );
+    }
+    let kept = names(&state, &target);
+    assert_eq!(kept.len(), 4, "{kept:?}");
+    assert!(kept
+        .iter()
+        .all(|n| n.chars().count() <= 120 && n.ends_with(".pdf")));
+}

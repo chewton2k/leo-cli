@@ -349,3 +349,80 @@ fn catalog_ratings_use_language_accuracy_and_the_reference_geometric_mean() {
     );
     assert_eq!(c.accuracy_for("negative", "en"), None);
 }
+
+#[test]
+fn downloads_write_a_recognisable_partial_that_a_later_download_clears() {
+    let (dir, l) = fixture();
+    let models = dir.path().join("models");
+    let (url, t) = model_server(b"model");
+    l.fetch(
+        "parakeet-tdt-0.6b-v3",
+        &url,
+        &AtomicBool::new(false),
+        &|_, _| {
+            assert!(std::fs::read_dir(&models).unwrap().flatten().any(|e| e
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".leo-download-")));
+        },
+    )
+    .unwrap();
+    t.join().unwrap();
+    std::fs::write(models.join(".leo-download-stale"), b"part").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(models.join(".leo-download-stale"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+    std::fs::write(models.join(".leo-download-running"), b"part").unwrap();
+    std::fs::write(models.join("older.gguf"), b"old").unwrap();
+    l.drop_partials();
+    assert!(!models.join(".leo-download-stale").exists());
+    assert!(models.join(".leo-download-running").exists());
+    assert!(models.join("older.gguf").exists());
+    assert!(l.model_path("parakeet-tdt-0.6b-v3").unwrap().exists());
+}
+
+#[test]
+fn a_finished_download_is_not_hashed_again() {
+    let (_dir, l) = fixture();
+    let (url, t) = model_server(b"model");
+    l.fetch(
+        "parakeet-tdt-0.6b-v3",
+        &url,
+        &AtomicBool::new(false),
+        &|_, _| {},
+    )
+    .unwrap();
+    t.join().unwrap();
+    let path = l.model_path("parakeet-tdt-0.6b-v3").unwrap();
+    let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::fs::write(&path, b"wrong").unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(stamp)
+        .unwrap();
+    l.use_model("parakeet-tdt-0.6b-v3", "en").unwrap();
+}
+
+#[test]
+fn a_choice_the_catalog_no_longer_offers_still_opens_speech_models() {
+    let (dir, l) = fixture();
+    let config = dir.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    for stored in [
+        r#"{"id":"retired-model","language":"en"}"#,
+        r#"{"id":"parakeet-tdt-0.6b-v3","language":"xx"}"#,
+    ] {
+        std::fs::write(config.join("speech-model.json"), stored).unwrap();
+        assert_eq!(l.view().unwrap()["selected"]["id"], "");
+        assert!(l
+            .selected()
+            .unwrap_err()
+            .to_string()
+            .contains("Choose and download"));
+    }
+}

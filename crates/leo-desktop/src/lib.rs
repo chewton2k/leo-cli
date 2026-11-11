@@ -185,7 +185,7 @@ pub fn run() {
             quit::menu(app.handle())?;
             tray::build(app.handle())?;
             open_at_login_once(app.handle(), config.as_deref());
-            app_settings.apply_startup()?;
+            app_settings.apply_startup();
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -205,13 +205,18 @@ pub fn run() {
         RunEvent::Reopen { .. } => show(app),
         RunEvent::ExitRequested { api, code, .. } => {
             #[cfg(target_os = "macos")]
-            if !quitting.allows(code, std::time::Instant::now()) {
-                api.prevent_exit();
-                show(app);
-                if let Some(window) = app.get_webview_window(MAIN) {
-                    let _ = window.eval("window.leoFromApp?.('quit', '')");
+            {
+                let leaving = app
+                    .try_state::<std::sync::Arc<updates::Updates>>()
+                    .is_some_and(|updates| updates.leaving());
+                if !quitting.allows(code, leaving, std::time::Instant::now()) {
+                    api.prevent_exit();
+                    show(app);
+                    if let Some(window) = app.get_webview_window(MAIN) {
+                        let _ = window.eval("window.leoFromApp?.('quit', '')");
+                    }
+                    return;
                 }
-                return;
             }
             #[cfg(not(target_os = "macos"))]
             let _ = code;

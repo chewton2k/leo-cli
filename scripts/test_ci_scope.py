@@ -57,7 +57,24 @@ class ScopeTests(unittest.TestCase):
         self.assert_scope(self.scope('guide.md', 'docs/design.txt', 'LICENSE'))
 
     def test_page_changes_run_node_and_both_browser_suites(self):
-        self.assert_scope(self.scope('crates/leo-web/src/web/app/notes.js'), 'node', 'browser')
+        self.assert_scope(self.scope('crates/leo-web/src/web/vendor/mermaid.min.js'), 'node', 'browser')
+
+    def test_page_scripts_scanned_by_rust_tests_also_run_rust(self):
+        for path in ('crates/leo-web/src/web/app/notes.js', 'crates/leo-web/src/web/chat.js'):
+            with self.subTest(path=path):
+                self.assert_scope(self.scope(path), 'rust', 'node', 'browser')
+                self.base = self.git('rev-parse', 'HEAD').strip()
+
+    def test_readme_and_contributing_are_read_by_the_wording_test(self):
+        for path in ('README.md', 'CONTRIBUTING.md'):
+            with self.subTest(path=path):
+                (self.repo / path).write_text('edited\n')
+                self.commit()
+                self.assert_scope(self.scope(), 'rust')
+                self.base = self.git('rev-parse', 'HEAD').strip()
+
+    def test_browser_test_server_runs_the_node_test_that_guards_it(self):
+        self.assert_scope(self.scope('crates/leo-web/tests/browser/server.js'), 'node', 'browser')
 
     def test_page_parts_compiled_into_rust_also_run_rust(self):
         for path in ('crates/leo-web/src/web/styles/09-kanban.css', 'crates/leo-web/src/web/page-head.html', 'crates/leo-web/src/web/page-tail.html'):

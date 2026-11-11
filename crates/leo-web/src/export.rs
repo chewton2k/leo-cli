@@ -31,6 +31,7 @@ uploads/  the files you uploaded, in a folder per note (named by the note's id,
 chats/    your conversations with Felix, one JSON file each.
 tasks.json the tasks you added on the Calendar page. Tasks from notes are
           in the notes themselves.
+boards.json your boards and their cards.
 margin.json Felix's margin notes and their replies, included with chats.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
@@ -62,6 +63,7 @@ struct Budget {
     limits: Limits,
     entries: usize,
     bytes: u64,
+    skipped: usize,
 }
 
 impl Budget {
@@ -70,6 +72,7 @@ impl Budget {
             limits,
             entries: 0,
             bytes: 0,
+            skipped: 0,
         }
     }
 
@@ -158,10 +161,10 @@ fn add_dir<W: Write + Seek>(
         if skip_hidden && name.starts_with('.') {
             continue;
         }
-        ensure!(
-            !name.contains(['/', '\\']) && !name.chars().any(char::is_control),
-            "An export filename contains unsupported characters; rename it and try again"
-        );
+        if name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+            budget.skipped += 1;
+            continue;
+        }
         let kind = entry
             .file_type()
             .context("An export item could not be checked; check its permissions and try again")?;
@@ -434,6 +437,19 @@ fn write_zip_with_limits<W: Write + Seek>(
             }
         }
     }
+    if budget.skipped > 0 {
+        let note = format!(
+            "{} file or folder name(s) with control characters could not be exported and were skipped.\n",
+            budget.skipped
+        );
+        budget.entry()?;
+        zip.start_file("leo/SKIPPED.txt", SimpleFileOptions::default())?;
+        BudgetWriter {
+            out: &mut zip,
+            budget: &mut budget,
+        }
+        .write_all(note.as_bytes())?;
+    }
     zip.finish()?;
     Ok(packed)
 }
@@ -523,6 +539,18 @@ mod tests {
         assert_eq!(
             folder_with_limits(bytes.path(), Limits { bytes: 4, ..LIMITS }).unwrap(),
             Packed { files: 2, bytes: 4 }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_with_a_control_character_in_its_name_is_skipped_not_fatal() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("Icon\r"), "").unwrap();
+        std::fs::write(folder.path().join("Notes.md"), "ab").unwrap();
+        assert_eq!(
+            folder_with_limits(folder.path(), LIMITS).unwrap(),
+            Packed { files: 1, bytes: 2 }
         );
     }
 
@@ -629,6 +657,27 @@ mod tests {
             "files"
         )
         .is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn names_skipped_for_control_characters_are_counted_in_the_export() {
+        let tmp = tempfile::tempdir().unwrap();
+        let notes = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::write(notes.join("Fine.md"), "ok").unwrap();
+        std::fs::write(notes.join("Bad\u{1}.md"), "no").unwrap();
+        let mut out = std::io::Cursor::new(Vec::new());
+        write_zip(
+            &mut out,
+            &notes,
+            &tmp.path().join("chats"),
+            Parts::default(),
+        )
+        .unwrap();
+        let listed = names(out.into_inner());
+        assert!(listed.iter().any(|n| n == "leo/SKIPPED.txt"), "{listed:?}");
+        assert!(!listed.iter().any(|n| n.contains("Bad")), "{listed:?}");
     }
 
     #[test]

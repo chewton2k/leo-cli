@@ -60,9 +60,8 @@ pub trait SecretStore {
 
     /// Whether a key is stored, without needing its value.
     ///
-    /// Separate from `get` because on a real keychain, reading a value can cost
-    /// the user a permission dialog while merely knowing one exists does not.
-    /// Anything that only renders status should call this.
+    /// Separate from `get` so a store can answer without handing out the
+    /// value. Anything that only renders status should call this.
     fn has(&self, account: &str) -> bool {
         matches!(self.get(account), Ok(Some(_)))
     }
@@ -202,20 +201,70 @@ fn backend_is_absent(e: &anyhow::Error) -> bool {
 /// provider name -> key. `BTreeMap` so the stored JSON is stable and diffable.
 type Bundle = std::collections::BTreeMap<String, String>;
 
-/// The bundle as read this process. `None` means "not read yet"; `Some(empty)`
-/// means read and there is nothing stored.
-static CACHE: Mutex<Option<Bundle>> = Mutex::new(None);
+/// The bundle as read this process. `Unread` means "not read yet"; `Failed`
+/// means the read failed, so nothing reads it again until a write needs it.
+enum Read {
+    Unread,
+    Ok(Bundle),
+    Failed,
+}
 
-/// Reset the cache. Used by tests, and after a write.
-fn cache_put(bundle: Bundle) {
-    if let Ok(mut guard) = CACHE.lock() {
-        *guard = Some(bundle);
+struct Bundles(Mutex<Read>);
+
+impl Bundles {
+    const fn new() -> Self {
+        Bundles(Mutex::new(Read::Unread))
+    }
+
+    fn current(&self, load: &dyn Fn() -> Result<Bundle>) -> Option<Bundle> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match &*state {
+            Read::Ok(bundle) => return Some(bundle.clone()),
+            Read::Failed => return None,
+            Read::Unread => {}
+        }
+        match load() {
+            Ok(bundle) => {
+                *state = Read::Ok(bundle.clone());
+                Some(bundle)
+            }
+            Err(e) => {
+                leo_core::diag::warn(format!("could not read stored credentials: {e}"));
+                *state = Read::Failed;
+                None
+            }
+        }
+    }
+
+    fn change(
+        &self,
+        load: &dyn Fn() -> Result<Bundle>,
+        write: &dyn Fn(&Bundle) -> Result<()>,
+        edit: impl FnOnce(&mut Bundle) -> bool,
+    ) -> Result<()> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut bundle = match &*state {
+            Read::Ok(bundle) => bundle.clone(),
+            Read::Unread | Read::Failed => {
+                let bundle = load()?;
+                *state = Read::Ok(bundle.clone());
+                bundle
+            }
+        };
+        if edit(&mut bundle) {
+            write(&bundle)?;
+            *state = Read::Ok(bundle);
+        }
+        Ok(())
     }
 }
 
-fn cache_get() -> Option<Bundle> {
-    CACHE.lock().ok().and_then(|guard| guard.clone())
+fn parse_bundle(json: &str) -> Result<Bundle> {
+    serde_json::from_str(json)
+        .map_err(|e| anyhow::anyhow!("stored credentials could not be read ({e})"))
 }
+
+static KEYCHAIN: Bundles = Bundles::new();
 
 pub fn forget_keychain(providers: &[String]) -> usize {
     std::iter::once(BUNDLE_ACCOUNT.to_string())
@@ -241,46 +290,32 @@ impl KeyringStore {
         keyring::Entry::new(SERVICE, account).map_err(Into::into)
     }
 
-    /// Read the bundle, at most once per process.
-    fn bundle(&self) -> Bundle {
-        if let Some(cached) = cache_get() {
-            return cached;
-        }
-
-        let bundle = match Self::entry(BUNDLE_ACCOUNT).and_then(|e| match e.get_password() {
+    fn load() -> Result<Bundle> {
+        match Self::entry(BUNDLE_ACCOUNT).and_then(|e| match e.get_password() {
             Ok(json) => Ok(Some(json)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.into()),
         }) {
-            Ok(Some(json)) => serde_json::from_str::<Bundle>(&json).unwrap_or_else(|e| {
-                // Refuse to guess at a corrupt bundle: report it and behave as
-                // though nothing is stored, rather than deleting anything.
-                leo_core::diag::warn(format!(
-                    "stored credentials could not be read ({e}); treating them as absent"
-                ));
-                Bundle::new()
-            }),
-            Ok(None) => Bundle::new(),
+            Ok(Some(json)) => parse_bundle(&json),
+            Ok(None) => Ok(Bundle::new()),
             // A backend that is absent rather than broken is not a problem worth
             // reporting: a machine with no keychain simply has no stored keys,
             // and leo works without any. Saying so would make the first command
             // a new user runs look like a failure.
-            Err(e) if backend_is_absent(&e) => Bundle::new(),
-            Err(e) => {
-                leo_core::diag::warn(format!("could not read stored credentials: {e}"));
-                Bundle::new()
-            }
-        };
-
-        cache_put(bundle.clone());
-        bundle
+            Err(e) if backend_is_absent(&e) => Ok(Bundle::new()),
+            Err(e) => Err(e),
+        }
     }
 
-    fn write_bundle(&self, bundle: &Bundle) -> Result<()> {
+    fn write_bundle(bundle: &Bundle) -> Result<()> {
         let json = serde_json::to_string(bundle)?;
         Self::entry(BUNDLE_ACCOUNT)?.set_password(&json)?;
-        cache_put(bundle.clone());
         Ok(())
+    }
+
+    /// Read the bundle, at most once per process.
+    fn bundle(&self) -> Option<Bundle> {
+        KEYCHAIN.current(&Self::load)
     }
 }
 
@@ -288,30 +323,29 @@ impl SecretStore for KeyringStore {
     fn get(&self, account: &str) -> Result<Option<Secret>> {
         Ok(self
             .bundle()
-            .get(account)
-            .map(|found| Secret(Zeroizing::new(found.clone()))))
+            .and_then(|bundle| bundle.get(account).cloned())
+            .map(|found| Secret(Zeroizing::new(found))))
     }
 
-    /// Whether a key is stored, without reading its value.
-    ///
-    /// The provider screen calls this for every provider it lists, and on a
-    /// keychain a *read* is what can cost a permission dialog.
+    /// Whether a key is stored. The keychain cannot say without reading the
+    /// one bundle item, so the first call can cost the permission dialog;
+    /// later calls, and calls after a failed read, use what was read.
     fn has(&self, account: &str) -> bool {
-        self.bundle().contains_key(account)
+        self.bundle()
+            .is_some_and(|bundle| bundle.contains_key(account))
     }
 
     fn set(&self, account: &str, secret: &str) -> Result<()> {
-        let mut bundle = self.bundle();
-        bundle.insert(account.to_string(), secret.to_string());
-        self.write_bundle(&bundle)
+        KEYCHAIN.change(&Self::load, &Self::write_bundle, |bundle| {
+            bundle.insert(account.to_string(), secret.to_string());
+            true
+        })
     }
 
     fn delete(&self, account: &str) -> Result<()> {
-        let mut bundle = self.bundle();
-        let removed = bundle.remove(account).is_some();
-        if removed {
-            self.write_bundle(&bundle)?;
-        }
+        KEYCHAIN.change(&Self::load, &Self::write_bundle, |bundle| {
+            bundle.remove(account).is_some()
+        })?;
         // Also clear anything an older version left behind, so a stale key
         // cannot come back through the legacy path.
         let _ = Self::entry(account).map(|e| e.delete_credential());
@@ -321,13 +355,7 @@ impl SecretStore for KeyringStore {
     fn available(&self) -> bool {
         // Reading the bundle is the probe: it is cached, so asking costs
         // nothing after the first call, and it fails soft on a dead backend.
-        match Self::entry(BUNDLE_ACCOUNT) {
-            Ok(entry) => !matches!(
-                entry.get_password(),
-                Err(keyring::Error::PlatformFailure(_)) | Err(keyring::Error::NoStorageAccess(_))
-            ),
-            Err(_) => false,
-        }
+        self.bundle().is_some()
     }
 }
 
@@ -478,32 +506,107 @@ mod tests {
         assert_eq!(BUNDLE_ACCOUNT, "credentials");
     }
 
-    #[test]
-    fn the_bundle_cache_is_read_once_and_updated_by_writes() {
-        let mut bundle = Bundle::new();
-        bundle.insert("groq".to_string(), "key".to_string());
-        cache_put(bundle.clone());
-
-        assert_eq!(cache_get().unwrap()["groq"], "key");
-
-        // What `set` does: mutate and re-cache, so nothing re-reads the item.
-        bundle.insert("hf".to_string(), "key-2".to_string());
-        cache_put(bundle.clone());
-        assert_eq!(cache_get().unwrap().len(), 2);
-
-        // What `delete` does.
-        bundle.remove("groq");
-        cache_put(bundle);
-        assert!(!cache_get().unwrap().contains_key("groq"));
+    struct FakeKeychain {
+        item: Mutex<Bundle>,
+        failing: std::sync::atomic::AtomicBool,
+        reads: std::sync::atomic::AtomicUsize,
+        writes: std::sync::atomic::AtomicUsize,
     }
 
-    /// A corrupt bundle must not be silently discarded or crash the app.
+    impl FakeKeychain {
+        fn holding(keys: &[(&str, &str)]) -> Self {
+            FakeKeychain {
+                item: Mutex::new(
+                    keys.iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                ),
+                failing: false.into(),
+                reads: 0.into(),
+                writes: 0.into(),
+            }
+        }
+
+        fn load(&self) -> Result<Bundle> {
+            use std::sync::atomic::Ordering;
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.failing.load(Ordering::SeqCst) {
+                anyhow::bail!("Platform failure: authorization denied by the user");
+            }
+            let read = self.item.lock().unwrap().clone();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            Ok(read)
+        }
+
+        fn write(&self, bundle: &Bundle) -> Result<()> {
+            self.writes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.item.lock().unwrap() = bundle.clone();
+            Ok(())
+        }
+    }
+
     #[test]
-    fn an_unreadable_bundle_is_treated_as_empty() {
-        assert!(serde_json::from_str::<Bundle>("not json").is_err());
-        // The store maps that error to an empty bundle rather than panicking;
-        // this asserts the shape it falls back to.
-        assert!(Bundle::new().is_empty());
+    fn a_failed_keychain_read_is_never_written_over_and_is_not_read_again() {
+        use std::sync::atomic::Ordering;
+        let keychain = FakeKeychain::holding(&[("calendar", "c"), ("openrouter", "o")]);
+        keychain.failing.store(true, Ordering::SeqCst);
+        let cache = Bundles::new();
+        let load = || keychain.load();
+        let write = |b: &Bundle| keychain.write(b);
+        for _ in 0..5 {
+            assert!(cache.current(&load).is_none());
+        }
+        assert_eq!(keychain.reads.load(Ordering::SeqCst), 1);
+        let insert = |b: &mut Bundle| {
+            b.insert("feed".into(), "f".into());
+            true
+        };
+        assert!(cache.change(&load, &write, insert).is_err());
+        assert_eq!(keychain.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(keychain.item.lock().unwrap().len(), 2);
+        keychain.failing.store(false, Ordering::SeqCst);
+        cache.change(&load, &write, insert).unwrap();
+        let stored = keychain.item.lock().unwrap().clone();
+        assert_eq!(stored.len(), 3);
+        assert_eq!(cache.current(&load).unwrap(), stored);
+    }
+
+    #[test]
+    fn concurrent_keychain_writes_keep_every_credential() {
+        let keychain = FakeKeychain::holding(&[("k", "v")]);
+        let cache = Bundles::new();
+        std::thread::scope(|scope| {
+            for n in 0..8 {
+                let (keychain, cache) = (&keychain, &cache);
+                scope.spawn(move || {
+                    cache
+                        .change(&|| keychain.load(), &|b| keychain.write(b), |b| {
+                            b.insert(format!("feed-{n}"), "x".into());
+                            true
+                        })
+                        .unwrap();
+                });
+            }
+        });
+        assert_eq!(keychain.item.lock().unwrap().len(), 9);
+    }
+
+    #[test]
+    fn a_corrupt_bundle_is_a_failed_read_that_is_never_written_over() {
+        let keychain = FakeKeychain::holding(&[("openrouter", "o")]);
+        let cache = Bundles::new();
+        let load = || parse_bundle("not json");
+        let write = |b: &Bundle| keychain.write(b);
+        assert!(cache.current(&load).is_none());
+        let insert = |b: &mut Bundle| {
+            b.insert("feed".into(), "f".into());
+            true
+        };
+        assert!(cache.change(&load, &write, insert).is_err());
+        assert!(cache.change(&load, &write, |_| true).is_err());
+        assert_eq!(keychain.writes.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(keychain.item.lock().unwrap().len(), 1);
     }
 
     /// The first command a new user runs must not look like a failure. A machine

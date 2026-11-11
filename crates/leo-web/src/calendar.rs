@@ -43,6 +43,7 @@ type Expansion = (String, Arc<Vec<Event>>);
 pub(crate) struct Calendar {
     busy: Arc<AtomicBool>,
     expanded: Mutex<VecDeque<Expansion>>,
+    settings: Mutex<()>,
 }
 
 #[derive(Debug, Default)]
@@ -290,8 +291,9 @@ fn calendars_json(notes: &Path, linking: &Linking) -> Vec<serde_json::Value> {
 
 fn status(notes: &Path, calendar: &Calendar, busy: bool, now: DateTime<Utc>) -> serde_json::Value {
     let linking: Linking = read(&settings_path(notes));
-    let from = now - Duration::hours(LOOK_BACK_HOURS);
-    let to = now + Duration::days(LOOK_AHEAD_DAYS);
+    let hour = DateTime::from_timestamp(now.timestamp().div_euclid(3600) * 3600, 0).unwrap_or(now);
+    let from = hour - Duration::hours(LOOK_BACK_HOURS);
+    let to = hour + Duration::days(LOOK_AHEAD_DAYS) + Duration::hours(1);
     let events: Vec<Event> = calendar
         .events(notes, from, to)
         .into_iter()
@@ -454,20 +456,29 @@ pub(crate) async fn get(State(state): State<AppState>) -> Response {
         let old = notes.clone();
         let _ = tokio::task::spawn_blocking(move || forget_old_google(&old, access.as_ref())).await;
     }
-    if let (Some(access), true) = (
-        state.calendar_access.clone(),
-        stale(&notes, now, STALE_AFTER_MINUTES),
-    ) {
-        if let Some(busy) = Busy::take(&state.calendar.busy) {
-            let notes = notes.clone();
-            std::thread::spawn(move || {
-                let _busy = busy;
-                refresh(&notes, access.as_ref(), Utc::now());
-            });
+    let access = state.calendar_access.clone();
+    let calendar = Arc::clone(&state.calendar);
+    let shown = tokio::task::spawn_blocking(move || {
+        if let (Some(access), true) = (access, stale(&notes, now, STALE_AFTER_MINUTES)) {
+            if let Some(busy) = Busy::take(&calendar.busy) {
+                let notes = notes.clone();
+                std::thread::spawn(move || {
+                    let _busy = busy;
+                    refresh(&notes, access.as_ref(), Utc::now());
+                });
+            }
         }
+        let busy = calendar.busy.load(Ordering::Acquire);
+        status(&notes, &calendar, busy, now)
+    })
+    .await;
+    match shown {
+        Ok(value) => Json(value).into_response(),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The calendars could not be read.",
+        ),
     }
-    let busy = state.calendar.busy.load(Ordering::Acquire);
-    Json(status(&notes, &state.calendar, busy, now)).into_response()
 }
 
 #[derive(Deserialize)]
@@ -522,10 +533,13 @@ pub(crate) async fn add(State(state): State<AppState>, Json(body): Json<Add>) ->
             },
             added_at: now,
         });
-        linking.offer = read::<Linking>(&settings_path(&notes)).offer;
-        if let Err(e) = leo_core::recording::write_json(&settings_path(&notes), &linking) {
-            let _ = access.delete(&account(&id));
-            return Err(e);
+        {
+            let _saving = shared.settings.lock().unwrap_or_else(|e| e.into_inner());
+            linking.offer = read::<Linking>(&settings_path(&notes)).offer;
+            if let Err(e) = leo_core::recording::write_json(&settings_path(&notes), &linking) {
+                let _ = access.delete(&account(&id));
+                return Err(e);
+            }
         }
         refresh(&notes, access.as_ref(), now);
         Ok(status(&notes, &shared, false, now))
@@ -571,7 +585,11 @@ pub(crate) async fn remove(
             bail!("That calendar is already gone.");
         }
         access.delete(&account(&id))?;
-        leo_core::recording::write_json(&settings_path(&notes), &linking)?;
+        {
+            let _saving = calendar.settings.lock().unwrap_or_else(|e| e.into_inner());
+            linking.offer = read::<Linking>(&settings_path(&notes)).offer;
+            leo_core::recording::write_json(&settings_path(&notes), &linking)?;
+        }
         refresh(&notes, access.as_ref(), Utc::now());
         Ok(status(&notes, &calendar, false, Utc::now()))
     })
@@ -597,10 +615,20 @@ pub(crate) async fn refresh_now(State(state): State<AppState>) -> Response {
         Ok(n) => n,
         Err(code) => return code.into_response(),
     };
-    let Some(busy) = Busy::take(&state.calendar.busy) else {
-        return Json(status(&notes, &state.calendar, true, Utc::now())).into_response();
-    };
     let calendar = Arc::clone(&state.calendar);
+    let Some(busy) = Busy::take(&state.calendar.busy) else {
+        return match tokio::task::spawn_blocking(move || {
+            status(&notes, &calendar, true, Utc::now())
+        })
+        .await
+        {
+            Ok(value) => Json(value).into_response(),
+            Err(_) => error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "The calendars could not be read.",
+            ),
+        };
+    };
     let done = tokio::task::spawn_blocking(move || {
         let _busy = busy;
         refresh(&notes, access.as_ref(), Utc::now());
@@ -629,6 +657,7 @@ pub(crate) async fn change(State(state): State<AppState>, Json(body): Json<Chang
     let calendar = Arc::clone(&state.calendar);
     let busy = state.calendar.busy.load(Ordering::Acquire);
     let done = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+        let _saving = calendar.settings.lock().unwrap_or_else(|e| e.into_inner());
         let mut linking: Linking = read(&settings_path(&notes));
         linking.offer = Some(body.offer);
         leo_core::recording::write_json(&settings_path(&notes), &linking)?;
@@ -852,6 +881,17 @@ pub(crate) mod tests {
         fn delete(&self, _: &str) -> Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn the_status_window_is_steady_so_the_expansion_is_reused() {
+        let (_dir, notes) = linked(None);
+        let calendar = Calendar::default();
+        let now = at("2026-10-30T16:10:00Z");
+        status(&notes, &calendar, false, now);
+        status(&notes, &calendar, false, now + Duration::seconds(37));
+        status(&notes, &calendar, false, now + Duration::minutes(20));
+        assert_eq!(calendar.expanded.lock().unwrap().len(), 1);
     }
 
     #[test]

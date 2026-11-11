@@ -94,6 +94,14 @@ test('code fences, tables and quotes stay whole', () => {
   );
 });
 
+test('only the math the page itself draws as a block opens a math block', () => {
+  const kinds = (lines) => ed.splitBlocks(lines).map((b) => b.kind);
+  assert.deepEqual(kinds(['\\begin{document} is how LaTeX files start', '# Heading', 'text']), ['line', 'line', 'line']);
+  assert.deepEqual(kinds(['\\[ not a block', '# Heading']), ['line', 'line']);
+  assert.deepEqual(kinds(['\\begin{align}', 'x', '\\end{align}', 'after']), ['math', 'line']);
+  assert.deepEqual(kinds(['\\[', 'x', '\\]', 'after']), ['math', 'line']);
+});
+
 test('an unclosed fence runs to the end', () => {
   assert.deepEqual(ed.splitBlocks(['```', 'x']).map((b) => [b.start, b.end, b.kind]), [[0, 2, 'code']]);
 });

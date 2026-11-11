@@ -354,3 +354,24 @@ fn one_day_of_a_repeating_task_moves_without_moving_the_rest() {
     ));
     assert!(back.get("moved").is_none(), "{back}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_task_that_cannot_be_deleted_says_so_instead_of_vanishing_until_the_next_load() {
+    use std::os::unix::fs::PermissionsExt;
+    let (state, dir, _) = state_with(&[]);
+    let made = json_of(run(create_task(
+        State(state.clone()),
+        Json(serde_json::from_value(serde_json::json!({"title": "Book dentist"})).unwrap()),
+    )));
+    let id = made["id"].as_str().unwrap().to_string();
+    let folder = dir.path().join("notes/.leo/tasks");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let locked = std::fs::write(folder.join("probe"), "x").is_err();
+    let reply = run(delete_task(State(state.clone()), Path(id.clone())));
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if locked {
+        assert_eq!(reply.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(crate::tasks::load(&state.chats, &id).is_some());
+    }
+}

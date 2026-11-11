@@ -36,6 +36,22 @@ test('citations become note chips, and ones Felix was never given are dropped', 
   assert.deepEqual(C.cited('no citations here n1', sources), []);
 });
 
+test('citations are only placed in running text, never in attributes, code or math', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Heaps' }];
+  const html = C.cite('<p><a href="https://example.com/a[n1]" target="_blank">docs</a> and <code>arr[n1]</code> and <span class="math" data-tex="x[n1]">x[n1]</span> and [n1]</p><pre><code>v[n1]</code></pre>', sources, esc);
+  assert.equal((html.match(/class="cite"/g) || []).length, 1, html);
+  assert.ok(html.includes('href="https://example.com/a[n1]"'), html);
+  assert.ok(html.includes('<code>arr[n1]</code>') && html.includes('<code>v[n1]</code>'), html);
+  assert.ok(html.includes('data-tex="x[n1]">x[n1]</span>'), html);
+});
+
+test('citations skip block math too', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Heaps' }];
+  const html = C.cite('<div class="math math-block" data-tex="x[n1]"><span class="katex">x[n1]</span></div><p>see [n1]</p>', sources, esc);
+  assert.equal((html.match(/class="cite"/g) || []).length, 1, html);
+  assert.ok(html.includes('<span class="katex">x[n1]</span></div>'), html);
+});
+
 test('numbered citations share a number per place, keep note and line, and leave no stray digits in copied text', () => {
   const sources = [{ n: 1, id: 'a', title: 'Heaps' }, { n: 2, id: 'b', title: 'Queues' }];
   const text = 'Min on top [n1 L4-6]. Again [n1 L4-6]. Queue [n2]. Other lines [n1 L9]. Gone [n9].';
@@ -964,6 +980,61 @@ function answers(messages, { busy = null, send = () => {}, clipboard = null, fet
   }
   return { context, calls, input, html: () => messages.map((m, i) => context.__bubble(m, i)), ...context.__fns };
 }
+
+function deciding(messages) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/chat.js'), 'utf8');
+  const cut = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+  const code = `${cut('    const inflight', '    async function undo(')}\n${cut('    async function saveAnswer(', '    function lastPair()')}`;
+  const calls = [];
+  const context = {
+    asNote: C.asNote, retiredPractice: C.retiredPractice, state: { messages, context: null }, notify() {}, remember() {}, draw() {}, onSaved() {}, onChanged() {}, onOrganized() {},
+    request: async (url) => { calls.push(url); await new Promise((r) => setImmediate(r)); return { ok: true, json: async () => ({ id: 'made', version: 'v' }) }; },
+  };
+  vm.createContext(context);
+  vm.runInContext(`${code}\n;globalThis.__fns = { decide, saveAnswer };`, context);
+  return { calls, ...context.__fns };
+}
+
+test('a double click on Create, Do it or Save as note sends one request', async () => {
+  const messages = [...pair(), { role: 'assistant', text: 'ok', proposals: [{ kind: 'create', title: 'T', state: 'new' }, { kind: 'move_note', state: 'new' }] }];
+  const box = deciding(messages);
+  await Promise.all([box.decide(2, 0, true), box.decide(2, 0, true)]);
+  assert.deepEqual(box.calls, ['/api/notes']);
+  assert.equal(messages[2].proposals[0].state, 'applied');
+  await Promise.all([box.decide(2, 1, true), box.decide(2, 1, true)]);
+  assert.deepEqual(box.calls.slice(1), ['/api/felix/act']);
+  await Promise.all([box.saveAnswer(1), box.saveAnswer(1)]);
+  assert.equal(box.calls.length, 3);
+  assert.equal(messages[1].saved, 'made');
+});
+
+test('a chat save that fails is reported once and sends only the messages leo keeps', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../src/web/chat.js'), 'utf8');
+  const from = source.indexOf('    let upload = Promise.resolve();');
+  const code = source.slice(from, source.indexOf('    async function loadChats()', from));
+  const sent = [];
+  const told = [];
+  const messages = Array.from({ length: 450 }, (_, i) => ({ role: 'user', text: `m${i}` }));
+  const context = {
+    MOST_SAVED: 400, state: { id: 'chat-1', refs: [], messages, chats: null }, stored: () => messages, persist() {}, drawChats() {}, loadChats() {}, setTimeout: () => 0,
+    NAME_CHECKS: [], notify: (t) => told.push(t),
+    request: async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: false }; },
+  };
+  vm.createContext(context);
+  vm.runInContext(`${code}\n;globalThis.__remember = remember;`, context);
+  await context.__remember();
+  await context.__remember();
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].messages.length, 400);
+  assert.equal(sent[0].messages[0].text, 'm50');
+  assert.equal(told.length, 1);
+});
 
 const pair = () => [{ role: 'user', text: 'What is a heap?' }, { role: 'assistant', text: '[n1] A heap keeps the minimum on top.', sources: [{ n: 1, id: 'a', title: 'Heaps' }] }];
 

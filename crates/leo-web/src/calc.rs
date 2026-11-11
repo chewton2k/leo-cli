@@ -3,6 +3,9 @@ use std::collections::HashMap;
 pub const MOST_LINES: usize = 400;
 const MOST_DEPTH: usize = 64;
 const MOST_CALLS: usize = 200_000;
+const MOST_NESTING: usize = 200;
+const MOST_NESTED: usize = 400;
+const MOST_LINE: usize = 4_000;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
@@ -102,6 +105,7 @@ enum Expr {
 struct Parser {
     tokens: Vec<Token>,
     at: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -158,11 +162,18 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
-        if let Some(op) = self.op_in(&["-", "+"]) {
-            self.at += 1;
-            return Ok(Expr::Unary(op, Box::new(self.unary()?)));
+        self.depth += 1;
+        if self.depth > MOST_NESTING {
+            return Err("brackets or signs are nested too deeply".into());
         }
-        self.power()
+        let expr = if let Some(op) = self.op_in(&["-", "+"]) {
+            self.at += 1;
+            Expr::Unary(op, Box::new(self.unary()?))
+        } else {
+            self.power()?
+        };
+        self.depth -= 1;
+        Ok(expr)
     }
 
     fn power(&mut self) -> Result<Expr, String> {
@@ -217,6 +228,7 @@ fn parse(text: &str) -> Result<Expr, String> {
     let mut parser = Parser {
         tokens: tokens(text)?,
         at: 0,
+        depth: 0,
     };
     let expr = parser.compare()?;
     if parser.at < parser.tokens.len() {
@@ -233,6 +245,7 @@ pub struct Calculator {
     values: HashMap<String, f64>,
     functions: HashMap<String, (Vec<String>, Expr)>,
     calls: usize,
+    calling: usize,
 }
 
 fn built_in(name: &str, args: &[f64]) -> Option<Result<f64, String>> {
@@ -276,6 +289,24 @@ fn built_in(name: &str, args: &[f64]) -> Option<Result<f64, String>> {
     })
 }
 
+fn binary(op: &str, x: f64, y: f64) -> Result<f64, String> {
+    let truth = |t: bool| if t { 1.0 } else { 0.0 };
+    Ok(match op {
+        "+" => x + y,
+        "-" => x - y,
+        "*" => x * y,
+        "/" => x / y,
+        "^" => x.powf(y),
+        "<" => truth(x < y),
+        ">" => truth(x > y),
+        "<=" => truth(x <= y),
+        ">=" => truth(x >= y),
+        "==" => truth((x - y).abs() <= 1e-12 * x.abs().max(y.abs()).max(1.0)),
+        "!=" => truth((x - y).abs() > 1e-12 * x.abs().max(y.abs()).max(1.0)),
+        _ => return Err(format!("unknown operation {op}")),
+    })
+}
+
 impl Calculator {
     fn value_of(
         &mut self,
@@ -283,8 +314,8 @@ impl Calculator {
         scope: &HashMap<String, f64>,
         depth: usize,
     ) -> Result<f64, String> {
-        if depth > MOST_DEPTH {
-            return Err("functions call each other too deeply".into());
+        if depth > MOST_NESTED {
+            return Err("this calculation is nested too deeply".into());
         }
         self.calls += 1;
         if self.calls > MOST_CALLS {
@@ -310,29 +341,33 @@ impl Calculator {
                     v
                 }
             }
+            Expr::Binary(op, a, b) if *op != "^" => {
+                let mut spine = vec![(*op, b.as_ref())];
+                let mut left = a.as_ref();
+                while let Expr::Binary(op, a, b) = left {
+                    if *op == "^" {
+                        break;
+                    }
+                    spine.push((*op, b.as_ref()));
+                    left = a.as_ref();
+                }
+                self.calls += spine.len() - 1;
+                let mut x = self.value_of(left, scope, depth + 1)?;
+                for (op, b) in spine.into_iter().rev() {
+                    let y = self.value_of(b, scope, depth + 1)?;
+                    x = binary(op, x, y)?;
+                }
+                x
+            }
             Expr::Binary(op, a, b) => {
-                if let (&"^", Expr::Name(base)) = (op, a.as_ref()) {
+                if let Expr::Name(base) = a.as_ref() {
                     if base == "e" && !scope.contains_key("e") && !self.values.contains_key("e") {
                         return Ok(self.value_of(b, scope, depth + 1)?.exp());
                     }
                 }
                 let x = self.value_of(a, scope, depth + 1)?;
                 let y = self.value_of(b, scope, depth + 1)?;
-                let truth = |t: bool| if t { 1.0 } else { 0.0 };
-                match *op {
-                    "+" => x + y,
-                    "-" => x - y,
-                    "*" => x * y,
-                    "/" => x / y,
-                    "^" => x.powf(y),
-                    "<" => truth(x < y),
-                    ">" => truth(x > y),
-                    "<=" => truth(x <= y),
-                    ">=" => truth(x >= y),
-                    "==" => truth((x - y).abs() <= 1e-12 * x.abs().max(y.abs()).max(1.0)),
-                    "!=" => truth((x - y).abs() > 1e-12 * x.abs().max(y.abs()).max(1.0)),
-                    _ => return Err(format!("unknown operation {op}")),
-                }
+                binary(op, x, y)?
             }
             Expr::Call(name, args) => {
                 if name == "if" && args.len() == 3 {
@@ -351,8 +386,14 @@ impl Calculator {
                     if params.len() != given.len() {
                         return Err(format!("{name} takes {} number(s)", params.len()));
                     }
+                    if self.calling >= MOST_DEPTH {
+                        return Err("functions call each other too deeply".into());
+                    }
                     let inner: HashMap<String, f64> = params.into_iter().zip(given).collect();
-                    return self.value_of(&body, &inner, depth + 1);
+                    self.calling += 1;
+                    let value = self.value_of(&body, &inner, depth + 1);
+                    self.calling -= 1;
+                    return value;
                 }
                 match built_in(name, &given) {
                     Some(result) => result?,
@@ -448,6 +489,13 @@ pub fn run(steps: &str) -> String {
             out.push(format!("(stopped after {MOST_LINES} lines)"));
             break;
         }
+        let length = line.chars().count();
+        if length > MOST_LINE {
+            out.push(format!(
+                "(a line of {length} characters)  →  That did not work: the most one line can hold is {MOST_LINE} characters"
+            ));
+            continue;
+        }
         out.push(match calc.line(line) {
             Ok(text) => text,
             Err(why) => format!("{}  →  That did not work: {why}", line.trim()),
@@ -518,5 +566,48 @@ mod tests {
         assert!(run(&many).ends_with(&format!("(stopped after {MOST_LINES} lines)")));
         let said = run("f(x) = if(x > 0, f(x - 1) + f(x - 1), 1)\nf(40)");
         assert!(said.contains("That did not work"), "{said}");
+    }
+
+    fn on_a_small_stack(steps: String) -> String {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || run(&steps))
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn deep_or_long_input_is_refused_without_overflowing_the_stack() {
+        let mut chain = String::from("g0(x) = x\n");
+        for k in 1..60 {
+            chain.push_str(&format!("g{k}(x) = {}g{}(x)\n", "-".repeat(150), k - 1));
+        }
+        chain.push_str("g59(1)");
+        for steps in [
+            format!("{}1{}", "(".repeat(3_000), ")".repeat(3_000)),
+            "-".repeat(5_000) + "1",
+            vec!["1"; 100_000].join("+"),
+            format!("{}1{}", "(".repeat(1_500), ")".repeat(1_500)),
+            "-".repeat(3_900) + "1",
+            chain,
+        ] {
+            let said = on_a_small_stack(steps);
+            let last = said.lines().last().unwrap_or_default();
+            assert!(
+                last.contains("That did not work"),
+                "{}",
+                &last[..last.len().min(200)]
+            );
+        }
+    }
+
+    #[test]
+    fn long_flat_sums_are_added_up() {
+        let thousand = vec!["1"; 1_000].join("+");
+        assert!(run(&thousand).ends_with("= 1000"));
+        let most = vec!["1"; 2_000].join("+");
+        assert!(on_a_small_stack(most).ends_with("= 2000"));
+        assert!(run(&vec!["2"; 70].join("*")).contains("= 1.1805916207e21"));
     }
 }

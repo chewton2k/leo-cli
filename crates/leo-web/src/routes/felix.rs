@@ -14,6 +14,37 @@ fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
 }
 
+const MOST_PROPOSAL_BYTES: usize = 500 * 1024;
+
+fn deliverable(mut event: serde_json::Value) -> serde_json::Value {
+    let fits = |event: &serde_json::Value| event.to_string().len() < MOST_PROPOSAL_BYTES;
+    if !fits(&event) {
+        if let Some(shown) = event["proposal"].as_object_mut() {
+            shown.remove("before");
+            shown.remove("after");
+        }
+    }
+    if !fits(&event) {
+        if event["proposal"]["state"] != "applied" {
+            return serde_json::json!({
+                "step": "That change is too large to show, so leo did not suggest it. Ask for a smaller one.",
+                "tool": "",
+                "found": Vec::<String>::new(),
+                "failed": true,
+            });
+        }
+        if let Some(shown) = event["proposal"].as_object_mut() {
+            shown.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "kind" | "note" | "title" | "summary" | "state" | "made" | "folder"
+                )
+            });
+        }
+    }
+    event
+}
+
 pub(crate) async fn list_chat_files(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -906,7 +937,7 @@ fn execute_tool(
             },
             _ => serde_json::json!(proposal),
         };
-        send(serde_json::json!({ "proposal": shown }));
+        send(deliverable(serde_json::json!({ "proposal": shown })));
     }
     Ok(done)
 }
@@ -1252,9 +1283,25 @@ fn answer(
     let light = remember.light;
     let routed = std::cell::Cell::new(light);
     let said = std::cell::RefCell::new(String::new());
+    let applied = std::cell::RefCell::new(Vec::<String>::new());
     let send = |value: serde_json::Value| {
         if value.get("restart").is_some() || value.get("reset").is_some() {
             said.borrow_mut().clear();
+        }
+        let shown = &value["proposal"];
+        if shown["state"] == "applied" {
+            applied
+                .borrow_mut()
+                .push(shown["summary"].as_str().map_or_else(
+                    || {
+                        format!(
+                            "{} {}",
+                            shown["kind"].as_str().unwrap_or("change"),
+                            shown["title"]
+                        )
+                    },
+                    str::to_string,
+                ));
         }
         if let Some(t) = value["t"].as_str() {
             said.borrow_mut().push_str(t);
@@ -1414,6 +1461,19 @@ fn answer(
             }
         }
     }
+    let redo = || {
+        let done = applied.borrow();
+        if done.is_empty() {
+            return conversation.clone();
+        }
+        chat::before_reply(
+            &conversation,
+            &format!(
+                "<already_done>\nAn earlier try at this answer broke off after leo had already made these changes. They are done: do not make them again.\n{}\n</already_done>\n",
+                done.join("\n")
+            ),
+        )
+    };
     if tx.is_closed() {
         return Ok(None);
     }
@@ -1430,22 +1490,16 @@ fn answer(
     });
     if let Some(mut talk) = chosen {
         let shown = std::cell::Cell::new(false);
+        let again = redo();
         let tried = if talk.native() {
-            native_answer(
-                state,
-                talk.as_mut(),
-                &mut desk,
-                &conversation,
-                &send,
-                &shown,
-            )
+            native_answer(state, talk.as_mut(), &mut desk, &again, &send, &shown)
         } else {
             text_answer(
                 state,
                 talk.as_mut(),
                 &mut desk,
                 access,
-                &conversation,
+                &again,
                 &send,
                 &shown,
             )
@@ -1500,7 +1554,7 @@ fn answer(
             &mut restated,
             &mut desk,
             access,
-            &conversation,
+            &redo(),
             &send,
             &shown,
         ) {
@@ -1924,15 +1978,27 @@ pub(crate) async fn chat_reply(
         Ok(found) => found,
         Err(code) => return code.into_response(),
     };
-    let documents = match &body.chat {
-        Some(chat) if !body.files.is_empty() => chat_files::texts(&state.chats, chat, &body.files),
-        _ => Vec::new(),
+    let (documents, memory) = {
+        let chats_dir = state.chats.clone();
+        let chat = body.chat.clone();
+        let files = body.files.clone();
+        match tokio::task::spawn_blocking(move || {
+            let documents = match &chat {
+                Some(chat) if !files.is_empty() => chat_files::texts(&chats_dir, chat, &files),
+                _ => Vec::new(),
+            };
+            let memory = chat
+                .as_deref()
+                .and_then(|id| chats::load(&chats_dir, id))
+                .and_then(|c| c.memory);
+            (documents, memory)
+        })
+        .await
+        {
+            Ok(found) => found,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
     };
-    let memory = body
-        .chat
-        .as_deref()
-        .and_then(|id| chats::load(&state.chats, id))
-        .and_then(|c| c.memory);
     let start = chat::kept_from(&body.messages, room, memory.as_ref());
     let documents_room = if body.practice { note_room } else { room };
     let (mut system, mut user) = chat::prompt_material(
@@ -2112,6 +2178,35 @@ pub(crate) async fn chat_reply(
         .headers_mut()
         .insert("x-accel-buffering", HeaderValue::from_static("no"));
     response
+}
+
+#[cfg(test)]
+mod deliverable_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_pending_proposal_is_not_a_card_but_applied_one_is_slimmed() {
+        let big = "x".repeat(MOST_PROPOSAL_BYTES);
+        let pending = serde_json::json!({ "proposal": {
+            "kind": "edit", "note": "n", "title": "t", "state": "new", "find": big, "replace": "y"
+        } });
+        let shown = deliverable(pending);
+        assert!(shown.get("proposal").is_none());
+        assert_eq!(shown["failed"], true);
+        assert!(shown["step"].as_str().unwrap().contains("too large"));
+
+        let applied = serde_json::json!({ "proposal": {
+            "kind": "edit", "note": "n", "title": "t", "state": "applied", "find": big, "replace": "y"
+        } });
+        let shown = deliverable(applied);
+        assert_eq!(shown["proposal"]["state"], "applied");
+        assert!(shown["proposal"].get("find").is_none());
+
+        let small = serde_json::json!({ "proposal": {
+            "kind": "edit", "state": "new", "find": "a", "replace": "b"
+        } });
+        assert_eq!(deliverable(small.clone()), small);
+    }
 }
 
 #[cfg(test)]

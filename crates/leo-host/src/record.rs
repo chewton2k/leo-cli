@@ -316,10 +316,7 @@ fn finish_tracks(
         let archive = session.archive();
         source
             .passages
-            .extend(archive.passages.into_iter().map(|mut p| {
-                p.speaker = (*speaker).into();
-                p
-            }));
+            .extend(archive.passages.into_iter().map(|p| labelled(speaker, p)));
         source.points.extend(archive.points);
         source.warnings.extend(archive.warnings);
     }
@@ -355,6 +352,16 @@ fn finish_tracks(
             Ok(())
         })),
     })
+}
+
+fn labelled(
+    speaker: &str,
+    mut passage: leo_core::recording::Passage,
+) -> leo_core::recording::Passage {
+    if !speaker.is_empty() {
+        passage.speaker = speaker.into();
+    }
+    passage
 }
 
 fn saved_sessions() -> Result<Vec<(String, std::path::PathBuf)>> {
@@ -480,6 +487,18 @@ fn resume_retained(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_single_recording_keeps_its_own_speaker_and_a_call_track_takes_its_side() {
+        let passage = leo_core::recording::Passage {
+            start_secs: 0,
+            end_secs: 5,
+            text: "hello".into(),
+            speaker: "Microphone".into(),
+        };
+        assert_eq!(super::labelled("", passage.clone()).speaker, "Microphone");
+        assert_eq!(super::labelled("You", passage).speaker, "You");
+    }
+
     #[test]
     fn unreadable_recovery_audio_is_an_error_before_any_note_is_written() {
         let dir = tempfile::tempdir().unwrap();

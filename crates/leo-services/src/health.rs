@@ -249,7 +249,7 @@ pub fn writing(
         },
         (Some(_), None) if agent.is_some() => WritingState::NotInstalled,
         (Some(pc), None)
-            if pc.key_env.is_none() && pc.base_url.as_deref().is_some_and(is_loopback) =>
+            if pc.key_env.is_none() && pc.base_url.as_deref().is_some_and(crate::ai::loopback) =>
         {
             WritingState::NotRunning
         }
@@ -304,8 +304,8 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
         return crate::speech::library::library().is_ok_and(|l| l.selected().is_ok());
     }
     if let Some(agent) = crate::ai::provider::agent_cli::Agent::of(provider) {
-        let bin = provider.bin.as_deref().unwrap_or(agent.program());
-        return crate::ai::provider::agent_cli::locate(bin).is_some();
+        let cli = crate::ai::provider::agent_cli::AgentCli::new(name.to_string(), agent, provider);
+        return crate::ai::provider::agent_cli::locate(cli.bin()).is_some();
     }
     // A key-based provider: only the key leo stored, and `has` rather than a
     // read so this cannot cost a permission prompt.
@@ -315,15 +315,11 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
 
     // A local server with no key: is anything listening?
     match &provider.base_url {
-        Some(url) if is_loopback(url) => port_open(url),
+        Some(url) if crate::ai::loopback(url) => port_open(url),
         // Remote and keyless: assume reachable; a request will say otherwise.
         Some(_) => true,
         None => false,
     }
-}
-
-fn is_loopback(url: &str) -> bool {
-    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]")
 }
 
 /// Where credentials are kept, and whether the file is readable by anyone else.
@@ -429,6 +425,28 @@ mod tests {
         );
         assert!(provider_usable(&config, "present", &store()));
         assert!(!provider_usable(&config, "absent", &store()));
+    }
+
+    #[test]
+    fn an_empty_program_setting_means_the_usual_program() {
+        for kind in [
+            crate::config::provider::ProviderKind::ClaudeCode,
+            crate::config::provider::ProviderKind::Codex,
+        ] {
+            let usual = ProviderConfig {
+                kind: Some(kind),
+                ..Default::default()
+            };
+            let empty = ProviderConfig {
+                bin: Some(String::new()),
+                ..usual.clone()
+            };
+            let config = config_with(vec![("usual", usual), ("empty", empty)], vec![]);
+            assert_eq!(
+                provider_usable(&config, "empty", &store()),
+                provider_usable(&config, "usual", &store())
+            );
+        }
     }
 
     #[test]
@@ -687,12 +705,5 @@ mod tests {
         assert!(!port_open("http://localhost:1"));
         assert!(!port_open("http://[::1]:1/v1"));
         assert!(!port_open("http://127.0.0.1:1/v1/chat"));
-    }
-
-    #[test]
-    fn loopback_urls_are_recognized() {
-        assert!(is_loopback("http://localhost:11434/v1"));
-        assert!(is_loopback("http://127.0.0.1:1234/v1"));
-        assert!(!is_loopback("https://openrouter.ai/api/v1"));
     }
 }

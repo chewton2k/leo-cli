@@ -77,16 +77,21 @@ fn context() -> (Config, Box<dyn crate::config::secret::SecretStore>) {
 /// costs nothing the user notices, because the recorder is already running and
 /// no audio is lost, and the read is cached for the rest of the process.
 pub fn warm_credentials() {
-    let config = crate::config::Config::load();
-    let store = crate::config::secret::default_store();
+    warm(
+        &crate::config::Config::load(),
+        crate::config::secret::default_store().as_ref(),
+    );
+}
+
+fn warm(config: &Config, store: &dyn crate::config::secret::SecretStore) {
     let names = config
         .transcribe
         .chain
         .iter()
         .chain(config.chat.chain.iter());
     for name in names {
-        if let Some(provider) = config.provider(name) {
-            let _ = crate::config::secret::resolve(provider.account(name), store.as_ref());
+        if let Some(provider) = config.provider(name).filter(|p| p.key_env.is_some()) {
+            let _ = crate::config::secret::resolve(provider.account(name), store);
         }
     }
 }
@@ -218,7 +223,7 @@ fn toolless_config(cfg: &Config) -> Config {
     quick
 }
 
-fn loopback(url: &str) -> bool {
+pub(crate) fn loopback(url: &str) -> bool {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host = authority.rsplit('@').next().unwrap_or("");
@@ -230,7 +235,7 @@ fn loopback(url: &str) -> bool {
     host == "localhost"
         || host
             .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
+            .is_ok_and(|address| address.is_loopback() || address.is_unspecified())
 }
 
 pub fn reads_stay_here(cfg: &Config) -> bool {
@@ -375,6 +380,46 @@ pub fn chat_streaming(
 mod tests {
     use crate::config::provider::{ProviderConfig, ProviderKind};
 
+    #[derive(Default)]
+    struct Reads(std::cell::RefCell<Vec<String>>);
+
+    impl crate::config::secret::SecretStore for Reads {
+        fn get(&self, account: &str) -> anyhow::Result<Option<crate::config::secret::Secret>> {
+            self.0.borrow_mut().push(account.to_string());
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn available(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn warming_reads_only_credentials_a_chain_provider_uses() {
+        let mut config =
+            crate::config::Config::parse_with_built_ins("[transcribe]\nchain = [\"parakeet\"]\n")
+                .unwrap();
+        config.chat.chain = ["claude_code", "ollama", "keyed"]
+            .map(String::from)
+            .to_vec();
+        config.providers.insert(
+            "keyed".into(),
+            ProviderConfig {
+                kind: Some(ProviderKind::Openai),
+                key_env: Some("KEYED_API_KEY".into()),
+                ..ProviderConfig::default()
+            },
+        );
+        let store = Reads::default();
+        super::warm(&config, &store);
+        assert_eq!(*store.0.borrow(), ["keyed"]);
+    }
+
     #[test]
     fn only_old_private_work_folders_are_swept_from_the_temp_folder() {
         let temp = tempfile::tempdir().unwrap();
@@ -466,6 +511,26 @@ mod tests {
     }
 
     #[test]
+    fn this_computer_is_loopback_or_unspecified_and_nothing_that_merely_contains_it() {
+        for url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:1/v1",
+            "http://0.0.0.0:11434/v1",
+            "http://[::]:11434/v1",
+        ] {
+            assert!(super::loopback(url), "{url}");
+        }
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "http://127.0.0.1.evil.example/v1",
+            "http://evil.example/localhost",
+        ] {
+            assert!(!super::loopback(url), "{url}");
+        }
+    }
+
+    #[test]
     fn only_a_loopback_ollama_with_a_local_model_keeps_text_here() {
         let with = |url: &str, model: &str| {
             let mut cfg = chained("ollama");
@@ -488,7 +553,8 @@ mod tests {
         assert!(!with("http://127.0.0.1.evil.example/v1", "llama3.2"));
         assert!(!with("http://localhost.evil.example/v1", "llama3.2"));
         assert!(!with("http://evil.example/127.0.0.1", "llama3.2"));
-        assert!(!with("http://0.0.0.0:11434/v1", "llama3.2"));
+        assert!(with("http://0.0.0.0:11434/v1", "llama3.2"));
+        assert!(with("http://[::]:11434/v1", "llama3.2"));
         assert!(!super::reads_stay_here(&chained("claude_code")));
     }
 

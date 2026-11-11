@@ -118,3 +118,28 @@ fn undo_brings_back_every_note_and_folder_a_move_to_the_trash_took() {
     ));
     assert_eq!(refused.unwrap_err(), StatusCode::BAD_REQUEST);
 }
+
+#[test]
+fn a_trashed_folder_leaves_no_empty_directory_to_block_its_name() {
+    let (state, _d, _ids) = state_with(&[("Notes", "Week 1"), ("Later", "Week 01")]);
+    let root = state.fresh().notes_dir.clone();
+    assert!(root.join("Week 1").is_dir());
+    let _ = run(move_to_trash(
+        State(state.clone()),
+        Json(TrashMove {
+            notes: vec![],
+            dirs: vec!["Week 1".into()],
+        }),
+    ))
+    .unwrap();
+    assert!(!root.join("Week 1").exists());
+    let renamed = run(crate::routes::notes::rename_dir(
+        State(state.clone()),
+        Json(crate::routes::notes::RenameDirBody {
+            from: "Week 01".into(),
+            name: "Week 1".into(),
+        }),
+    ))
+    .unwrap();
+    assert_eq!(renamed.0["path"], "Week 1");
+}

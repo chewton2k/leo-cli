@@ -548,7 +548,11 @@ pub fn propose(chats: &Path, call: &Call) -> Result<Proposal, String> {
                 return Err("give the card a title".into());
             }
             let column = match call.text("column").trim() {
-                "" => board.columns[0].id.clone(),
+                "" => board
+                    .columns
+                    .first()
+                    .map(|c| c.id.clone())
+                    .ok_or_else(|| format!("{} has no columns", quoted(&board.name)))?,
                 wanted => find_column(&board, wanted)?,
             };
             let description = boards::description_of(&call.text("description"))
@@ -629,7 +633,7 @@ pub fn propose(chats: &Path, call: &Call) -> Result<Proposal, String> {
             let column = match call.text("column").trim() {
                 "" if to.id == from.id => card.column.clone(),
                 "" => boards::matching_column(&to, Some(&column_name(&from, &card.column)))
-                    .unwrap_or_else(|| to.columns[0].id.clone()),
+                    .ok_or_else(|| format!("{} has no columns", quoted(&to.name)))?,
                 wanted => find_column(&to, wanted)?,
             };
             let position = call.text("position");
@@ -850,4 +854,46 @@ pub fn neighbour_before(chats: &Path, card: &Card) -> Option<Option<String>> {
         .collect();
     let at = column.iter().position(|c| c.id == card.id)?;
     Some(at.checked_sub(1).map(|i| column[i].id.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_board_without_columns_is_refused_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let now = chrono::Utc::now();
+        let mut from = boards::new_board("Sprint", now);
+        let card = Card {
+            id: boards::new_id('c'),
+            board: from.id.clone(),
+            column: from.columns[0].id.clone(),
+            rank: 1.0,
+            title: "Write it".into(),
+            subheading: String::new(),
+            description: String::new(),
+            priority: String::new(),
+            created_at: now,
+            updated_at: now,
+            deleted: false,
+        };
+        boards::put_card(&chats, &card).unwrap();
+        from.columns.clear();
+        boards::put_board(&chats, &from).unwrap();
+        let mut empty = boards::new_board("Empty", now);
+        empty.columns.clear();
+        boards::put_board(&chats, &empty).unwrap();
+        let add = Call {
+            name: "add_card".into(),
+            args: serde_json::json!({"board": "Sprint", "title": "Read"}),
+        };
+        assert!(propose(&chats, &add).unwrap_err().contains("no columns"));
+        let moved = Call {
+            name: "move_card".into(),
+            args: serde_json::json!({"card": "Write it", "to_board": "Empty"}),
+        };
+        assert!(propose(&chats, &moved).unwrap_err().contains("no columns"));
+    }
 }

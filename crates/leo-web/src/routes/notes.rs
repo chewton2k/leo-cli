@@ -33,11 +33,6 @@ pub(crate) struct SearchParams {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct ToggleParams {
-    pub(crate) checkbox: usize,
-}
-
-#[derive(Deserialize)]
 pub(crate) struct DirParams {
     pub(crate) parent: Option<String>,
 }
@@ -304,8 +299,8 @@ fn make_tagged_note(
     dir: &str,
 ) -> Result<NoteResponse, StatusCode> {
     directory(store, dir)?;
-    if !store.dir_exists(dir) {
-        store.create_dir(dir);
+    if !store.dir_exists(dir) && !store.create_dir(dir) {
+        return Err(StatusCode::BAD_REQUEST);
     }
     let note = store
         .create_note(title.to_string(), body.to_string(), tags, dir)
@@ -343,14 +338,20 @@ pub(crate) async fn update_note(
         .with_store(move |store| {
             let recorded = crate::tools::has_transcript(&store.notes_dir, &id);
             let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
-            let edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
+            let mut edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
             if edited
                 && body
                     .base
                     .as_deref()
                     .is_some_and(|base| base != version_of(note))
             {
-                return Err(StatusCode::CONFLICT);
+                let same = body.title.as_ref().is_none_or(|title| *title == note.title)
+                    && body.body.as_ref().is_none_or(|text| *text == note.body)
+                    && body.tags.as_ref().is_none_or(|tags| *tags == note.tags);
+                if !same {
+                    return Err(StatusCode::CONFLICT);
+                }
+                edited = false;
             }
             if let Some(title) = body.title {
                 note.title = title;
@@ -399,23 +400,6 @@ pub(crate) async fn delete_note(
         })
         .await
         .unwrap_or_else(|status| status)
-}
-
-pub(crate) async fn toggle_checkbox(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(params): Query<ToggleParams>,
-) -> Result<Json<NoteResponse>, StatusCode> {
-    state
-        .with_store(move |store| {
-            store
-                .toggle_checkbox(&id, params.checkbox)
-                .ok_or(StatusCode::NOT_FOUND)?;
-            let resp = NoteResponse::from_note(store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?);
-            save(store)?;
-            Ok(Json(resp))
-        })
-        .await
 }
 
 pub(crate) async fn move_note(
@@ -503,6 +487,21 @@ pub(crate) struct DirResponse {
     pub(crate) notes: usize,
 }
 
+fn note_counts(store: &Store) -> std::collections::HashMap<String, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for note in &store.notes {
+        let directory = note.directory.as_str();
+        if directory.is_empty() {
+            continue;
+        }
+        for (at, _) in directory.match_indices('/') {
+            *counts.entry(directory[..at].to_string()).or_default() += 1;
+        }
+        *counts.entry(directory.to_string()).or_default() += 1;
+    }
+    counts
+}
+
 pub(crate) async fn list_dirs(
     State(state): State<AppState>,
     Query(params): Query<DirParams>,
@@ -511,6 +510,7 @@ pub(crate) async fn list_dirs(
         .read_store(move |store| {
             let parent = params.parent.unwrap_or_default();
             directory(store, &parent)?;
+            let counts = note_counts(store);
             Ok(Json(
                 store
                     .subdirs(&parent)
@@ -523,7 +523,7 @@ pub(crate) async fn list_dirs(
                         };
                         DirResponse {
                             name,
-                            notes: store.dir_contents(&full).0,
+                            notes: counts.get(&full).copied().unwrap_or(0),
                         }
                     })
                     .collect(),
@@ -539,10 +539,11 @@ pub(crate) async fn list_folders(
         .read_store(|store| {
             let mut all = store.directories.clone();
             all.sort_by_key(|d| d.to_lowercase());
+            let counts = note_counts(store);
             Ok(Json(
                 all.into_iter()
                     .map(|name| DirResponse {
-                        notes: store.dir_contents(&name).0,
+                        notes: counts.get(&name).copied().unwrap_or(0),
                         name,
                     })
                     .collect(),
@@ -566,6 +567,7 @@ pub(crate) async fn move_dir(
                 .move_dir(&body.from, &body.into)
                 .ok_or(StatusCode::CONFLICT)?;
             save(store)?;
+            carry_files(&store.notes_dir, body.from.trim_matches('/'), &to);
             remove_emptied(&store.notes_dir.join(body.from.trim_matches('/')));
             Ok(Json(serde_json::json!({ "path": to })))
         })
@@ -595,6 +597,7 @@ pub(crate) async fn rename_dir(
                 .rename_dir(&body.from, &body.name)
                 .ok_or(StatusCode::CONFLICT)?;
             save(store)?;
+            carry_files(&store.notes_dir, &body.from, &to);
             remove_emptied(&store.notes_dir.join(&body.from));
             Ok(Json(serde_json::json!({ "path": to })))
         })
@@ -603,7 +606,40 @@ pub(crate) async fn rename_dir(
 
 const MOST_EMPTY_FOLDERS: usize = 10_000;
 
-fn remove_emptied(top: &std::path::Path) {
+fn carry_files(notes_dir: &std::path::Path, from: &str, to: &str) {
+    let top = notes_dir.join(from);
+    let dest = notes_dir.join(to);
+    let mut found = vec![std::path::PathBuf::new()];
+    let mut i = 0;
+    while i < found.len() && i < MOST_EMPTY_FOLDERS {
+        let here = found[i].clone();
+        if let Ok(entries) = std::fs::read_dir(top.join(&here)) {
+            for entry in entries.take(MOST_EMPTY_FOLDERS).flatten() {
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                let relative = here.join(entry.file_name());
+                if kind.is_dir() {
+                    if found.len() < MOST_EMPTY_FOLDERS {
+                        found.push(relative);
+                    }
+                } else if kind.is_file() {
+                    let target = dest.join(&relative);
+                    if target.symlink_metadata().is_ok() {
+                        continue;
+                    }
+                    if let Some(parent) = target.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::rename(entry.path(), &target);
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+pub(crate) fn remove_emptied(top: &std::path::Path) {
     let mut found = vec![top.to_path_buf()];
     let mut i = 0;
     while i < found.len() && i < MOST_EMPTY_FOLDERS {
