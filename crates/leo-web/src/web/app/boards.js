@@ -286,7 +286,7 @@ function kanbanRebind() {
   const again = app.querySelector(d.kind === 'card' ? `.kanban-card[data-card="${CSS.escape(d.id)}"]` : `.kanban-col[data-col="${CSS.escape(d.id)}"]`);
   if (!again) return kanbanCancel();
   d.item = again;
-  d.from = { parent: again.parentElement, next: again.nextElementSibling };
+  if (d.live && !d.from.parent.isConnected) d.from = { parent: again.parentElement, next: again.nextElementSibling };
   if (d.live) again.classList.add('kanban-placeholder');
 }
 

@@ -146,7 +146,7 @@ function drawSide() {
     <div class="side-explorer" id="side-explorer">
       <button class="side-row side-new" data-action="new" data-dir="${esc(actionDir)}" aria-label="New note" aria-keyshortcuts="${ON_MAC ? 'Meta+N' : 'Control+N'}" title="New note${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.filePlus}<span class="side-label">New note</span><kbd aria-hidden="true">${newNoteLabel}</kbd></button>
       <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><span class="side-group-tools"><button class="side-add" data-action="new-folder" data-parent="${esc(actionDir)}" aria-label="New folder" title="New folder${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.folderPlus}</button></span></div>
-      <div class="side-filter-row"><label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label><button class="side-add side-sort${side.sort !== 'title' || side.show !== 'all' ? ' on' : ''}" data-action="side-sort" aria-label="Sort and show notes" title="${esc(sideOrderLabel())}" aria-haspopup="menu" aria-expanded="false">${ICON.sort}</button></div>
+      <div class="side-filter-row"><label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label><button class="side-add side-sort${side.sort !== 'title' || side.show !== 'all' ? ' on' : ''}" data-action="side-sort" aria-label="Sort and show notes" title="${esc(sideOrderLabel())}" aria-haspopup="menu" aria-expanded="${Boolean(popup?.owner.matches('[data-action="side-sort"]'))}">${ICON.sort}</button></div>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="" tabindex="0">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
@@ -405,7 +405,7 @@ function loadSideNotes(path, offset = 0, force = false) {
     const oldest = [...side.notes.keys()].find((key) => !side.automatic.has(key));
     side.notes.delete(oldest);
   }
-  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, loaded: Boolean(previous?.loaded), refreshing: Boolean(previous?.loaded && previous.offset === offset), error: false, seq, order };
+  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, loaded: Boolean(previous?.loaded), refreshing: Boolean(previous?.loaded && previous.offset === offset), error: false, seq, order, reordered: Boolean(previous && previous.order !== order) };
   side.notes.set(path, entry);
   side.pending = side.pending.filter((read) => side.notes.get(read.path) === read.entry);
   side.pending.push({ path, entry });
@@ -426,15 +426,20 @@ async function readSideNotes(path, entry) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SIDE_NOTES_TIMEOUT);
   try {
-    const query = new URLSearchParams({ dir: path, offset: String(entry.offset), limit: String(SIDE_NOTES_PAGE), brief: 'true', sort: side.sort, show: side.show });
+    const [sort, show] = entry.order.split(' ');
+    const query = new URLSearchParams({ dir: path, offset: String(entry.offset), limit: String(SIDE_NOTES_PAGE), brief: 'true', sort, show });
     const page = await api(`/api/notes?${query}`, { total: true, signal: controller.signal });
     if (side.notes.get(path) !== entry || entry.seq !== seq) return;
     if (!Array.isArray(page.items)) throw new Error('Notes could not be opened.');
     entry.items = page.items.slice(0, SIDE_NOTES_PAGE).filter((note) => typeof note.id === 'string' && typeof note.title === 'string');
     entry.total = Number.isSafeInteger(page.total) && page.total >= 0 ? page.total : entry.items.length;
     entry.loaded = true;
+    if (!entry.items.length && entry.offset && entry.total) setTimeout(() => loadSideNotes(path, Math.floor((entry.total - 1) / SIDE_NOTES_PAGE) * SIDE_NOTES_PAGE, true));
   } catch (e) {
-    if (side.notes.get(path) === entry && entry.seq === seq) entry.error = true;
+    if (side.notes.get(path) === entry && entry.seq === seq) {
+      entry.error = true;
+      if (entry.reordered) entry.items = [];
+    }
   } finally {
     clearTimeout(timeout);
     entry.loading = false;

@@ -1733,11 +1733,20 @@
         const index = blockAtLine(lineOf(from));
         const blk = index < 0 ? null : container.querySelector(`.blk[data-i="${index}"]`);
         if (!blk) return [];
-        const wanted = lines.join('\n').slice(from, to).trim();
+        const source = lines.join('\n');
+        const wanted = source.slice(from, to).trim();
         const texts = [];
         const walker = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node);
-        const at = wanted ? texts.map((node) => node.data).join('').indexOf(wanted) : -1;
+        const shown = texts.map((node) => node.data).join('');
+        let earlier = 0;
+        for (let seen = wanted ? source.indexOf(wanted, lineStart(blocks[index].start)) : -1; seen >= 0 && seen < from; seen = source.indexOf(wanted, seen + 1)) earlier++;
+        let at = -1;
+        for (let i = 0; wanted && i <= earlier; i++) {
+          const next = shown.indexOf(wanted, at + 1);
+          if (next < 0) break;
+          at = next;
+        }
         const spot = (n) => {
           for (const node of texts) {
             if (n <= node.data.length) return [node, n];

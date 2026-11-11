@@ -710,6 +710,16 @@ function marginDraw() {
   });
   const shown = new Set(boxes.map(({ t }) => t.id));
   for (const [id, el] of marginPage.els) if (!shown.has(id)) el.hidden = true;
+  for (const { t } of placed) {
+    if (shown.has(t.id)) continue;
+    marginPage.marks.get(t.id)?.remove();
+    marginPage.marks.delete(t.id);
+    marginPage.rects.delete(t.id);
+    for (const [key, path] of marginThreadPaths(t.id)) {
+      path.remove();
+      marginPage.paths.delete(key);
+    }
+  }
   const reading = marginReadingBox(origin);
   if (reading) boxes.push(reading);
   marginPage.roomy?.classList.remove('margin-room');

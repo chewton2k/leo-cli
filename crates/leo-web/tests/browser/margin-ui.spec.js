@@ -343,3 +343,15 @@ test('margin notes on passages inside tables, code and quotes sit beside their p
     expect(card.y, quote).toBeGreaterThan(title.y + title.height);
   }
 });
+
+test('a margin note on the second copy of a line in a code block sits by that copy', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const quote = 'retry the write';
+  const body = `Opening words.\n\n\`\`\`\n${quote}\nwait a moment\n${quote}\n\`\`\`\n\nClosing words.`;
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Second copy', body } })).json();
+  expect((await page.request.post(`/api/notes/${note.id}/margin/threads`, { data: { version: note.version, quote, prefix: 'wait a moment\n', suffix: '\n```', question: 'Why twice?' } })).ok()).toBe(true);
+  await page.goto(`/#/n/${note.id}`);
+  const line = await page.locator('.margin-ink .squiggle').first().boundingBox();
+  const code = await page.locator('#doc pre').first().boundingBox();
+  expect(line.y).toBeGreaterThan(code.y + code.height * 0.6);
+});
