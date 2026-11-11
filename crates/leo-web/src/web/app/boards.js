@@ -243,6 +243,7 @@ function drawKanban() {
   } finally {
     kanban.redrawing = false;
   }
+  kanbanRebind();
   const next = app.querySelector('.kanban-cols');
   if (next) next.scrollLeft = scrolled;
   for (const list of app.querySelectorAll('.kanban-cards')) list.scrollTop = lists.get(list.dataset.col) || 0;
@@ -276,6 +277,17 @@ function kanbanRedrawCard(card) {
   const focused = document.activeElement === el;
   el.outerHTML = kanbanCardHtml(card);
   if (focused) app.querySelector(`.kanban-card[data-card="${CSS.escape(card.id)}"]`)?.focus({ preventScroll: true });
+  kanbanRebind();
+}
+
+function kanbanRebind() {
+  const d = kanban.drag;
+  if (!d || d.item.isConnected) return;
+  const again = app.querySelector(d.kind === 'card' ? `.kanban-card[data-card="${CSS.escape(d.id)}"]` : `.kanban-col[data-col="${CSS.escape(d.id)}"]`);
+  if (!again) return kanbanCancel();
+  d.item = again;
+  d.from = { parent: again.parentElement, next: again.nextElementSibling };
+  if (d.live) again.classList.add('kanban-placeholder');
 }
 
 function kanbanSyncTab() {
