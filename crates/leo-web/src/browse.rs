@@ -18,7 +18,14 @@ pub(crate) fn order(
     let sort = sort.unwrap_or("updated");
     if !matches!(
         sort,
-        "updated" | "oldest" | "created" | "created-asc" | "opened" | "folder" | "title" | "title-desc"
+        "updated"
+            | "oldest"
+            | "created"
+            | "created-asc"
+            | "opened"
+            | "folder"
+            | "title"
+            | "title-desc"
     ) {
         return Err(StatusCode::BAD_REQUEST);
     }
