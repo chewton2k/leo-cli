@@ -420,3 +420,37 @@ for (const failure of ['server', 'offline']) test(`legacy folder ${failure} erro
   await expect(folderRow(page, dir)).toHaveAttribute('aria-current', 'page');
   await expect(page).toHaveURL(/\/#\/$/);
 });
+
+test('the explorer sorts notes by name or edit date, shows only some, and remembers the choice', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const dir = await createFolder(page);
+  const alpha = await createNote(page, dir, 'Alpha');
+  await createNote(page, dir, 'Bravo');
+  const charlie = await createNote(page, dir, 'Charlie');
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  expect((await page.request.patch(`/api/notes/${alpha.id}`, { data: { body: '- [ ] Still to do' } })).ok()).toBe(true);
+  await openNote(page, charlie);
+  const rows = page.locator(`#side .side-note[data-from="${dir}"] .side-label:not(.side-count)`);
+  await expect(rows).toHaveText(['Alpha', 'Bravo', 'Charlie']);
+  const button = page.getByRole('button', { name: 'Sort and show notes' });
+  await expect(button).not.toHaveClass(/\bon\b/);
+  await button.click();
+  const menu = page.getByRole('menu', { name: 'Sort and show notes' });
+  await expect(menu.getByRole('menuitemradio', { name: 'Name', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await menu.getByRole('menuitemradio', { name: 'Last edited' }).click();
+  await expect(rows).toHaveText(['Alpha', 'Charlie', 'Bravo']);
+  await expect(page.locator(`#side .side-note[data-id="${alpha.id}"] .side-count`)).toHaveText('just now');
+  await expect(button).toHaveClass(/\bon\b/);
+  await button.click();
+  await menu.getByRole('menuitemradio', { name: 'With open tasks' }).click();
+  await expect(rows).toHaveText(['Alpha']);
+  await page.reload();
+  await expect(rows).toHaveText(['Alpha']);
+  await button.click();
+  await expect(menu.getByRole('menuitemradio', { name: 'Last edited' })).toHaveAttribute('aria-checked', 'true');
+  await menu.getByRole('menuitemradio', { name: 'All notes' }).click();
+  await button.click();
+  await menu.getByRole('menuitemradio', { name: 'Name, Z to A' }).click();
+  await expect(rows).toHaveText(['Charlie', 'Bravo', 'Alpha']);
+  await expect(page.locator(`#side .side-note[data-from="${dir}"] .side-count`)).toHaveCount(0);
+});

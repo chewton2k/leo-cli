@@ -219,6 +219,8 @@ Decided: the owner's motion list (2026-11-06); only quick functional motion.
   or sheet; moving or trashing the open note's folder flushes its draft first.
   Never two rows highlighted. Saved open folders (`leo-side-folders`) hold only
   folders the user opened; reveals (`side.revealed`) are never saved.
+  The sort button beside Filter picks `/api/notes` `sort` and `show` for every
+  folder's notes (folders stay by name), saved as `leo-side-order` (2026-11-10).
 - Quick Leo opens with Cmd/Ctrl+K only (Cmd/Ctrl+F removed 2026-11-09); Cmd/Ctrl+N
   makes a note in the current folder, never inside a sheet, an inline edit, while
   composing or when locked.
