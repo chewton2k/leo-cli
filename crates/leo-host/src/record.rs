@@ -190,6 +190,7 @@ fn write_sources(
         &parts,
         &points,
         None,
+        None,
         "Recording",
         &|prompt, max| {
             leo_services::ai::chat_outcome(

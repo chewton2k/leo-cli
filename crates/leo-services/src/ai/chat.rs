@@ -189,6 +189,76 @@ Reply with the notes for this part only: no preamble, no remarks after them, and
     Prompt { system, user }
 }
 
+pub fn build_draft_prompt(
+    notes_so_far: &str,
+    transcript: &str,
+    points: &[Jotted],
+    span: &str,
+) -> Prompt {
+    let key_points = if points.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{POINTS_RULE}")
+    };
+    let system = format!(
+        "You write study notes in Markdown from a lecture or meeting while it is still being recorded, one stretch at a time.
+
+{READING_A_TRANSCRIPT}
+
+The notes already written for the earlier part of the recording are in <notes_so_far> (empty at the start); they stay as they are. The transcript of the next stretch ({span}) is in <transcript>. The recording goes on after it, so:
+- No title and no summary: those are written when the recording ends.
+- ## sections for the topics in <transcript> only, in the order they came up, with bullet points (- ). Continue from where <notes_so_far> stops; never repeat what it already covers.
+{FORMATTING}
+
+{LEARNING}{key_points}
+
+Leave \"## Action items\" and \"## Check yourself\" to the end of the recording: do not write either now. Keep each commitment the speaker states (an assignment, a due date, an exam, a meeting) as a plain bullet, with its date as said, in the section where it came up.
+
+Reply with the new sections only: no preamble, no remarks after them, and do not wrap them in a code block."
+    );
+    let user = format!(
+        "{}<notes_so_far>\n{notes_so_far}\n</notes_so_far>\n\n<transcript>\n{transcript}\n</transcript>\n\n\
+         Write the notes for this stretch ({span}) in interpretable language: ## sections only, \
+         continuing the notes so far.",
+        points_block(points)
+    );
+    Prompt { system, user }
+}
+
+pub fn build_close_prompt(notes_so_far: &str, transcript: &str, points: &[Jotted]) -> Prompt {
+    let key_points = if points.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{POINTS_RULE}")
+    };
+    let system = format!(
+        "You finish study notes in Markdown for a lecture or meeting whose start is already written up.
+
+{READING_A_TRANSCRIPT}
+
+The notes for the start of the recording are in <notes_so_far>; they stay as they are. The transcript of the rest of the recording is in <transcript> (it may be empty).
+
+Shape of the reply:
+1. The first line is the title of the whole recording, as plain text: no \"Title:\", no #, no quotes, no bold.
+2. A blank line, then a 2-3 sentence summary of the whole recording.
+3. ## sections for the topics in <transcript> only, in the order they came up, with bullet points (- ). Continue from where <notes_so_far> stops; never repeat what it already covers.
+{FORMATTING}
+
+{LEARNING}{key_points}
+
+\"## Action items\" gathers the commitments from <notes_so_far> and <transcript> alike, and \"## Check yourself\" covers the whole recording, the notes so far included.
+
+Reply with the title, the summary and the new sections only: no preamble, no remarks after them, and do not wrap them in a code block."
+    );
+    let user = format!(
+        "{}<notes_so_far>\n{notes_so_far}\n</notes_so_far>\n\n<transcript>\n{transcript}\n</transcript>\n\n\
+         Finish the notes in interpretable language: the title alone on the first line, then the \
+         summary, then the sections for this transcript only.",
+        points_block(points)
+    );
+    Prompt { system, user }
+}
+
 pub fn build_summary_prompt(part_notes: &str) -> Prompt {
     let system = "You name and summarize a long recording from the notes already taken on it.
 

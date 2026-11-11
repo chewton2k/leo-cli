@@ -110,15 +110,210 @@ fn points_for(points: &[Jotted], groups: &[Group], index: usize) -> Vec<Jotted> 
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Drafted {
+    pub upto: u32,
+    pub key: String,
+    pub notes: String,
+}
+
+const DRAFT_TAIL_CHARS: usize = 4_000;
+
+fn boundary(parts: &[Part], upto: u32) -> u64 {
+    parts
+        .iter()
+        .filter(|p| p.index < upto)
+        .map(|p| p.end_secs)
+        .max()
+        .unwrap_or(0)
+}
+
+pub fn draft_key(
+    parts: &[Part],
+    points: &[Jotted],
+    profile: &leo_core::recording::Profile,
+    upto: u32,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let end = boundary(parts, upto);
+    let texts: Vec<(u32, &str)> = parts
+        .iter()
+        .filter(|p| p.index < upto)
+        .map(|p| (p.index, p.text.as_str()))
+        .collect();
+    let typed: Vec<(u64, &str)> = points
+        .iter()
+        .filter(|p| p.at_secs < end)
+        .map(|p| (p.at_secs, p.text.as_str()))
+        .collect();
+    let bytes = serde_json::to_vec(&(texts, typed, profile)).unwrap_or_default();
+    base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        Sha256::digest(bytes),
+    )
+}
+
+pub fn notes_context(notes: &str, budget: super::budget::Budget) -> String {
+    if notes.chars().count() <= budget.chars() / 3 {
+        return notes.trim().to_string();
+    }
+    let headings: Vec<&str> = notes.lines().filter(|l| l.starts_with("## ")).collect();
+    let chars: Vec<char> = notes.chars().collect();
+    let tail: String = chars[chars.len().saturating_sub(DRAFT_TAIL_CHARS)..]
+        .iter()
+        .collect();
+    format!(
+        "Headings so far:\n{}\n\nThe last part of the notes:\n…{}",
+        headings.join("\n"),
+        tail.trim_end()
+    )
+}
+
+fn text_from(parts: &[Part], from: usize, to: usize) -> String {
+    let joined = |slice: &[Part]| {
+        slice
+            .iter()
+            .fold(String::new(), |out, p| super::live::stitch(&out, &p.text))
+    };
+    let prior = joined(&parts[..from]);
+    let full = joined(&parts[..to]);
+    full.strip_prefix(prior.as_str())
+        .map_or_else(|| joined(&parts[from..to]), |rest| rest.trim().to_string())
+}
+
+fn points_between(points: &[Jotted], from: u64, to: Option<u64>) -> Vec<Jotted> {
+    points
+        .iter()
+        .filter(|p| p.at_secs >= from && to.is_none_or(|to| p.at_secs < to))
+        .cloned()
+        .collect()
+}
+
+fn fits(prompt: &Prompt, budget: super::budget::Budget) -> bool {
+    prompt.system.chars().count() + prompt.user.chars().count() <= budget.chars()
+}
+
+pub fn draft_prompt(
+    new_parts: &[Part],
+    notes: &str,
+    points: &[Jotted],
+    budget: super::budget::Budget,
+) -> Option<(Prompt, usize)> {
+    let start = new_parts.first()?.start_secs;
+    let context = notes_context(notes, budget);
+    (1..=new_parts.len()).rev().find_map(|n| {
+        let end = new_parts[n - 1].end_secs;
+        let text = new_parts[..n]
+            .iter()
+            .fold(String::new(), |out, p| super::live::stitch(&out, &p.text));
+        let span = format!("{}–{}", clock(start), clock(end));
+        let prompt = chat::build_draft_prompt(
+            &context,
+            &text,
+            &points_between(points, start, Some(end)),
+            &span,
+        );
+        fits(&prompt, budget).then_some((prompt, n))
+    })
+}
+
+fn close_with_drafts(
+    parts: &[Part],
+    points: &[Jotted],
+    drafted: &Drafted,
+    fallback_title: &str,
+    chat_fn: Chat<'_>,
+    progress: Progress<'_>,
+    budget: super::budget::Budget,
+) -> Option<Structured> {
+    let covered = parts.iter().take_while(|p| p.index < drafted.upto).count();
+    let rest = text_from(parts, covered, parts.len());
+    let from = boundary(parts, drafted.upto);
+    let prompt = chat::build_close_prompt(
+        &notes_context(&drafted.notes, budget),
+        &rest,
+        &points_between(points, from, None),
+    );
+    if !fits(&prompt, budget) {
+        return None;
+    }
+    progress(0, 1);
+    let reply = chat_fn(prompt, super::STRUCTURE_MAX_TOKENS);
+    progress(1, 1);
+    let notes = drafted.notes.trim();
+    let (title, body, problems, writer_failed) = match reply {
+        Ok(reply) if !chat::clean_reply(&reply).is_empty() => {
+            let (title, body) = chat::split_title_body(&reply);
+            let at = body
+                .lines()
+                .position(|l| l.starts_with("## "))
+                .unwrap_or(usize::MAX);
+            let summary: Vec<&str> = body.lines().take(at).collect();
+            let sections: Vec<&str> = body.lines().skip(at).collect();
+            let joined = [summary.join("\n"), notes.to_string(), sections.join("\n")]
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            (title, joined, Vec::new(), false)
+        }
+        outcome => {
+            let why = match outcome {
+                Err(e) => super::writing_error(&e),
+                Ok(_) => "The AI returned an empty ending.".to_string(),
+            };
+            let body = if rest.trim().is_empty() {
+                notes.to_string()
+            } else {
+                format!("{notes}\n\n{}", raw(&[], "Transcript", &rest))
+            };
+            (
+                fallback_title.to_string(),
+                body,
+                vec![format!(
+                    "{why} The notes written during the recording are kept, and the rest of the transcript is saved as it is."
+                )],
+                true,
+            )
+        }
+    };
+    Some(Structured {
+        title: if title.trim().is_empty() {
+            fallback_title.to_string()
+        } else {
+            title
+        },
+        body: points_kept(body, points),
+        problems,
+        writer_failed,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn structure_recording(
     parts: &[Part],
     points: &[Jotted],
     existing: Option<&str>,
+    drafted: Option<&Drafted>,
     fallback_title: &str,
     chat_fn: Chat<'_>,
     progress: Progress<'_>,
     budget: super::budget::Budget,
 ) -> Structured {
+    if let Some(drafted) = drafted.filter(|_| existing.is_none()) {
+        if let Some(done) = close_with_drafts(
+            parts,
+            points,
+            drafted,
+            fallback_title,
+            chat_fn,
+            progress,
+            budget,
+        ) {
+            return done;
+        }
+    }
     let groups = groups(parts, budget.words);
     let mut problems = Vec::new();
 
@@ -515,6 +710,7 @@ mod tests {
             &[part(0, 50, "w")],
             &[],
             None,
+            None,
             "Recording",
             &chat,
             &|_, _| {},
@@ -538,6 +734,7 @@ mod tests {
         let s = structure_recording(
             &[part(0, 50, "w")],
             &points,
+            None,
             None,
             "Recording, Sep 29",
             &chat,
@@ -576,6 +773,7 @@ mod tests {
         let s = structure_recording(
             &parts,
             &points,
+            None,
             None,
             "Recording",
             &chat,
@@ -669,7 +867,7 @@ mod tests {
                 .to_string();
             Ok(format!("## From {first}\n- x"))
         };
-        let s = structure_recording(&parts, &[], None, "R", &chat, &|_, _| {}, TEST);
+        let s = structure_recording(&parts, &[], None, None, "R", &chat, &|_, _| {}, TEST);
         assert!(
             most.load(Ordering::SeqCst) >= 2,
             "parts were not written in parallel"
@@ -701,7 +899,16 @@ mod tests {
             assert!(!p.system.contains("name and summarize"));
             Ok("## More\n- x".to_string())
         };
-        let s = structure_recording(&parts, &[], Some("old"), "Sep 29", &chat, &|_, _| {}, TEST);
+        let s = structure_recording(
+            &parts,
+            &[],
+            Some("old"),
+            None,
+            "Sep 29",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
         assert_eq!(
             calls.load(Ordering::Relaxed),
             groups(&parts, TEST.words).len()
@@ -713,8 +920,199 @@ mod tests {
     fn a_long_recording_with_every_part_failed_is_a_failed_write_up() {
         let parts: Vec<Part> = (0..20).map(|i| part(i, 1000, &format!("p{i}w"))).collect();
         let chat = |_: Prompt, _: u32| -> Result<String> { anyhow::bail!("no writer") };
-        let s = structure_recording(&parts, &[], None, "R", &chat, &|_, _| {}, TEST);
+        let s = structure_recording(&parts, &[], None, None, "R", &chat, &|_, _| {}, TEST);
         assert!(s.writer_failed);
         assert!(s.body.contains("p0w0"), "the transcript was kept");
+    }
+
+    fn drafted(upto: u32, notes: &str) -> Drafted {
+        Drafted {
+            upto,
+            key: String::new(),
+            notes: notes.to_string(),
+        }
+    }
+
+    #[test]
+    fn with_drafts_one_close_call_writes_the_rest_around_them() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b"), part(2, 20, "c")];
+        let seen = std::sync::Mutex::new(Vec::new());
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            seen.lock().unwrap().push(p);
+            Ok("Disks\n\nHow disks work.\n\n## Caching\n- c\n\n## Check yourself\n> [!question]- Why?\n> Because.".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(2, "## Layout\n- a\n\n## Seeking\n- b")),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].user.contains("## Seeking") && seen[0].user.contains("c0"));
+        assert!(!seen[0].user.contains("a0") && !seen[0].user.contains("b0"));
+        assert_eq!(s.title, "Disks");
+        let at = |t: &str| {
+            s.body
+                .find(t)
+                .unwrap_or_else(|| panic!("{t} in {}", s.body))
+        };
+        assert!(at("How disks work.") < at("## Layout"));
+        assert!(at("## Seeking") < at("## Caching"));
+        assert!(at("## Caching") < at("## Check yourself"));
+        assert!(!s.writer_failed && s.problems.is_empty());
+    }
+
+    #[test]
+    fn a_close_with_nothing_left_or_no_sections_still_keeps_the_drafts() {
+        let parts = [part(0, 20, "a")];
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            assert!(p.user.contains("<transcript>\n\n</transcript>"));
+            Ok("Disks\n\nOnly a summary.".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert_eq!(s.body, "Only a summary.\n\n## Layout\n- a");
+    }
+
+    #[test]
+    fn a_failed_close_keeps_the_drafts_and_the_rest_of_the_transcript() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let chat = |_: Prompt, _: u32| -> Result<String> { anyhow::bail!("busy") };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "Recording",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(s.writer_failed);
+        assert_eq!(s.title, "Recording");
+        assert!(s.body.starts_with("## Layout") && s.body.contains("b0"));
+        assert!(!s.body.contains("a0"));
+        assert_eq!(s.problems.len(), 1);
+    }
+
+    #[test]
+    fn typed_points_go_to_their_own_stretch_and_are_never_lost() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let points = vec![
+            Jotted {
+                at_secs: 10,
+                text: "early point kept".into(),
+            },
+            Jotted {
+                at_secs: 400,
+                text: "late point".into(),
+            },
+        ];
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            assert!(p.user.contains("late point") && !p.user.contains("early point kept"));
+            Ok("T\n\nS.\n\n## More\n- late point".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &points,
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(s.body.contains("early point kept"));
+        assert_eq!(s.body.matches("late point").count(), 1);
+    }
+
+    #[test]
+    fn drafts_are_ignored_when_adding_to_an_existing_note() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            assert!(!p.user.contains("notes_so_far"));
+            Ok("- more".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            Some("old"),
+            Some(&drafted(1, "## Layout")),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(!s.body.contains("## Layout"));
+    }
+
+    #[test]
+    fn the_draft_key_changes_with_its_own_stretch_only() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let profile = leo_core::recording::Profile::default();
+        let point = |at_secs| Jotted {
+            at_secs,
+            text: "p".into(),
+        };
+        let key = draft_key(&parts, &[], &profile, 1);
+        assert_eq!(key, draft_key(&parts, &[point(500)], &profile, 1));
+        assert_ne!(key, draft_key(&parts, &[point(20)], &profile, 1));
+        assert_ne!(key, draft_key(&parts, &[], &profile, 2));
+        let wants = leo_core::recording::Profile {
+            wants: "focus on proofs".into(),
+            ..Default::default()
+        };
+        assert_ne!(key, draft_key(&parts, &[], &wants, 1));
+        let mut changed = parts.clone();
+        changed[0].text.push_str(" again");
+        assert_ne!(key, draft_key(&changed, &[], &profile, 1));
+    }
+
+    #[test]
+    fn a_draft_takes_the_longest_stretch_that_fits() {
+        let parts = [part(0, 200, "a"), part(1, 200, "b"), part(2, 200, "c")];
+        let roomy = draft_prompt(&parts, "", &[], TEST).unwrap();
+        assert_eq!(roomy.1, 3);
+        let tight = Budget {
+            words: 1_200,
+            at_once: 1,
+        };
+        let (prompt, n) = draft_prompt(&parts, "", &[], tight).unwrap();
+        assert!((1..3).contains(&n));
+        assert!(prompt.user.contains("a0") && !prompt.user.contains("c0"));
+        let tiny = Budget {
+            words: 10,
+            at_once: 1,
+        };
+        assert!(draft_prompt(&parts, "", &[], tiny).is_none());
+        assert!(prompt
+            .system
+            .contains("Leave \"## Action items\" and \"## Check yourself\" to the end"));
+    }
+
+    #[test]
+    fn long_drafts_are_cut_to_their_headings_and_tail() {
+        let notes = format!("## One\n{}\n## Two\n- end", "x".repeat(20_000));
+        let small = Budget {
+            words: 3_000,
+            at_once: 1,
+        };
+        let context = notes_context(&notes, small);
+        assert!(context.contains("## One") && context.contains("## Two\n- end"));
+        assert!(context.chars().count() < 4_200);
+        assert_eq!(notes_context("## A\n- a", small), "## A\n- a");
     }
 }

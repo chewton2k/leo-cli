@@ -683,6 +683,7 @@ pub fn write_up(
         &assembled.parts,
         &points,
         existing,
+        None,
         &fallback,
         &|prompt, max| {
             crate::ai::chat_outcome(
