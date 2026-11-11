@@ -69,6 +69,7 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
             dir: directory,
             screen,
             input,
+            draft: draft_fn(),
         },
         &controls,
         &|event| {
@@ -249,6 +250,7 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
                         dir: directory,
                         screen: speaker == "Others",
                         input,
+                        draft: None,
                     },
                     &controls,
                     &|event| {
@@ -484,6 +486,12 @@ fn resume_retained(
         "This recording is still incomplete. Try recovering it again."
     );
     Ok(())
+}
+
+fn draft_fn() -> Option<recorder::DraftFn> {
+    leo_services::ai::writing_ready().then(|| -> recorder::DraftFn {
+        Arc::new(|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value))
+    })
 }
 
 #[cfg(test)]
