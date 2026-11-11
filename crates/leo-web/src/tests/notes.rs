@@ -88,7 +88,7 @@ fn deleting_by_an_ambiguous_prefix_deletes_nothing() {
         let first = store.notes[0].id.clone();
         store.notes[1].id = format!("{first}x");
         store.save().unwrap();
-        first
+        first[..first.len() - 1].to_string()
     };
     let status = run(delete_note(State(state.clone()), Path(prefix)));
     assert_eq!(status, StatusCode::NOT_FOUND);

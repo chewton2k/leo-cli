@@ -808,7 +808,7 @@ END:VCALENDAR\r
 
     #[test]
     fn a_feed_full_of_exclusion_dates_is_expanded_quickly() {
-        let first = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+        let first = NaiveDate::from_ymd_opt(1100, 1, 1).unwrap();
         let mut text =
             String::from("BEGIN:VEVENT\nUID:d\nDTSTART:20260101T160000Z\nRRULE:FREQ=DAILY\n");
         for line in 0..60 {

@@ -156,6 +156,7 @@ impl Updates {
             self.app.exit(0);
         }
     }
+    #[cfg(target_os = "macos")]
     pub fn leaving(&self) -> bool {
         self.leaving.load(Ordering::Acquire)
     }
