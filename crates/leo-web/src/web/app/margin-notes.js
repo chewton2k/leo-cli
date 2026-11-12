@@ -1068,6 +1068,18 @@ async function marginInsert(s, t, text, request) {
   return { done: await api(`/api/notes/${enc(s.note.id)}/insert`, { method: 'POST', body: { text, line: next, base: fresh.version, request } }), line: next };
 }
 
+async function marginWeave(s, t, request) {
+  await flush(s);
+  const path = `/api/notes/${enc(s.note.id)}/margin/threads/${enc(t.id)}/weave`;
+  try {
+    return await api(path, { method: 'POST', body: { base: s.note.version, request } });
+  } catch (e) {
+    if (e.status !== 409 || e.data?.why) throw e;
+  }
+  const fresh = await api(`/api/notes/${enc(s.note.id)}`);
+  return api(path, { method: 'POST', body: { base: fresh.version, request } });
+}
+
 async function marginAdd(t) {
   if (marginPage.adding.has(t.id)) return;
   marginPage.adding.add(t.id);
@@ -1075,24 +1087,35 @@ async function marginAdd(t) {
   const el = marginPage.els.get(t.id);
   const button = $('.margin-add', el);
   button.disabled = true;
+  button.textContent = 'Working it in…';
   marginSaying(el, '');
   t.addRequest = t.addRequest || requestId();
-  let added;
+  let done, from = null, to = null, woven = true;
   try {
-    added = await marginInsert(s, t, marginNow(t), t.addRequest);
+    done = await marginWeave(s, t, t.addRequest).catch((e) => {
+      if (e.data?.why !== 'lost') throw e;
+      woven = false;
+      return null;
+    });
+    if (woven) ({ from, to } = done);
+    else {
+      const added = await marginInsert(s, t, marginNow(t), t.addRequest);
+      done = added.done;
+      if (added.line !== null) [from, to] = [added.line + 1, added.line + 3];
+    }
   } catch (e) {
     if (e instanceof Locked) throw e;
-    if (el.isConnected) marginSaying(el, e.status === 409 ? 'The note changed. Try once more.' : e.message);
+    if (el.isConnected) marginSaying(el, e.status === 409 && !e.data?.why ? 'The note changed. Try once more.' : e.message);
     return;
   } finally {
     marginPage.adding.delete(t.id);
     button.disabled = false;
+    button.textContent = 'Add to note';
   }
-  const { done, line } = added;
   const id = s.note.id;
   const threadPath = `/api/notes/${enc(id)}/margin/threads/${enc(t.id)}`;
   const open = () => state.view === 'note' && state.session && state.session.note.id === id;
-  toast(line === null ? 'Its passage has moved, so this went at the end of the note' : 'Added to note', {
+  toast(woven ? 'Worked into the note' : from === null ? 'Its passage has moved, so this went at the end of the note' : 'Added to note', {
     action: 'Undo',
     run: async () => {
       try {
@@ -1109,8 +1132,8 @@ async function marginAdd(t) {
     if (e instanceof Locked) throw e;
   });
   if (open()) await showNote(id);
-  if (open() && line !== null) {
-    state.session.doc.glow(line + 1, line + 3);
+  if (open() && from !== null) {
+    state.session.doc.glow(from, to);
     setTimeout(() => { if (open()) state.session.doc.glow(); }, GLOW_MS);
   }
 }

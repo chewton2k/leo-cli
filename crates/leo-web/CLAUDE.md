@@ -386,6 +386,10 @@ Felix (2026-10-19).
   (3) threads per part, each reply capped at `THROUGH_TOKENS` (700); a run ends
   at the page's `THROUGH_MOST` (12) notes. Undo DELETE
   `.../threads/{id}` is 409 `replying`/`replied`.
+- Add to note weaves: POST `.../threads/{id}/weave` rewrites the quote's
+  blank-line block with `toolless_chat` (`WEAVE_SYSTEM`, `margin::woven` refuses a
+  rewrite under half or over 3× + 400 of the block), version-checked before and
+  after the AI; only a lost passage falls back to `/insert`.
 - The model's quote must be in the note now; `margin::crowded` allows one open
   note per sentence. The server anchors on prefix + quote + suffix exactly and
   never falls back to another occurrence. Asks: 3 to `MOST_ASKED` (1,000)
