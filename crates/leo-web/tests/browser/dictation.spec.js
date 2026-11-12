@@ -70,7 +70,7 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       view.shortcut = { recording: true, held: 'option', captured: '' };
       await expect(page.locator('#dictation-shortcut-field kbd')).toHaveText('\u2325');
       view.shortcut = { recording: false, held: '', captured: 'fn' };
-      await expect(page.locator('#dictation-shortcut-status')).toHaveText('Saved. Hold Fn to dictate.');
+      await expect(page.locator('#dictation-shortcut-status')).toHaveText('Saved. Hold or press Fn to dictate.');
       await expect(page.locator('[data-dictation="shortcut"]')).toHaveValue('fn');
       await expect(words).toHaveValue('Charlton\n東京');
       await page.getByRole('radiogroup', { name: 'Popup position' }).getByRole('radio', { name: 'Top' }).click();
