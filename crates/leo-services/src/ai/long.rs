@@ -245,19 +245,22 @@ pub fn draft_prompt(
     budget: super::budget::Budget,
 ) -> Option<(Prompt, usize)> {
     let start = new_parts.first()?.start_secs;
-    let context = notes_context(notes, (budget.chars() / 3).min(DRAFT_CONTEXT_CHARS));
-    (1..=new_parts.len()).rev().find_map(|n| {
-        let end = new_parts[n - 1].end_secs;
-        let text = new_parts[..n]
-            .iter()
-            .fold(String::new(), |out, p| super::live::stitch(&out, &p.text));
-        let typed = points_between(points, start, Some(end));
-        if text.trim().is_empty() && typed.is_empty() {
-            return None;
-        }
-        let span = format!("{}–{}", clock(start), clock(end));
-        let prompt = chat::build_draft_prompt(&context, &text, &typed, &span);
-        fits(&prompt, budget).then_some((prompt, n))
+    let cap = (budget.chars() / 3).min(DRAFT_CONTEXT_CHARS);
+    [cap, cap / 8].into_iter().find_map(|cap| {
+        let context = notes_context(notes, cap);
+        (1..=new_parts.len()).rev().find_map(|n| {
+            let end = new_parts[n - 1].end_secs;
+            let text = new_parts[..n]
+                .iter()
+                .fold(String::new(), |out, p| super::live::stitch(&out, &p.text));
+            let typed = points_between(points, start, Some(end));
+            if text.trim().is_empty() && typed.is_empty() {
+                return None;
+            }
+            let span = format!("{}–{}", clock(start), clock(end));
+            let prompt = chat::build_draft_prompt(&context, &text, &typed, &span);
+            fits(&prompt, budget).then_some((prompt, n))
+        })
     })
 }
 
@@ -1347,6 +1350,24 @@ mod tests {
         );
         assert_eq!(s.title, "Recording");
         assert_eq!(s.body, "## Layout\n- a\n\n## Caching\n- c");
+    }
+
+    #[test]
+    fn a_stretch_with_long_typed_points_still_drafts_with_less_context() {
+        let ollama = Budget {
+            words: 2_764,
+            at_once: 1,
+        };
+        let parts = [part(0, 540, "a")];
+        let points = vec![Jotted {
+            at_secs: 10,
+            text: "slide ".repeat(900),
+        }];
+        let notes = "## Earlier\n- words\n".repeat(600);
+        let (prompt, n) = draft_prompt(&parts, &notes, &points, ollama).unwrap();
+        assert_eq!(n, 1);
+        assert!(prompt.user.contains("slide slide") && prompt.user.contains("a539"));
+        assert!(!prompt.user.contains(&notes_context(&notes, ollama.chars() / 3)));
     }
 
     #[test]

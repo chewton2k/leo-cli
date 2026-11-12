@@ -92,8 +92,8 @@ headings plus the last 4,000 chars) and the close at a third of the budget. At S
 running draft is joined after the tail is transcribed; Finish now stops it (agent CLIs are
 killed; a loopback OpenAI-compatible stream such as Ollama's stops between lines) and still
 joins.
-`write_up` uses `drafts_for` (key must match; never for an append, including a resumed
-session whose drafts.json still matches) and `structure_recording` makes one closing call
+`write_up` uses `drafts_for` (key must match; never for an append; a resumed session uses
+its drafts.json when it still matches) and `structure_recording` makes one closing call
 (`chat::build_close_prompt`: notes so far, every commitment, the rest of the transcript) that
 writes the title, summary, the remaining sections, Action items and Check yourself; the note
 is summary, drafts, then those sections. When the rest is too long for one close (a small
