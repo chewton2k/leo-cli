@@ -113,6 +113,21 @@ fn detect_language_is_refused_and_migrated_for_models_that_cannot_detect() {
 }
 
 #[test]
+fn a_model_that_cannot_detect_prefers_the_system_language_then_english_then_its_first() {
+    use crate::speech::catalog::choose_language;
+    let listed = |all: &[&str]| all.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+    let three = listed(&["bg", "de", "en"]);
+    assert_eq!(choose_language(&three, Some("de")).as_deref(), Some("de"));
+    assert_eq!(choose_language(&three, Some("ja")).as_deref(), Some("en"));
+    assert_eq!(choose_language(&three, None).as_deref(), Some("en"));
+    assert_eq!(
+        choose_language(&listed(&["bg", "de"]), Some("ja")).as_deref(),
+        Some("bg")
+    );
+    assert_eq!(choose_language(&[], Some("en")), None);
+}
+
+#[test]
 fn choosing_detect_language_for_a_model_that_cannot_detect_picks_a_listed_language() {
     let dir = tempfile::tempdir().unwrap();
     let mut data = catalog().clone();

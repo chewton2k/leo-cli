@@ -83,6 +83,7 @@ pub(super) struct WinTxShared {
     snapshot: Mutex<Vec<SavedFormat>>,
     sequence: Mutex<u32>,
     owner: std::sync::atomic::AtomicUsize,
+    own: std::sync::atomic::AtomicBool,
 }
 
 static PENDING: Mutex<Option<Arc<WinTxShared>>> = Mutex::new(None);
@@ -270,7 +271,8 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
     };
     let _ = EmptyClipboard();
     let concealed = RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing"));
-    if formats.iter().any(|saved| saved.format == concealed) {
+    let own = shared.own.load(std::sync::atomic::Ordering::Acquire);
+    if !own && formats.iter().any(|saved| saved.format == concealed) {
         formats.clear();
         info!("[reliable-paste] previous clipboard was concealed; cleared instead of restoring");
     }
@@ -307,12 +309,19 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
         }
     }
     let _ = CloseClipboard();
+    if own {
+        super::copied();
+    }
 }
 
 unsafe fn snapshot_clipboard(hwnd: HWND, shared: &WinTxShared) -> Result<(), String> {
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::DataExchange::METAFILEPICT;
     OpenClipboard(Some(hwnd)).map_err(|_| "The clipboard is busy. Try dictating again.")?;
+    shared.own.store(
+        super::own_copy(GetClipboardSequenceNumber() as i64),
+        std::sync::atomic::Ordering::Release,
+    );
     struct Open;
     impl Drop for Open {
         fn drop(&mut self) {
@@ -441,6 +450,10 @@ unsafe fn snapshot_clipboard(hwnd: HWND, shared: &WinTxShared) -> Result<(), Str
     }
     *shared.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = formats;
     Ok(())
+}
+
+pub(super) fn count() -> i64 {
+    unsafe { GetClipboardSequenceNumber() as i64 }
 }
 
 unsafe fn publish(hwnd: HWND) -> Result<u32, String> {
@@ -676,6 +689,7 @@ pub(super) fn run(
         snapshot: Mutex::new(Vec::new()),
         sequence: Mutex::new(0),
         owner: std::sync::atomic::AtomicUsize::new(0),
+        own: std::sync::atomic::AtomicBool::new(false),
     });
 
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();

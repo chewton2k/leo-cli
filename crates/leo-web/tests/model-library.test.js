@@ -42,14 +42,16 @@ test('the downloaded heading counts models in the singular', () => {
   const models = [{ id: 'one', name: 'English', languages: ['en'], size: 100, bytes: 100, downloaded: true, verified: true, recommended: true, speed: 8, accuracy: 96 }];
   assert.ok(h.speechCards({ selected: { id: 'one', language: 'en' }, ready: true, disk_bytes: 100, models, extra_files: [] }).includes('1 model ·'));
 });
-test('a model that cannot detect language is used with the system language when it has it, else its first', () => {
+test('a model that cannot detect language is used with the system language when it has it, else English, else its first', () => {
   const h = helpers();
   const model = { languages: ['bg', 'de', 'en'], detects_language: false };
   const use = (language) => { h.navigator = { language }; return h.speechUseLanguage(model); };
   assert.equal(use('de-CH'), 'de');
   assert.equal(use('EN-us'), 'en');
-  assert.equal(use('ja-JP'), 'bg');
-  assert.equal(use(undefined), 'bg');
+  assert.equal(use('ja-JP'), 'en');
+  assert.equal(use(undefined), 'en');
+  h.navigator = { language: 'ja-JP' };
+  assert.equal(h.speechUseLanguage({ languages: ['bg', 'de'], detects_language: false }), 'bg');
   assert.equal(h.speechUseLanguage({ languages: ['en', 'de'], detects_language: true }), 'auto');
   assert.equal(h.speechUseLanguage({ languages: ['en', 'de'] }), 'auto');
 });

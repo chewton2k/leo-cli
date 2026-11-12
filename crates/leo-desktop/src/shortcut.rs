@@ -32,7 +32,7 @@ pub fn validate(raw: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn loaded(saved: String) -> (String, String) {
+pub(crate) fn loaded(saved: String) -> (String, String) {
     match validate(&saved) {
         Ok(()) => (saved, String::new()),
         Err(error) => {

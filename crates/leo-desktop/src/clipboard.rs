@@ -22,6 +22,7 @@ fn paste_error(e: &str) -> String {
 pub fn copy(app: &AppHandle, text: &str) -> Result<(), String> {
     app.clipboard()
         .write_secret(text)
+        .map(|()| crate::paste_tx::copied())
         .map_err(|_| "The clipboard could not be opened. Try Copy again.".into())
 }
 pub fn paste(

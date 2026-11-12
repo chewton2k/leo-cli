@@ -1092,7 +1092,7 @@ function speechBytes(bytes) {
 function speechUseLanguage(model) {
   if (model.detects_language !== false) return 'auto';
   const mine = String(globalThis.navigator?.language || '').split('-')[0].toLowerCase();
-  return model.languages.includes(mine) ? mine : model.languages[0];
+  return model.languages.includes(mine) ? mine : model.languages.includes('en') ? 'en' : model.languages[0];
 }
 function speechLanguage(code) {
   try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch (e) { return code; }

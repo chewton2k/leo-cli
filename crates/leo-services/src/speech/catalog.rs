@@ -165,10 +165,15 @@ impl Model {
                     .next()
                     .map(str::to_lowercase)
             });
-        self.languages
-            .iter()
-            .find(|l| Some(l.as_str()) == system.as_deref())
-            .or(self.languages.first())
-            .cloned()
+        choose_language(&self.languages, system.as_deref())
     }
+}
+
+pub(crate) fn choose_language(languages: &[String], system: Option<&str>) -> Option<String> {
+    languages
+        .iter()
+        .find(|l| Some(l.as_str()) == system)
+        .or_else(|| languages.iter().find(|l| *l == "en"))
+        .or(languages.first())
+        .cloned()
 }

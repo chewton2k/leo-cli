@@ -67,6 +67,7 @@ struct MacPending {
     activity: Option<leo_core::activity::Lease>,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
     snapshot: super::Snapshot,
+    own: bool,
     change_count: NSInteger,
     provider: Option<Retained<LeoPasteProvider>>,
     preserve_transcript: bool,
@@ -89,6 +90,7 @@ fn settle(pending: &Arc<Mutex<MacPending>>, app_handle: &AppHandle) {
     let activity = p.activity.take();
     let state = p.state.clone();
     let snapshot = std::mem::take(&mut p.snapshot.0);
+    let own = p.own;
     let change_count = p.change_count;
     let preserve_transcript = p.preserve_transcript;
     let transcript = p.transcript.clone();
@@ -104,7 +106,12 @@ fn settle(pending: &Arc<Mutex<MacPending>>, app_handle: &AppHandle) {
         let _ = crate::clipboard::copy(app_handle, &transcript);
         info!("[reliable-paste] left transcript on clipboard as plain text");
     } else {
-        restore(&NSPasteboard::generalPasteboard(), &snapshot, change_count);
+        restore(
+            &NSPasteboard::generalPasteboard(),
+            &snapshot,
+            change_count,
+            own,
+        );
     }
 
     drop(provider);
@@ -115,6 +122,7 @@ fn restore(
     pasteboard: &NSPasteboard,
     snapshot: &[Vec<(String, Vec<u8>)>],
     change_count: NSInteger,
+    own: bool,
 ) -> bool {
     let items: Vec<Retained<objc2::runtime::ProtocolObject<dyn NSPasteboardWriting>>> = snapshot
         .iter()
@@ -135,13 +143,20 @@ fn restore(
         .flatten()
         .map(|(kind, _)| kind.as_str())
         .collect();
-    if super::restorable(&types) {
+    if super::restorable(&types, own) {
         pasteboard.writeObjects(&NSArray::from_retained_slice(&items));
+        if own {
+            super::copied();
+        }
         info!("[reliable-paste] restored previous clipboard");
     } else {
         info!("[reliable-paste] previous clipboard was concealed; cleared instead of restoring");
     }
     true
+}
+
+pub(super) fn count() -> i64 {
+    NSPasteboard::generalPasteboard().changeCount() as i64
 }
 
 pub(super) fn flush_pending(app_handle: &AppHandle) {
@@ -229,6 +244,7 @@ pub(super) fn run(
 
     let pasteboard = NSPasteboard::generalPasteboard();
     let before = pasteboard.changeCount();
+    let own = super::own_copy(before as i64);
     let mut items = Vec::new();
     let mut bytes = 0usize;
     if let Some(all) = pasteboard.pasteboardItems() {
@@ -293,6 +309,7 @@ pub(super) fn run(
         activity: Some(activity),
         current,
         snapshot,
+        own,
         change_count,
         provider: Some(provider),
         preserve_transcript: sent.is_err(),
@@ -339,14 +356,15 @@ mod tests {
         write(&pasteboard, "dictation");
         let change_count = pasteboard.changeCount();
         write(&pasteboard, "newer");
-        assert!(!super::restore(&pasteboard, &snapshot, change_count));
+        assert!(!super::restore(&pasteboard, &snapshot, change_count, false));
         assert_eq!(read(&pasteboard).as_deref(), Some("newer"));
 
         write(&pasteboard, "dictation");
         assert!(super::restore(
             &pasteboard,
             &snapshot,
-            pasteboard.changeCount()
+            pasteboard.changeCount(),
+            false
         ));
         assert_eq!(read(&pasteboard).as_deref(), Some("before"));
 
@@ -358,9 +376,18 @@ mod tests {
         assert!(super::restore(
             &pasteboard,
             &concealed,
-            pasteboard.changeCount()
+            pasteboard.changeCount(),
+            false
         ));
         assert_eq!(read(&pasteboard), None);
+        write(&pasteboard, "dictation");
+        assert!(super::restore(
+            &pasteboard,
+            &concealed,
+            pasteboard.changeCount(),
+            true
+        ));
+        assert_eq!(read(&pasteboard).as_deref(), Some("secret"));
         let _: () = unsafe { msg_send![&*pasteboard, releaseGlobally] };
     }
 }

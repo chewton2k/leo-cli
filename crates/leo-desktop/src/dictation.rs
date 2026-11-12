@@ -142,10 +142,12 @@ impl Dictation {
     pub fn new(app: AppHandle) -> Result<Arc<Self>> {
         let path = leo_core::paths::config_dir()?.join("dictation.json");
         let (settings, problem) = Settings::recover(&path);
+        let mut in_use = settings.clone();
+        in_use.shortcut = crate::shortcut::loaded(settings.shortcut.clone()).0;
         let (tx, rx) = mpsc::sync_channel(32);
         let this = Arc::new(Self {
             app: app.clone(),
-            settings: Mutex::new(settings.clone()),
+            settings: Mutex::new(in_use),
             path,
             state: Mutex::new(json!({"state":"idle"})),
             theme: Mutex::new("system".into()),
