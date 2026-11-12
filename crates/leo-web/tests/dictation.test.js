@@ -3,9 +3,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const core = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
+function withKeys(context, mac = true) {
+  context.ON_MAC = mac;
+  vm.runInContext(core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('async function dictateHint')), context);
+  return context;
+}
 test('dictation controls escape history and preserve explicit text settings', () => {
   const context = { app: { addEventListener() {} }, settingsOption: (value, label) => `<option>${label}</option>`, ICON: { chevron: '' }, esc: value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'), state: {}, window: {}, document: { activeElement: null, addEventListener() {} }, setTimeout() {} };
   vm.createContext(context);
+  withKeys(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/dictation.js'), 'utf8'), context);
   const html = context.dictationCards({ settings: { shortcut: 'option+space', custom_words: ['東京'], mode: 'both', popup: 'live' }, recent: [{ id: 1, text: '<img src=x onerror=bad()>' }], shortcut: {} });
@@ -20,6 +28,21 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(html.includes('role="radiogroup" aria-label="Popup"'));
   assert.ok(/<input type="checkbox" class="switch" role="switch" data-dictation="writing" data-on="quick">/.test(html));
   assert.ok(html.includes('Adds a few seconds'));
+  assert.ok(html.includes('Names and terms leo should spell your way, up to 200. Some models also listen for them; the first ones count most.'));
+  assert.ok(html.includes('<kbd>\u2325</kbd><kbd>Space</kbd>'));
+  assert.ok(html.includes('data-action="dictation-record">Change</button>'));
+  for (const gone of ['Use shortcut', 'dictation-use-shortcut', 'dictation-resume', 'Change shortcut']) assert.ok(!html.includes(gone));
+  assert.ok(html.includes('<input type="hidden" data-dictation="shortcut" value="option+space">'));
+  const recording = context.dictationCards({ settings: { shortcut: 'option+space' }, recent: [], shortcut: { recording: true, held: 'command+shift' } });
+  assert.ok(recording.includes('shortcut-field recording'));
+  assert.ok(recording.includes('Press your keys\u2026'));
+  assert.ok(recording.includes('<kbd>\u2318</kbd><kbd>\u21e7</kbd>'));
+  assert.ok(!recording.includes('<kbd>Space</kbd>'));
+  assert.ok(recording.includes('>Esc to cancel</span>'));
+  const windows = withKeys(vm.createContext({ esc: (value) => value }), false);
+  assert.deepEqual(plain(vm.runInContext("shortcutParts('ctrl_left+alt+super+shift+fn+space+k')", windows)), ['Ctrl', 'Alt', 'Win', 'Shift', 'Fn', 'Space', 'K']);
+  assert.deepEqual(plain(vm.runInContext("shortcutParts('')", windows)), []);
+  assert.deepEqual(plain(vm.runInContext("shortcutParts('command_right+option+fn')", withKeys(vm.createContext({}), true))), ['\u2318', '\u2325', 'Fn']);
   assert.ok(html.includes('Matches the tone of the app you dictate into (only the app’s name is used).'));
   assert.ok(!/id="dictation-position-row" hidden/.test(html));
   assert.ok(/id="dictation-position-row" hidden/.test(context.dictationCards({ settings: { popup: 'off' }, recent: [], shortcut: {} })));
@@ -39,6 +62,101 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.equal(context.dictationDraft().writing, 'selected');
   context.app.querySelectorAll = () => fields(true, 'quick');
   assert.equal(context.dictationDraft().writing, 'quick');
+});
+function shortcutContext(shortcut = {}, saved = 'option+space') {
+  const calls = [], handlers = {}, delays = [], status = { textContent: '', classes: new Set(), classList: { toggle: (name, on) => status.classes[on ? 'add' : 'delete'](name) } };
+  const field = { innerHTML: '', classList: { toggle() {} } }, hidden = { dataset: { dictation: 'shortcut' }, value: saved };
+  const context = {
+    app: { addEventListener() {}, querySelectorAll: () => [hidden] },
+    window: { addEventListener: (type, fn, capture) => { handlers[type] = { fn, capture }; } },
+    ICON: {}, esc: (value) => value, document: { activeElement: null, addEventListener() {} },
+    state: { view: 'settings', dictation: { settings: { shortcut: saved }, shortcut, recent: [] } }, seq: 1,
+    setTimeout: (fn, ms) => { delays.push(ms); }, clearTimeout() {}, appVisible: () => true, pulse() {}, refreshPanel() {}, fail: (e) => { throw e; },
+    $: (selector) => ({ '#dictation-shortcut-status': status, '#dictation-shortcut-field': field, '[data-dictation="shortcut"]': hidden, '#dictation-result': { classList: { remove() {}, add() {} } }, '#dictation-recent': {} })[selector] || null,
+    api: async (url, options = {}) => {
+      if (options.body) calls.push(plain(options.body));
+      if (options.body && options.body.action === 'save' && context.refuse) throw new Error(context.refuse);
+      const settings = options.body && options.body.action === 'save' ? options.body.settings : context.state.dictation.settings;
+      return { settings, shortcut: context.after || {}, recent: [] };
+    },
+  };
+  vm.createContext(context);
+  withKeys(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/dictation.js'), 'utf8'), context);
+  return { context, calls, handlers, hidden, status, field, delays };
+}
+const settle = async () => { for (let n = 0; n < 6; n++) await new Promise((resolve) => setImmediate(resolve)); };
+test('a captured chord saves at once, says so, and is not saved twice', async () => {
+  const { context, calls, hidden, status } = shortcutContext({ recording: true, held: 'option' });
+  context.after = { recording: false, captured: 'command+shift+k' };
+  context.updateDictationStatus(context.state.dictation);
+  assert.equal(status.textContent, 'Esc to cancel');
+  assert.deepEqual(calls, []);
+  const captured = { settings: { shortcut: 'option+space' }, shortcut: { recording: false, captured: 'command+shift+k' } };
+  context.updateDictationStatus(captured);
+  await settle();
+  assert.deepEqual(calls, [{ action: 'save', settings: { shortcut: 'command+shift+k' } }]);
+  assert.equal(hidden.value, 'command+shift+k');
+  assert.equal(status.textContent, 'Saved. Hold \u2318 \u21e7 K to dictate.');
+  assert.ok(status.classes.has('ok') && !status.classes.has('bad'));
+  context.updateDictationStatus(captured);
+  await settle();
+  assert.equal(calls.length, 1);
+  context.updateDictationStatus({ settings: { shortcut: 'command+shift+k' }, shortcut: { recording: true, held: '' } });
+  context.updateDictationStatus(captured);
+  await settle();
+  assert.equal(calls.length, 2);
+});
+test('a chord left over from before this page saw a recording is never saved', async () => {
+  const { context, calls } = shortcutContext();
+  context.updateDictationStatus({ settings: { shortcut: 'option+space' }, shortcut: { recording: false, captured: 'fn' } });
+  await settle();
+  assert.deepEqual(calls, []);
+});
+test('a refused chord keeps the old shortcut, shows the refusal and resumes it', async () => {
+  const { context, calls, hidden, status } = shortcutContext();
+  context.refuse = 'Another app already uses that shortcut.';
+  context.updateDictationStatus({ settings: { shortcut: 'option+space' }, shortcut: { recording: true, held: 'fn' } });
+  context.updateDictationStatus({ settings: { shortcut: 'option+space' }, shortcut: { recording: false, captured: 'fn' } });
+  await settle();
+  assert.deepEqual(calls.map((c) => c.action), ['save', 'resume_shortcut']);
+  assert.equal(hidden.value, 'option+space');
+  assert.equal(status.textContent, 'Another app already uses that shortcut.');
+  assert.ok(status.classes.has('bad') && !status.classes.has('ok'));
+});
+test('while recording every key is held back from the page and Escape or an outside click cancels', async () => {
+  const { context, calls, handlers } = shortcutContext({ recording: true, held: '' });
+  context.after = { recording: true, held: '' };
+  assert.ok(handlers.keydown.capture && handlers.keyup.capture && handlers.click.capture);
+  const key = (type, name) => { const e = { type, key: name, prevented: false, stopped: false, preventDefault() { e.prevented = true; }, stopImmediatePropagation() { e.stopped = true; } }; handlers[type].fn(e); return e; };
+  for (const name of [' ', 'Enter', 'k', 'Tab']) {
+    const e = key('keydown', name);
+    assert.ok(e.prevented && e.stopped, name);
+  }
+  assert.ok(key('keyup', ' ').prevented);
+  assert.deepEqual(calls, []);
+  assert.ok(key('keydown', 'Escape').prevented);
+  await settle();
+  assert.deepEqual(calls, [{ action: 'resume_shortcut' }]);
+  handlers.click.fn({ target: { closest: () => ({}) } });
+  await settle();
+  assert.equal(calls.length, 1);
+  handlers.click.fn({ target: { closest: () => null } });
+  await settle();
+  assert.deepEqual(calls.map((c) => c.action), ['resume_shortcut', 'resume_shortcut']);
+  context.state.dictation.shortcut = {};
+  assert.ok(!key('keydown', ' ').prevented);
+  assert.ok(!key('keydown', 'Escape').prevented);
+  handlers.click.fn({ target: { closest: () => null } });
+  await settle();
+  assert.equal(calls.length, 2);
+});
+test('the page polls every 150 ms while recording and every 600 ms otherwise', () => {
+  for (const [shortcut, wait] of [[{ recording: true }, 150], [{}, 600]]) {
+    const { context, delays } = shortcutContext(shortcut);
+    context.pollDictation(1, vm.runInContext('dictationGeneration', context));
+    assert.deepEqual(delays, [wait]);
+  }
 });
 function editContext(words, recent) {
   const listeners = {}, calls = [], panel = { html: '' }, field = { value: words.join('\n') }, result = { textContent: '' };
@@ -62,7 +180,6 @@ function editContext(words, recent) {
   context.field = field;
   return { context, listeners, calls, panel, field, result };
 }
-const plain = (value) => JSON.parse(JSON.stringify(value));
 const type = (context, text) => vm.runInContext(`dictationEdit.text = ${JSON.stringify(text)}`, context);
 const chipWords = (html) => [...html.matchAll(/data-word="([^"]*)"/g)].map((m) => m[1]);
 test('editing a recent dictation offers only its new words as custom words', async () => {
@@ -81,9 +198,34 @@ test('edit offers skip known words, punctuation-only changes and cap at three', 
   const offers = (before, after, known) => plain(editContext(known, []).context.dictationWordOffers(before, after, known));
   assert.deepEqual(offers('a leo b', 'a Leo b', ['leo']), []);
   assert.deepEqual(offers('hello users', 'hello users.', []), []);
-  assert.deepEqual(offers('x y', 'x A1 y Bb y Cc y Dd', []), ['A1', 'Bb', 'Cc']);
+  assert.deepEqual(offers('x y', 'x Aaa y Bbb y Ccc y Ddd', []), ['Aaa', 'Bbb', 'Ccc']);
+  assert.deepEqual(offers('x y', 'x A1 y Bb y Cc', []), []);
+  assert.deepEqual(offers('x y', 'x what y Zed', []), ['Zed']);
+  assert.deepEqual(offers('x y', 'x it y The y okay', []), []);
+  assert.deepEqual(offers('x y', 'x very much y', []), []);
+  assert.deepEqual(offers('x y', 'x Noarlunga y', []), ['Noarlunga']);
   assert.deepEqual(offers('x y', 'x Q y Zed', []), ['Zed']);
   assert.deepEqual(offers('x y', 'x Zed y zed', []), ['Zed']);
+});
+test('an edited dictation keeps its original behind a Show original toggle', () => {
+  const { context, panel } = editContext([], [{ id: 7, text: 'Ship the Noarlunga deck.', edited: true, original: 'Ship the no longer deck.' }, { id: 8, text: 'Plain', edited: true, original: null }, { id: 9, text: 'Fresh' }]);
+  context.showDictationRecent();
+  assert.ok(panel.html.includes('Edited \u00b7 <button type="button" class="link-btn" data-action="dictation-original" data-id="7" aria-expanded="false">Show original</button>'));
+  assert.ok(!panel.html.includes('Original:'));
+  assert.equal((panel.html.match(/dictation-original/g) || []).length, 1);
+  assert.ok(panel.html.includes('<span class="hint">Edited</span>'));
+  context.toggleDictationOriginal({ dataset: { id: '7' } });
+  assert.ok(panel.html.includes('>Hide original</button>'));
+  assert.ok(panel.html.includes('<p class="set-note" data-refresh-key="original-7">Original: Ship the no longer deck.</p>'));
+  context.toggleDictationOriginal({ dataset: { id: '7' } });
+  assert.ok(panel.html.includes('>Show original</button>'));
+  assert.ok(!panel.html.includes('Original:'));
+});
+test('an original is escaped', () => {
+  const { context, panel } = editContext([], [{ id: 1, text: 'x', edited: true, original: '<img src=x onerror=bad()>' }]);
+  context.toggleDictationOriginal({ dataset: { id: '1' } });
+  assert.ok(panel.html.includes('Original: &lt;img'));
+  assert.ok(!panel.html.includes('<img'));
 });
 test('accepting an offer adds the word once, respects the limit, and Escape cancels', async () => {
   const { context, listeners, calls, panel, field, result } = editContext(['Felix'], [{ id: 7, text: 'leo seal I' }]);

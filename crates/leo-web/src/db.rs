@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS dictations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
     text TEXT NOT NULL,
-    edited INTEGER NOT NULL DEFAULT 0
+    edited INTEGER NOT NULL DEFAULT 0,
+    original TEXT
 );
 CREATE TABLE IF NOT EXISTS interviews (
     id TEXT PRIMARY KEY,
@@ -248,6 +249,14 @@ impl Db {
             tx.execute_batch(
                 "ALTER TABLE dictations ADD COLUMN edited INTEGER NOT NULL DEFAULT 0;",
             )?;
+        }
+        let has_original: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('dictations') WHERE name = 'original')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_original {
+            tx.execute_batch("ALTER TABLE dictations ADD COLUMN original TEXT;")?;
         }
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;

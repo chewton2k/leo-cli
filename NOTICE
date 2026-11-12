@@ -70,3 +70,4 @@ Copyright (c) 2024 OpenWhispr Team
 MIT License (same terms as above)
 
 Leo's dictation echo filter (crates/leo-services/src/dictation/text.rs) ports src/utils/dictionaryEchoFilter.js.
+The everyday-word list in Recent dictations (crates/leo-web/src/web/app/dictation.js) ports src/utils/correctionLearner.js.
