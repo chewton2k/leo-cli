@@ -1,6 +1,12 @@
 use enigo::{Enigo, Key, Keyboard, Settings};
 use std::sync::Mutex;
 
+const SHIFT: u64 = 0x0002_0000;
+const CONTROL: u64 = 0x0004_0000;
+const OPTION: u64 = 0x0008_0000;
+const COMMAND: u64 = 0x0010_0000;
+const FN: u64 = 0x0080_0000;
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::Key;
@@ -44,6 +50,17 @@ mod macos {
     unsafe extern "C" {
         fn CFDataGetBytePtr(data: CfDataRef) -> *const u8;
         fn CFRelease(value: *const c_void);
+    }
+
+    const HID_SYSTEM_STATE: i32 = 1;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceFlagsState(state_id: i32) -> u64;
+    }
+
+    pub(super) fn held_modifiers() -> u64 {
+        unsafe { CGEventSourceFlagsState(HID_SYSTEM_STATE) }
     }
 
     struct InputSource(TisInputSourceRef);
@@ -143,6 +160,42 @@ impl EnigoState {
     }
 }
 
+#[cfg(target_os = "macos")]
+use macos::held_modifiers;
+
+#[cfg(target_os = "windows")]
+fn held_modifiers() -> u64 {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    [
+        (VK_SHIFT, SHIFT),
+        (VK_CONTROL, CONTROL),
+        (VK_MENU, OPTION),
+        (VK_LWIN, COMMAND),
+        (VK_RWIN, COMMAND),
+    ]
+    .into_iter()
+    .filter(|(key, _)| unsafe { GetAsyncKeyState(i32::from(key.0)) } < 0)
+    .fold(0, |flags, (_, flag)| flags | flag)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn held_modifiers() -> u64 {
+    0
+}
+
+pub fn modifiers_up(flags: u64) -> bool {
+    flags & (SHIFT | CONTROL | OPTION | COMMAND | FN) == 0
+}
+
+pub fn wait_for_modifiers_up() {
+    let started = std::time::Instant::now();
+    while !modifiers_up(held_modifiers()) && started.elapsed() < std::time::Duration::from_secs(1) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 pub fn send_paste_ctrl_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let (modifier_key, v_key_code) = (Key::Meta, macos::command_v_key());
@@ -169,6 +222,21 @@ pub fn send_paste_ctrl_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_held_modifier_keys_hold_back_the_paste() {
+        assert!(super::modifiers_up(0));
+        assert!(super::modifiers_up(0x0001_0000 | 0x0000_0100 | 0x2000_0000));
+        for flag in [
+            super::SHIFT,
+            super::CONTROL,
+            super::OPTION,
+            super::COMMAND,
+            super::FN,
+        ] {
+            assert!(!super::modifiers_up(flag | 0x0001_0000));
+        }
+    }
+
     #[test]
     fn keyboard_work_runs_without_holding_the_state_lock() {
         let slot = super::Slot::new(1);

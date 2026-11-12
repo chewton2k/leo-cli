@@ -2,16 +2,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use log::{error, info};
+use log::info;
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSData, NSInteger, NSObject, NSString};
 use tauri::AppHandle;
-use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use super::{evaluate, send_chord, TxState, WaitDecision};
-use crate::settings::{ClipboardHandling, PasteMethod};
+use super::{evaluate, keep_waiting, send_chord, TxState, WaitDecision};
 
 const CONCEALMENT_TYPES: [&str; 3] = [
     "org.nspasteboard.TransientType",
@@ -103,34 +101,50 @@ fn settle(pending: &Arc<Mutex<MacPending>>, app_handle: &AppHandle) {
     if !still_ours {
         info!("[reliable-paste] clipboard changed externally; leaving it untouched");
     } else if preserve_transcript {
-        let _ = app_handle.clipboard().write_text(&transcript);
+        let _ = crate::clipboard::copy(app_handle, &transcript);
         info!("[reliable-paste] left transcript on clipboard as plain text");
     } else {
-        let pasteboard = NSPasteboard::generalPasteboard();
-        let items: Vec<Retained<objc2::runtime::ProtocolObject<dyn NSPasteboardWriting>>> =
-            snapshot
-                .iter()
-                .map(|formats| {
-                    let item = NSPasteboardItem::new();
-                    for (kind, bytes) in formats {
-                        item.setData_forType(&NSData::with_bytes(bytes), &NSString::from_str(kind));
-                    }
-                    objc2::runtime::ProtocolObject::from_retained(item)
-                })
-                .collect();
-        if pasteboard.changeCount() != change_count {
-            return;
-        }
-        pasteboard.clearContents();
-        pasteboard.writeObjects(&NSArray::from_retained_slice(&items));
-        info!("[reliable-paste] restored previous clipboard");
+        restore(&NSPasteboard::generalPasteboard(), &snapshot, change_count);
     }
 
     drop(provider);
     drop(activity);
 }
 
-fn flush_pending(app_handle: &AppHandle) {
+fn restore(
+    pasteboard: &NSPasteboard,
+    snapshot: &[Vec<(String, Vec<u8>)>],
+    change_count: NSInteger,
+) -> bool {
+    let items: Vec<Retained<objc2::runtime::ProtocolObject<dyn NSPasteboardWriting>>> = snapshot
+        .iter()
+        .map(|formats| {
+            let item = NSPasteboardItem::new();
+            for (kind, bytes) in formats {
+                item.setData_forType(&NSData::with_bytes(bytes), &NSString::from_str(kind));
+            }
+            objc2::runtime::ProtocolObject::from_retained(item)
+        })
+        .collect();
+    if pasteboard.changeCount() != change_count {
+        return false;
+    }
+    pasteboard.clearContents();
+    let types: Vec<&str> = snapshot
+        .iter()
+        .flatten()
+        .map(|(kind, _)| kind.as_str())
+        .collect();
+    if super::restorable(&types) {
+        pasteboard.writeObjects(&NSArray::from_retained_slice(&items));
+        info!("[reliable-paste] restored previous clipboard");
+    } else {
+        info!("[reliable-paste] previous clipboard was concealed; cleared instead of restoring");
+    }
+    true
+}
+
+pub(super) fn flush_pending(app_handle: &AppHandle) {
     let previous = match PENDING.lock() {
         Ok(mut slot) => slot.take(),
         Err(_) => None,
@@ -154,7 +168,7 @@ fn spawn_waiter(pending: Arc<Mutex<MacPending>>, app_handle: AppHandle) {
                 }
                 let result = match p.state.lock() {
                     Ok(mut st) => {
-                        if !(p.current)() {
+                        if !keep_waiting(st.injected_at.is_some(), (p.current)()) {
                             st.cancelled = true;
                         }
                         let now = Instant::now();
@@ -207,10 +221,7 @@ pub(super) fn run(
     app_handle: &AppHandle,
     enigo: &mut enigo::Enigo,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Result<(), String> {
-    let paste_method = &PasteMethod::CtrlV;
-    let clipboard_handling = ClipboardHandling::Restore;
-
+) -> Result<super::Read, String> {
     flush_pending(app_handle);
     let activity = leo_core::activity::global()
         .begin()
@@ -274,17 +285,8 @@ pub(super) fn run(
     if let Ok(mut st) = state.lock() {
         st.injected_at = Some(Instant::now());
     }
-    match send_chord(enigo, paste_method) {
-        Ok(()) => {
-            info!("[reliable-paste] paste chord sent ({paste_method:?})");
-        }
-        Err(e) => {
-            if let Ok(mut st) = state.lock() {
-                st.injection_failed = true;
-            }
-            error!("[reliable-paste] failed to send paste chord: {e}");
-        }
-    }
+    let sent = send_chord(enigo, &state);
+    let read = state.clone();
 
     let pending = Arc::new(Mutex::new(MacPending {
         state,
@@ -293,7 +295,7 @@ pub(super) fn run(
         snapshot,
         change_count,
         provider: Some(provider),
-        preserve_transcript: clipboard_handling == ClipboardHandling::CopyToClipboard,
+        preserve_transcript: sent.is_err(),
         transcript: text.to_string(),
         settled: false,
     }));
@@ -302,5 +304,63 @@ pub(super) fn run(
     }
     spawn_waiter(pending, app_handle.clone());
 
-    Ok(())
+    sent?;
+    Ok(Box::new(move || {
+        read.lock()
+            .map(|st| st.any_receipt_after_injection())
+            .unwrap_or(false)
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2::msg_send;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+
+    fn write(pasteboard: &NSPasteboard, text: &str) {
+        pasteboard.clearContents();
+        pasteboard.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
+    }
+
+    fn read(pasteboard: &NSPasteboard) -> Option<String> {
+        pasteboard
+            .stringForType(unsafe { NSPasteboardTypeString })
+            .map(|text| text.to_string())
+    }
+
+    #[test]
+    fn a_newer_copy_wins_otherwise_the_snapshot_returns() {
+        let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+        let snapshot = vec![vec![(
+            "public.utf8-plain-text".to_string(),
+            b"before".to_vec(),
+        )]];
+        write(&pasteboard, "dictation");
+        let change_count = pasteboard.changeCount();
+        write(&pasteboard, "newer");
+        assert!(!super::restore(&pasteboard, &snapshot, change_count));
+        assert_eq!(read(&pasteboard).as_deref(), Some("newer"));
+
+        write(&pasteboard, "dictation");
+        assert!(super::restore(
+            &pasteboard,
+            &snapshot,
+            pasteboard.changeCount()
+        ));
+        assert_eq!(read(&pasteboard).as_deref(), Some("before"));
+
+        let concealed = vec![vec![
+            ("public.utf8-plain-text".to_string(), b"secret".to_vec()),
+            ("org.nspasteboard.ConcealedType".to_string(), Vec::new()),
+        ]];
+        write(&pasteboard, "dictation");
+        assert!(super::restore(
+            &pasteboard,
+            &concealed,
+            pasteboard.changeCount()
+        ));
+        assert_eq!(read(&pasteboard), None);
+        let _: () = unsafe { msg_send![&*pasteboard, releaseGlobally] };
+    }
 }

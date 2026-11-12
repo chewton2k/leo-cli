@@ -33,7 +33,7 @@ reqwest-updater = { package = "reqwest", version = "0.13", default-features = fa
 log = "0.4"
 enigo = "0.6.1"
 handy-keys = "0.3.4"
-tauri-plugin-clipboard-manager = "2.3"
+tauri-plugin-clipboard-manager = "2.5"
 tauri-plugin-global-shortcut = "2.3"
 tauri-plugin-notification = "2"
 

@@ -546,10 +546,12 @@ impl Dictation {
             Arc::new(move || this.generation.current(id))
         })
         .map_err(anyhow::Error::msg)?;
+        use crate::clipboard::Pasted;
         Ok(match (pasted, fallback) {
-            (Some(message), _) => Finish::Problem(message),
-            (None, Some(reason)) => Finish::Notice(reason.into()),
-            (None, None) => Finish::Done,
+            (Pasted::Manual(message), _) => Finish::Problem(message),
+            (Pasted::Unsure(message), _) => Finish::Notice(message),
+            (Pasted::Done, Some(reason)) => Finish::Notice(reason.into()),
+            (Pasted::Done, None) => Finish::Done,
         })
     }
 }
