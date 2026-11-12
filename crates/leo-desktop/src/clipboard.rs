@@ -56,7 +56,10 @@ pub fn paste(
     let abandoned = timed_out.clone();
     caller
         .run_on_main_thread(move || {
-            if abandoned.load(std::sync::atomic::Ordering::Acquire) || !current() { let _=done.send(Ok(None)); return; }
+            if abandoned.load(std::sync::atomic::Ordering::Acquire) || !current() {
+                let _ = done.send(Ok(None));
+                return;
+            }
             let result = (|| {
                 if app.try_state::<crate::input::EnigoState>().is_none() {
                     app.manage(crate::input::EnigoState::new().map_err(|e| {
@@ -65,10 +68,12 @@ pub fn paste(
                     })?);
                 }
                 let input = app.state::<crate::input::EnigoState>();
-                input.0.with(|enigo| crate::paste_tx::try_reliable_paste(
-                    &text, &app, enigo, current.clone()
-                )).ok_or("Keyboard input is busy. Try again.")?
-
+                input
+                    .0
+                    .with(|enigo| {
+                        crate::paste_tx::try_reliable_paste(&text, &app, enigo, current.clone())
+                    })
+                    .ok_or("Keyboard input is busy. Try again.")?
             })();
             let _ = done.send(result.map(Some).map_err(|e| paste_error(&e)));
         })
