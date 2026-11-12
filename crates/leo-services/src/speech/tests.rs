@@ -80,6 +80,82 @@ fn activation_requires_a_verified_model_and_supported_language() {
 }
 
 #[test]
+fn detect_language_is_refused_and_migrated_for_models_that_cannot_detect() {
+    let c = catalog();
+    assert!(!c.get("canary-180m-flash").unwrap().language("auto"));
+    assert!(c.get("canary-180m-flash").unwrap().language("de"));
+    assert!(c.get("parakeet-tdt-0.6b-v3").unwrap().language("auto"));
+    assert!(!c.get("canary-180m-flash").unwrap().detects_language());
+    let dir = tempfile::tempdir().unwrap();
+    let l = Library::with_catalog(
+        dir.path().join("models"),
+        dir.path().join("config"),
+        Arc::new(c.clone()),
+    );
+    std::fs::create_dir_all(dir.path().join("config")).unwrap();
+    let save = |id: &str| {
+        std::fs::write(
+            dir.path().join("config/speech-model.json"),
+            format!(r#"{{"id":"{id}","language":"auto"}}"#),
+        )
+        .unwrap()
+    };
+    save("canary-180m-flash");
+    let migrated = l.selection().unwrap();
+    assert_eq!(migrated.id, "canary-180m-flash");
+    assert!(c
+        .get("canary-180m-flash")
+        .unwrap()
+        .language(&migrated.language));
+    assert_ne!(migrated.language, "auto");
+    save("parakeet-tdt-0.6b-v3");
+    assert_eq!(l.selection().unwrap().language, "auto");
+}
+
+#[test]
+fn a_model_that_cannot_detect_prefers_the_system_language_then_english_then_its_first() {
+    use crate::speech::catalog::choose_language;
+    let listed = |all: &[&str]| all.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+    let three = listed(&["bg", "de", "en"]);
+    assert_eq!(choose_language(&three, Some("de")).as_deref(), Some("de"));
+    assert_eq!(choose_language(&three, Some("ja")).as_deref(), Some("en"));
+    assert_eq!(choose_language(&three, None).as_deref(), Some("en"));
+    assert_eq!(
+        choose_language(&listed(&["bg", "de"]), Some("ja")).as_deref(),
+        Some("bg")
+    );
+    assert_eq!(choose_language(&[], Some("en")), None);
+}
+
+#[test]
+fn choosing_detect_language_for_a_model_that_cannot_detect_picks_a_listed_language() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = catalog().clone();
+    data.models.retain(|m| m.id == "canary-180m-flash");
+    let quant = data.models[0].quant.clone();
+    let file = data.models[0].files.get_mut(&quant).unwrap();
+    file.size = 5;
+    file.sha256 = crate::providers::hex(&<sha2::Sha256 as sha2::Digest>::digest(b"model"));
+    let l = Library::with_catalog(
+        dir.path().join("models"),
+        dir.path().join("config"),
+        Arc::new(data),
+    );
+    let (url, t) = model_server(b"model");
+    l.fetch(
+        "canary-180m-flash",
+        &url,
+        &AtomicBool::new(false),
+        &|_, _| {},
+    )
+    .unwrap();
+    t.join().unwrap();
+    l.use_model("canary-180m-flash", "auto").unwrap();
+    let language = l.selected().unwrap().language;
+    assert!(["en", "de", "es", "fr"].contains(&language.as_str()));
+}
+
+#[test]
 fn the_default_dictation_model_is_fast_enough_for_live_text() {
     assert!(catalog().live("parakeet-unified-en-0.6b"));
 }

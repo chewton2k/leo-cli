@@ -239,8 +239,30 @@ fn to_i16(x: f32) -> i16 {
     (x.clamp(-1.0, 1.0) * 32767.0).round() as i16
 }
 
-fn mono<T: Copy>(data: &[T], channels: usize, convert: impl Fn(T) -> f32) -> Vec<f32> {
+fn mono<T: Copy>(
+    data: &[T],
+    channels: usize,
+    loudest: bool,
+    convert: impl Fn(T) -> f32,
+) -> Vec<f32> {
     let channels = channels.max(1);
+    if loudest && channels > 1 {
+        let mut energy = vec![0f32; channels];
+        for frame in data.chunks(channels) {
+            for (sum, s) in energy.iter_mut().zip(frame) {
+                *sum += convert(*s).powi(2);
+            }
+        }
+        let best = energy
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map_or(0, |(channel, _)| channel);
+        return data
+            .chunks(channels)
+            .map(|frame| frame.get(best).map_or(0.0, |s| convert(*s)))
+            .collect();
+    }
     data.chunks(channels)
         .map(|frame| frame.iter().map(|s| convert(*s)).sum::<f32>() / frame.len() as f32)
         .collect()
@@ -258,6 +280,7 @@ fn build(
     raw: SyncSender<Vec<f32>>,
     problem: Arc<Mutex<Option<String>>>,
     dropped: Arc<AtomicU64>,
+    loudest: bool,
 ) -> Result<(cpal::Stream, u32)> {
     let config = if device.supports_input() {
         device.default_input_config()
@@ -286,40 +309,68 @@ fn build(
             );
         }
     };
-    let stream = match format {
-        cpal::SampleFormat::F32 => device.build_input_stream(
-            stream_config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| send(mono(data, channels, |s| s)),
-            on_error,
-            None,
-        ),
-        cpal::SampleFormat::I16 => device.build_input_stream(
-            stream_config,
-            move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                send(mono(data, channels, |s| s as f32 / 32768.0))
-            },
-            on_error,
-            None,
-        ),
-        cpal::SampleFormat::I32 => device.build_input_stream(
-            stream_config,
-            move |data: &[i32], _: &cpal::InputCallbackInfo| {
-                send(mono(data, channels, |s| s as f32 / 2_147_483_648.0))
-            },
-            on_error,
-            None,
-        ),
-        cpal::SampleFormat::U16 => device.build_input_stream(
-            stream_config,
-            move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                send(mono(data, channels, |s| (s as f32 - 32768.0) / 32768.0))
-            },
-            on_error,
-            None,
-        ),
-        other => bail!("the microphone uses an audio format leo cannot read ({other})"),
-    }
-    .map_err(|e| anyhow!("could not open the microphone: {e}"))?;
+    let open = |stream_config: cpal::StreamConfig| -> Result<cpal::Stream> {
+        match format {
+            cpal::SampleFormat::F32 => device.build_input_stream(
+                stream_config,
+                {
+                    let send = send.clone();
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        send(mono(data, channels, loudest, |s| s))
+                    }
+                },
+                on_error.clone(),
+                None,
+            ),
+            cpal::SampleFormat::I16 => device.build_input_stream(
+                stream_config,
+                {
+                    let send = send.clone();
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        send(mono(data, channels, loudest, |s| s as f32 / 32768.0))
+                    }
+                },
+                on_error.clone(),
+                None,
+            ),
+            cpal::SampleFormat::I32 => device.build_input_stream(
+                stream_config,
+                {
+                    let send = send.clone();
+                    move |data: &[i32], _: &cpal::InputCallbackInfo| {
+                        send(mono(data, channels, loudest, |s| {
+                            s as f32 / 2_147_483_648.0
+                        }))
+                    }
+                },
+                on_error.clone(),
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_input_stream(
+                stream_config,
+                {
+                    let send = send.clone();
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        send(mono(data, channels, loudest, |s| {
+                            (s as f32 - 32768.0) / 32768.0
+                        }))
+                    }
+                },
+                on_error.clone(),
+                None,
+            ),
+            other => bail!("the microphone uses an audio format leo cannot read ({other})"),
+        }
+        .map_err(|e| anyhow!("could not open the microphone: {e}"))
+    };
+    #[cfg(windows)]
+    let stream = {
+        let mut buffered = stream_config;
+        buffered.buffer_size = cpal::BufferSize::Fixed(rate / 2);
+        open(buffered).or_else(|_| open(stream_config))?
+    };
+    #[cfg(not(windows))]
+    let stream = open(stream_config)?;
     stream
         .play()
         .map_err(|e| anyhow!("could not start the microphone: {e}"))?;
@@ -364,16 +415,24 @@ pub struct Mic {
     thread: Option<JoinHandle<()>>,
     pub problem: Arc<Mutex<Option<String>>>,
     pub dropped: Arc<AtomicU64>,
+    heard: Arc<AtomicBool>,
 }
 
 impl Mic {
     pub fn open(screen: bool) -> Result<(Mic, Receiver<Vec<i16>>)> {
-        Self::open_device(screen, None)
+        Self::open_device(screen, None, false)
     }
     pub fn open_named(name: Option<String>) -> Result<(Mic, Receiver<Vec<i16>>)> {
-        Self::open_device(false, name)
+        Self::open_device(false, name, true)
     }
-    fn open_device(screen: bool, name: Option<String>) -> Result<(Mic, Receiver<Vec<i16>>)> {
+    pub fn heard_signal(&self) -> bool {
+        self.heard.load(Ordering::Relaxed)
+    }
+    fn open_device(
+        screen: bool,
+        name: Option<String>,
+        loudest: bool,
+    ) -> Result<(Mic, Receiver<Vec<i16>>)> {
         if disabled() {
             bail!("the microphone is turned off for leo (LEO_NO_MICROPHONE is set)");
         }
@@ -382,11 +441,13 @@ impl Mic {
         let stop = Arc::new(AtomicBool::new(false));
         let problem = Arc::new(Mutex::new(None));
         let dropped = Arc::new(AtomicU64::new(0));
+        let heard = Arc::new(AtomicBool::new(false));
         let thread = {
-            let (stop, problem, dropped) = (
+            let (stop, problem, dropped, heard) = (
                 Arc::clone(&stop),
                 Arc::clone(&problem),
                 Arc::clone(&dropped),
+                Arc::clone(&heard),
             );
             std::thread::Builder::new()
                 .name("leo-mic".into())
@@ -395,7 +456,13 @@ impl Mic {
                     let opened = (if let Some(name) = name {
                         cpal::default_host().input_devices().map_err(anyhow::Error::from).and_then(|mut devices| devices.find(|d| device_name(d) == name).ok_or_else(|| anyhow!("The chosen microphone is unavailable. Choose another in Dictation settings.")))
                     } else { find_device(screen) }).and_then(|device| {
-                        build(&device, raw_tx, Arc::clone(&problem), Arc::clone(&dropped))
+                        build(
+                            &device,
+                            raw_tx,
+                            Arc::clone(&problem),
+                            Arc::clone(&dropped),
+                            loudest,
+                        )
                     });
                     let (stream, rate) = match opened {
                         Ok(opened) => {
@@ -413,6 +480,9 @@ impl Mic {
                     while !stop.load(Ordering::Relaxed) {
                         match raw_rx.recv_timeout(Duration::from_millis(100)) {
                             Ok(chunk) => {
+                                if chunk.iter().any(|s| *s != 0.0) {
+                                    heard.store(true, Ordering::Relaxed);
+                                }
                                 converted.clear();
                                 let lost = dropped.load(Ordering::Relaxed);
                                 if lost > seen_dropped {
@@ -456,6 +526,7 @@ impl Mic {
                     thread: Some(thread),
                     problem,
                     dropped,
+                    heard,
                 },
                 out_rx,
             )),
@@ -769,7 +840,23 @@ mod tests {
 
     #[test]
     fn channels_are_averaged_into_one() {
-        assert_eq!(mono(&[0.2f32, 0.4, -1.0, 1.0], 2, |s| s), vec![0.3f32, 0.0]);
-        assert_eq!(mono(&[16384i16], 1, |s| s as f32 / 32768.0), vec![0.5]);
+        assert_eq!(
+            mono(&[0.2f32, 0.4, -1.0, 1.0], 2, false, |s| s),
+            vec![0.3f32, 0.0]
+        );
+        assert_eq!(
+            mono(&[16384i16], 1, false, |s| s as f32 / 32768.0),
+            vec![0.5]
+        );
+    }
+
+    #[test]
+    fn the_loudest_channel_is_kept_whole() {
+        assert_eq!(
+            mono(&[0.0f32, 0.4, 0.0, -0.5, 0.0, 0.2], 2, true, |s| s),
+            vec![0.4f32, -0.5, 0.2]
+        );
+        assert_eq!(mono(&[0.5f32, 0.1, 0.3], 2, true, |s| s), vec![0.5f32, 0.3]);
+        assert_eq!(mono(&[0.2f32, 0.4], 1, true, |s| s), vec![0.2f32, 0.4]);
     }
 }

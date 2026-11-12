@@ -36,6 +36,7 @@ impl TranscribeProvider for LocalSpeech {
                 selected,
                 pcm,
                 crate::speech::engine::Priority::Segment,
+                Vec::new(),
             )
         };
         run().map_err(|e| ProviderError::Retryable(e.to_string()))

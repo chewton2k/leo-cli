@@ -2,14 +2,13 @@ use std::sync::{mpsc::Sender, Arc, Mutex, Once};
 use std::thread;
 use std::time::Instant;
 
-use log::{error, info, warn};
+use log::{info, warn};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{
     SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
 
-use super::{evaluate, send_chord, TxState, WaitDecision};
-use crate::settings::{ClipboardHandling, PasteMethod};
+use super::{evaluate, keep_waiting, send_chord, TxState, WaitDecision};
 use windows::Win32::Foundation::GlobalFree;
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardOwner,
@@ -84,7 +83,7 @@ pub(super) struct WinTxShared {
     snapshot: Mutex<Vec<SavedFormat>>,
     sequence: Mutex<u32>,
     owner: std::sync::atomic::AtomicUsize,
-    preserve_transcript: bool,
+    own: std::sync::atomic::AtomicBool,
 }
 
 static PENDING: Mutex<Option<Arc<WinTxShared>>> = Mutex::new(None);
@@ -186,7 +185,7 @@ fn ensure_window_class(hinstance: HINSTANCE) {
     });
 }
 
-fn flush_pending() {
+pub(super) fn flush_pending() {
     let previous = match PENDING.lock() {
         Ok(mut slot) => slot.take(),
         Err(_) => None,
@@ -198,19 +197,42 @@ fn flush_pending() {
         Ok(mut st) => st.cancelled = true,
         Err(_) => return,
     }
-    let sequence = *previous.sequence.lock().unwrap_or_else(|e| e.into_inner());
-    let still_ours = unsafe { GetClipboardSequenceNumber() } == sequence;
-    if still_ours {
-        unsafe { settle_clipboard(&previous) };
-    }
+    let hwnd = HWND(previous.owner.load(std::sync::atomic::Ordering::Acquire) as *mut _);
+    let _ = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            hwnd,
+            WM_TIMER,
+            Some(WPARAM(TIMER_ID)),
+            None,
+        )
+    };
+}
+
+unsafe fn open_owned(shared: &WinTxShared) -> bool {
+    let hwnd = HWND(shared.owner.load(std::sync::atomic::Ordering::Acquire) as *mut _);
+    (0..10).any(|attempt| {
+        if attempt > 0 {
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        OpenClipboard(Some(hwnd)).is_ok()
+    })
+}
+
+fn preserved_format(format: u32) -> bool {
+    !(0x0200..=0x02FF).contains(&format)
 }
 
 unsafe fn settle_clipboard(shared: &WinTxShared) {
-    if !shared.preserve_transcript {
+    let preserve_transcript = shared
+        .state
+        .lock()
+        .map(|st| st.injection_failed)
+        .unwrap_or(false);
+    if !preserve_transcript {
         restore_snapshot(shared);
         return;
     }
-    if OpenClipboard(None).is_err() {
+    if !open_owned(shared) {
         warn!("[reliable-paste] could not open clipboard to leave transcript");
         return;
     }
@@ -222,14 +244,15 @@ unsafe fn settle_clipboard(shared: &WinTxShared) {
         let _ = CloseClipboard();
         return;
     }
-    let _ = EmptyClipboard();
     render_text(shared);
     let _ = CloseClipboard();
+    super::copied();
     info!("[reliable-paste] left transcript on clipboard as plain text");
 }
 
 unsafe fn restore_snapshot(shared: &WinTxShared) {
-    if OpenClipboard(None).is_err() {
+    if !open_owned(shared) {
+        warn!("[reliable-paste] could not open clipboard to restore");
         return;
     }
     let sequence = *shared.sequence.lock().unwrap_or_else(|e| e.into_inner());
@@ -248,6 +271,12 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
         }
     };
     let _ = EmptyClipboard();
+    let concealed = RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing"));
+    let own = shared.own.load(std::sync::atomic::Ordering::Acquire);
+    if !own && formats.iter().any(|saved| saved.format == concealed) {
+        formats.clear();
+        info!("[reliable-paste] previous clipboard was concealed; cleared instead of restoring");
+    }
     for saved in &mut formats {
         let handle = match &saved.data {
             SavedData::Memory(data) => {
@@ -281,12 +310,19 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
         }
     }
     let _ = CloseClipboard();
+    if own {
+        super::copied();
+    }
 }
 
 unsafe fn snapshot_clipboard(hwnd: HWND, shared: &WinTxShared) -> Result<(), String> {
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::DataExchange::METAFILEPICT;
     OpenClipboard(Some(hwnd)).map_err(|_| "The clipboard is busy. Try dictating again.")?;
+    shared.own.store(
+        super::own_copy(GetClipboardSequenceNumber() as i64),
+        std::sync::atomic::Ordering::Release,
+    );
     struct Open;
     impl Drop for Open {
         fn drop(&mut self) {
@@ -305,11 +341,13 @@ unsafe fn snapshot_clipboard(hwnd: HWND, shared: &WinTxShared) -> Result<(), Str
             break;
         }
         if formats.len() >= 256 || format == CF_OWNERDISPLAY.0 as u32 {
-            return Err("This clipboard cannot be preserved automatically. Copy your dictation from Recent dictations.".into());
+            return Err("The clipboard cannot be preserved automatically.".into());
         }
-        let handle = GetClipboardData(format).map_err(|_| {
-            "A clipboard format could not be preserved. Copy your dictation from Recent dictations."
-        })?;
+        if !preserved_format(format) {
+            continue;
+        }
+        let handle =
+            GetClipboardData(format).map_err(|_| "A clipboard format could not be preserved.")?;
         let data = if format == CF_BITMAP.0 as u32 || format == CF_DSPBITMAP.0 as u32 {
             let mut bitmap = BITMAP::default();
             if GetObjectW(
@@ -415,6 +453,10 @@ unsafe fn snapshot_clipboard(hwnd: HWND, shared: &WinTxShared) -> Result<(), Str
     Ok(())
 }
 
+pub(super) fn count() -> i64 {
+    unsafe { GetClipboardSequenceNumber() as i64 }
+}
+
 unsafe fn publish(hwnd: HWND) -> Result<u32, String> {
     OpenClipboard(Some(hwnd)).map_err(|e| format!("OpenClipboard failed: {e}"))?;
     let published = publish_formats();
@@ -467,7 +509,7 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
             Ok(st) => st,
             Err(_) => return,
         };
-        if !(shared.current)() {
+        if !keep_waiting(st.injected_at.is_some(), (shared.current)()) {
             st.cancelled = true;
         }
         if st.cancelled {
@@ -637,10 +679,7 @@ pub(super) fn run(
     _app_handle: &tauri::AppHandle,
     enigo: &mut enigo::Enigo,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Result<(), String> {
-    let paste_method = &PasteMethod::CtrlV;
-    let clipboard_handling = ClipboardHandling::Restore;
-
+) -> Result<super::Read, String> {
     let shared = Arc::new(WinTxShared {
         state: Mutex::new(TxState::new()),
         text: text.to_string(),
@@ -651,7 +690,7 @@ pub(super) fn run(
         snapshot: Mutex::new(Vec::new()),
         sequence: Mutex::new(0),
         owner: std::sync::atomic::AtomicUsize::new(0),
-        preserve_transcript: clipboard_handling == ClipboardHandling::CopyToClipboard,
+        own: std::sync::atomic::AtomicBool::new(false),
     });
 
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -679,19 +718,24 @@ pub(super) fn run(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .injected_at = Some(Instant::now());
-    match send_chord(enigo, paste_method) {
-        Ok(()) => {
-            info!("[reliable-paste] paste chord sent ({paste_method:?})");
-        }
-        Err(e) => {
-            shared
-                .state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .injection_failed = true;
-            error!("[reliable-paste] failed to send paste chord: {e}");
-        }
-    }
+    send_chord(enigo, &shared.state)?;
+    Ok(Box::new(move || {
+        shared
+            .state
+            .lock()
+            .map(|st| st.any_receipt_after_injection())
+            .unwrap_or(false)
+    }))
+}
 
-    Ok(())
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn private_clipboard_formats_are_skipped() {
+        assert!(super::preserved_format(0x0001));
+        assert!(!super::preserved_format(0x0200));
+        assert!(!super::preserved_format(0x02FF));
+        assert!(super::preserved_format(0x0300));
+        assert!(super::preserved_format(0xC000));
+    }
 }

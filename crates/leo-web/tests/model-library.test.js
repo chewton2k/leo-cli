@@ -42,3 +42,25 @@ test('the downloaded heading counts models in the singular', () => {
   const models = [{ id: 'one', name: 'English', languages: ['en'], size: 100, bytes: 100, downloaded: true, verified: true, recommended: true, speed: 8, accuracy: 96 }];
   assert.ok(h.speechCards({ selected: { id: 'one', language: 'en' }, ready: true, disk_bytes: 100, models, extra_files: [] }).includes('1 model ·'));
 });
+test('a model that cannot detect language is used with the system language when it has it, else English, else its first', () => {
+  const h = helpers();
+  const model = { languages: ['bg', 'de', 'en'], detects_language: false };
+  const use = (language) => { h.navigator = { language }; return h.speechUseLanguage(model); };
+  assert.equal(use('de-CH'), 'de');
+  assert.equal(use('EN-us'), 'en');
+  assert.equal(use('ja-JP'), 'en');
+  assert.equal(use(undefined), 'en');
+  h.navigator = { language: 'ja-JP' };
+  assert.equal(h.speechUseLanguage({ languages: ['bg', 'de'], detects_language: false }), 'bg');
+  assert.equal(h.speechUseLanguage({ languages: ['en', 'de'], detects_language: true }), 'auto');
+  assert.equal(h.speechUseLanguage({ languages: ['en', 'de'] }), 'auto');
+});
+test('Detect language is offered only for models that detect language', () => {
+  const h = helpers();
+  h.settingsOption = (value) => `<option value="${value}">`;
+  const html = (extra) => h.speechCards({ selected: { id: 'm', language: 'en' }, ready: true, disk_bytes: 1, extra_files: [], models: [{ id: 'm', name: 'M', languages: ['en', 'de'], size: 1, bytes: 1, downloaded: true, verified: true, in_use: true, speed: 8, accuracy: 90, ...extra }] });
+  assert.ok(html({ detects_language: true }).includes('<option value="auto">'));
+  assert.ok(html({}).includes('<option value="auto">'));
+  assert.ok(!html({ detects_language: false }).includes('<option value="auto">'));
+  assert.ok(html({ detects_language: false }).includes('<option value="de">'));
+});

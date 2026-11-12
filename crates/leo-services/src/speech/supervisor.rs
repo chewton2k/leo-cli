@@ -249,7 +249,7 @@ struct InFlight {
     control: Arc<Control>,
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -274,6 +274,7 @@ impl EngineSupervisor {
             spec: None,
             stream: None,
             unloads_done: 0,
+            gpu_backend_error: false,
         };
         thread::Builder::new()
             .name("transcribe-engine".into())
@@ -457,12 +458,16 @@ enum Failure {
     Remote(String),
     Crashed(String),
     Hung(Duration),
+    Backend(String),
     Cancelled,
 }
 
 impl Failure {
     fn worker_lost(&self) -> bool {
-        matches!(self, Failure::Crashed(_) | Failure::Hung(_))
+        matches!(
+            self,
+            Failure::Crashed(_) | Failure::Hung(_) | Failure::Backend(_)
+        )
     }
 }
 
@@ -473,6 +478,7 @@ impl fmt::Display for Failure {
             Failure::Remote(message) => f.write_str(message),
             Failure::Crashed(detail) => write!(f, "transcription worker crashed ({detail})"),
             Failure::Hung(t) => write!(f, "transcription worker did not respond within {t:?}"),
+            Failure::Backend(message) => write!(f, "transcription backend failed ({message})"),
             Failure::Cancelled => f.write_str("cancelled"),
         }
     }
@@ -507,6 +513,7 @@ struct Owner {
     spec: Option<LoadSpec>,
     stream: Option<ActiveStream>,
     unloads_done: u64,
+    gpu_backend_error: bool,
 }
 
 impl Owner {
@@ -655,10 +662,17 @@ impl Owner {
 
     fn worker_lost(&mut self, during: &str, failure: &Failure) -> bool {
         let info = self.worker.take().and_then(|worker| worker.info.clone());
+        *lock(&self.shared.loaded) = None;
         let pinned = self.spec.as_ref().is_some_and(LoadSpec::pinned);
         match info {
             Some(info) if info.on_gpu => {
-                if !pinned {
+                if matches!(failure, Failure::Backend(_)) && !self.gpu_backend_error {
+                    self.gpu_backend_error = true;
+                    warn!(
+                        "{failure} during {during} on GPU '{}' ({}); restarting the worker",
+                        info.device, info.backend
+                    );
+                } else if !pinned {
                     self.shared.mark_gpu_unavailable(format!(
                         "{failure} during {during} on GPU '{}' ({})",
                         info.device, info.backend
@@ -671,12 +685,14 @@ impl Owner {
     }
 
     fn deadlines(&self) -> Deadlines {
-        let on_gpu = self
-            .worker
+        Deadlines::for_device(self.worker_on_gpu())
+    }
+
+    fn worker_on_gpu(&self) -> bool {
+        self.worker
             .as_ref()
             .and_then(|worker| worker.info.as_ref())
-            .is_some_and(|info| info.on_gpu);
-        Deadlines::for_device(on_gpu)
+            .is_some_and(|info| info.on_gpu)
     }
 
     fn call_work(
@@ -709,10 +725,17 @@ impl Owner {
         if killed || self.shared.cancelled_since(epoch) {
             if killed || result.as_ref().is_err_and(Failure::worker_lost) {
                 self.worker = None;
+                *lock(&self.shared.loaded) = None;
             }
             return Err(Failure::Cancelled);
         }
         result
+    }
+
+    fn run_succeeded(&mut self) {
+        if self.worker_on_gpu() {
+            self.gpu_backend_error = false;
+        }
     }
 
     fn transcribe(
@@ -733,17 +756,26 @@ impl Owner {
             self.ensure_worker()?;
             let deadline = self.deadlines().run(pcm.len());
             match self.call_work(&request, Some(pcm), deadline, epoch) {
-                Ok(Response::Transcript(transcript)) => return Ok(transcript),
+                Ok(Response::Transcript(transcript)) => {
+                    self.run_succeeded();
+                    return Ok(transcript);
+                }
                 Ok(other) => return Err(unexpected(&other).into()),
                 Err(failure) if failure.worker_lost() => {
                     let on_gpu = self.worker_lost("transcription", &failure);
                     let pinned = self.spec.as_ref().is_some_and(LoadSpec::pinned);
-                    let hung_on_cpu = matches!(failure, Failure::Hung(_)) && !on_gpu;
-                    if retried || pinned || hung_on_cpu {
+                    let failed_on_cpu =
+                        !on_gpu && matches!(failure, Failure::Hung(_) | Failure::Backend(_));
+                    let fresh_gpu = on_gpu && !self.shared.gpu_unavailable();
+                    if pinned || failed_on_cpu || (retried && !fresh_gpu) {
                         return Err(failure.into());
                     }
-                    warn!("Retrying the transcription in a fresh worker");
-                    retried = true;
+                    if fresh_gpu {
+                        warn!("Retrying the transcription in a fresh GPU worker");
+                    } else {
+                        warn!("Retrying the transcription in a fresh worker");
+                        retried = true;
+                    }
                 }
                 Err(failure) => return Err(failure.into()),
             }
@@ -852,12 +884,15 @@ impl Owner {
                 update,
                 text,
                 language,
-            }) => Ok(Some(Finalized {
-                update,
-                text,
-                language,
-                elapsed: started.elapsed(),
-            })),
+            }) => {
+                self.run_succeeded();
+                Ok(Some(Finalized {
+                    update,
+                    text,
+                    language,
+                    elapsed: started.elapsed(),
+                }))
+            }
             Ok(other) => {
                 error!("Stream finalize failed: {}", unexpected(&other));
                 Ok(None)
@@ -1043,6 +1078,7 @@ impl Worker {
     fn wait(&mut self, request: &Request, deadline: Duration) -> Result<Response, Failure> {
         match self.responses.recv_timeout(deadline) {
             Ok(Response::Error(message)) => Err(Failure::Remote(message)),
+            Ok(Response::BackendError(message)) => Err(Failure::Backend(message)),
             Ok(response) => Ok(response),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.control.kill();
@@ -1290,12 +1326,12 @@ mod unit_tests {
 }
 
 #[cfg(all(test, unix))]
-mod fake_tests {
+pub(super) mod fake_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    static ENV: Mutex<()> = Mutex::new(());
+    pub(crate) static ENV: Mutex<()> = Mutex::new(());
 
-    fn fake() -> tempfile::TempDir {
+    pub(crate) fn fake() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("worker");
         std::fs::write(
@@ -1314,7 +1350,7 @@ mod fake_tests {
     #[test]
     fn crashed_and_malformed_workers_retry_on_cpu_and_are_reaped() {
         let _guard = ENV.lock().unwrap();
-        for mode in ["crashed", "garbage"] {
+        for (mode, workers) in [("crashed", 2), ("garbage", 2), ("backend", 3)] {
             let dir = fake();
             let engine = EngineSupervisor::new(true);
             engine
@@ -1331,7 +1367,7 @@ mod fake_tests {
             assert!(!engine.loaded().unwrap().on_gpu);
             engine.unload().wait();
             let pids = std::fs::read_to_string(dir.path().join("pids")).unwrap();
-            assert_eq!(pids.lines().count(), 2);
+            assert_eq!(pids.lines().count(), workers);
             for pid in pids.lines().map(|p| p.parse::<i32>().unwrap()) {
                 assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
             }
@@ -1362,6 +1398,7 @@ mod fake_tests {
         let stopped = Instant::now();
         engine.cancel();
         assert!(matches!(work.join().unwrap(), Err(EngineError::Cancelled)));
+        assert!(engine.loaded().is_none());
         engine.unload().wait();
         assert!(stopped.elapsed() < Duration::from_secs(3));
         for pid in std::fs::read_to_string(dir.path().join("pids"))

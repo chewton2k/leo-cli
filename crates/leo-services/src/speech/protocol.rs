@@ -58,6 +58,7 @@ pub enum Response {
     },
     Ok,
     Error(String),
+    BackendError(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

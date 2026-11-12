@@ -2,12 +2,13 @@ use anyhow::{ensure, Context, Result};
 use leo_services::dictation::{
     activation::{Action, Activation},
     generation::Generation,
-    settings::{Popup, Settings, Writing},
+    settings::{Mode, Popup, Settings, Writing},
     visualizer::Visualizer,
 };
 use leo_services::speech::{
     engine::{engine, DictationStream, Priority},
     library::library,
+    supervisor::EngineError,
     vad::{
         CaptureVad, SileroVad, SILERO_VAD_THRESHOLD, VAD_OFFLINE_HANGOVER_MS,
         VAD_STREAMING_HANGOVER_MS,
@@ -24,17 +25,100 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 
+const CANCELLED: &str = "Dictation cancelled.";
+const STOPPED_UNEXPECTEDLY: &str = "Dictation stopped unexpectedly. Try again.";
+const TOO_LONG: &str = "This dictation is too long. Try shorter dictations or a smaller model.";
+const NOT_TRANSCRIBED: &str =
+    "Dictation could not be transcribed. Try again or choose a smaller model in Settings.";
+const MICROPHONE: &str = "Microphone";
+const MIC_STOPPED: &str = "The microphone stopped. Leo pasted what it heard.";
+const MIC_STOPPED_EARLY: &str = "The microphone stopped before anything was heard.";
+const SILENCE: &str = "The microphone sent only silence. Check that it isn't muted, or choose another in Dictation settings.";
+const NOTHING_HEARD: &str = "Nothing heard";
+const NOTHING: &str = "Nothing was heard. Check the microphone in Dictation settings.";
+const CHECK_PASTE: &str = "Check the paste";
+const WITHOUT_AI: &str = "Pasted without AI writing";
+const TEST_FOLDER: &str = "The test output needs a folder.";
+const FINISH_TO_SAVE: &str = "Finish dictating before changing its settings.";
+const UNREADABLE: &str =
+    "These dictation settings could not be read. Check the fields and try again.";
+const FINISH_TO_RECORD: &str = "Finish dictating before recording a shortcut.";
+const CHOOSE_RECENT: &str = "Choose a recent dictation.";
+const TOO_LONG_TO_COPY: &str = "This dictation is too long to copy.";
+const CHOOSE_THEME: &str = "Choose Light, Dark or Match.";
+const CHOOSE_ACTION: &str = "Choose an action in Dictation settings.";
+
 const FEED_SAMPLES: usize = 512;
 const SHOWN_CHARS: usize = 25_000;
 
 const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(4);
+#[derive(Debug, PartialEq)]
 enum Finish {
     Done,
     Problem(String),
-    Notice(String),
+    Notice(&'static str, String),
+}
+#[derive(Default)]
+struct Queue {
+    activation: Activation,
+    busy: Option<u64>,
+    queued: Activation,
+    queued_wants: bool,
+}
+impl Queue {
+    fn input(
+        &mut self,
+        pressed: bool,
+        now: Instant,
+        mode: Mode,
+        capturing: bool,
+        stop: &AtomicBool,
+    ) -> Action {
+        if self.busy.is_some() && !capturing && stop.load(Ordering::Acquire) {
+            match self.queued.input(pressed, now, mode) {
+                Action::Start => self.queued_wants = true,
+                Action::Stop => self.queued_wants = false,
+                Action::None => {}
+            }
+            return Action::None;
+        }
+        match self.activation.input(pressed, now, mode) {
+            Action::Start if self.busy.is_none() => Action::Start,
+            Action::Stop => {
+                stop.store(true, Ordering::Release);
+                self.activation.reset();
+                if self.busy.is_some() && !capturing {
+                    Action::None
+                } else {
+                    Action::Stop
+                }
+            }
+            _ => Action::None,
+        }
+    }
+    fn complete(&mut self, id: u64, current: bool) -> bool {
+        if self.busy != Some(id) {
+            return false;
+        }
+        self.busy = None;
+        let start = self.queued_wants && current;
+        self.activation = if start {
+            std::mem::take(&mut self.queued)
+        } else {
+            Activation::default()
+        };
+        self.queued.reset();
+        self.queued_wants = false;
+        start
+    }
+    fn cancel(&mut self) {
+        self.queued.reset();
+        self.queued_wants = false;
+        self.activation.reset();
+    }
 }
 enum Event {
-    Input(bool, bool),
+    Input(bool, bool, Instant),
     Complete(u64),
     Cancel,
     Shutdown(mpsc::SyncSender<()>),
@@ -58,10 +142,12 @@ impl Dictation {
     pub fn new(app: AppHandle) -> Result<Arc<Self>> {
         let path = leo_core::paths::config_dir()?.join("dictation.json");
         let (settings, problem) = Settings::recover(&path);
+        let mut in_use = settings.clone();
+        in_use.shortcut = crate::shortcut::loaded(settings.shortcut.clone()).0;
         let (tx, rx) = mpsc::sync_channel(32);
         let this = Arc::new(Self {
             app: app.clone(),
-            settings: Mutex::new(settings.clone()),
+            settings: Mutex::new(in_use),
             path,
             state: Mutex::new(json!({"state":"idle"})),
             theme: Mutex::new("system".into()),
@@ -88,8 +174,10 @@ impl Dictation {
                 app,
                 settings.shortcut,
                 this.escape.clone(),
-                Arc::new(move |pressed, cancel| {
-                    let _ = input.try_send(Event::Input(pressed, cancel));
+                Arc::new(move |pressed, cancel, at| {
+                    if input.try_send(Event::Input(pressed, cancel, at)).is_err() {
+                        log::warn!("Dictation dropped a shortcut input: its queue is full.");
+                    }
                 }),
             );
             let _ = this.shortcut.set(keys);
@@ -115,11 +203,13 @@ impl Dictation {
     fn decorate(&self, value: &mut Value) {
         value["theme"] = json!(self.theme.lock().unwrap_or_else(|e| e.into_inner()).clone());
         let settings = self.preferences();
-        value["minimal"] = json!(settings.popup == Popup::Minimal);
+        value["minimal"] = json!(settings.popup != Popup::Live);
         value["top"] = json!(settings.top);
     }
     fn publish(&self, mut view: Value) {
-        if self.preferences().popup == Popup::Off {
+        if self.preferences().popup == Popup::Off
+            && !matches!(view["state"].as_str(), Some("error" | "notice"))
+        {
             return;
         }
         self.decorate(&mut view);
@@ -152,8 +242,11 @@ impl Dictation {
     fn phase(&self, id: u64, phase: &str) {
         self.change(id, |state| state["state"] = json!(phase));
     }
-    fn notice(self: &Arc<Self>, id: u64, settings: &Settings, message: &str) {
-        if !self.update(id, json!({"state":"notice","message":message})) {
+    fn notice(self: &Arc<Self>, id: u64, settings: &Settings, title: &str, message: &str) {
+        if !self.update(
+            id,
+            json!({"state":"notice","title":title,"message":message}),
+        ) {
             return;
         }
         self.show(id, settings);
@@ -175,6 +268,10 @@ impl Dictation {
         crate::overlay::hide(&self.app);
     }
     fn show(self: &Arc<Self>, id: u64, settings: &Settings) {
+        if settings.popup == Popup::Off {
+            crate::overlay::hide(&self.app);
+            return;
+        }
         let this = self.clone();
         crate::overlay::show(
             &self.app,
@@ -207,38 +304,31 @@ impl Dictation {
         let _ = finished.recv_timeout(std::time::Duration::from_secs(5));
     }
     fn run(self: Arc<Self>, rx: mpsc::Receiver<Event>) {
-        let mut activation = Activation::default();
-        let mut busy = None;
-        let mut queued = Activation::default();
-        let mut queued_wants = false;
+        let mut queue = Queue::default();
         while let Ok(event) = rx.recv() {
             match event {
-                Event::Input(pressed, cancel) => {
+                Event::Input(pressed, cancel, at) => {
                     if cancel {
                         self.cancel();
                         continue;
                     }
-                    let mode = self.preferences().mode;
-                    if busy.is_some() && !self.capturing.load(Ordering::Acquire) {
-                        match queued.input(pressed, Instant::now(), mode) {
-                            Action::Start => queued_wants = true,
-                            Action::Stop => queued_wants = false,
-                            Action::None => {}
-                        }
-                        continue;
-                    }
-                    match activation.input(pressed, Instant::now(), mode) {
-                        Action::Start if busy.is_none() => {
-                            busy = Some(self.begin());
-                        }
+                    let stop = self
+                        .stop
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone()
+                        .unwrap_or_default();
+                    match queue.input(
+                        pressed,
+                        at,
+                        self.preferences().mode,
+                        self.capturing.load(Ordering::Acquire),
+                        &stop,
+                    ) {
+                        Action::Start => queue.busy = Some(self.begin()),
                         Action::Stop => {
-                            if let Some(stop) =
-                                self.stop.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
-                            {
-                                stop.store(true, Ordering::Release);
-                            }
                             self.capturing.store(false, Ordering::Release);
-                            if let Some(id) = busy {
+                            if let Some(id) = queue.busy {
                                 self.phase(
                                     id,
                                     if engine().loaded() {
@@ -248,35 +338,26 @@ impl Dictation {
                                     },
                                 );
                             }
-                            activation.reset();
                         }
-                        _ => {}
+                        Action::None => {}
                     }
                 }
                 Event::Cancel => {
                     self.generation.cancel();
-                    queued.reset();
-                    queued_wants = false;
-                    activation.reset();
+                    queue.cancel();
                     if let Some(stop) = self.stop.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
                     {
                         stop.store(true, Ordering::Release);
                     }
                     self.capturing.store(false, Ordering::Release);
                     self.set_escape(false);
-                    engine().cancel();
                     self.idle();
                 }
                 Event::Complete(id) => {
-                    if busy == Some(id) {
-                        busy = None;
+                    if queue.busy == Some(id) {
                         self.capturing.store(false, Ordering::Release);
-                        activation.reset();
-                        if queued_wants && self.generation.current(id) {
-                            queued_wants = false;
-                            activation = queued;
-                            queued = Activation::default();
-                            busy = Some(self.begin());
+                        if queue.complete(id, self.generation.current(id)) {
+                            queue.busy = Some(self.begin());
                         }
                     }
                 }
@@ -302,22 +383,27 @@ impl Dictation {
         self.show(id, &settings);
         let this = self.clone();
         std::thread::spawn(move || {
-            let result = activity.and_then(|_activity| this.capture(id, &settings, &stop));
+            let result =
+                guarded(|| activity.and_then(|_activity| this.capture(id, &settings, &stop)));
             if this.generation.current(id) {
                 this.set_escape(false);
+                let mut shown = settings.clone();
+                if shown.popup == Popup::Off {
+                    shown.popup = Popup::Minimal;
+                }
                 match result {
                     Ok(Finish::Problem(message)) => {
                         this.update(id, json!({"state":"error","message":message}));
-                        this.show(id, &settings);
+                        this.show(id, &shown);
                     }
-                    Ok(Finish::Notice(message)) => this.notice(id, &settings, &message),
+                    Ok(Finish::Notice(title, message)) => this.notice(id, &shown, title, &message),
                     Ok(Finish::Done) => {
                         this.update(id, json!({"state":"idle"}));
                         crate::overlay::hide(&this.app);
                     }
                     Err(e) => {
                         this.update(id, json!({"state":"error","message":e.to_string()}));
-                        this.show(id, &settings);
+                        this.show(id, &shown);
                     }
                 }
             }
@@ -341,7 +427,7 @@ impl Dictation {
         if !live {
             engine().warm(selected.clone());
         }
-        ensure!(self.generation.current(id), "Dictation cancelled.");
+        ensure!(self.generation.current(id), CANCELLED);
         let named = settings.microphone.clone();
         if stop.load(Ordering::Acquire) {
             return Ok(Finish::Done);
@@ -369,12 +455,16 @@ impl Dictation {
         let this = self.clone();
         let mut stream = if live {
             engine()
-                .stream(selected.clone(), move |committed, tentative| {
-                    this.change(id, |state| {
-                        state["committed"] = json!(newest(&committed));
-                        state["tentative"] = json!(newest(&tentative));
-                    });
-                })
+                .stream(
+                    selected.clone(),
+                    settings.custom_words.clone(),
+                    move |committed, tentative| {
+                        this.change(id, |state| {
+                            state["committed"] = json!(newest(&committed));
+                            state["tentative"] = json!(newest(&tentative));
+                        });
+                    },
+                )
                 .ok()
         } else {
             None
@@ -409,7 +499,8 @@ impl Dictation {
                         }
                     });
                     if began {
-                        chime(settings.sounds, true);
+                        let this = self.clone();
+                        chime(settings.sounds, true, move || this.generation.current(id));
                     }
                 }
                 if let Some(levels) = visualizer.feed(chunk) {
@@ -439,13 +530,20 @@ impl Dictation {
             },
         );
         self.capturing.store(false, Ordering::Release);
-        if let Some(mic) = &mic {
-            if let Some(problem) = mic.problem.lock().ok().and_then(|p| p.clone()) {
-                anyhow::bail!(problem);
-            }
+        if settings.writing == Writing::Off {
+            self.set_escape(false);
         }
-        let raw = pcm?;
-        ensure!(self.generation.current(id), "Dictation cancelled.");
+        let problem = mic
+            .as_ref()
+            .and_then(|mic| mic.problem.lock().ok().and_then(|p| p.clone()));
+        let captured = pcm.map_err(|e| problem.clone().map_or(e, anyhow::Error::msg))?;
+        if let Some(problem) = &problem {
+            log::warn!("Dictation's microphone stopped: {problem}");
+        }
+        let stopped = problem.is_some() || captured.stalled;
+        let signal = mic.as_ref().is_none_or(|mic| mic.heard_signal());
+        let raw = captured.pcm;
+        ensure!(self.generation.current(id), CANCELLED);
         self.phase(
             id,
             if engine().loaded() {
@@ -454,7 +552,10 @@ impl Dictation {
                 "loading"
             },
         );
-        chime(settings.sounds, false);
+        {
+            let this = self.clone();
+            chime(settings.sounds, false, move || this.generation.current(id));
+        }
         let tail = speech.map(CaptureVad::finish).unwrap_or_default();
         kept.extend_from_slice(&tail);
         pending.extend_from_slice(&tail);
@@ -464,19 +565,26 @@ impl Dictation {
         } else {
             None
         };
-        ensure!(self.generation.current(id), "Dictation cancelled.");
+        ensure!(self.generation.current(id), CANCELLED);
         let text = match transcript {
             Some(text) => text,
-            None => {
-                let audio = if kept.is_empty() && selected.streaming {
-                    raw
-                } else {
-                    kept
-                };
-                engine().transcribe(selected.clone(), audio, Priority::Dictation)?
-            }
+            None => match engine().transcribe(
+                selected.clone(),
+                batch_audio(kept, raw, selected.streaming),
+                Priority::Dictation,
+                settings.custom_words.clone(),
+            ) {
+                Ok(text) => text,
+                Err(e) if matches!(e.downcast_ref(), Some(EngineError::Cancelled)) => {
+                    return Ok(Finish::Done)
+                }
+                Err(e) => {
+                    log::warn!("Dictation could not be transcribed: {e:#}");
+                    anyhow::bail!(NOT_TRANSCRIBED);
+                }
+            },
         };
-        ensure!(self.generation.current(id), "Dictation cancelled.");
+        ensure!(self.generation.current(id), CANCELLED);
         let language = if selected.language != "auto" {
             Some(selected.language.as_str())
         } else {
@@ -486,13 +594,16 @@ impl Dictation {
                 .filter(|m| m.languages.len() == 1)
                 .and_then(|m| m.languages.first().map(String::as_str))
         };
-        ensure!(
-            text.len() <= 100_000,
-            "This dictation is too long. Try shorter dictations or a smaller model."
-        );
-        let text = leo_services::dictation::text::clean(&text, settings, language);
-        if text.trim().is_empty() {
-            return Ok(Finish::Done);
+        ensure!(text.len() <= 100_000, TOO_LONG);
+        let text = std::panic::catch_unwind(|| {
+            leo_services::dictation::text::clean(&text, settings, language)
+        })
+        .unwrap_or_else(|_| {
+            log::warn!("Dictation's text rules failed, so the transcript is pasted as heard.");
+            text.clone()
+        });
+        if !leo_services::dictation::text::meaningful(&text) {
+            return Ok(outcome(None, None, stopped, signal));
         }
         let mut fallback = None;
         let text = if settings.writing == Writing::Off {
@@ -505,27 +616,32 @@ impl Dictation {
                 settings.writing,
                 language,
                 app.as_deref(),
+                &settings.custom_words,
                 Arc::new(move || !this.generation.current(id)),
             ) {
                 Ok(polished) => polished,
                 Err(reason) => {
-                    ensure!(self.generation.current(id), "Dictation cancelled.");
+                    ensure!(self.generation.current(id), CANCELLED);
                     fallback = Some(reason);
                     text
                 }
             }
         };
-        ensure!(self.generation.current(id), "Dictation cancelled.");
-        leo_web::dictation::remember(&leo_core::paths::data_dir()?, &text)?;
+        self.set_escape(false);
+        ensure!(self.generation.current(id), CANCELLED);
+        if let Err(e) =
+            leo_core::paths::data_dir().and_then(|data| leo_web::dictation::remember(&data, &text))
+        {
+            log::warn!("Dictation could not be kept in Recent dictations: {e:#}");
+        }
         let output = text;
-        ensure!(self.generation.current(id), "Dictation cancelled.");
+        ensure!(self.generation.current(id), CANCELLED);
         if Self::test_mode() {
             if let Some(path) = std::env::var_os("LEO_DICTATION_OUTPUT") {
                 use std::io::Write;
                 let path = PathBuf::from(path);
-                let mut file = tempfile::NamedTempFile::new_in(
-                    path.parent().context("The test output needs a folder.")?,
-                )?;
+                let mut file =
+                    tempfile::NamedTempFile::new_in(path.parent().context(TEST_FOLDER)?)?;
                 file.write_all(output.as_bytes())?;
                 file.persist(path).map_err(|e| e.error)?;
                 return Ok(Finish::Done);
@@ -536,11 +652,7 @@ impl Dictation {
             Arc::new(move || this.generation.current(id))
         })
         .map_err(anyhow::Error::msg)?;
-        Ok(match (pasted, fallback) {
-            (Some(message), _) => Finish::Problem(message),
-            (None, Some(reason)) => Finish::Notice(reason.into()),
-            (None, None) => Finish::Done,
-        })
+        Ok(outcome(Some(pasted), fallback, stopped, signal))
     }
 }
 impl leo_web::dictation::DictationApi for Dictation {
@@ -561,20 +673,17 @@ impl leo_web::dictation::DictationApi for Dictation {
     fn change(&self, value: Value) -> Result<Value> {
         match value["action"].as_str() {
             Some("test_press") if Self::test_mode() => {
-                self.tx.try_send(Event::Input(true, false))?;
+                self.tx
+                    .try_send(Event::Input(true, false, Instant::now()))?;
             }
             Some("test_release") if Self::test_mode() => {
-                self.tx.try_send(Event::Input(false, false))?;
+                self.tx
+                    .try_send(Event::Input(false, false, Instant::now()))?;
             }
             Some("save") => {
-                ensure!(
-                    !self.capturing.load(Ordering::Acquire),
-                    "Finish dictating before changing its settings."
-                );
-                let settings: Settings = serde_json::from_value(value["settings"].clone())
-                    .context(
-                    "These dictation settings could not be read. Check the fields and try again.",
-                )?;
+                ensure!(!self.capturing.load(Ordering::Acquire), FINISH_TO_SAVE);
+                let settings: Settings =
+                    serde_json::from_value(value["settings"].clone()).context(UNREADABLE)?;
                 settings.validate()?;
                 crate::shortcut::validate(&settings.shortcut).map_err(anyhow::Error::msg)?;
                 settings.commit(&self.path, || {
@@ -591,10 +700,7 @@ impl leo_web::dictation::DictationApi for Dictation {
                 *self.problem.lock().unwrap_or_else(|e| e.into_inner()) = None;
             }
             Some("record_shortcut") => {
-                ensure!(
-                    !self.capturing.load(Ordering::Acquire),
-                    "Finish dictating before recording a shortcut."
-                );
+                ensure!(!self.capturing.load(Ordering::Acquire), FINISH_TO_RECORD);
                 self.shortcut
                     .get()
                     .unwrap()
@@ -604,34 +710,63 @@ impl leo_web::dictation::DictationApi for Dictation {
             Some("resume_shortcut") => self.shortcut.get().unwrap().resume(),
             Some("cancel") => self.cancel(),
             Some("copy") => {
-                let text = value["text"]
-                    .as_str()
-                    .context("Choose a recent dictation.")?;
-                ensure!(text.len() <= 100_000, "This dictation is too long to copy.");
+                let text = value["text"].as_str().context(CHOOSE_RECENT)?;
+                ensure!(text.len() <= 100_000, TOO_LONG_TO_COPY);
                 crate::clipboard::copy(&self.app, text).map_err(anyhow::Error::msg)?;
             }
             Some("theme") => {
                 let choice = value["theme"].as_str().unwrap_or("system");
-                ensure!(
-                    ["light", "dark", "system"].contains(&choice),
-                    "Choose Light, Dark or Match."
-                );
+                ensure!(["light", "dark", "system"].contains(&choice), CHOOSE_THEME);
                 *self.theme.lock().unwrap_or_else(|e| e.into_inner()) = choice.into();
                 let view = self.state.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 self.publish(view);
             }
-            _ => anyhow::bail!("Choose an action in Dictation settings."),
+            _ => anyhow::bail!(CHOOSE_ACTION),
         }
         Ok(json!({"ok":true}))
     }
 }
-fn chime(enabled: bool, start: bool) {
+fn chime(enabled: bool, start: bool, current: impl Fn() -> bool + Send + 'static) {
     if enabled {
         std::thread::spawn(move || {
             static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
             let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
-            crate::audio_feedback::play(true, start);
+            if current() {
+                crate::audio_feedback::play(true, start);
+            }
         });
+    }
+}
+fn guarded(work: impl FnOnce() -> Result<Finish>) -> Result<Finish> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .unwrap_or_else(|_| Err(anyhow::anyhow!(STOPPED_UNEXPECTEDLY)))
+}
+fn batch_audio(kept: Vec<f32>, raw: Vec<f32>, streaming: bool) -> Vec<f32> {
+    if kept.is_empty() && streaming {
+        raw
+    } else {
+        kept
+    }
+}
+fn outcome(
+    pasted: Option<crate::clipboard::Pasted>,
+    fallback: Option<&'static str>,
+    stopped: bool,
+    signal: bool,
+) -> Finish {
+    use crate::clipboard::Pasted;
+    match (pasted, fallback) {
+        (None, _) if stopped => Finish::Problem(MIC_STOPPED_EARLY.into()),
+        (None, _) if !signal => Finish::Notice(MICROPHONE, SILENCE.into()),
+        (None, _) => Finish::Notice(NOTHING_HEARD, NOTHING.into()),
+        (Some(Pasted::Manual(message)), _) => Finish::Problem(message),
+        (Some(Pasted::Unsure(message)), _) => Finish::Notice(CHECK_PASTE, message),
+        (Some(Pasted::Done), Some(reason)) if stopped => {
+            Finish::Notice(MICROPHONE, format!("{MIC_STOPPED} {reason}"))
+        }
+        (Some(Pasted::Done), None) if stopped => Finish::Notice(MICROPHONE, MIC_STOPPED.into()),
+        (Some(Pasted::Done), Some(reason)) => Finish::Notice(WITHOUT_AI, reason.into()),
+        (Some(Pasted::Done), None) => Finish::Done,
     }
 }
 fn feed(stream: &DictationStream, pcm: &[f32]) -> bool {
@@ -642,4 +777,114 @@ fn newest(text: &str) -> String {
     text.chars()
         .skip(count.saturating_sub(SHOWN_CHARS))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clipboard::Pasted;
+
+    fn tap(queue: &mut Queue, capturing: bool, stop: &AtomicBool) -> Action {
+        let now = Instant::now();
+        let action = queue.input(true, now, Mode::Tap, capturing, stop);
+        assert_eq!(
+            queue.input(false, now, Mode::Tap, capturing, stop),
+            Action::None
+        );
+        action
+    }
+
+    #[test]
+    fn a_press_after_cancel_is_dropped_and_never_starts_a_later_dictation() {
+        let mut queue = Queue::default();
+        let stop = AtomicBool::new(false);
+        assert_eq!(tap(&mut queue, false, &stop), Action::Start);
+        queue.busy = Some(1);
+        queue.cancel();
+        stop.store(true, Ordering::Release);
+        assert_eq!(tap(&mut queue, false, &stop), Action::None);
+        assert!(queue.queued_wants);
+        assert!(!queue.complete(1, false));
+        assert!(!queue.queued_wants);
+        let stop = AtomicBool::new(false);
+        assert_eq!(tap(&mut queue, false, &stop), Action::Start);
+        queue.busy = Some(2);
+        assert_eq!(tap(&mut queue, true, &stop), Action::Stop);
+        assert!(stop.load(Ordering::Acquire));
+        assert!(!queue.complete(2, true));
+    }
+
+    #[test]
+    fn a_stop_press_after_capture_ended_on_its_own_is_swallowed() {
+        let mut queue = Queue::default();
+        let stop = AtomicBool::new(false);
+        assert_eq!(tap(&mut queue, false, &stop), Action::Start);
+        queue.busy = Some(1);
+        assert_eq!(tap(&mut queue, false, &stop), Action::None);
+        assert!(!queue.queued_wants);
+        assert!(stop.load(Ordering::Acquire));
+        assert!(!queue.complete(1, true));
+    }
+
+    #[test]
+    fn a_press_while_decoding_starts_the_next_dictation() {
+        let mut queue = Queue::default();
+        let stop = AtomicBool::new(false);
+        assert_eq!(tap(&mut queue, false, &stop), Action::Start);
+        queue.busy = Some(1);
+        assert_eq!(tap(&mut queue, true, &stop), Action::Stop);
+        assert_eq!(tap(&mut queue, false, &stop), Action::None);
+        assert!(queue.queued_wants);
+        assert!(queue.complete(1, true));
+        queue.busy = Some(2);
+        let stop = AtomicBool::new(false);
+        assert_eq!(tap(&mut queue, true, &stop), Action::Stop);
+    }
+
+    #[test]
+    fn a_panic_becomes_an_error_and_audio_falls_back_to_raw_only_for_streaming() {
+        let error = guarded(|| panic!("boom")).unwrap_err();
+        assert_eq!(error.to_string(), STOPPED_UNEXPECTEDLY);
+        assert_eq!(guarded(|| Ok(Finish::Done)).unwrap(), Finish::Done);
+        assert_eq!(batch_audio(vec![1.0], vec![2.0], true), vec![1.0]);
+        assert_eq!(batch_audio(Vec::new(), vec![2.0], true), vec![2.0]);
+        assert!(batch_audio(Vec::new(), vec![2.0], false).is_empty());
+    }
+
+    #[test]
+    fn every_ending_has_its_message() {
+        assert_eq!(
+            outcome(None, None, true, true),
+            Finish::Problem(MIC_STOPPED_EARLY.into())
+        );
+        assert_eq!(
+            outcome(None, None, false, false),
+            Finish::Notice(MICROPHONE, SILENCE.into())
+        );
+        assert_eq!(
+            outcome(None, Some("x"), false, true),
+            Finish::Notice(NOTHING_HEARD, NOTHING.into())
+        );
+        assert_eq!(
+            outcome(Some(Pasted::Manual("m".into())), None, true, true),
+            Finish::Problem("m".into())
+        );
+        assert_eq!(
+            outcome(Some(Pasted::Unsure("u".into())), Some("x"), true, true),
+            Finish::Notice(CHECK_PASTE, "u".into())
+        );
+        assert_eq!(
+            outcome(Some(Pasted::Done), Some("x"), true, true),
+            Finish::Notice(MICROPHONE, format!("{MIC_STOPPED} x"))
+        );
+        assert_eq!(
+            outcome(Some(Pasted::Done), None, true, true),
+            Finish::Notice(MICROPHONE, MIC_STOPPED.into())
+        );
+        assert_eq!(
+            outcome(Some(Pasted::Done), Some("x"), false, false),
+            Finish::Notice(WITHOUT_AI, "x".into())
+        );
+        assert_eq!(outcome(Some(Pasted::Done), None, false, true), Finish::Done);
+    }
 }

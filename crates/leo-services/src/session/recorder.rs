@@ -444,7 +444,12 @@ fn hear(samples: &[i16]) -> Option<String> {
     let selected = crate::speech::library::library().ok()?.selected().ok()?;
     let pcm = samples.iter().map(|s| *s as f32 / 32768.0).collect();
     let text = crate::speech::engine::engine()
-        .transcribe(selected, pcm, crate::speech::engine::Priority::Live)
+        .transcribe(
+            selected,
+            pcm,
+            crate::speech::engine::Priority::Live,
+            Vec::new(),
+        )
         .ok()?;
     Some(if live::is_silence_artifact(&text) {
         String::new()

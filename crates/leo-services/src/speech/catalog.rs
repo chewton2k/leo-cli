@@ -147,8 +147,33 @@ impl Model {
             DEFAULT_MODEL | "parakeet-unified-en-0.6b" | "canary-180m-flash"
         )
     }
+    pub fn detects_language(&self) -> bool {
+        self.capabilities["languageDetection"].as_bool() != Some(false)
+    }
     pub fn language(&self, language: &str) -> bool {
-        (language == "auto" && self.languages.len() > 1)
+        (language == "auto" && self.languages.len() > 1 && self.detects_language())
             || self.languages.iter().any(|l| l == language)
     }
+    pub fn default_language(&self) -> Option<String> {
+        let system = ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .find(|value| !value.is_empty())
+            .and_then(|value| {
+                value
+                    .split(['_', '.', '-', '@'])
+                    .next()
+                    .map(str::to_lowercase)
+            });
+        choose_language(&self.languages, system.as_deref())
+    }
+}
+
+pub(crate) fn choose_language(languages: &[String], system: Option<&str>) -> Option<String> {
+    languages
+        .iter()
+        .find(|l| Some(l.as_str()) == system)
+        .or_else(|| languages.iter().find(|l| *l == "en"))
+        .or(languages.first())
+        .cloned()
 }

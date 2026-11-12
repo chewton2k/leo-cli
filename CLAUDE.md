@@ -163,7 +163,15 @@ settings and credentials are excluded from note exports.
   owns global shortcuts, permissions, in-memory capture, transactional paste
   and a bundled nonactivating popup. Writing AI runs on dictations only when
 the user turns on the AI writing switch (2026-11-02, the user's call; off by default; on keeps a stored `selected`, else `quick`). Recent
-  results are twenty local rows in `leo.db`, never notes or sync data.
+  results are twenty local rows in `leo.db`, never notes or sync data; an edited
+  row keeps its `original` text (Show original). Custom words fix spelling in
+  `dictation/text.rs` and, where the speech model supports it, are passed to it
+  as vocabulary (a recited-list echo is stripped); the AI check refuses changed
+  words, numbers and added symbols; filler rules follow a `whatlang` guess of the
+  text. The echo filter ports OpenWhispr's `dictionaryEchoFilter.js` and the
+  Recent-dictations everyday-word list its `correctionLearner.js` (MIT, credited
+  in NOTICE); the self-correction rules are leo's own. Robustness details:
+  leo-desktop, leo-services and leo-web CLAUDE.md "Dictation".
 - Recording is captured in Rust, including two native tracks for calls; hiding
   the window cannot stop it. App Nap is held while recording. Missing models
   leave audio pending and recoverable; the app can resume native sessions.

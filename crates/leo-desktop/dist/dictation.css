@@ -8,6 +8,7 @@ body[data-top="true"] { justify-content: flex-start; }
 #dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
 #timer { color: var(--muted); font-variant-numeric: tabular-nums; }
 #wave { height: 18px; display: flex; align-items: center; justify-content: center; gap: 3px; }
+#wave[hidden] { display: none; }
 #wave i { width: 4px; min-height: 3px; max-height: 18px; border-radius: 2px; background: var(--danger); transition: height 80ms linear; }
 #cancel { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
 #cancel:hover { background: var(--surface-2); color: var(--text); }

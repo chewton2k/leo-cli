@@ -61,7 +61,15 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .settings-section .set-row.column > .btn { align-self: flex-start; }
 .settings-section .btn { white-space: nowrap; }
 .set-shortcut { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 1 auto; min-width: 0; }
-.set-shortcut .set-input { flex: 0 1 180px; min-width: 110px; }
+.shortcut-field { display: flex; align-items: center; gap: 6px; flex: 0 1 220px; min-width: 110px; min-height: 38px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg); overflow: hidden; }
+.set-card .shortcut-field { background: var(--raised); }
+.shortcut-field kbd { flex: none; font-family: inherit; font-size: 11.5px; font-weight: var(--fw-semibold); line-height: 1; color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 3px 6px; }
+.shortcut-held { display: flex; gap: 6px; margin-left: auto; flex: none; }
+.shortcut-prompt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); color: var(--faint); }
+.shortcut-field.recording { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.shortcut-field.recording kbd { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+#dictation-shortcut-status.ok { color: var(--good); }
+#dictation-shortcut-status.bad { color: var(--danger); }
 .set-shortcut .btn { flex: none; white-space: nowrap; }
 #dictation-shortcut-status:empty { display: none; }
 .settings-section a.btn { text-decoration: none; }

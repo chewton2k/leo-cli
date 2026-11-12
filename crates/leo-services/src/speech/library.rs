@@ -156,6 +156,21 @@ impl Library {
             .context(
             "The speech model choice could not be read. Choose a model again in Settings.",
         )?;
+        if selected.language == "auto" {
+            if let Some(model) = self
+                .catalog
+                .get(&selected.id)
+                .ok()
+                .filter(|m| !m.language("auto"))
+            {
+                if let Some(language) = model.default_language() {
+                    return Ok(Selection {
+                        id: selected.id,
+                        language,
+                    });
+                }
+            }
+        }
         if selected.id.is_empty()
             || self
                 .catalog
@@ -260,6 +275,12 @@ impl Library {
 
     pub fn use_model(&self, id: &str, language: &str) -> Result<()> {
         let model = self.catalog.get(id)?;
+        let language = if language == "auto" && !model.language("auto") {
+            model.default_language().unwrap_or_else(|| language.into())
+        } else {
+            language.into()
+        };
+        let language = language.as_str();
         ensure!(
             model.language(language),
             "Choose a language supported by this speech model."
@@ -331,7 +352,7 @@ impl Library {
             let accuracy = self.catalog.accuracy_for(&model.id, &selection.language);
             models.push(json!({ "id": model.id, "name": model.name, "description": model.description,
                 "languages": model.languages, "size": model.file().size, "bytes": bytes, "downloaded": downloaded, "verified": verified,
-                "in_use": verified && selection.id == model.id, "streaming": model.capabilities["streaming"],
+                "in_use": verified && selection.id == model.id, "streaming": model.capabilities["streaming"], "detects_language": model.detects_language(),
                 "live": self.catalog.live(&model.id), "recommended": model.recommended(), "license": model.license,
                 "speed": self.catalog.speed(&model.id), "accuracy": accuracy.unwrap_or(0.0), "accuracy_measured": accuracy.is_some(), "benchmark_language": selection.language,
                 "progress": job.map(|j| json!({ "bytes": j.bytes, "total": j.total, "state": j.state, "error": j.error })) }));

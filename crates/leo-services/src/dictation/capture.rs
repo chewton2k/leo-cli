@@ -6,6 +6,12 @@ use std::sync::{
 use std::time::{Duration, Instant};
 pub const MOST_SAMPLES: usize = 300 * 16_000;
 pub const FIRST_AUDIO: Duration = Duration::from_secs(8);
+const STALL: Duration = Duration::from_secs(5);
+#[derive(Debug)]
+pub struct Captured {
+    pub pcm: Vec<f32>,
+    pub stalled: bool,
+}
 fn append(
     pcm: &mut Vec<f32>,
     samples: &[i16],
@@ -30,8 +36,8 @@ pub fn collect(
     stop: &AtomicBool,
     heard: impl FnMut(&[f32], f32, f64),
     close: impl FnOnce() + Send,
-) -> Result<Vec<f32>> {
-    collect_within(rx, stop, heard, close, FIRST_AUDIO)
+) -> Result<Captured> {
+    collect_within(rx, stop, heard, close, FIRST_AUDIO, STALL)
 }
 fn collect_within(
     rx: &Receiver<Vec<i16>>,
@@ -39,15 +45,27 @@ fn collect_within(
     mut heard: impl FnMut(&[f32], f32, f64),
     close: impl FnOnce() + Send,
     first_audio: Duration,
-) -> Result<Vec<f32>> {
+    stall: Duration,
+) -> Result<Captured> {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(300);
     let mut pcm = Vec::new();
+    let mut last_chunk = None;
+    let mut stalled = false;
     let result = (|| -> Result<()> {
         while !stop.load(Ordering::Acquire) && pcm.len() < MOST_SAMPLES && Instant::now() < deadline
         {
             match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(samples) => append(&mut pcm, &samples, &mut heard)?,
+                Ok(samples) => {
+                    last_chunk = Some(Instant::now());
+                    append(&mut pcm, &samples, &mut heard)?
+                }
+                Err(RecvTimeoutError::Timeout)
+                    if last_chunk.is_some_and(|at: Instant| at.elapsed() >= stall) =>
+                {
+                    stalled = true;
+                    break;
+                }
                 Err(RecvTimeoutError::Timeout)
                     if pcm.is_empty() && started.elapsed() >= first_audio =>
                 {
@@ -73,7 +91,7 @@ fn collect_within(
     for samples in rx.try_iter().take(64) {
         append(&mut pcm, &samples, &mut heard)?;
     }
-    Ok(pcm)
+    Ok(Captured { pcm, stalled })
 }
 #[cfg(test)]
 mod tests {
@@ -87,6 +105,7 @@ mod tests {
         assert_eq!(
             collect(&rx, &AtomicBool::new(false), |_, _, s| seconds = s, || {})
                 .unwrap()
+                .pcm
                 .len(),
             16_000
         );
@@ -95,8 +114,33 @@ mod tests {
         assert!(
             collect(&rx, &AtomicBool::new(true), |_, _, _| panic!(), || {})
                 .unwrap()
+                .pcm
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn capture_stops_at_the_most_samples_and_ignores_the_rest() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for _ in 0..MOST_SAMPLES / 160_000 + 1 {
+            tx.send(vec![1000; 160_000]).unwrap();
+        }
+        let captured = collect(&rx, &AtomicBool::new(false), |_, _, _| {}, || {}).unwrap();
+        assert_eq!(captured.pcm.len(), MOST_SAMPLES);
+        assert!(!captured.stalled);
+    }
+
+    #[test]
+    fn one_message_over_ten_seconds_is_refused() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(vec![1000; 160_000]).unwrap();
+        let captured = collect(&rx, &AtomicBool::new(true), |_, _, _| {}, || {}).unwrap();
+        assert_eq!(captured.pcm.len(), 160_000);
+        tx.send(vec![1000; 160_001]).unwrap();
+        let error = collect(&rx, &AtomicBool::new(true), |_, _, _| {}, || {})
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("too much audio"));
     }
 }
 
@@ -112,9 +156,28 @@ mod tail_tests {
             |_, _, _| {},
             || {},
             Duration::ZERO,
+            STALL,
         )
         .unwrap_err();
         assert!(error.to_string().contains("not sending audio"));
+    }
+
+    #[test]
+    fn a_microphone_that_goes_quiet_ends_the_dictation_with_what_it_sent() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(vec![1000; 1600]).unwrap();
+        let captured = collect_within(
+            &rx,
+            &AtomicBool::new(false),
+            |_, _, _| {},
+            || {},
+            FIRST_AUDIO,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        assert!(captured.stalled);
+        assert_eq!(captured.pcm.len(), 1600);
+        drop(tx);
     }
 
     #[test]
@@ -130,7 +193,7 @@ mod tail_tests {
                 }
             },
         );
-        assert_eq!(pcm.unwrap().len(), 6400);
+        assert_eq!(pcm.unwrap().pcm.len(), 6400);
     }
     #[test]
     fn closing_the_microphone_precedes_draining_its_last_audio() {
@@ -145,6 +208,6 @@ mod tail_tests {
                 tx.send(vec![1000; 1600]).unwrap();
             },
         );
-        assert_eq!(pcm.unwrap().len(), 1600);
+        assert_eq!(pcm.unwrap().pcm.len(), 1600);
     }
 }

@@ -220,7 +220,7 @@ async function onboardingModel(el) {
   onboardingBusy = true;
   drawOnboardingProgress();
   try {
-    const view = await api('/api/speech', { method: 'POST', body: { action: verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' } });
+    const view = await api('/api/speech', { method: 'POST', body: { action: verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : speechUseLanguage(model) } });
     if (generation !== onboardingGeneration || !onboardingHere(2)) return;
     onboardingSpeech = view;
     if (verb === 'use') { onboardingBusy = false; await finishOnboarding({ dataset: { step: '2' } }); return; }

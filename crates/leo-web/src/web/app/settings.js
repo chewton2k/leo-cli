@@ -1072,7 +1072,7 @@ function speechCards(view) {
   if (!view) return '<section class="set-card"><p class="hint">Speech models could not be opened. Reopen leo and try again.</p></section>';
   const selected = view.selected || {};
   const current = view.models.find((model) => model.id === selected.id);
-  const language = current && view.ready && current.languages.length > 1 ? `<label class="set-row" data-find="speech-language"><span class="set-label">Language</span><span class="select-control"><select id="speech-language" data-speech-language="${esc(current.id)}">${settingsOption('auto', 'Detect language', selected.language)}${current.languages.map((code) => settingsOption(code, speechLanguage(code), selected.language)).join('')}</select>${ICON.chevron}</span></label>` : '';
+  const language = current && view.ready && current.languages.length > 1 ? `<label class="set-row" data-find="speech-language"><span class="set-label">Language</span><span class="select-control"><select id="speech-language" data-speech-language="${esc(current.id)}">${current.detects_language === false ? '' : settingsOption('auto', 'Detect language', selected.language)}${current.languages.map((code) => settingsOption(code, speechLanguage(code), selected.language)).join('')}</select>${ICON.chevron}</span></label>` : '';
   const downloaded = view.models.filter((model) => model.downloaded);
   const extras = view.extra_files || [];
   const available = view.models.filter((model) => !model.downloaded);
@@ -1088,6 +1088,11 @@ function speechCards(view) {
 function speechBytes(bytes) {
   bytes = Math.max(0, Number(bytes) || 0);
   return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(1) + ' GB' : bytes >= 1048576 ? Math.round(bytes / 1048576) + ' MB' : bytes + ' B';
+}
+function speechUseLanguage(model) {
+  if (model.detects_language !== false) return 'auto';
+  const mine = String(globalThis.navigator?.language || '').split('-')[0].toLowerCase();
+  return model.languages.includes(mine) ? mine : model.languages.includes('en') ? 'en' : model.languages[0];
 }
 function speechLanguage(code) {
   try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch (e) { return code; }
@@ -1176,7 +1181,7 @@ function changeSpeechModel(el) {
   }
   const model = state.speech.models.find((m) => m.id === el.dataset.model);
   if (!model) return;
-  const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' };
+  const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : speechUseLanguage(model) };
   if (change.action === 'delete') return speechDeleteMenu(el, model.name, 'The download is removed from this computer. Your notes stay.', { action: 'delete', id: model.id });
   return speechChange(change);
 }

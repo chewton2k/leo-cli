@@ -196,7 +196,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = pageCss();
-  const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
+  const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector), ON_MAC=true;
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)}, saving={drafts:()=>[]};
@@ -217,6 +217,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     }
     const cascade=()=>{}, pulse=()=>{}, overlapOut=()=>{};
     ${read('app/core.js').slice(read('app/core.js').indexOf('const MOTION_MS'), read('app/core.js').indexOf('function stillMotion'))}
+    ${read('app/core.js').slice(read('app/core.js').indexOf('const SHORTCUT_KEYS'), read('app/core.js').indexOf('async function dictateHint'))}
     const unfold=menu=>{menu.hidden=false;}, fold=menu=>{menu.hidden=true;}, floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"],[data-action="theme-pick"],[data-action="width-pick"],[data-action="text-size-pick"],[data-action="letters-pick"],[data-action="setting-reset"]'); if(!el) return; const act=el.dataset.action; if(act==='segment-pick') pickSegment(el); else if(act==='theme-pick') pickTheme(el); else if(act==='width-pick') pickWidth(el); else if(act==='text-size-pick') pickTextSize(el); else if(act==='letters-pick') pickLetters(el); else resetSetting(el);});
     ${read('theme.js')}

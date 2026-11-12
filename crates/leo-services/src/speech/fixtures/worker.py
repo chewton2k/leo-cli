@@ -19,6 +19,12 @@ def read_exact(length):
         out += part
     return out
 
+def wait_for_go():
+    for _ in range(1000):
+        if (folder / 'go').exists():
+            break
+        time.sleep(0.01)
+
 def send(value):
     payload = json.dumps(value).encode()
     sys.stdout.buffer.write(struct.pack('<I', len(payload)) + payload + struct.pack('<I', 0))
@@ -37,6 +43,9 @@ try:
             folder = path.parent
             with (folder / 'pids').open('a') as file:
                 file.write(str(os.getpid()) + '\n')
+            if mode == 'loadwaits':
+                (folder / 'loading').touch()
+                wait_for_go()
             send({'Loaded': {'arch': 'fake', 'variant': 'fake', 'backend': 'cpu' if cpu else 'metal', 'device': 'fake', 'on_gpu': not cpu,
                 'supports_initial_prompt': False, 'supports_long_form': False, 'supports_vocabulary': False,
                 'capabilities': {'native_sample_rate': 16000, 'languages': ['en'], 'translate_target_languages': [],
@@ -46,6 +55,11 @@ try:
             (folder / 'running').touch()
             if mode == 'hung':
                 time.sleep(30)
+            if mode == 'waits':
+                wait_for_go()
+            if not cpu and mode == 'backend':
+                send({'BackendError': 'device lost'})
+                continue
             if not cpu and mode == 'crashed':
                 os._exit(7)
             if not cpu and mode == 'garbage':

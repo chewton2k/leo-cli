@@ -35,12 +35,6 @@ pub trait VoiceActivityDetector: Send + Sync {
         Ok(self.push_frame(frame)?.is_speech())
     }
 
-    fn set_hangover_frames(&mut self, _frames: usize) {}
-
-    fn tail_report(&self) -> Option<VadTailReport> {
-        None
-    }
-
     fn reset(&mut self) {}
 }
 
@@ -56,15 +50,6 @@ fn check_whole_frames(frames: &[f32], frame_samples: usize) -> Result<()> {
         );
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct VadTailReport {
-    pub withheld_frames: usize,
-    pub withheld_voiced_frames: usize,
-    pub in_speech: bool,
-    pub onset_counter: usize,
-    pub hangover_counter: usize,
 }
 
 mod earshot;
@@ -176,6 +161,29 @@ mod tests {
         assert_eq!(kept.len(), 256 * 8);
         assert_eq!(kept[256 * 7 + 99], 0.2);
         assert_eq!(kept[256 * 7 + 100], 0.0);
+    }
+
+    struct Flaky(Vec<Option<bool>>);
+    impl VoiceActivityDetector for Flaky {
+        fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
+            match self.0.remove(0) {
+                Some(true) => Ok(VadFrame::Speech(frame)),
+                Some(false) => Ok(VadFrame::Noise),
+                None => anyhow::bail!("flaky"),
+            }
+        }
+        fn frame_samples(&self) -> usize {
+            512
+        }
+    }
+
+    #[test]
+    fn a_frame_the_detector_failed_on_is_kept_once() {
+        let script = vec![Some(false), None, Some(false), Some(true), Some(true)];
+        let mut vad = CaptureVad::new(Box::new(Flaky(script)), VAD_OFFLINE_HANGOVER_MS);
+        let audio: Vec<f32> = (0..5).flat_map(|k| vec![k as f32; 512]).collect();
+        let kept: Vec<f32> = vad.push(&audio).chunks(512).map(|f| f[0]).collect();
+        assert_eq!(kept, [1.0, 0.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]

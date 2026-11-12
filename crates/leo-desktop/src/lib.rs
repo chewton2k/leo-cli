@@ -14,7 +14,6 @@ mod port;
 #[cfg(target_os = "macos")]
 mod quit;
 mod secure_input;
-mod settings;
 mod shell_path;
 mod shortcut;
 mod shortcut_events;
@@ -327,6 +326,7 @@ fn sync_visible(window: &tauri::WebviewWindow, visible: bool, force: bool) {
 }
 
 fn stop_engine(app: &AppHandle) {
+    paste_tx::flush(app);
     if let Some(updates) = app.try_state::<std::sync::Arc<updates::Updates>>() {
         updates.stop();
     }

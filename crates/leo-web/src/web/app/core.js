@@ -709,8 +709,11 @@ async function showWorkspace(dir = null) {
 }
 
 const SHORTCUT_KEYS = { option: ['⌥', 'Alt'], opt: ['⌥', 'Alt'], alt: ['⌥', 'Alt'], ctrl: ['⌃', 'Ctrl'], control: ['⌃', 'Ctrl'], cmd: ['⌘', 'Win'], command: ['⌘', 'Win'], meta: ['⌘', 'Win'], super: ['⌘', 'Win'], shift: ['⇧', 'Shift'] };
+function shortcutParts(keys) {
+  return keys ? keys.split('+').map((key) => { const name = key.trim().replace(/^(ctrl|option|alt|shift|command|super)_(left|right)$/i, '$1'); return SHORTCUT_KEYS[name.toLowerCase()]?.[ON_MAC ? 0 : 1] || name.replace(/^./, (c) => c.toUpperCase()); }) : [];
+}
 function shortcutText(keys) {
-  return keys.split('+').map((key) => SHORTCUT_KEYS[key.trim().toLowerCase()]?.[ON_MAC ? 0 : 1] || key.trim().replace(/^./, (c) => c.toUpperCase())).join(ON_MAC ? '' : '+');
+  return shortcutParts(keys).join(ON_MAC ? '' : '+');
 }
 async function dictateHint(el) {
   try {

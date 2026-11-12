@@ -20,7 +20,7 @@ pub fn remember(data: &Path, text: &str) -> Result<()> {
         !text.trim().is_empty() && text.len() <= 100_000,
         "This dictation is too long to keep in Recent dictations."
     );
-    crate::db::at(&data.join(crate::db::FILE)).with(|db| {
+    crate::db::try_at(&data.join(crate::db::FILE))?.with(|db| {
         let tx = db.transaction()?;
         tx.execute("INSERT INTO dictations(at,text) VALUES (?1,?2)", rusqlite::params![chrono::Utc::now().to_rfc3339(), text])?;
         tx.execute("DELETE FROM dictations WHERE id NOT IN (SELECT id FROM dictations ORDER BY id DESC LIMIT 20)", [])?;
@@ -29,7 +29,7 @@ pub fn remember(data: &Path, text: &str) -> Result<()> {
 }
 pub fn recent(data: &Path) -> Result<Vec<Value>> {
     crate::db::at(&data.join(crate::db::FILE)).with(|db| {
-        db.prepare("SELECT id,at,text,edited FROM dictations ORDER BY id DESC LIMIT 20")?.query_map([], |r| Ok(json!({"id":r.get::<_,i64>(0)?, "at":r.get::<_,String>(1)?, "text":r.get::<_,String>(2)?, "edited":r.get::<_,i64>(3)? != 0})))?.collect()
+        db.prepare("SELECT id,at,text,edited,original FROM dictations ORDER BY id DESC LIMIT 20")?.query_map([], |r| Ok(json!({"id":r.get::<_,i64>(0)?, "at":r.get::<_,String>(1)?, "text":r.get::<_,String>(2)?, "edited":r.get::<_,i64>(3)? != 0, "original":r.get::<_,Option<String>>(4)?})))?.collect()
     })
 }
 pub fn edit(data: &Path, id: i64, text: &str) -> Result<()> {
@@ -40,7 +40,7 @@ pub fn edit(data: &Path, id: i64, text: &str) -> Result<()> {
     );
     let changed = crate::db::at(&data.join(crate::db::FILE)).with(|db| {
         db.execute(
-            "UPDATE dictations SET text=?1, edited=1 WHERE id=?2",
+            "UPDATE dictations SET original=COALESCE(original,text), text=?1, edited=1 WHERE id=?2",
             rusqlite::params![text, id],
         )
     })?;
@@ -146,11 +146,19 @@ mod tests {
         remember(dir.path(), "ship it to leo seal I users").unwrap();
         let id = recent(dir.path()).unwrap()[0]["id"].as_i64().unwrap();
         assert_eq!(recent(dir.path()).unwrap()[0]["edited"], false);
+        assert!(recent(dir.path()).unwrap()[0]["original"].is_null());
         edit(dir.path(), id, "  Ship it to Leo CLI users  ").unwrap();
         let all = recent(dir.path()).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0]["text"], "Ship it to Leo CLI users");
         assert_eq!(all[0]["edited"], true);
+        assert_eq!(all[0]["original"], "ship it to leo seal I users");
+        edit(dir.path(), id, "Ship it to Leo CLI users now").unwrap();
+        assert_eq!(
+            recent(dir.path()).unwrap()[0]["original"],
+            "ship it to leo seal I users"
+        );
+        edit(dir.path(), id, "Ship it to Leo CLI users").unwrap();
         assert!(edit(dir.path(), id + 1, "x").is_err());
         assert!(edit(dir.path(), id, "   ").is_err());
         assert_eq!(
