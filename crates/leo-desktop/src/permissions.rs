@@ -6,12 +6,34 @@ unsafe extern "C" {
 pub fn accessibility() -> bool {
     #[cfg(target_os = "macos")]
     {
-        unsafe { AXIsProcessTrusted() }
+        let trusted = unsafe { AXIsProcessTrusted() };
+        if trusted && !GRANT_RECORDED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            record_grant();
+        }
+        trusted
     }
     #[cfg(not(target_os = "macos"))]
     {
         true
     }
+}
+#[cfg(target_os = "macos")]
+static GRANT_RECORDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+fn grant_file() -> Option<std::path::PathBuf> {
+    leo_core::paths::config_dir()
+        .ok()
+        .map(|dir| dir.join("accessibility-version"))
+}
+#[cfg(target_os = "macos")]
+fn record_grant() {
+    if let Some(file) = grant_file() {
+        let _ = leo_core::paths::write_atomic(&file, env!("CARGO_PKG_VERSION"));
+    }
+}
+#[cfg(any(target_os = "macos", test))]
+fn stale_grant(recorded: Option<&str>, current: &str) -> bool {
+    recorded.is_some_and(|version| version.trim() != current)
 }
 pub fn elevated_target() -> bool {
     #[cfg(windows)]
@@ -116,6 +138,7 @@ pub fn focused_point() -> Option<(f64, f64)> {
                 attribute: *const c_void,
                 value: *mut *const c_void,
             ) -> i32;
+            fn AXUIElementSetMessagingTimeout(element: *const c_void, seconds: f32) -> i32;
             fn AXValueGetValue(value: *const c_void, kind: i32, out: *mut c_void) -> bool;
         }
         #[link(name = "CoreFoundation", kind = "framework")]
@@ -150,6 +173,7 @@ pub fn focused_point() -> Option<(f64, f64)> {
             return None;
         }
         let system = Owned(AXUIElementCreateSystemWide());
+        AXUIElementSetMessagingTimeout(system.0, 0.25);
         let app = attribute(system.0, "AXFocusedApplication")?;
         let window = attribute(app.0, "AXFocusedWindow")?;
         let position = attribute(window.0, "AXPosition")?;
@@ -250,11 +274,25 @@ pub fn request_microphone(app: &tauri::AppHandle) -> anyhow::Result<()> {
     }
     Ok(())
 }
-pub fn request_accessibility(_app: &tauri::AppHandle) -> anyhow::Result<()> {
+pub fn request_accessibility(app: &tauri::AppHandle) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
-    tauri::async_runtime::block_on(
-        tauri_plugin_macos_permissions::request_accessibility_permission(),
-    );
+    {
+        let recorded = grant_file().and_then(|file| std::fs::read_to_string(file).ok());
+        if !accessibility() && stale_grant(recorded.as_deref(), env!("CARGO_PKG_VERSION")) {
+            let _ = leo_core::children::quiet_command("/usr/bin/tccutil")
+                .args(["reset", "Accessibility", app.config().identifier.as_str()])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            record_grant();
+        }
+        tauri::async_runtime::block_on(
+            tauri_plugin_macos_permissions::request_accessibility_permission(),
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     Ok(())
 }
 #[cfg(target_os = "macos")]
@@ -325,5 +363,17 @@ pub fn shortcut_clash(shortcut: &str) -> bool {
     {
         let _ = value;
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stale_grant;
+
+    #[test]
+    fn reset_only_after_a_version_change_with_a_recorded_grant() {
+        assert!(!stale_grant(None, "0.4.26"));
+        assert!(!stale_grant(Some("0.4.26\n"), "0.4.26"));
+        assert!(stale_grant(Some("0.4.25"), "0.4.26"));
     }
 }

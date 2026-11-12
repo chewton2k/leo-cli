@@ -99,17 +99,22 @@ pub fn show(
             })
             .or_else(|| app.primary_monitor().ok().flatten());
         if let Some(monitor) = monitor {
-            let scale = monitor.scale_factor();
-            let p = monitor.position();
-            let s = monitor.size();
-            let x = p.x as f64 / scale + (s.width as f64 / scale - WIDTH) / 2.0;
-            let y = p.y as f64 / scale
-                + if top {
-                    46.0
-                } else {
-                    s.height as f64 / scale - HEIGHT - 40.0
-                };
-            let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+            #[cfg(windows)]
+            place(&window, &monitor, top);
+            #[cfg(not(windows))]
+            {
+                let scale = monitor.scale_factor();
+                let p = monitor.position();
+                let s = monitor.size();
+                let x = p.x as f64 / scale + (s.width as f64 / scale - WIDTH) / 2.0;
+                let y = p.y as f64 / scale
+                    + if top {
+                        46.0
+                    } else {
+                        s.height as f64 / scale - HEIGHT - 40.0
+                    };
+                let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -121,6 +126,82 @@ pub fn show(
         #[cfg(not(target_os = "macos"))]
         let _ = window.show();
     });
+}
+#[cfg(any(windows, test))]
+fn windows_bounds(
+    origin: (i32, i32),
+    size: (u32, u32),
+    scale: f64,
+    text_scale: f64,
+    top: bool,
+) -> (i32, i32, i32, i32) {
+    let content = scale * text_scale;
+    let width = (WIDTH * content).round().max(1.0) as i32;
+    let height = (HEIGHT * content).round().max(1.0) as i32;
+    let x = (origin.0 as f64 + (size.0 as f64 - width as f64) / 2.0).round() as i32;
+    let y = if top {
+        origin.1 as f64 + 46.0 * scale
+    } else {
+        origin.1 as f64 + size.1 as f64 - height as f64 - 40.0 * scale
+    };
+    (x, y.round() as i32, width, height)
+}
+#[cfg(windows)]
+fn text_scale() -> f64 {
+    use windows::{
+        core::w,
+        Win32::{
+            Foundation::ERROR_SUCCESS,
+            System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD},
+        },
+    };
+    let mut percent = 0u32;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Accessibility"),
+            w!("TextScaleFactor"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&mut percent as *mut u32).cast()),
+            Some(&mut size),
+        )
+    };
+    if status == ERROR_SUCCESS {
+        (percent as f64 / 100.0).clamp(1.0, 2.25)
+    } else {
+        1.0
+    }
+}
+#[cfg(windows)]
+fn place(window: &tauri::WebviewWindow, monitor: &tauri::Monitor, top: bool) {
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER},
+    };
+    let p = monitor.position();
+    let s = monitor.size();
+    let (x, y, width, height) = windows_bounds(
+        (p.x, p.y),
+        (s.width, s.height),
+        monitor.scale_factor(),
+        text_scale(),
+        top,
+    );
+    if let Ok(hwnd) = window.hwnd() {
+        let _ = unsafe {
+            SetWindowPos(
+                HWND(hwnd.0),
+                None,
+                x,
+                y,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        };
+    }
 }
 pub fn hide(app: &AppHandle) {
     let app = app.clone();
@@ -144,4 +225,32 @@ pub fn tokens() -> &'static str {
         "\n",
         include_str!("../../leo-web/src/web/styles/01-tokens.css")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_bounds_use_the_destination_monitor_in_physical_pixels() {
+        assert_eq!(
+            windows_bounds((1920, 0), (3840, 2160), 1.5, 1.0, false),
+            (3540, 1902, 600, 198)
+        );
+        assert_eq!(
+            windows_bounds((-2560, -200), (2560, 1440), 1.25, 1.0, true),
+            (-1530, -143, 500, 165)
+        );
+    }
+
+    #[test]
+    fn text_scale_grows_the_window_and_keeps_the_anchored_edge() {
+        let (_, y, _, height) = windows_bounds((0, 0), (2560, 1440), 1.0, 1.0, false);
+        let (x, scaled_y, width, scaled_height) =
+            windows_bounds((0, 0), (2560, 1440), 1.0, 1.5, false);
+        assert_eq!((width, scaled_height), (600, 198));
+        assert_eq!(x, 980);
+        assert_eq!(y + height, scaled_y + scaled_height);
+        assert_eq!(windows_bounds((0, 0), (2560, 1440), 1.0, 1.5, true).1, 46);
+    }
 }

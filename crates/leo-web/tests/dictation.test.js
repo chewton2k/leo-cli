@@ -132,7 +132,7 @@ test('clearing history asks first', () => {
 test('popup live and minimal states keep useful errors and timers', () => {
   const { display } = require('../../leo-desktop/dist/dictation.js');
   assert.equal(display({ state: 'listening', seconds: 62.9, text: 'hello' }).timer, '1:02');
-  assert.equal(display({ state: 'listening', minimal: true, text: 'hello' }).text, '');
+  assert.equal(display({ state: 'listening', minimal: true, committed: 'hello', tentative: 'there' }).text, '');
   assert.equal(display({ state: 'error', minimal: true, message: 'Choose a microphone.' }).text, 'Choose a microphone.');
   assert.equal(display({ state: 'error', message: 'x' }).label, 'Dictation stopped');
   assert.equal(display({ state: 'loading' }).label, 'Loading model…');
@@ -145,7 +145,49 @@ test('popup live and minimal states keep useful errors and timers', () => {
   assert.equal(notice.label, 'Pasted without AI writing');
   assert.equal(notice.text, 'The writing AI took too long.');
   assert.equal(notice.caret, false);
+  assert.equal(display({ state: 'notice', title: 'Nothing heard', message: 'x' }).label, 'Nothing heard');
+  assert.equal(display({ state: 'notice', title: '', message: 'x' }).label, 'Pasted without AI writing');
+  assert.equal(display({ state: 'error', title: 'Nothing heard', message: 'x' }).label, 'Dictation stopped');
   assert.equal(display({ state: 'listening', top: true }).top, true);
+});
+function popupPage() {
+  const dir = path.join(__dirname, '../../leo-desktop/dist');
+  const nodes = {}, listeners = {};
+  const node = (id) => nodes[id] || (nodes[id] = {
+    id, textContent: '', hidden: false, dataset: {}, style: {}, children: [], scrollTop: 0, scrollHeight: 0, clientHeight: 0,
+    classList: { toggle() {} }, appendChild(child) { this.children.push(child); }, addEventListener() {}, setAttribute() {}, removeAttribute() {},
+  });
+  const root = {
+    document: { body: node('body'), documentElement: node('html'), getElementById: node, createElement: () => ({ style: {} }) },
+    addEventListener: (name, fn) => { listeners[name] = fn; }, setInterval() {},
+    __TAURI_INTERNALS__: { invoke: () => new Promise(() => {}), transformCallback: (fn) => { root.emit = fn; return 1; } },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(dir, 'dictation.js'), 'utf8'), root);
+  return { node, listeners, emit: (payload) => root.emit({ payload }) };
+}
+test('popup blocks its context menu, shows the notice title and drops stale revisions', () => {
+  const page = popupPage();
+  let prevented = false;
+  page.listeners.contextmenu({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  page.emit({ state: 'listening', rev: 5, seconds: 3 });
+  assert.equal(page.node('wave').hidden, false);
+  assert.equal(page.node('timer').textContent, '0:03');
+  page.emit({ state: 'notice', rev: 6, title: 'Check the paste', message: 'Leo could not confirm the paste.' });
+  assert.equal(page.node('label').textContent, 'Check the paste');
+  assert.equal(page.node('message').textContent, 'Leo could not confirm the paste.');
+  assert.equal(page.node('wave').hidden, true);
+  assert.equal(page.node('timer').textContent, '');
+  page.emit({ state: 'listening', rev: 4 });
+  assert.equal(page.node('label').textContent, 'Check the paste');
+});
+test('popup page hides live words from screen readers and the red bars outside listening', () => {
+  const dir = path.join(__dirname, '../../leo-desktop/dist');
+  const html = fs.readFileSync(path.join(dir, 'dictation.html'), 'utf8');
+  for (const id of ['timer', 'committed', 'tentative', 'caret']) assert.match(html, new RegExp(`<span id="${id}" aria-hidden="true"`));
+  for (const id of ['label', 'message']) assert.doesNotMatch(html, new RegExp(`<span id="${id}"[^>]*aria-hidden`));
+  assert.match(html, /<div id="pill" role="status" aria-live="polite">/);
+  assert.match(fs.readFileSync(path.join(dir, 'dictation.css'), 'utf8'), /#wave\[hidden\] \{ display: none; \}/);
 });
 test('popup shows committed and tentative words like Handy and keeps them while writing', () => {
   const { display, smooth, height } = require('../../leo-desktop/dist/dictation.js');

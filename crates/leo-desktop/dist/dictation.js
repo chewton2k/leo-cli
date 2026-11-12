@@ -12,7 +12,7 @@
     const recording = state.state === 'listening';
     return {
       top: Boolean(state.top),
-      label: labels[state.state] || '',
+      label: state.state === 'notice' && state.title ? String(state.title) : labels[state.state] || '',
       timer: Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'),
       message,
       committed: committed ? committed + ' ' : '',
@@ -34,6 +34,7 @@
   const doc = root.document;
   const invoke = (action) => tauri.invoke('dictation_popup', { action });
   const element = (id) => doc.getElementById(id);
+  root.addEventListener('contextmenu', (event) => event.preventDefault());
   const wave = element('wave');
   const text = element('text');
   for (let n = 0; n < BARS; n++) wave.appendChild(doc.createElement('i'));
