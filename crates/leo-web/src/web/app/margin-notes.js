@@ -184,7 +184,7 @@ function marginSetStatus(text, brief = false) {
 }
 
 function marginAskKeys() {
-  return ON_MAC ? 'Cmd+Shift+E' : 'Ctrl+Shift+E';
+  return shortcutText(shortcutKeys('ask'));
 }
 
 function marginMenuSlide(menu, open, button, key) {

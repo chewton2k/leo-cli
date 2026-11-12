@@ -101,7 +101,8 @@ scripted animation is skipped under `stillMotion()`; CSS motion sits under
 - Quick Leo (2026-10-19, the user's request; keys changed 2026-11-07, Cmd/Ctrl+F removed 2026-11-09:
   one shortcut, the user's call): Cmd/Ctrl+K anywhere opens it, and
   Cmd/Ctrl+N makes a note in the current folder (never inside a sheet, an inline
-  edit, while composing or when locked). The explorer starts with a New note row,
+  edit, while composing or when locked). Both are customizable in Settings →
+  Shortcuts, stored per window in `leo-shortcuts`. The explorer starts with a New note row,
   has a Filter field (`#side-filter`, survives repaints) and arrow, Home/End and
   type-ahead keys with one tab stop (`sideRoving`). The sidebar
   Search button, the header search button or the phone menu opens one line
@@ -179,7 +180,8 @@ and Settings. Every Settings section uses the same Settings / section breadcrumb
 Keeping and Trash keep their routes and controllers inside that frame.
 Usage opens from the rail above Settings and shows remaining subscription windows,
 with unknown and expired readings explicit. The combined Quick Leo uses
-Cmd/Ctrl+K and retains task/search/question/navigation ranking. Explicit named
+Cmd/Ctrl+K (customizable in Settings → Shortcuts) and retains
+task/search/question/navigation ranking. Explicit named
 month dates and ISO dates keep their deadline; omitted years use the next date.
 The calendar tray puts its mini calendar before tasks, and all-day/timed grids
 share the full width without scrollbar gutters shifting their day boundaries.
@@ -754,7 +756,7 @@ The heading disclosure opens on mouse hover without taking focus, stays open acr
   one cite per bullet, short plain sentences, no bold except a closing "Next:" line.
 - Copy, Retry and Edit (2026-11-09): every answer has Copy (Markdown, citations as links); the last answer has Retry and the last question Edit, both off while a reply streams. They take the last pair back with POST `/api/chats/{id}/drop` `{count, total}` (`chats::drop_last`, 409 unless the saved chat has `total` messages), then resend or put the text in the composer.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
-  chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
+  chat), passages (Ask Felix on a selection, ⌘⇧E by default, customizable in Settings → Shortcuts; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
   Save as note, chat history (`chats.rs`, local naming), cost line
   (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).
@@ -881,7 +883,7 @@ target. Check the page sequence after loading preferences.
 - A failed or missing AI shows an actionable status above the note and leaves the same line in Settings → Felix and
   Health until a read works: the writer's own sentence (`leo_core::writing_said`, no provider detail), `no_writer()`
   when none is set, or `margin::PROBLEM` (no prefix) for a timeout or an unreadable reply; the failed response carries it as `error`.
-- Selection: ⌘⇧E opens a draft in the margin and asks at once, POST
+- Selection: ⌘⇧E (customizable, stored per window in `leo-shortcuts`) opens a draft in the margin and asks at once, POST
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
   only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this
   passage…", 2026-11-09): Enter sends the typed question (empty Enter asks generally), Escape or blur closes it;
@@ -1467,7 +1469,9 @@ Settings search (2026-11-04, after T3 Code): `SETTINGS_INDEX` in
 `{section, label, keywords, id}`, one entry per setting a person can name. Its
 `id` is the `data-find` attribute on that row or card in the page markup;
 `settings-navigation.test.js` fails when an entry names a section that does not
-exist, a duplicate id, or an id no source draws. Add the entry and the
+exist, a duplicate id, or an id no source draws (the Shortcuts section's
+`shortcut-quick`, `shortcut-new`, `shortcut-ask` and `shortcut-dictation` rows
+included). Add the entry and the
 `data-find` together. Filtering is local and case-insensitive (every typed word
 must appear in the label or keywords; a label that starts with the query comes
 first). The input is a combobox with `aria-activedescendant` over a listbox of

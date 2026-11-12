@@ -704,7 +704,7 @@ async function showWorkspace(dir = null) {
   document.body.classList.remove('on-note');
   chrome({});
   swap('workspace', () => {
-    app.innerHTML = `<section class="workspace-empty"><label class="quick-bar home-ask">${ICON.search}<input id="home-ask" placeholder="Ask Felix, search, or jot something…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Ask Felix, search, or jot something"><kbd>${quickLabel}</kbd></label><p class="hint home-dictate" hidden></p>${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    app.innerHTML = `<section class="workspace-empty"><label class="quick-bar home-ask">${ICON.search}<input id="home-ask" placeholder="Ask Felix, search, or jot something…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Ask Felix, search, or jot something"><kbd>${shortcutText(shortcutKeys('quick'))}</kbd></label><p class="hint home-dictate" hidden></p>${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
     wireHomeAsk();
     dictateHint($('.home-dictate'));
     scrollToTop();
@@ -717,6 +717,31 @@ function shortcutParts(keys) {
 }
 function shortcutText(keys) {
   return shortcutParts(keys).join(ON_MAC ? '' : '+');
+}
+const SHORTCUTS = { quick: ['Quick Leo', 'k'], new: ['New note', 'n'], ask: ['Ask Felix about a selection', 'shift+e'] };
+function shortcutDefault(name) {
+  return `${ON_MAC ? 'cmd' : 'ctrl'}+${SHORTCUTS[name][1]}`;
+}
+function shortcutKeys(name) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('leo-shortcuts'))?.[name];
+    if (saved && typeof saved === 'string') return saved;
+  } catch (e) {}
+  return shortcutDefault(name);
+}
+function chordOf(e, modifiers) {
+  let key = String(e.key || '').toLowerCase();
+  const code = /^(?:Key|Digit)(.)$/.exec(e.code || '')?.[1].toLowerCase();
+  if (code && ((ON_MAC && e.altKey) || (e.shiftKey && /\d/.test(code)))) key = code;
+  const held = [e.metaKey && 'cmd', e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift'].filter(Boolean);
+  if (!key || /^(meta|control|alt|shift)$/.test(key)) return modifiers ? held.join('+') : '';
+  return held.concat(key === ' ' ? 'space' : key).join('+');
+}
+function pressed(e, name) {
+  return chordOf(e) === shortcutKeys(name);
+}
+function shortcutAria(keys) {
+  return keys.split('+').map((key) => ({ cmd: 'Meta', ctrl: 'Control', alt: 'Alt', shift: 'Shift' })[key] || key.toUpperCase()).join('+');
 }
 async function dictateHint(el) {
   try {

@@ -186,7 +186,7 @@ const inQuick = (sel) => (quick.root && !quick.root.classList.contains('scrim-go
 function quickLeo() {
   Object.assign(quick, { due: [], rows: [], at: 0, picked: null, notes: [], chats: [], folders: [], asked: '' });
   quick.root = sheet(`<div class="quick-leo">
-    <label class="quick-bar">${ICON.search}<input id="quick-input" placeholder="Search, ask, remind or jot anything…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo" role="combobox" aria-controls="quick-results" aria-expanded="true"><kbd>${quickLabel}</kbd></label>
+    <label class="quick-bar">${ICON.search}<input id="quick-input" placeholder="Search, ask, remind or jot anything…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo" role="combobox" aria-controls="quick-results" aria-expanded="true"><kbd>${shortcutText(shortcutKeys('quick'))}</kbd></label>
     <div class="quick-results" id="quick-results" role="listbox" aria-label="Results"></div>
   </div>`);
   const input = inQuick('#quick-input');

@@ -3478,6 +3478,67 @@ test('Settings chooses light or dark for this browser, or follows the device', a
   await expect.poll(background).toBe(light);
 });
 
+test('Settings changes Quick Leo and New note keys, refuses reserved and taken ones, and resets', async ({ page }) => {
+  await page.goto('/#/settings/shortcuts');
+  const mac = await page.evaluate(() => ON_MAC);
+  const label = (key) => (mac ? `⌘${key}` : `Ctrl+${key}`);
+  const row = (name) => page.locator(`[data-find="shortcut-${name}"]`);
+  const change = (name) => row(name).locator('[data-action="shortcut-record"]');
+  const hint = (name) => row(name).locator('.hint');
+  const search = page.locator('[data-action="quick-leo"]');
+  const quick = page.locator('.scrim:not(.scrim-gone) .quick-leo');
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('K')})`);
+
+  await change('quick').click();
+  await expect(row('quick').locator('.shortcut-field')).toHaveClass(/recording/);
+  await page.keyboard.press('Escape');
+  await expect(row('quick').locator('.shortcut-field')).not.toHaveClass(/recording/);
+  await expect(row('quick').getByRole('button', { name: 'Reset' })).toHaveCount(0);
+
+  await change('quick').click();
+  await page.keyboard.press('ControlOrMeta+b');
+  await expect(hint('quick')).toContainText('reserved for bold');
+  await expect(hint('quick')).toHaveClass(/bad/);
+  await change('quick').click();
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect(hint('quick')).toHaveText('Already used by New note.');
+  await change('quick').click();
+  await page.keyboard.press('j');
+  await expect(hint('quick')).toHaveText(`Use ${mac ? '⌘' : 'Ctrl'} with a key.`);
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('K')})`);
+
+  await change('quick').click();
+  await page.keyboard.press('ControlOrMeta+j');
+  await expect(hint('quick')).toHaveText('Saved');
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('J')})`);
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(page.locator('.quick-leo'), 'the old keys no longer open Quick Leo').toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+j');
+  await expect(quick).toBeVisible();
+  await expect(quick.locator('.quick-bar kbd')).toHaveText(label('J'));
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+
+  await change('new').click();
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await expect(hint('new')).toHaveText('Saved');
+  await expect(page.locator('.side-new')).toHaveAttribute('aria-keyshortcuts', `${mac ? 'Meta' : 'Control'}+Shift+M`);
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect(page).toHaveURL(/#\/settings\/shortcuts$/);
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/new');
+  await page.goto('/#/settings/shortcuts');
+  await expect(row('new').locator('.shortcut-field')).toContainText('M');
+
+  await row('quick').getByRole('button', { name: 'Reset' }).click();
+  await expect(row('quick').getByRole('button', { name: 'Reset' })).toHaveCount(0);
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('K')})`);
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(quick).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+});
+
 test('a calendar is connected in Settings by pasting one link, and can be removed', async ({ page }) => {
   let linked = [];
   let posted = null;

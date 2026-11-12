@@ -99,7 +99,7 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (state.view !== 'note' || !(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 'e') return;
+  if (state.view !== 'note' || !pressed(e, 'ask')) return;
   e.preventDefault();
   askAboutSelection();
 });
