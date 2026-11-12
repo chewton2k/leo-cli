@@ -1,5 +1,5 @@
 use crate::shortcut_events::{self, Binding, Feed};
-use handy_keys::{Hotkey, KeyEvent};
+use handy_keys::{Hotkey, Key, KeyEvent, Modifiers};
 use serde_json::{json, Value};
 use std::{
     sync::{
@@ -25,7 +25,72 @@ pub fn validate(raw: &str) -> Result<(), String> {
     {
         return Err("Escape cancels dictation. Record another shortcut.".into());
     }
+    if hotkey.key.is_none()
+        && (Modifiers::CMD.contains(hotkey.modifiers) || Modifiers::CTRL.contains(hotkey.modifiers))
+    {
+        return Err("This key is used to paste. Record another shortcut.".into());
+    }
     Ok(())
+}
+fn loaded(saved: String) -> (String, String) {
+    match validate(&saved) {
+        Ok(()) => (saved, String::new()),
+        Err(error) => {
+            let default = leo_services::dictation::settings::Settings::default().shortcut;
+            let note = format!(
+                "The saved shortcut cannot be used, so Leo uses {default} for now. {error}"
+            );
+            (default, note)
+        }
+    }
+}
+fn release_held(pressed: bool) -> Option<(bool, bool)> {
+    pressed.then_some((false, false))
+}
+fn use_system(secure: bool, permission: bool, feed_ok: bool) -> bool {
+    secure || !permission || !feed_ok
+}
+struct Chord {
+    most: Modifiers,
+    key: Option<Key>,
+    down: Option<Key>,
+}
+const NO_CHORD: Chord = Chord {
+    most: Modifiers::empty(),
+    key: None,
+    down: None,
+};
+#[derive(Debug, PartialEq)]
+enum Step {
+    Held(String),
+    Captured(String),
+    Cancel,
+}
+fn chord(modifiers: Modifiers, key: Option<Key>) -> String {
+    Hotkey::new(modifiers, key)
+        .map(|hotkey| hotkey.to_handy_string())
+        .unwrap_or_default()
+}
+fn recorder_step(state: &mut Chord, event: KeyEvent) -> Step {
+    if state.most.is_empty() && state.key.is_none() {
+        if !event.is_key_down {
+            return Step::Held(String::new());
+        }
+        if event.key == Some(Key::Escape) && event.modifiers.is_empty() {
+            return Step::Cancel;
+        }
+    }
+    state.most |= event.modifiers;
+    if event.is_key_down && event.key.is_some() {
+        state.key = event.key;
+        state.down = event.key;
+    } else if event.key == state.down {
+        state.down = None;
+    }
+    if !event.is_key_down && event.modifiers.is_empty() && state.down.is_none() {
+        return Step::Captured(chord(state.most, state.key));
+    }
+    Step::Held(chord(event.modifiers, state.down))
 }
 fn fallback(raw: &str) -> Option<String> {
     use handy_keys::Modifiers as M;
@@ -41,6 +106,7 @@ fn fallback(raw: &str) -> Option<String> {
     }
     Some(Hotkey::new(widened, hotkey.key).ok()?.to_handy_string())
 }
+const TAKEN: &str = "Another app may use this shortcut. Choose another in Dictation settings.";
 fn tapped(shortcut: &str, permission: bool, recording: bool, windows: bool) -> bool {
     let exact = shortcut
         .parse::<Hotkey>()
@@ -54,7 +120,7 @@ enum Command {
     Record(mpsc::SyncSender<Result<(), String>>),
     Resume,
     Wake,
-    Key(u64, KeyEvent),
+    Key(u64, KeyEvent, Instant),
 }
 pub struct Shortcuts {
     tx: mpsc::SyncSender<Command>,
@@ -69,12 +135,17 @@ impl Shortcuts {
         input: Arc<dyn Fn(bool, bool) + Send + Sync>,
     ) -> Self {
         let (tx, rx) = mpsc::sync_channel(64);
+        let (shortcut, note) = loaded(shortcut);
         let status = Arc::new(Mutex::new(json!({})));
         let state = status.clone();
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = stopped.clone();
         let sender = tx.clone();
-        std::thread::spawn(move || run(app, rx, sender, shortcut, capturing, input, state, stop));
+        std::thread::spawn(move || {
+            run(
+                app, rx, sender, shortcut, note, capturing, input, state, stop,
+            )
+        });
         Self {
             tx,
             stopped,
@@ -129,6 +200,7 @@ fn run(
     rx: mpsc::Receiver<Command>,
     tx: mpsc::SyncSender<Command>,
     mut shortcut: String,
+    mut note: String,
     capturing: Arc<AtomicBool>,
     input: Arc<dyn Fn(bool, bool) + Send + Sync>,
     status: Arc<Mutex<Value>>,
@@ -139,7 +211,10 @@ fn run(
     let mut binding = None;
     let mut escape = Binding::new("escape".parse().unwrap());
     let mut recorder_since: Option<Instant> = None;
-    let mut candidate = String::new();
+    let mut chord_state = NO_CHORD;
+    let mut pressing = String::new();
+    let mut captured = String::new();
+    let mut configure_done = None;
     let mut permission = false;
     let mut secure = false;
     let mut system = false;
@@ -147,6 +222,7 @@ fn run(
     let mut carbon_cancel = false;
     let cancel_active = Arc::new(AtomicBool::new(false));
     let carbon_active = Arc::new(AtomicBool::new(false));
+    let carbon_down = Arc::new(AtomicBool::new(false));
     let mut problem = String::new();
     let mut dirty = true;
     let mut checked = Instant::now() - shortcut_events::IDLE;
@@ -167,11 +243,10 @@ fn run(
         let mut key = None;
         match command {
             Some(Command::Configure(value, done)) => {
-                shortcut = value;
+                configure_done = Some((done, std::mem::replace(&mut shortcut, value)));
                 recorder_since = None;
-                candidate.clear();
+                note.clear();
                 dirty = true;
-                let _ = done.send(Ok(()));
             }
             Some(Command::Record(done)) => {
                 if crate::secure_input::enabled() {
@@ -180,7 +255,10 @@ fn run(
                     let _ = done.send(Err("Allow Leo in System Settings → Privacy & Security → Accessibility, then try again.".into()));
                 } else {
                     recorder_since = Some(Instant::now());
-                    candidate.clear();
+                    chord_state = NO_CHORD;
+                    pressing.clear();
+                    captured.clear();
+                    note.clear();
                     dirty = true;
                     record_done = Some(done);
                 }
@@ -189,7 +267,7 @@ fn run(
                 recorder_since = None;
                 dirty = true;
             }
-            Some(Command::Key(source, event)) => {
+            Some(Command::Key(source, event, _at)) => {
                 if source == epoch {
                     key = Some(event);
                 }
@@ -208,9 +286,19 @@ fn run(
         }
         if recorder_since.is_some_and(|at| at.elapsed() >= Duration::from_secs(30)) {
             recorder_since = None;
+            note = "No keys were pressed. Click Change to try again.".into();
             dirty = true;
         }
+        let mut taken = false;
         if dirty {
+            if let Some((pressed, cancel)) = release_held(
+                binding
+                    .as_ref()
+                    .is_some_and(|binding: &Binding| binding.pressed)
+                    | carbon_down.swap(false, Ordering::AcqRel),
+            ) {
+                input(pressed, cancel);
+            }
             drop(feed.take());
             key = None;
             epoch = epoch.wrapping_add(1);
@@ -220,7 +308,7 @@ fn run(
             let _ = app.global_shortcut().unregister_all();
             carbon = None;
             carbon_cancel = false;
-            problem.clear();
+            problem.clone_from(&note);
             if tapped(
                 &shortcut,
                 permission,
@@ -229,21 +317,33 @@ fn run(
             ) {
                 let sender = tx.clone();
                 let source = epoch;
-                match Feed::start(move |event, stop| {
-                    shortcut_events::deliver(&sender, Command::Key(source, event), stop)
+                match Feed::start(move |event, at, stop| {
+                    shortcut_events::deliver(&sender, Command::Key(source, event, at), stop)
                 }) {
                     Ok(value) => feed = Some(value),
                     Err(error) => problem = error,
                 }
             }
-            system = secure || !permission || (cfg!(windows) && feed.is_none());
+            system = use_system(secure, permission, feed.is_some());
             if recorder_since.is_none() && system {
                 if let Some(shadow) = fallback(&shortcut) {
                     let active = carbon_active.clone();
                     let action = input.clone();
-                    match app.global_shortcut().on_shortcut(shadow.as_str(),move |_,_,event| { if active.load(Ordering::Acquire) { action(event.state==ShortcutState::Pressed,false); } }) {
-                        Ok(())=>carbon=Some(shadow),
-                        Err(_)=>problem="Another app may use this shortcut. Choose another in Dictation settings.".into(),
+                    let down = carbon_down.clone();
+                    match app
+                        .global_shortcut()
+                        .on_shortcut(shadow.as_str(), move |_, _, event| {
+                            if active.load(Ordering::Acquire) {
+                                let pressed = event.state == ShortcutState::Pressed;
+                                down.store(pressed, Ordering::Release);
+                                action(pressed, false);
+                            }
+                        }) {
+                        Ok(()) => carbon = Some(shadow),
+                        Err(_) => {
+                            taken = true;
+                            problem = TAKEN.into();
+                        }
                     }
                 } else if !permission
                     || shortcut
@@ -255,6 +355,15 @@ fn run(
             }
             carbon_active.store(carbon.is_some(), Ordering::Release);
             dirty = false;
+        }
+        if let Some((done, previous)) = configure_done.take() {
+            let refused = taken && previous != shortcut;
+            if refused {
+                shortcut = previous;
+                dirty = true;
+                let _ = tx.try_send(Command::Wake);
+            }
+            let _ = done.send(if refused { Err(TAKEN.into()) } else { Ok(()) });
         }
         if let Some(done) = record_done.take() {
             let result = if feed.is_some() {
@@ -301,10 +410,17 @@ fn run(
         }
         if let Some(event) = key {
             if recorder_since.is_some() {
-                if event.is_key_down {
-                    if let Ok(hotkey) = event.as_hotkey() {
-                        candidate = hotkey.to_handy_string();
+                match recorder_step(&mut chord_state, event) {
+                    Step::Held(keys) => pressing = keys,
+                    Step::Captured(keys) => {
+                        captured = keys;
+                        recorder_since = None;
                     }
+                    Step::Cancel => recorder_since = None,
+                }
+                if recorder_since.is_none() {
+                    dirty = true;
+                    let _ = tx.try_send(Command::Wake);
                 }
             } else if wants_escape && !wants_carbon_cancel && escape.input(event) == Some(true) {
                 input(true, true);
@@ -314,7 +430,7 @@ fn run(
                 }
             }
         }
-        let view = json!({"recording":recorder_since.is_some(),"candidate":candidate,"accessibility":permission,"secure_input":secure,"fallback":carbon,"problem":problem});
+        let view = json!({"recording":recorder_since.is_some(),"held":if recorder_since.is_some() { pressing.as_str() } else { "" },"captured":captured,"accessibility":permission,"secure_input":secure,"fallback":carbon,"problem":problem});
         let mut current = status.lock().unwrap_or_else(|e| e.into_inner());
         if *current != view {
             *current = view;
@@ -358,5 +474,106 @@ mod tests {
             "macOS keeps the tap"
         );
         assert!(!tapped("ctrl+space", false, false, false), "no permission");
+    }
+
+    #[test]
+    fn paste_modifiers_alone_are_refused_and_a_bad_saved_shortcut_loads_the_default() {
+        use super::{loaded, validate};
+        for raw in ["cmd", "cmd_left", "ctrl", "ctrl_right"] {
+            assert_eq!(
+                validate(raw),
+                Err("This key is used to paste. Record another shortcut.".into()),
+                "{raw}"
+            );
+        }
+        for raw in ["cmd+k", "option", "ctrl+shift", "fn"] {
+            assert!(validate(raw).is_ok(), "{raw}");
+        }
+        assert_eq!(loaded("fn".into()), ("fn".into(), String::new()));
+        let (shortcut, note) = loaded("cmd".into());
+        assert_eq!(
+            shortcut,
+            leo_services::dictation::settings::Settings::default().shortcut
+        );
+        assert!(note.contains("This key is used to paste."), "{note}");
+    }
+
+    #[test]
+    fn a_held_binding_is_released_and_a_failed_feed_uses_the_system_shortcut() {
+        use super::{release_held, use_system};
+        assert_eq!(release_held(true), Some((false, false)));
+        assert_eq!(release_held(false), None);
+        assert!(!use_system(false, true, true));
+        assert!(use_system(false, true, false), "feed failed");
+        assert!(use_system(true, true, true), "secure input");
+        assert!(use_system(false, false, true), "no permission");
+    }
+
+    #[test]
+    fn the_recorder_keeps_the_largest_chord_until_every_key_is_up() {
+        use super::{recorder_step, Step, NO_CHORD};
+        use handy_keys::{Hotkey, Key, KeyEvent, Modifiers as M};
+        let event = |modifiers, key, is_key_down| KeyEvent {
+            modifiers,
+            key,
+            is_key_down,
+            changed_modifier: None,
+        };
+        let name = |raw: &str| raw.parse::<Hotkey>().unwrap().to_handy_string();
+        for keys_first in [false, true] {
+            let mut state = NO_CHORD;
+            let mut step = |e| recorder_step(&mut state, e);
+            assert_eq!(
+                step(event(M::empty(), Some(Key::Return), false)),
+                Step::Held(String::new())
+            );
+            assert_eq!(step(event(M::CMD, None, true)), Step::Held(name("cmd")));
+            assert_eq!(
+                step(event(M::CMD | M::SHIFT, None, true)),
+                Step::Held(name("cmd+shift"))
+            );
+            let k = event(M::CMD | M::SHIFT, Some(Key::K), true);
+            assert_eq!(step(k), Step::Held(name("cmd+shift+k")));
+            assert_eq!(step(k), Step::Held(name("cmd+shift+k")), "repeat");
+            if keys_first {
+                assert_eq!(
+                    step(event(M::CMD | M::SHIFT, Some(Key::K), false)),
+                    Step::Held(name("cmd+shift"))
+                );
+                assert_eq!(
+                    step(event(M::SHIFT, None, false)),
+                    Step::Held(name("shift"))
+                );
+                assert_eq!(
+                    step(event(M::empty(), None, false)),
+                    Step::Captured(name("cmd+shift+k"))
+                );
+            } else {
+                assert_eq!(step(event(M::CMD, None, false)), Step::Held(name("cmd+k")));
+                assert_eq!(step(event(M::empty(), None, false)), Step::Held(name("k")));
+                assert_eq!(
+                    step(event(M::empty(), Some(Key::K), false)),
+                    Step::Captured(name("cmd+shift+k"))
+                );
+            }
+        }
+        for (raw, modifier) in [("fn", M::FN), ("option", M::OPT)] {
+            let mut state = NO_CHORD;
+            recorder_step(&mut state, event(modifier, None, true));
+            assert_eq!(
+                recorder_step(&mut state, event(M::empty(), None, false)),
+                Step::Captured(name(raw))
+            );
+        }
+        let mut state = NO_CHORD;
+        assert_eq!(
+            recorder_step(&mut state, event(M::empty(), Some(Key::Escape), true)),
+            Step::Cancel
+        );
+        recorder_step(&mut state, event(M::SHIFT, None, true));
+        assert_eq!(
+            recorder_step(&mut state, event(M::SHIFT, Some(Key::Escape), true)),
+            Step::Held(name("shift+escape"))
+        );
     }
 }

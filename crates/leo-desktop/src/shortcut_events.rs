@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use handy_keys::{Hotkey, KeyEvent, KeyboardListener};
 
@@ -14,7 +14,7 @@ const BACKPRESSURE: Duration = Duration::from_millis(5);
 
 pub struct Binding {
     pub key: Hotkey,
-    pressed: bool,
+    pub pressed: bool,
 }
 
 impl Binding {
@@ -65,7 +65,7 @@ pub struct Feed {
 
 impl Feed {
     pub fn start(
-        send: impl Fn(KeyEvent, &AtomicBool) -> bool + Send + 'static,
+        send: impl Fn(KeyEvent, Instant, &AtomicBool) -> bool + Send + 'static,
     ) -> Result<Self, String> {
         let blocked = Arc::new(Mutex::new(HashSet::new()));
         let listener = KeyboardListener::new_with_blocking(blocked.clone()).map_err(|_| {
@@ -81,13 +81,14 @@ impl Feed {
             while !stopped.load(Ordering::Acquire) {
                 match listener.recv_timeout(LINGER) {
                     Ok(event) => {
+                        let at = Instant::now();
                         let relevant = raw.load(Ordering::Acquire)
                             || keys
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .iter()
                                 .any(|key| event.key.is_none() || event.key == key.key);
-                        if relevant && !send(event, &stopped) {
+                        if relevant && !send(event, at, &stopped) {
                             break;
                         }
                     }
