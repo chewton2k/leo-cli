@@ -850,6 +850,16 @@ async fn a_weave_rewrites_only_the_paragraph_and_keeps_the_note_safe() {
         .post(&path, serde_json::json!({ "base": version }))
         .await;
     assert_eq!((status, why["why"].as_str()), (409, Some("code")));
+    let version = engine
+        .edit(
+            &id,
+            &format!("```\nfn main() {{}}\n\n{PASSAGE}\n\nmore\n```"),
+        )
+        .await;
+    let (status, why) = engine
+        .post(&path, serde_json::json!({ "base": version }))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("code")));
     let version = engine.edit(&id, &old).await;
     margin::set_status(&engine.chats(), &id, &thread, "resolved");
     let (status, _) = engine

@@ -3512,6 +3512,7 @@ test('Settings changes Quick Leo and New note keys, refuses reserved and taken o
   await expect(hint('quick')).toHaveText('Saved');
   await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('J')})`);
   await page.keyboard.press('ControlOrMeta+k');
+  await page.waitForTimeout(300);
   await expect(page.locator('.quick-leo'), 'the old keys no longer open Quick Leo').toHaveCount(0);
   await page.keyboard.press('ControlOrMeta+j');
   await expect(quick).toBeVisible();
@@ -3524,6 +3525,7 @@ test('Settings changes Quick Leo and New note keys, refuses reserved and taken o
   await expect(hint('new')).toHaveText('Saved');
   await expect(page.locator('.side-new')).toHaveAttribute('aria-keyshortcuts', `${mac ? 'Meta' : 'Control'}+Shift+M`);
   await page.keyboard.press('ControlOrMeta+n');
+  await page.waitForTimeout(300);
   await expect(page).toHaveURL(/#\/settings\/shortcuts$/);
   await page.keyboard.press('ControlOrMeta+Shift+m');
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/new');

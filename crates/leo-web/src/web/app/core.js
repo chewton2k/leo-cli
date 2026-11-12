@@ -725,7 +725,7 @@ function shortcutDefault(name) {
 function shortcutKeys(name) {
   try {
     const saved = JSON.parse(localStorage.getItem('leo-shortcuts'))?.[name];
-    if (saved && typeof saved === 'string') return saved;
+    if (typeof saved === 'string' && /(^|\+)(cmd|ctrl)\+./.test(saved)) return saved;
   } catch (e) {}
   return shortcutDefault(name);
 }

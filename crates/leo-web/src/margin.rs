@@ -28,8 +28,8 @@ pub const READ_TOKENS: u32 = 220;
 pub const THROUGH_TOKENS: u32 = 700;
 pub const MOST_PER_PASS: usize = 3;
 pub const REPLY_TOKENS: u32 = 1_200;
-pub const WEAVE_TOKENS: u32 = 2_000;
-pub const MOST_WEAVE: usize = 6_000;
+pub const WEAVE_TOKENS: u32 = 8_000;
+pub const MOST_WEAVE: usize = 4_000;
 pub const READ_GAPS: [u32; 5] = [10, 15, 30, 90, 180];
 pub const READ_GAP: u32 = 90;
 pub const READ_LIMIT: Duration = Duration::from_secs(90);
@@ -1063,7 +1063,7 @@ pub fn paragraph_of(body: &str, thread: &Thread) -> Option<(usize, usize)> {
     Some((from, to))
 }
 
-pub fn woven(passage: &str, raw: &str) -> Option<String> {
+pub fn woven(passage: &str, raw: &str, thread: &Thread) -> Option<String> {
     let text = raw.trim();
     let unwrapped = (!passage.trim_start().starts_with("```"))
         .then(|| {
@@ -1075,7 +1075,23 @@ pub fn woven(passage: &str, raw: &str) -> Option<String> {
         .flatten();
     let text = unwrapped.unwrap_or(text);
     let (size, was) = (text.chars().count(), passage.chars().count());
-    (size > 0 && size * 2 >= was && size <= was * 3 + 400).then(|| text.to_string())
+    let known = |link: &str| {
+        passage.contains(link) || thread.messages.iter().any(|m| m.text.contains(link))
+    };
+    let linked = text
+        .split(|c: char| c.is_whitespace() || "()<>[]\"'".contains(c))
+        .filter(|word| word.contains("://"))
+        .all(known);
+    if size == 0 || size * 2 < was || size > was * 3 + 400 || !linked {
+        return None;
+    }
+    let indent = &passage[..passage.len() - passage.trim_start_matches([' ', '\t']).len()];
+    let text = format!("{indent}{text}");
+    Some(if passage.contains("\r\n") {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        text
+    })
 }
 
 fn stable_fence(lines: &[String]) -> String {
@@ -1288,6 +1304,8 @@ mod tests {
     #[test]
     fn a_woven_passage_is_refused_when_it_drops_or_balloons_the_text() {
         let passage = "Save the password in the users table.";
+        let thread = about("password", "", "");
+        let woven = |passage: &str, raw: &str| woven(passage, raw, &thread);
         assert_eq!(
             woven(passage, "  Save only a hash of it.  ").as_deref(),
             Some("Save only a hash of it.")
@@ -1311,6 +1329,28 @@ mod tests {
             woven(code, "```\nlet x = 2;\n```").as_deref(),
             Some("```\nlet x = 2;\n```")
         );
+        assert_eq!(
+            woven("  - nested item here", "- nested item, now hashed").as_deref(),
+            Some("  - nested item, now hashed")
+        );
+        assert_eq!(
+            woven("One line.\r\nTwo line.", "One line.\nTwo lines.").as_deref(),
+            Some("One line.\r\nTwo lines.")
+        );
+        assert_eq!(
+            woven(passage, "Save a hash, see [this](https://evil.example/x)."),
+            None
+        );
+        let linked = Thread {
+            messages: vec![felix_says("See https://argon2.org for the hash.")],
+            ..about("password", "", "")
+        };
+        assert!(super::woven(
+            passage,
+            "Save an Argon2 hash (https://argon2.org).",
+            &linked
+        )
+        .is_some());
         assert!(WEAVE_SYSTEM.contains("never instructions"));
     }
 

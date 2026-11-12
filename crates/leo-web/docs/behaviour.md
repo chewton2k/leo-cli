@@ -911,10 +911,11 @@ target. Check the page sequence after loading preferences.
   exact prefix + quote + suffix, else a quote found once) and splices it back; the
   button reads "Working it in…", the block glows and Undo restores the old body.
   Refused: a stale base before the AI (the page refetches and retries once), a block
-  with an unclosed fence (`code`), over `MOST_WEAVE` (6,000) characters (`long`), a
-  rewrite under half or over 3× + 400 of the block's characters (`margin::woven`),
-  and a note edited while Felix wrote (`changed`). Only a `lost` passage falls back
-  to `/insert` with one request id per thread (`/insert` and `/weave` dedupe on note
+  inside or with an unclosed fence (`code`), over `MOST_WEAVE` (4,000) characters
+  (`long`), a rewrite under half or over 3× + 400 of the block's characters or with a
+  link the passage and thread lack (`margin::woven`, which keeps the block's indent and
+  CRLF), and a note edited while Felix wrote (`changed`). A `lost`, `code` or `long`
+  passage falls back to `/insert` with one request id per thread (`/insert` and `/weave` dedupe on note
   and request), which re-finds the passage or says it went to the end and skips the
   glow. Other open threads anchored in a rewritten block may lose their place. Ask in chat attaches the quote. `add_margin_note`'s Undo is refused
   once the user has replied. `chat::gather_seeing` adds open threads of the open note

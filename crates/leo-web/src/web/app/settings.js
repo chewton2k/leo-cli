@@ -984,7 +984,7 @@ document.addEventListener('change', (e) => {
 });
 
 const shortcutRec = { name: '', on: false, held: '', hint: '', bad: false };
-const SHORTCUT_RESERVED = { q: 'quit', w: 'closing the window', r: 'reload', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo', a: 'select all', s: 'save', b: 'bold', i: 'italic', u: 'underline', ',': 'settings' };
+const SHORTCUT_RESERVED = { q: 'quit', w: 'closing the window', r: 'reload', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo', a: 'select all', s: 'save', b: 'bold', i: 'italic', u: 'underline', p: 'print', h: 'hiding leo', m: 'minimizing', ',': 'settings' };
 function shortcutRow(name, find) {
   const mine = shortcutRec.name === name, on = mine && shortcutRec.on, label = SHORTCUTS[name][0];
   const hint = on ? 'Esc to cancel' : mine ? shortcutRec.hint : '';
@@ -998,7 +998,7 @@ function shortcutsCard() {
 }
 function shortcutRefusal(name, chord) {
   const mod = ON_MAC ? 'cmd' : 'ctrl', parts = chord.split('+'), text = shortcutText(chord);
-  if (!parts.includes('cmd') && !parts.includes('ctrl')) return `Use ${ON_MAC ? '⌘' : 'Ctrl'} with a key.`;
+  if (!parts.includes(mod) && !(ON_MAC && parts.includes('ctrl'))) return `Use ${ON_MAC ? '⌘' : 'Ctrl'} with a key.`;
   const reserved = parts[0] === mod && parts.length === 2 ? SHORTCUT_RESERVED[parts[1]] : chord === `${mod}+shift+z` ? 'redo' : '';
   if (reserved) return `${text} is reserved for ${reserved}.`;
   const other = Object.keys(SHORTCUTS).find((key) => key !== name && shortcutKeys(key) === chord);
@@ -1022,10 +1022,14 @@ function shortcutStop() {
   window.removeEventListener('hashchange', shortcutStop);
   shortcutRec.on = false;
 }
+function shortcutDrawn() {
+  drawSettings(state.settings);
+  $(`[data-action="shortcut-record"][data-name="${shortcutRec.name}"]`)?.focus();
+}
 function shortcutCancel() {
   shortcutRec.hint = '';
   shortcutStop();
-  drawSettings(state.settings);
+  shortcutDrawn();
 }
 function shortcutKey(e) {
   e.preventDefault();
@@ -1040,11 +1044,12 @@ function shortcutKey(e) {
   const why = shortcutRefusal(shortcutRec.name, chord) || shortcutSave(shortcutRec.name, chord);
   Object.assign(shortcutRec, { hint: why || 'Saved', bad: !!why });
   shortcutStop();
-  drawSettings(state.settings);
+  shortcutDrawn();
   drawSide();
 }
 function shortcutAway(e) {
-  if (!e.target.closest('.shortcut-field.recording')) shortcutCancel();
+  if (e.target.closest('[data-action^="shortcut-"]')) shortcutStop();
+  else if (!e.target.closest('.shortcut-field.recording')) shortcutCancel();
 }
 function shortcutRecord(name) {
   shortcutStop();

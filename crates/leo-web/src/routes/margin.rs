@@ -941,7 +941,10 @@ pub(crate) async fn weave(
         );
     };
     let passage = note.body[from..to].to_string();
-    if margin::without_open_fence(&passage).len() != passage.len() {
+    let before = &note.body[..from];
+    if margin::without_open_fence(before).len() != before.len()
+        || margin::without_open_fence(&passage).len() != passage.len()
+    {
         return said(
             StatusCode::CONFLICT,
             "code",
@@ -967,7 +970,7 @@ pub(crate) async fn weave(
         Ok(raw) => raw,
         Err(refused) => return *refused,
     };
-    let Some(text) = margin::woven(&passage, &raw) else {
+    let Some(text) = margin::woven(&passage, &raw, &found) else {
         return said(
             StatusCode::BAD_GATEWAY,
             "no-answer",

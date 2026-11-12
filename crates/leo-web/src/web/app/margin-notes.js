@@ -1093,7 +1093,7 @@ async function marginAdd(t) {
   let done, from = null, to = null, woven = true;
   try {
     done = await marginWeave(s, t, t.addRequest).catch((e) => {
-      if (e.data?.why !== 'lost') throw e;
+      if (!['lost', 'code', 'long'].includes(e.data?.why)) throw e;
       woven = false;
       return null;
     });
