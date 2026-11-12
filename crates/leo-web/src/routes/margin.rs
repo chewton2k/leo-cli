@@ -8,7 +8,9 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::margin::{self, Prefs, Refused, Thread};
-use crate::routes::notes::version_of;
+use crate::routes::felix::Applied;
+use crate::routes::insert;
+use crate::routes::notes::{save, version_of, NoteResponse};
 use crate::usage::Purpose;
 use crate::AppState;
 
@@ -34,6 +36,13 @@ pub(crate) struct AskBody {
 #[derive(Deserialize)]
 pub(crate) struct ReplyBody {
     text: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WeaveBody {
+    base: String,
+    #[serde(default)]
+    request: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -665,11 +674,11 @@ pub(crate) async fn forget(
     }
 }
 
-async fn answered(
+async fn written(
     state: &AppState,
-    note: &Open,
-    thread: &Thread,
-    question: &str,
+    system: impl FnOnce(&std::path::Path) -> String + Send + 'static,
+    user: String,
+    tokens: u32,
 ) -> Result<String, Box<Response>> {
     let Some(streamer) = state.toolless_chat.clone() else {
         return Err(Box::new(said(
@@ -685,20 +694,15 @@ async fn answered(
             "Felix is working on several answers. Try again in a moment.",
         )));
     };
-    let user = margin::reply_prompt(&note.title, &note.body, thread, question);
-    let (chats, held) = (state.chats.clone(), thread.note.clone());
-    let asked = question != margin::UNSPOKEN;
+    let chats = state.chats.clone();
     let started = Instant::now();
     let usage = std::sync::Arc::clone(&state.usage);
     let reply = blocking(move || {
         let _foreground = foreground;
-        let prefs = margin::prefs(&chats);
-        let voice = margin::voice_of(&prefs, &margin::persona_of(&chats, &held));
-        let said = margin::instructions_of(&chats, &held);
         let reply = streamer(
-            &margin::instructed(&margin::voiced(margin::REPLY_SYSTEM, &voice, asked), &said),
+            &system(&chats),
             &user,
-            margin::REPLY_TOKENS,
+            tokens,
             &mut |_| {},
             &mut || {},
             &|| false,
@@ -713,7 +717,30 @@ async fn answered(
         reply
     })
     .await?;
-    let text = reply.map(|r| r.text).unwrap_or_default();
+    Ok(reply.map(|r| r.text).unwrap_or_default())
+}
+
+async fn answered(
+    state: &AppState,
+    note: &Open,
+    thread: &Thread,
+    question: &str,
+) -> Result<String, Box<Response>> {
+    let user = margin::reply_prompt(&note.title, &note.body, thread, question);
+    let held = thread.note.clone();
+    let asked = question != margin::UNSPOKEN;
+    let text = written(
+        state,
+        move |chats| {
+            let prefs = margin::prefs(chats);
+            let voice = margin::voice_of(&prefs, &margin::persona_of(chats, &held));
+            let said = margin::instructions_of(chats, &held);
+            margin::instructed(&margin::voiced(margin::REPLY_SYSTEM, &voice, asked), &said)
+        },
+        user,
+        margin::REPLY_TOKENS,
+    )
+    .await?;
     let text: String = text.trim().chars().take(margin::MOST_REPLY).collect();
     let text = margin::without_open_fence(&text);
     if text.is_empty() {
@@ -865,6 +892,123 @@ pub(crate) async fn reply(
             "This note was closed while Felix answered.",
         ),
         Err(refused) => *refused,
+    }
+}
+
+pub(crate) async fn weave(
+    State(state): State<AppState>,
+    Path((id, thread)): Path<(String, String)>,
+    Json(body): Json<WeaveBody>,
+) -> Response {
+    if !margin::valid_note(&thread) || !margin::valid_version(&body.base) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let request = body
+        .request
+        .filter(|r| !r.is_empty() && r.len() <= insert::MOST_REQUEST);
+    if let Some(found) = request.as_deref().and_then(|r| insert::remembered(&id, r)) {
+        return Json(found).into_response();
+    }
+    let note = match open_note(&state, &id).await {
+        Ok(note) => note,
+        Err(refused) => return *refused,
+    };
+    if note.version != body.base {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let Some(_replying) = state.margin.replying(&thread) else {
+        return said(
+            StatusCode::CONFLICT,
+            "busy",
+            "Felix is already working on this.",
+        );
+    };
+    let chats = state.chats.clone();
+    let (held, wanted) = (id.clone(), thread.clone());
+    let found = match blocking(move || margin::one(&chats, &held, &wanted)).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(refused) => return *refused,
+    };
+    if found.status != "open" {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let Some((from, to)) = margin::paragraph_of(&note.body, &found) else {
+        return said(
+            StatusCode::CONFLICT,
+            "lost",
+            "Those words are not in the note any more.",
+        );
+    };
+    let passage = note.body[from..to].to_string();
+    if margin::without_open_fence(&passage).len() != passage.len() {
+        return said(
+            StatusCode::CONFLICT,
+            "code",
+            "Felix can only work this into text, not into part of a code block.",
+        );
+    }
+    if passage.chars().count() > margin::MOST_WEAVE {
+        return said(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "long",
+            "This paragraph is too long for Felix to rewrite. Split it, then try again.",
+        );
+    }
+    let user = margin::weave_prompt(&note.title, &passage, &found);
+    let raw = match written(
+        &state,
+        |_| margin::WEAVE_SYSTEM.to_string(),
+        user,
+        margin::WEAVE_TOKENS,
+    )
+    .await
+    {
+        Ok(raw) => raw,
+        Err(refused) => return *refused,
+    };
+    let Some(text) = margin::woven(&passage, &raw) else {
+        return said(
+            StatusCode::BAD_GATEWAY,
+            "no-answer",
+            "Felix could not work this in just now. Try again.",
+        );
+    };
+    let (base, note_id) = (body.base, id.clone());
+    let done = state
+        .with_store(move |store| {
+            let note = store.find_note_mut(&note_id).ok_or(StatusCode::NOT_FOUND)?;
+            if version_of(note) != base {
+                return Err(StatusCode::CONFLICT);
+            }
+            let line = note.body[..from].matches('\n').count() + 1;
+            let next = format!("{}{text}{}", &note.body[..from], &note.body[to..]);
+            let before = std::mem::replace(&mut note.body, next);
+            note.updated_at = Utc::now();
+            let applied = Applied {
+                note: NoteResponse::from_note(note),
+                before,
+            };
+            save(store)?;
+            Ok((applied, line, line + text.matches('\n').count()))
+        })
+        .await;
+    match done {
+        Ok((applied, from, to)) => {
+            let mut value = serde_json::json!(applied);
+            value["from"] = from.into();
+            value["to"] = to.into();
+            if let Some(request) = request.as_deref() {
+                insert::remember(&id, request, &value);
+            }
+            Json(value).into_response()
+        }
+        Err(StatusCode::CONFLICT) => said(
+            StatusCode::CONFLICT,
+            "changed",
+            "The note changed while Felix was working this in. Try once more.",
+        ),
+        Err(code) => code.into_response(),
     }
 }
 

@@ -797,6 +797,113 @@ async fn a_thread_takes_replies_within_its_limits() {
 }
 
 #[tokio::test]
+async fn a_weave_rewrites_only_the_paragraph_and_keeps_the_note_safe() {
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let engine = Engine::with(Powers {
+        toolless_chat: Some(talking(
+            "So login checks a hash with Argon2id.",
+            Arc::clone(&prompts),
+        )),
+        ..Default::default()
+    })
+    .await;
+    let old = format!("Intro.\n\nSo {PASSAGE}.\n\nEnd.");
+    let (id, version) = engine.note("Weave", &old).await;
+    let thread = thread_on(&engine, &id).await;
+    let path = format!("/api/notes/{id}/margin/threads/{thread}/weave");
+    let (status, _) = engine
+        .post(&path, serde_json::json!({ "base": "0000000000000000" }))
+        .await;
+    assert_eq!(status, 409);
+    assert!(prompts.lock().unwrap().is_empty());
+    let ask = serde_json::json!({ "base": version, "request": "r1" });
+    let (status, woven) = engine.post(&path, ask.clone()).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        woven["body"],
+        "Intro.\n\nSo login checks a hash with Argon2id.\n\nEnd."
+    );
+    assert_eq!(woven["before"], old.as_str());
+    assert_eq!(
+        (woven["from"].as_u64(), woven["to"].as_u64()),
+        (Some(3), Some(3))
+    );
+    let asked = prompts.lock().unwrap()[0].clone();
+    assert!(asked.contains(&format!("So {PASSAGE}.")) && asked.contains("In plain text?"));
+    assert!(!asked.contains("Intro.") && !asked.contains("End."));
+    assert_eq!(engine.post(&path, ask).await.1, woven);
+    assert_eq!(prompts.lock().unwrap().len(), 1);
+
+    let version = engine.edit(&id, "Nothing left here.").await;
+    let (status, why) = engine
+        .post(&path, serde_json::json!({ "base": version }))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("lost")));
+    let long = format!("{} {PASSAGE}", "word ".repeat(margin::MOST_WEAVE / 5));
+    let version = engine.edit(&id, &long).await;
+    let (status, why) = engine
+        .post(&path, serde_json::json!({ "base": version }))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (413, Some("long")));
+    let version = engine.edit(&id, &format!("```\n{PASSAGE}\n\nmore")).await;
+    let (status, why) = engine
+        .post(&path, serde_json::json!({ "base": version }))
+        .await;
+    assert_eq!((status, why["why"].as_str()), (409, Some("code")));
+    let version = engine.edit(&id, &old).await;
+    margin::set_status(&engine.chats(), &id, &thread, "resolved");
+    let (status, _) = engine
+        .post(&path, serde_json::json!({ "base": version }))
+        .await;
+    assert_eq!(status, 409);
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn a_weave_refuses_when_the_note_changed_while_felix_wrote() {
+    let (asked, wait) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (seen, held) = (Arc::clone(&asked), Arc::clone(&wait));
+    let engine = Arc::new(
+        Engine::with(Powers {
+            toolless_chat: Some(Arc::new(move |_, _, _, _, _, _| {
+                seen.store(1, Ordering::SeqCst);
+                while held.load(Ordering::SeqCst) == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Ok(crate::chat::Reply::from(
+                    "So login checks a hash with Argon2id.".to_string(),
+                ))
+            })),
+            ..Default::default()
+        })
+        .await,
+    );
+    let (id, version) = engine.note("Raced", &format!("So {PASSAGE}.")).await;
+    let thread = thread_on(&engine, &id).await;
+    let path = format!("/api/notes/{id}/margin/threads/{thread}/weave");
+    let racing = Arc::clone(&engine);
+    let weaving = tokio::spawn(async move {
+        racing
+            .post(&path, serde_json::json!({ "base": version }))
+            .await
+    });
+    while asked.load(Ordering::SeqCst) == 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    engine
+        .edit(&id, &format!("So {PASSAGE}, typed meanwhile."))
+        .await;
+    wait.store(1, Ordering::SeqCst);
+    let (status, why) = weaving.await.unwrap();
+    assert_eq!((status, why["why"].as_str()), (409, Some("changed")));
+    let body = engine.get(&format!("/api/notes/{id}")).await.1["body"].clone();
+    assert_eq!(body, format!("So {PASSAGE}, typed meanwhile."));
+    if let Ok(engine) = Arc::try_unwrap(engine) {
+        engine.stop().await;
+    }
+}
+
+#[tokio::test]
 async fn dismissing_and_resolving_take_a_thread_off_the_page_and_undo_brings_it_back() {
     let engine = Engine::with(Powers::default()).await;
     let (id, _) = engine.note("Done", PASSAGE).await;
