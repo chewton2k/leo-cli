@@ -132,7 +132,7 @@ impl Shortcuts {
         app: AppHandle,
         shortcut: String,
         capturing: Arc<AtomicBool>,
-        input: Arc<dyn Fn(bool, bool) + Send + Sync>,
+        input: Arc<dyn Fn(bool, bool, Instant) + Send + Sync>,
     ) -> Self {
         let (tx, rx) = mpsc::sync_channel(64);
         let (shortcut, note) = loaded(shortcut);
@@ -202,7 +202,7 @@ fn run(
     mut shortcut: String,
     mut note: String,
     capturing: Arc<AtomicBool>,
-    input: Arc<dyn Fn(bool, bool) + Send + Sync>,
+    input: Arc<dyn Fn(bool, bool, Instant) + Send + Sync>,
     status: Arc<Mutex<Value>>,
     stopped: Arc<AtomicBool>,
 ) {
@@ -267,9 +267,9 @@ fn run(
                 recorder_since = None;
                 dirty = true;
             }
-            Some(Command::Key(source, event, _at)) => {
+            Some(Command::Key(source, event, at)) => {
                 if source == epoch {
-                    key = Some(event);
+                    key = Some((event, at));
                 }
             }
             Some(Command::Wake) | None => {}
@@ -297,7 +297,7 @@ fn run(
                     .is_some_and(|binding: &Binding| binding.pressed)
                     | carbon_down.swap(false, Ordering::AcqRel),
             ) {
-                input(pressed, cancel);
+                input(pressed, cancel, Instant::now());
             }
             drop(feed.take());
             key = None;
@@ -336,7 +336,7 @@ fn run(
                             if active.load(Ordering::Acquire) {
                                 let pressed = event.state == ShortcutState::Pressed;
                                 down.store(pressed, Ordering::Release);
-                                action(pressed, false);
+                                action(pressed, false, Instant::now());
                             }
                         }) {
                         Ok(()) => carbon = Some(shadow),
@@ -383,7 +383,7 @@ fn run(
                 .global_shortcut()
                 .on_shortcut("escape", move |_, _, event| {
                     if active.load(Ordering::Acquire) && event.state == ShortcutState::Pressed {
-                        action(true, true);
+                        action(true, true, Instant::now());
                     }
                 })
                 .is_ok();
@@ -408,7 +408,7 @@ fn run(
         if !wants_escape {
             escape = Binding::new("escape".parse().unwrap());
         }
-        if let Some(event) = key {
+        if let Some((event, at)) = key {
             if recorder_since.is_some() {
                 match recorder_step(&mut chord_state, event) {
                     Step::Held(keys) => pressing = keys,
@@ -423,10 +423,10 @@ fn run(
                     let _ = tx.try_send(Command::Wake);
                 }
             } else if wants_escape && !wants_carbon_cancel && escape.input(event) == Some(true) {
-                input(true, true);
+                input(true, true, at);
             } else if !carbon_active.load(Ordering::Acquire) {
                 if let Some(pressed) = binding.as_mut().and_then(|binding| binding.input(event)) {
-                    input(pressed, false);
+                    input(pressed, false, at);
                 }
             }
         }
