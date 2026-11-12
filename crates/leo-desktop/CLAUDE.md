@@ -105,7 +105,11 @@ capture and its process activity guard live in services and continue when
 `Dictation` is managed as an Arc before the loopback engine starts and supplies
 `Powers.dictation`. A bounded coordinator serializes shortcut inputs, handles
 hold/tap and remembered input during decoding, and rejects stale completion by
-generation. It opens the selected microphone only for capture. Lid-closed
+generation. Its state is a tested `Queue`: a press after a cancel never starts a
+later dictation, and a stop press after capture ended on its own is swallowed.
+A panic in the pipeline (`catch_unwind`) ends with an error, never a dead
+coordinator; a panic in the text rules pastes the raw transcript; a Recent
+dictations (history) failure only logs. It opens the selected microphone only for capture. Lid-closed
 microphone, trailing space and Press Enter after pasting were removed
 (2026-11-02, the user's call); `dictation.json` files that still name them load
 and drop them on the next save. Capture releases
@@ -114,7 +118,10 @@ Start/stop WAVs are optional and excluded from lecture recordings by AudioGate;
 they play on their own thread. The popup says "Starting microphone…" until the
 first audio arrives, silence included; only then does it say Listening and
 play the start chime (Handy's readiness cue). No audio at all in 8 s is an error (a
-Bluetooth headset can take seconds to switch).
+Bluetooth headset can take seconds to switch). A microphone that stalls after
+audio, goes silent or stops transcribes what was heard and says why; empty or
+meaningless text also says why. Notices carry a title and engine errors are
+worded and logged. Errors and notices show as Minimal when the popup is Off.
 At launch the app warms CoreAudio, checks the model stamp and, on Apple Silicon
 once per app version (`<config>/speech-shaders-ready`), has a throwaway worker
 compile the Metal shaders (about 4 s) so the first shortcut does not. No model is loaded at
@@ -124,21 +131,38 @@ Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
 never expose the test actions or write a test paste file.
 
 `shortcut.rs` owns handy-keys on a dedicated thread, re-creating it after
-Accessibility changes. Recording a binding pauses global registration, supports
-modifier-only/Fn and expires after 30 s. Secure Input uses the Carbon fallback
+Accessibility changes. Recording a binding pauses global registration and supports
+modifier-only/Fn. The recorder reports the held keys, saves the largest chord
+captured when the keys are released, Escape cancels, and it expires after 30 s
+with "no keys were pressed". `configure` answers only after registration and
+keeps the previous shortcut when the new one is taken; a bare Cmd or Ctrl is
+refused, and a saved invalid shortcut loads (in memory) as the default with a
+problem, so Settings shows the one in use. A held binding (handy-keys or system
+shortcut) is released before a rebuild; if the macOS key feed fails the system
+shortcut takes over; key events are stamped when the feed sees them and dropped
+inputs log. Secure Input uses the Carbon fallback
 for representable chords (side-specific modifiers widen); modifier-only events
-stay on handy-keys. Escape registers only during capture, including fallback,
-and is reserved from being the dictation binding. On Windows the same system
+stay on handy-keys. Escape registers only while capturing (and through AI
+writing when it is on), including fallback, and is reserved from being the
+dictation binding. Not done (2026-11-11, the user's call): on Windows a
+modifier-only hold can still end on a mouse click; the fix belongs upstream in
+handy-keys. On Windows the same system
 hotkey path carries any chord it can match exactly (2026-11-06, the user's
 call), because handy-keys' Windows listener wakes every 10 ms and hooks the
 mouse; handy-keys runs there only for modifier-only, Fn and one-side bindings
 and while a shortcut is being recorded (`shortcut::tapped`). Status exposes missing
 permissions, unavailable registration and uncovered Secure Input chords.
 
-`paste_tx` publishes lazy clipboard data, waits for post-injection reads and a
-200 ms quiet period, with an 8 s cap. Restoration checks ownership again; a newer
-copy wins.
-macOS snapshots every pasteboard item/type. Windows retains memory formats and
+`paste_tx` publishes lazy clipboard data, waits up to 1 s for held modifiers
+before the chord, waits for post-injection reads and a 200 ms quiet period, with
+an 8 s cap. A failed chord is an error and leaves the text on the clipboard; a
+paste no app read is reported as unsure. Restoration checks ownership again; a
+newer copy wins. The clipboard/paste preference types are gone. Copy writes with
+`write_secret` (marked private), and a concealed or transient snapshot is not
+restored unless it is Leo's own copy (the pasteboard change count or clipboard
+sequence number after the copy is compared). A pending restore is flushed on exit.
+macOS snapshots every pasteboard item/type. Windows opens the clipboard with its
+own owner window and retries, skips private formats, retains memory formats and
 copies bitmap, metafile and palette handles; a format it cannot preserve causes
 an error before publishing. Total snapshot bytes/items/types are bounded.
 Enigo is taken out of its state slot for native I/O; layout-aware Cmd+V resolves
@@ -150,9 +174,14 @@ on macOS, nonfocusable always-on-top window on Windows. It uses the focused
 window's monitor, with cursor/primary fallbacks, and supports top/bottom and
 Live/Minimal/Off. Its CSS token block comes directly from the web page's theme;
 the main page sends Light/Dark/Match changes. Queued shows and updates check the
-current generation. The popup's IPC is limited to its own window label.
+current generation. The popup's IPC is limited to its own window label. Its context menu is
+blocked, the notice title shows, the timer and live words are `aria-hidden`, the
+level bars are hidden outside listening, and on Windows it is placed in physical
+pixels with the display and text scale. AX messaging has a 0.25 s timeout;
+Accessibility is reset with `tccutil` only when it is denied after a version
+change.
 The popup follows Handy's live preview: state changes are pushed as a
-`dictation` event (revision-stamped, skipped when the popup is Off; the page
+`dictation` event (revision-stamped, skipped when the popup is Off except errors and notices, shown as Minimal; the page
 polls only if listening fails), committed and tentative words render with a
 caret, the text pins to its newest line, and 16 FFT buckets
 (`dictation::visualizer`) drive nine smoothed bars. Dictation follows Handy (2026-11-04, the
@@ -170,7 +199,7 @@ polishing step (its own `escape` flag, separate from `capturing`), and a
 fallback shows a four-second "Pasted without AI writing" notice with the
 reason. Settings warns when no writing AI is set up (`writing_ready`, which is
 `health::writing`'s cheap state; the tray's plan-use line reads the same state).
-Shutdown cancels dictation/shortcuts and stops the speech worker before the
+`CHORD_HOLD_MS` stays 100 (the user's call). Shutdown cancels dictation/shortcuts and stops the speech worker before the
 loopback engine finishes.
 
 ## Settings and updates

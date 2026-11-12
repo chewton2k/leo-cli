@@ -113,7 +113,15 @@ awaiting the network and promotes atomically; linked and hard-linked models are
 refused; selection/deletion/promotion use a private file lock.
 
 `speech/engine.rs` admits eight jobs, gives dictation priority between chunks
-and pauses lower work during a dictation reservation. One actor owns supervisor
+and pauses lower work during a dictation reservation. A dictation cancel bumps a
+per-dictation counter and kills the worker call only while a dictation is being
+served, so recording segments and live passes keep running; waiting dictations
+return Cancelled within 50 ms and the actor re-checks after model load and
+between chunks. Custom words go to `RunOptions::vocabulary` when the model
+supports it. Offline clips whose `(len/160)%8` is 0 get 160 zeros (padding
+guard, until transcribe-cpp 0.4.2 is on crates.io). A transcribe.cpp backend
+error counts as a lost worker (one fresh GPU retry, then CPU); `loaded()` is
+cleared when a worker is lost, and idle unload waits for a dictation. One actor owns supervisor
 and model. Recording pins it; otherwise idle unload is five minutes. Stop and
 updater unload share one five-second deadline; ordinary admission stays
 immediate and bounded. Deletion waits behind inference, unloads first and
@@ -337,6 +345,9 @@ malformed settings fall back without overwriting the damaged file. `RETIRED`
 keys are stripped before parsing (the struct denies unknown fields).
 `activation.rs`: hold, tap and the 300 ms hold-or-tap decision, ignoring repeats.
 `generation.rs` gates completion after taking the state lock, so cancel wins.
+The catalog refuses language "auto" for a model without `languageDetection`,
+and a saved "auto" migrates to the system language, else `en`, else the first
+language.
 
 `dictation/text.rs`: custom words match fuzzily/phonetically at 0.18 (phonetic
 is an internal soundex port of the old `natural` crate, golden-tested in
@@ -344,21 +355,34 @@ is an internal soundex port of the old `natural` crate, golden-tested in
 rules (on by default; patterns compiled once per language and custom list,
 `filler_patterns`), Unicode-safe punctuation and capitalization, clock times only
 when marked (`230 pm` → `2:30 pm`; a bare `230` is left to the AI). Fillers on
-also drop "you know" at a clause edge and "scratch that" with its sentence, never
-"like".
+also drop "you know" at a clause edge and "scratch that" with its sentence (the
+next word is capitalized), never "like"; stutter collapse needs fillers on. The
+filler language comes from a `whatlang` guess (`TextDetected`: confidence ≥ 0.9
+and ≥ 20 characters) before the model's language. Custom-word matching has
+guards (hyphens, plurals/possessives, casing); quoted text, code and URLs are
+kept; `meaningful()` rejects text with no letter or digit. A vocabulary echo
+(the model reciting the custom words) is stripped first.
 
 `polish.rs` is the optional AI step (`Writing`: off by default, `quick` 12 s,
 `selected` 30 s). It is told only the frontmost app's name (never window titles
 or screen text) and treats the dictation as text, never instructions. Replies are
 only unwrapped (code fence, `<dictation>`), never `clean_reply`. A reply must keep
 70% of the words (characters for unspaced scripts), add at most half new ones
-(15% for a question) and keep the same number of negations; `FILLERS` don't
-count and number words/digits count as one token. Failures are logged without
+(15% for a question) and keep the same number of negations; counts are
+multisets, `FILLERS` don't count and number words/digits count as one token.
+Added links, pipes, backticks, dollar signs, semicolons and stray line breaks
+are refused, as are changed digits and am/pm; a spoken "no" self-correction is
+honored. The prompt carries the custom words and spoken punctuation; the chain
+has no tools; a leading `<think>` block is stripped. Failures are logged without
 the provider's text. The call uses `ChatProvider::complete_until` so cancel or
 deadline stops an agent CLI; every fallback returns a reason the popup shows.
 
 `capture.rs` bounds dictation to 300 s and closes the input before draining and
-transcribing. `Mic::open_named` opens only the selected input; `microphones`
+transcribing. It returns `Captured { pcm, stalled }`: a capture that stalls 5 s
+after first audio ends and transcribes what was heard, and `Mic::heard_signal`
+tells a silent microphone from a quiet room. Dictation input takes the loudest
+channel instead of the average (recordings keep their downmix); Windows opens a
+500 ms buffer, retrying with the default config. `Mic::open_named` opens only the selected input; `microphones`
 enumerates without opening. `AudioGate` makes lecture capture wait for a playing
 feedback sound and blocks new ones until the recording ends (no I/O under its
 mutex). Streaming dictation falls back to the retained batch PCM; queued live

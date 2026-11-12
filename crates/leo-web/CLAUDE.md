@@ -541,7 +541,14 @@ a modal.
   eviction in one transaction). Copy resolves a stored ID and discards
   page-supplied text; edit refuses an unknown id. Nothing becomes a note or sync
   file; leo never watches other apps. No Save button: changes save at once,
-  in order (`saveDictation`).
+  in order (`saveDictation`). The first edit keeps the `original` text (a
+  nullable column added on open); the row shows Edited and a Show original
+  toggle, and word offers skip short (< 3 letters) and everyday words. The
+  Shortcut row is a keycap field and one Change button: while recording it shows
+  the held keys live, the page saves the captured chord when the native recorder
+  reports it, Esc (or a click elsewhere) cancels, and a note says Saved or why
+  not. Detect language is hidden for a model that cannot detect language, and
+  setup picks the system language, else `en`, for such a model.
 - Settings search: `SETTINGS_INDEX` entries (`{section, label, keywords, id}`)
   and the row's `data-find` attribute are added together;
   `settings-navigation.test.js` fails on an unknown section, a duplicate id or
