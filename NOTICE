@@ -61,3 +61,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+OpenWhispr
+https://github.com/OpenWhispr/openwhispr
+Copyright (c) 2024 OpenWhispr Team
+MIT License (same terms as above)
+
+Leo's dictation echo filter (crates/leo-services/src/dictation/text.rs) ports src/utils/dictionaryEchoFilter.js.

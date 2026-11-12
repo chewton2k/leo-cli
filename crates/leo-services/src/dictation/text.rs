@@ -87,15 +87,24 @@ fn find_best_match<'a>(
     custom_words: &'a [String],
     custom_word_match_keys: &[CustomWordMatchKey],
     threshold: f64,
+    phonetic: bool,
 ) -> Option<(&'a String, f64)> {
     if !is_supported_fuzzy_key(candidate) || candidate.chars().count() > 50 {
         return None;
     }
 
-    let mut best_match: Option<&String> = None;
+    if let Some(exact) = custom_word_match_keys.iter().find(|k| k.key == candidate) {
+        return Some((&custom_words[exact.word_index], 0.0));
+    }
+
+    let mut best_match: Option<usize> = None;
     let mut best_score = f64::MAX;
+    let mut runner_up = f64::MAX;
 
     for custom_word_key in custom_word_match_keys {
+        if candidate.strip_suffix('s') == Some(custom_word_key.key.as_str()) {
+            continue;
+        }
         let candidate_len = candidate.chars().count();
         let custom_word_len = custom_word_key.key.chars().count();
         let len_diff = candidate_len.abs_diff(custom_word_len) as f64;
@@ -112,7 +121,11 @@ fn find_best_match<'a>(
             1.0
         };
 
-        let phonetic_match = supports_soundex(candidate)
+        let phonetic_match = phonetic
+            && candidate_len >= 5
+            && custom_word_len >= 5
+            && levenshtein_dist <= 1
+            && supports_soundex(candidate)
             && supports_soundex(&custom_word_key.key)
             && soundex(candidate, &custom_word_key.key);
 
@@ -122,19 +135,36 @@ fn find_best_match<'a>(
             levenshtein_score
         };
 
-        if combined_score < threshold && combined_score < best_score {
-            best_match = Some(&custom_words[custom_word_key.word_index]);
+        if combined_score >= threshold {
+            continue;
+        }
+        if combined_score < best_score {
+            if best_match != Some(custom_word_key.word_index) {
+                runner_up = best_score;
+            }
+            best_match = Some(custom_word_key.word_index);
             best_score = combined_score;
+        } else if best_match != Some(custom_word_key.word_index) && combined_score < runner_up {
+            runner_up = combined_score;
         }
     }
 
-    best_match.map(|m| (m, best_score))
+    if runner_up - best_score < 0.04 {
+        return None;
+    }
+    best_match.map(|index| (&custom_words[index], best_score))
 }
 
-pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -> String {
+pub fn apply_custom_words(
+    text: &str,
+    custom_words: &[String],
+    threshold: f64,
+    language: Option<&str>,
+) -> String {
     if custom_words.is_empty() {
         return text.to_string();
     }
+    let phonetic = language.is_none_or(|l| l.split(['-', '_']).next() == Some("en"));
 
     let custom_word_match_keys: Vec<CustomWordMatchKey> = custom_words
         .iter()
@@ -163,9 +193,13 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
             }
             let ngram = build_ngram(ngram_words);
 
-            if let Some((replacement, score)) =
-                find_best_match(&ngram, custom_words, &custom_word_match_keys, threshold)
-            {
+            if let Some((replacement, score)) = find_best_match(
+                &ngram,
+                custom_words,
+                &custom_word_match_keys,
+                threshold,
+                phonetic,
+            ) {
                 let is_better = best_match
                     .as_ref()
                     .is_none_or(|(_, _, best_score)| score < *best_score);
@@ -194,8 +228,12 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
 }
 
 fn preserve_case_pattern(original: &str, replacement: &str) -> String {
-    if original.chars().all(|c| c.is_uppercase()) {
+    if original.chars().filter(|c| c.is_alphabetic()).count() > 1
+        && original.chars().all(|c| c.is_uppercase())
+    {
         replacement.to_uppercase()
+    } else if replacement.chars().any(char::is_uppercase) {
+        replacement.to_string()
     } else if original.chars().next().is_some_and(|c| c.is_uppercase()) {
         let mut chars: Vec<char> = replacement.chars().collect();
         if let Some(first_char) = chars.get_mut(0) {
@@ -238,26 +276,33 @@ fn extract_punctuation(word: &str) -> (&str, &str) {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutputLanguageEvidence {
     UserSelected(String),
-    ModelConstrained(String),
-    ModelDetected(String),
-    Detected(String),
     TextDetected(String),
-    TranslatedToEnglish,
     Unknown,
 }
 
 impl OutputLanguageEvidence {
     pub(crate) fn language(&self) -> Option<&str> {
         match self {
-            Self::UserSelected(language)
-            | Self::ModelConstrained(language)
-            | Self::ModelDetected(language)
-            | Self::Detected(language)
-            | Self::TextDetected(language) => Some(language),
-            Self::TranslatedToEnglish => Some("en"),
+            Self::UserSelected(language) | Self::TextDetected(language) => Some(language),
             Self::Unknown => None,
         }
     }
+}
+
+pub fn guess_language(text: &str) -> Option<&'static str> {
+    if text.trim().chars().count() < 20 {
+        return None;
+    }
+    let info = whatlang::detect(text)?;
+    if info.confidence() < 0.9 {
+        return None;
+    }
+    Some(match info.lang() {
+        whatlang::Lang::Eng => "en",
+        whatlang::Lang::Deu => "de",
+        whatlang::Lang::Fra => "fr",
+        other => other.code(),
+    })
 }
 
 const UNIVERSAL_FILLER_WORDS: &[&str] = &[
@@ -332,12 +377,23 @@ fn push_restoring_capital(kept: &mut String, segment: &str, capital_owed: &mut b
     kept.push_str(segment);
 }
 
+static PROTECTED_SPAN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)`[^`]*`|"[^"]*"|“[^”]*”|\b(?:https?|ftp)://\S+|\bwww\.\S+"#).unwrap()
+});
+
 fn remove_filler_matches(text: &str, pattern: &Regex) -> String {
     let mut kept = String::with_capacity(text.len());
     let mut resume = 0;
     let mut capital_owed = false;
+    let protected: Vec<_> = PROTECTED_SPAN.find_iter(text).map(|m| m.range()).collect();
 
     for filler in pattern.find_iter(text) {
+        if text.get(..filler.start()).is_some_and(|h| h.ends_with('-'))
+            || text.get(filler.end()..).is_some_and(|t| t.starts_with('-'))
+            || protected.iter().any(|span| span.contains(&filler.start()))
+        {
+            continue;
+        }
         push_restoring_capital(
             &mut kept,
             text.get(resume..filler.start()).unwrap_or_default(),
@@ -373,11 +429,16 @@ fn remove_spoken_asides(text: &str) -> String {
             .rfind(['.', '!', '?'])
             .and_then(|at| head.get(..=at))
             .unwrap_or_default();
-        let tail = text.get(found.end()..).unwrap_or_default();
+        let mut tail = String::new();
+        push_restoring_capital(
+            &mut tail,
+            text.get(found.end()..).unwrap_or_default(),
+            &mut true,
+        );
         text = match (kept.is_empty(), tail.is_empty()) {
             (false, false) => format!("{kept} {tail}"),
             (false, true) => kept.to_string(),
-            _ => tail.to_string(),
+            _ => tail,
         };
     }
     let text = YOU_KNOW_BETWEEN.replace_all(&text, ",");
@@ -393,63 +454,36 @@ fn filler_pattern(word: &str) -> Result<Regex, regex::Error> {
     Regex::new(&format!(r"(?i)\b{}\b[,.]?", regex::escape(word)))
 }
 
-fn filler_patterns(
-    language: &OutputLanguageEvidence,
-    custom_filler_words: &Option<Vec<String>>,
-) -> Patterns {
+fn filler_patterns(language: &OutputLanguageEvidence) -> Patterns {
     use std::collections::HashMap;
     use std::sync::Mutex;
     static DEFAULTS: LazyLock<Mutex<HashMap<&'static str, Patterns>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
-    static CUSTOM: Mutex<Option<(Vec<String>, Patterns)>> = Mutex::new(None);
-    match custom_filler_words {
-        Some(words) => {
-            let mut cached = CUSTOM.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((known, patterns)) = cached.as_ref() {
-                if known == words {
-                    return patterns.clone();
-                }
-            }
-            let patterns: Patterns = words
+    let gated = language
+        .language()
+        .map(gated_filler_words_for_language)
+        .unwrap_or_default();
+    let key = gated.first().copied().unwrap_or("");
+    DEFAULTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(key)
+        .or_insert_with(|| {
+            UNIVERSAL_FILLER_WORDS
                 .iter()
-                .filter_map(|word| filler_pattern(word).ok())
-                .collect();
-            *cached = Some((words.clone(), patterns.clone()));
-            patterns
-        }
-        None => {
-            let gated = language
-                .language()
-                .map(gated_filler_words_for_language)
-                .unwrap_or_default();
-            let key = gated.first().copied().unwrap_or("");
-            DEFAULTS
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .entry(key)
-                .or_insert_with(|| {
-                    UNIVERSAL_FILLER_WORDS
-                        .iter()
-                        .chain(gated)
-                        .map(|word| filler_pattern(word).unwrap())
-                        .collect()
-                })
-                .clone()
-        }
-    }
+                .chain(gated)
+                .map(|word| filler_pattern(word).unwrap())
+                .collect()
+        })
+        .clone()
 }
 
-pub fn remove_filler_words(
-    text: &str,
-    language: &OutputLanguageEvidence,
-    custom_filler_words: &Option<Vec<String>>,
-    enabled: bool,
-) -> String {
+pub fn remove_filler_words(text: &str, language: &OutputLanguageEvidence, enabled: bool) -> String {
     if !enabled {
         return text.to_string();
     }
 
-    let patterns = filler_patterns(language, custom_filler_words);
+    let patterns = filler_patterns(language);
 
     let mut filtered = text.to_string();
     for pattern in patterns.iter() {
@@ -485,17 +519,178 @@ pub fn normalize_transcription_output(text: &str) -> String {
     normalized.trim().to_string()
 }
 
+pub fn meaningful(text: &str) -> bool {
+    text.chars().any(char::is_alphanumeric)
+}
+
 pub fn clean(text: &str, settings: &super::settings::Settings, language: Option<&str>) -> String {
-    let fixed = apply_custom_words(text, &settings.custom_words, 0.18);
-    let evidence = language
-        .map(|s| OutputLanguageEvidence::UserSelected(s.into()))
-        .unwrap_or(OutputLanguageEvidence::Unknown);
-    clock_times(&normalize_transcription_output(&remove_filler_words(
-        &fixed,
-        &evidence,
-        &None,
-        settings.fillers,
-    )))
+    let (evidence, language) = match (language, guess_language(text)) {
+        (Some(chosen), _) => (
+            OutputLanguageEvidence::UserSelected(chosen.into()),
+            language,
+        ),
+        (None, Some(guess)) => (
+            OutputLanguageEvidence::TextDetected(guess.into()),
+            Some(guess),
+        ),
+        (None, None) => (OutputLanguageEvidence::Unknown, None),
+    };
+    let fixed = apply_custom_words(text, &settings.custom_words, 0.18, language);
+    let filtered = remove_filler_words(&fixed, &evidence, settings.fillers);
+    let normalized = if settings.fillers {
+        normalize_transcription_output(&filtered)
+    } else {
+        MULTI_SPACE_PATTERN
+            .replace_all(&filtered, " ")
+            .trim()
+            .to_string()
+    };
+    clock_times(&normalized)
+}
+
+fn echo_normalize(s: &str) -> String {
+    s.chars()
+        .flat_map(char::to_lowercase)
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+static PROMPT_DELIMITER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[,、，]").unwrap());
+static TRAILING_DELIMITER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[,、，]\s*$").unwrap());
+static SENTENCE_BREAK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[.!?]\s+|[。！？]\s*").unwrap());
+static NON_TERMINAL_PERIOD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?iu)(?:(?:^|[\s(])(?:etc|vs|mrs?|ms|dr|st|jr|sra?|prof|incl|esp|approx|ca|cf|al|no|nr|ex|ej|vgl|bzw|usw|\p{L}|\d{1,2})|\p{L}\.\p{L})$|\.$",
+    )
+    .unwrap()
+});
+
+fn prompt_terms(prompt: &str) -> Vec<String> {
+    PROMPT_DELIMITER
+        .split(prompt)
+        .map(echo_normalize)
+        .filter(|term| !term.is_empty())
+        .collect()
+}
+
+fn consecutive_term_run(text_words: &[&str], prompt: &str) -> bool {
+    let sequence: Vec<(String, usize)> = prompt_terms(prompt)
+        .into_iter()
+        .enumerate()
+        .flat_map(|(index, term)| {
+            term.split(' ')
+                .map(|word| (word.to_string(), index))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if text_words.is_empty() || text_words.len() > sequence.len() {
+        return false;
+    }
+    sequence.windows(text_words.len()).any(|window| {
+        window
+            .iter()
+            .zip(text_words)
+            .all(|((word, _), said)| word == said)
+            && window[text_words.len() - 1].1 - window[0].1 + 1 >= 3
+    })
+}
+
+fn overlap(words: &[&str], vocabulary: &std::collections::HashSet<&str>) -> (usize, usize) {
+    let unique: std::collections::HashSet<&str> = words.iter().copied().collect();
+    (
+        unique.iter().filter(|w| vocabulary.contains(*w)).count(),
+        unique.len(),
+    )
+}
+
+fn is_prompt_fragment(text: &str, prompt: &str) -> bool {
+    let (normalized, normalized_prompt) = (echo_normalize(text), echo_normalize(prompt));
+    if normalized.is_empty() || normalized_prompt.is_empty() {
+        return false;
+    }
+    let words: Vec<&str> = normalized.split(' ').collect();
+    let vocabulary = normalized_prompt.split(' ').collect();
+    let (matched, unique) = overlap(&words, &vocabulary);
+    let mut counts = std::collections::HashMap::new();
+    let looped = words.iter().any(|word| {
+        let count = counts.entry(*word).or_insert(0);
+        *count += 1;
+        *count >= 3
+    });
+    let continues_prompt_shape = looped
+        || (TRAILING_DELIMITER.is_match(text) && normalized.chars().count() <= 30)
+        || (PROMPT_DELIMITER.is_match(text) && consecutive_term_run(&words, prompt));
+    matched as f64 / unique as f64 >= 0.9 && continues_prompt_shape
+}
+
+fn is_whole_prompt(text: &str, prompt: &str) -> bool {
+    let (normalized, normalized_prompt) = (echo_normalize(text), echo_normalize(prompt));
+    if normalized.is_empty() || normalized_prompt.is_empty() {
+        return false;
+    }
+    if normalized == normalized_prompt {
+        return true;
+    }
+    let words: Vec<&str> = normalized.split(' ').collect();
+    let vocabulary = normalized_prompt.split(' ').collect();
+    let (matched, unique) = overlap(&words, &vocabulary);
+    matched as f64 / unique as f64 >= 0.9 && matched as f64 / vocabulary.len() as f64 >= 0.7
+}
+
+fn strip_trailing_echo<'a>(text: &'a str, words: &[String]) -> &'a str {
+    let terms: Vec<String> = words.iter().flat_map(|word| prompt_terms(word)).collect();
+    if terms.len() < 2 {
+        return text;
+    }
+    let body = text.trim_end();
+    let mut tail_start = 0;
+    for found in SENTENCE_BREAK.find_iter(body) {
+        let period = body
+            .get(found.start()..)
+            .is_some_and(|rest| rest.starts_with('.'));
+        if found.end() >= body.len()
+            || (period
+                && NON_TERMINAL_PERIOD.is_match(body.get(..found.start()).unwrap_or_default()))
+        {
+            continue;
+        }
+        tail_start = found.end();
+    }
+    let tail = prompt_terms(body.get(tail_start..).unwrap_or_default());
+    if tail_start == 0
+        || !tail.first().is_some_and(|first| terms.contains(first))
+        || tail.iter().filter(|term| terms.contains(term)).count() < 2
+    {
+        return text;
+    }
+    let indexes: Vec<Option<usize>> = tail
+        .iter()
+        .map(|term| terms.iter().position(|known| known == term))
+        .collect();
+    if !indexes
+        .windows(2)
+        .all(|pair| matches!(pair, [Some(a), Some(b)] if *b == *a + 1))
+    {
+        return text;
+    }
+    let opens_prompt = indexes[0] == Some(0);
+    let closes_prompt = indexes.len() >= 5 && indexes.last() == Some(&Some(terms.len() - 1));
+    if !opens_prompt && !closes_prompt {
+        return text;
+    }
+    body.get(..tail_start).unwrap_or(text).trim_end()
+}
+
+pub fn strip_vocabulary_echo(text: &str, words: &[String]) -> String {
+    let prompt = words.join(", ");
+    if words.len() >= 3 && (is_whole_prompt(text, &prompt) || is_prompt_fragment(text, &prompt)) {
+        return String::new();
+    }
+    strip_trailing_echo(text, words).to_string()
 }
 
 #[cfg(test)]
@@ -540,13 +735,9 @@ mod tests {
         assert!(!soundex("leo", "leon"));
     }
 
-    fn filter_transcription_output(
-        text: &str,
-        language: &str,
-        custom_filler_words: &Option<Vec<String>>,
-    ) -> String {
+    fn filter_transcription_output(text: &str, language: &str) -> String {
         let language = OutputLanguageEvidence::UserSelected(language.to_string());
-        let filtered = remove_filler_words(text, &language, custom_filler_words, true);
+        let filtered = remove_filler_words(text, &language, true);
         normalize_transcription_output(&filtered)
     }
 
@@ -554,7 +745,7 @@ mod tests {
     fn test_apply_custom_words_exact_match() {
         let text = "hello world";
         let custom_words = vec!["Hello".to_string(), "World".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert_eq!(result, "Hello World");
     }
 
@@ -562,7 +753,7 @@ mod tests {
     fn test_apply_custom_words_fuzzy_match() {
         let text = "helo wrold";
         let custom_words = vec!["hello".to_string(), "world".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert_eq!(result, "hello world");
     }
 
@@ -591,7 +782,7 @@ mod tests {
     fn test_empty_custom_words() {
         let text = "hello world";
         let custom_words = vec![];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert_eq!(result, "hello world");
     }
 
@@ -613,163 +804,147 @@ mod tests {
     #[test]
     fn test_filter_filler_words() {
         let text = "So uhm I was thinking uh about this";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "So I was thinking about this");
     }
 
     #[test]
     fn test_filter_filler_words_case_insensitive() {
         let text = "UHM this is UH a test";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "This is a test");
     }
 
     #[test]
     fn test_filter_filler_words_with_punctuation() {
         let text = "Well, uhm, I think, uh. that's right";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "Well, I think, that's right");
     }
 
     #[test]
     fn test_filter_cleans_whitespace() {
         let text = "Hello    world   test";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "Hello world test");
     }
 
     #[test]
     fn test_filter_trims() {
         let text = "  Hello world  ";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "Hello world");
     }
 
     #[test]
     fn test_filter_combined() {
         let text = "  Uhm, so I was, uh, thinking about this  ";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "So I was, thinking about this");
     }
 
     #[test]
     fn test_filter_final_filler_keeps_the_full_stop() {
-        let result = filter_transcription_output("We should ship it, um.", "en", &None);
+        let result = filter_transcription_output("We should ship it, um.", "en");
         assert_eq!(result, "We should ship it.");
-        let result = filter_transcription_output("Call me tomorrow uh.", "en", &None);
+        let result = filter_transcription_output("Call me tomorrow uh.", "en");
         assert_eq!(result, "Call me tomorrow.");
-        assert_eq!(filter_transcription_output("Uh.", "en", &None), "");
+        assert_eq!(filter_transcription_output("Uh.", "en"), "");
     }
 
     #[test]
     fn test_filter_leading_filler_keeps_sentence_capital() {
-        let result = filter_transcription_output("Um, so I think we should ship it.", "en", &None);
+        let result = filter_transcription_output("Um, so I think we should ship it.", "en");
         assert_eq!(result, "So I think we should ship it.");
 
-        let result = filter_transcription_output("That works. Um, let me check.", "en", &None);
+        let result = filter_transcription_output("That works. Um, let me check.", "en");
         assert_eq!(result, "That works. Let me check.");
 
-        let result = filter_transcription_output("He said, Um, not today.", "en", &None);
+        let result = filter_transcription_output("He said, Um, not today.", "en");
         assert_eq!(result, "He said, not today.");
     }
 
     #[test]
     fn test_filter_preserves_valid_text() {
         let text = "This is a completely normal sentence.";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "This is a completely normal sentence.");
     }
 
     #[test]
     fn test_filter_stutter_collapse() {
         let text = "w wh wh wh wh wh wh wh wh wh why";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "w wh why");
     }
 
     #[test]
     fn test_filter_stutter_short_words() {
         let text = "I I I I think so so so so";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "I think so");
     }
 
     #[test]
     fn test_filter_stutter_longer_words() {
         let text = "Check data doc doc doc doc documentation.";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "Check data doc documentation.");
     }
 
     #[test]
     fn test_filter_stutter_mixed_case() {
         let text = "No NO no NO no";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "No");
     }
 
     #[test]
     fn test_filter_stutter_preserves_two_repetitions() {
         let text = "no no is fine";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "no no is fine");
     }
 
     #[test]
     fn test_filter_english_removes_um() {
         let text = "um I think um this is good";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "I think this is good");
     }
 
     #[test]
     fn test_filter_portuguese_preserves_um() {
         let text = "um gato bonito";
-        let result = filter_transcription_output(text, "pt", &None);
+        let result = filter_transcription_output(text, "pt");
         assert_eq!(result, "um gato bonito");
     }
 
     #[test]
     fn test_filter_spanish_preserves_ha() {
         let text = "ha sido un buen día";
-        let result = filter_transcription_output(text, "es", &None);
+        let result = filter_transcription_output(text, "es");
         assert_eq!(result, "ha sido un buen día");
     }
 
     #[test]
     fn test_filter_language_code_with_region() {
         let text = "um gato bonito";
-        let result = filter_transcription_output(text, "pt-BR", &None);
+        let result = filter_transcription_output(text, "pt-BR");
         assert_eq!(result, "um gato bonito");
-    }
-
-    #[test]
-    fn test_filter_custom_filler_words_override() {
-        let custom = Some(vec!["okay".to_string(), "right".to_string()]);
-        let text = "okay so I think right this works";
-        let result = filter_transcription_output(text, "en", &custom);
-        assert_eq!(result, "so I think this works");
-    }
-
-    #[test]
-    fn test_filter_custom_filler_words_empty_disables() {
-        let custom = Some(vec![]);
-        let text = "So uhm I was thinking uh about this";
-        let result = filter_transcription_output(text, "en", &custom);
-        assert_eq!(result, "So uhm I was thinking uh about this");
     }
 
     #[test]
     fn test_filter_unknown_language_still_removes_universal_fillers() {
         let text = "uh I think uhm this works";
-        let result = filter_transcription_output(text, "xx", &None);
+        let result = filter_transcription_output(text, "xx");
         assert_eq!(result, "I think this works");
     }
 
     #[test]
     fn test_filter_unknown_language_does_not_remove_um() {
         let text = "um I think this works";
-        let result = filter_transcription_output(text, "xx", &None);
+        let result = filter_transcription_output(text, "xx");
         assert_eq!(result, "um I think this works");
     }
 
@@ -778,7 +953,6 @@ mod tests {
         let filtered = remove_filler_words(
             "uhh bueno hmm creo que um ha llegado",
             &OutputLanguageEvidence::Unknown,
-            &None,
             true,
         );
         assert_eq!(
@@ -789,7 +963,6 @@ mod tests {
         let cyrillic = remove_filler_words(
             "хм я думаю ммм это работает",
             &OutputLanguageEvidence::Unknown,
-            &None,
             true,
         );
         assert_eq!(
@@ -802,17 +975,17 @@ mod tests {
     fn test_filter_german_gated_fillers_require_evidence() {
         let text = "äh ich glaube ähm das passt";
 
-        let unknown = remove_filler_words(text, &OutputLanguageEvidence::Unknown, &None, true);
+        let unknown = remove_filler_words(text, &OutputLanguageEvidence::Unknown, true);
         assert_eq!(normalize_transcription_output(&unknown), text);
 
-        let result = filter_transcription_output(text, "de", &None);
+        let result = filter_transcription_output(text, "de");
         assert_eq!(result, "ich glaube das passt");
     }
 
     #[test]
     fn test_filter_preserves_millimetre_unit() {
         let text = "the screw is 5 mm long";
-        let result = filter_transcription_output(text, "en", &None);
+        let result = filter_transcription_output(text, "en");
         assert_eq!(result, "the screw is 5 mm long");
     }
 
@@ -820,8 +993,7 @@ mod tests {
     fn test_filter_detected_evidence_unlocks_gated_fillers() {
         let model = remove_filler_words(
             "um I think this works",
-            &OutputLanguageEvidence::ModelDetected("en".to_string()),
-            &None,
+            &OutputLanguageEvidence::TextDetected("en".to_string()),
             true,
         );
         assert_eq!(normalize_transcription_output(&model), "I think this works");
@@ -829,7 +1001,6 @@ mod tests {
         let text = remove_filler_words(
             "euh je pense que ça marche",
             &OutputLanguageEvidence::TextDetected("fr".to_string()),
-            &None,
             true,
         );
         assert_eq!(
@@ -839,32 +1010,10 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_master_toggle_disables_custom_and_builtin_removal() {
-        let text = "um customword I think";
-        let language = OutputLanguageEvidence::UserSelected("en".to_string());
-        let custom = Some(vec!["customword".to_string()]);
-
-        let result = remove_filler_words(text, &language, &custom, false);
-
-        assert_eq!(result, text);
-    }
-
-    #[test]
-    fn test_filter_custom_words_apply_without_language_evidence() {
-        let custom = Some(vec!["customword".to_string()]);
-        let text = "customword should be removed but um should remain";
-
-        let filtered = remove_filler_words(text, &OutputLanguageEvidence::Unknown, &custom, true);
-        let result = normalize_transcription_output(&filtered);
-
-        assert_eq!(result, "should be removed but um should remain");
-    }
-
-    #[test]
     fn test_apply_custom_words_ngram_two_words() {
         let text = "il cui nome è Charge B, che permette";
         let custom_words = vec!["ChargeBee".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert!(result.contains("ChargeBee,"), "unexpected result: {result}");
         assert!(!result.contains("Charge B"));
     }
@@ -873,7 +1022,7 @@ mod tests {
     fn test_apply_custom_words_ngram_three_words() {
         let text = "use Chat G P T for this";
         let custom_words = vec!["ChatGPT".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert!(result.contains("ChatGPT"));
     }
 
@@ -881,7 +1030,7 @@ mod tests {
     fn test_apply_custom_words_prefers_longer_ngram() {
         let text = "Open AI GPT model";
         let custom_words = vec!["OpenAI".to_string(), "GPT".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert_eq!(result, "OpenAI GPT model");
     }
 
@@ -889,7 +1038,7 @@ mod tests {
     fn test_apply_custom_words_ngram_preserves_case() {
         let text = "CHARGE B is great";
         let custom_words = vec!["ChargeBee".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert!(result.contains("CHARGEBEE"));
     }
 
@@ -897,7 +1046,7 @@ mod tests {
     fn test_apply_custom_words_ngram_with_spaces_in_custom() {
         let text = "using Mac Book Pro";
         let custom_words = vec!["MacBook Pro".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert_eq!(result, "using MacBook Pro");
     }
 
@@ -905,7 +1054,7 @@ mod tests {
     fn test_apply_custom_words_trailing_number_not_doubled() {
         let text = "use GPT4 for this";
         let custom_words = vec!["GPT-4".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert!(
             !result.contains("GPT-44"),
             "got double-counted result: {}",
@@ -917,7 +1066,7 @@ mod tests {
     fn test_apply_custom_words_matches_ampersand_word() {
         let text = "send it to RD for review";
         let custom_words = vec!["R&D".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.18);
+        let result = apply_custom_words(text, &custom_words, 0.18, None);
         assert_eq!(result, "send it to R&D for review");
     }
 
@@ -925,7 +1074,7 @@ mod tests {
     fn test_apply_custom_words_matches_spoken_ampersand_word() {
         let text = "send it to R and D for review";
         let custom_words = vec!["R&D".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.18);
+        let result = apply_custom_words(text, &custom_words, 0.18, None);
         assert_eq!(result, "send it to R&D for review");
     }
 
@@ -933,7 +1082,7 @@ mod tests {
     fn test_apply_custom_words_preserves_ampersand_word() {
         let text = "send it to R&D for review";
         let custom_words = vec!["R&D".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.18);
+        let result = apply_custom_words(text, &custom_words, 0.18, None);
         assert_eq!(result, "send it to R&D for review");
     }
 
@@ -941,7 +1090,7 @@ mod tests {
     fn test_apply_custom_words_handles_unicode_punctuation() {
         let text = "「Handee。」";
         let custom_words = vec!["Handy".to_string()];
-        let result = apply_custom_words(text, &custom_words, 0.5);
+        let result = apply_custom_words(text, &custom_words, 0.5, None);
         assert_eq!(result, "「Handy。」");
     }
 
@@ -949,14 +1098,14 @@ mod tests {
     fn test_apply_custom_words_skips_cjk_fuzzy_matching() {
         let text = "你好。";
         let custom_words = vec!["你号".to_string()];
-        let result = apply_custom_words(text, &custom_words, 1.0);
+        let result = apply_custom_words(text, &custom_words, 1.0, None);
         assert_eq!(result, text);
     }
 
     #[test]
     fn spoken_asides_are_removed_only_where_they_are_asides() {
         let en = OutputLanguageEvidence::UserSelected("en".into());
-        let clean = |text: &str| remove_filler_words(text, &en, &None, true);
+        let clean = |text: &str| remove_filler_words(text, &en, true);
         assert_eq!(
             clean("We ship Tuesday, you know, maybe Wednesday"),
             "We ship Tuesday, maybe Wednesday"
@@ -969,7 +1118,7 @@ mod tests {
         );
         assert_eq!(
             clean("Hi. Lunch at noon. scratch that, lunch at one."),
-            "Hi. lunch at one."
+            "Hi. Lunch at one."
         );
         assert_eq!(clean("Lunch at noon. Scratch that"), "");
         for kept in [
@@ -984,8 +1133,354 @@ mod tests {
             assert_eq!(clean(kept), kept);
         }
         assert_eq!(
-            remove_filler_words("Lunch. Scratch that. Dinner.", &en, &None, false),
+            remove_filler_words("Lunch. Scratch that. Dinner.", &en, false),
             "Lunch. Scratch that. Dinner."
+        );
+    }
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|w| w.to_string()).collect()
+    }
+
+    fn settings(fillers: bool, custom: &[&str]) -> crate::dictation::settings::Settings {
+        crate::dictation::settings::Settings {
+            fillers,
+            custom_words: words(custom),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn short_custom_names_leave_ordinary_words_alone() {
+        let names = words(&["Sam", "Tim", "Ann", "Max", "Uma"]);
+        let text = "um I have the same time an hour to make it";
+        assert_eq!(apply_custom_words(text, &names, 0.18, None), text);
+        assert_eq!(apply_custom_words(text, &names, 0.18, Some("en")), text);
+        assert_eq!(
+            apply_custom_words("she said yes", &words(&["Shih"]), 0.18, None),
+            "she said yes"
+        );
+    }
+
+    #[test]
+    fn phonetic_discount_needs_english_and_a_close_long_word() {
+        let felix = words(&["Felix"]);
+        assert_eq!(
+            apply_custom_words("hi felex", &felix, 0.18, None),
+            "hi Felix"
+        );
+        assert_eq!(
+            apply_custom_words("hi felex", &felix, 0.18, Some("en-US")),
+            "hi Felix"
+        );
+        assert_eq!(
+            apply_custom_words("hi felex", &felix, 0.18, Some("pt")),
+            "hi felex"
+        );
+        assert_eq!(
+            apply_custom_words("hi fallex", &felix, 0.18, None),
+            "hi fallex"
+        );
+    }
+
+    #[test]
+    fn a_token_equal_to_a_custom_word_is_not_pulled_to_another() {
+        let both = words(&["Maxx", "Max"]);
+        assert_eq!(apply_custom_words("max", &both, 0.5, None), "Max");
+    }
+
+    #[test]
+    fn two_equally_close_custom_words_abstain() {
+        let both = words(&["Felix", "Felex"]);
+        assert_eq!(apply_custom_words("felax", &both, 0.18, None), "felax");
+        assert_eq!(apply_custom_words("felix", &both, 0.18, None), "Felix");
+    }
+
+    #[test]
+    fn plurals_and_possessives_of_custom_words_are_left_as_spoken() {
+        assert_eq!(
+            apply_custom_words("Anthropic's models", &words(&["Anthropic"]), 0.18, None),
+            "Anthropic's models"
+        );
+        assert_eq!(
+            apply_custom_words("count the tokens", &words(&["token"]), 0.18, None),
+            "count the tokens"
+        );
+    }
+
+    #[test]
+    fn custom_word_casing_keeps_its_own_capitals() {
+        let phone = words(&["iPhone"]);
+        assert_eq!(
+            apply_custom_words("I phone you later", &phone, 0.18, None),
+            "iPhone you later"
+        );
+        assert_eq!(
+            apply_custom_words("open X code now", &words(&["Xcode"]), 0.18, None),
+            "open Xcode now"
+        );
+        assert_eq!(preserve_case_pattern("I", "world"), "World");
+    }
+
+    #[test]
+    fn hyphenated_interjections_stay_whole() {
+        assert_eq!(
+            filter_transcription_output("Uh-huh, that works.", "en"),
+            "Uh-huh, that works."
+        );
+        assert_eq!(
+            filter_transcription_output("mm-hmm sounds good", "en"),
+            "mm-hmm sounds good"
+        );
+        assert_eq!(
+            filter_transcription_output("uh-oh uh we broke it", "en"),
+            "uh-oh we broke it"
+        );
+    }
+
+    #[test]
+    fn quoted_code_and_url_tokens_keep_filler_like_words() {
+        assert_eq!(
+            filter_transcription_output("Say \"um\" then um go", "en"),
+            "Say \"um\" then go"
+        );
+        assert_eq!(
+            filter_transcription_output("Run `uh` now", "en"),
+            "Run `uh` now"
+        );
+        assert_eq!(
+            filter_transcription_output("Open https://example.com/uh/um now um", "en"),
+            "Open https://example.com/uh/um now"
+        );
+    }
+
+    #[test]
+    fn scratch_that_keeps_the_next_sentence_capitalised() {
+        let en = OutputLanguageEvidence::UserSelected("en".into());
+        assert_eq!(
+            remove_filler_words("I like cats. Scratch that, dogs are better.", &en, true),
+            "Dogs are better."
+        );
+    }
+
+    #[test]
+    fn repeats_collapse_only_while_fillers_are_on() {
+        let text = "no no no that's wrong";
+        assert_eq!(
+            clean(text, &settings(true, &[]), Some("en")),
+            "no that's wrong"
+        );
+        assert_eq!(clean(text, &settings(false, &[]), Some("en")), text);
+    }
+
+    #[test]
+    fn language_is_guessed_from_the_text_when_none_is_chosen() {
+        let s = settings(true, &[]);
+        assert_eq!(
+            clean(
+                "Um, so I was thinking that we could meet on Tuesday afternoon to talk about the budget.",
+                &s,
+                None
+            ),
+            "So I was thinking that we could meet on Tuesday afternoon to talk about the budget."
+        );
+        let portuguese = "um gato muito bonito está dormindo na minha cama porque ele gosta de ficar perto de mim";
+        assert_eq!(clean(portuguese, &s, None), portuguese);
+        assert_eq!(clean("Um, yes", &s, None), "Um, yes");
+        assert_eq!(guess_language("too short"), None);
+        assert_eq!(
+            guess_language("So I was thinking that we could meet on Tuesday afternoon to talk about the budget."),
+            Some("en")
+        );
+    }
+
+    #[test]
+    fn meaningful_needs_a_letter_or_digit() {
+        assert!(!meaningful("."));
+        assert!(!meaningful(" , "));
+        assert!(!meaningful(""));
+        assert!(meaningful("a"));
+        assert!(meaningful("7."));
+        assert!(meaningful("東京"));
+    }
+
+    const LARGE: &[&str] = &[
+        "OpenWhispr",
+        "Parakeet",
+        "Alcahest",
+        "Chromium",
+        "TypeScript",
+        "Electron",
+        "testing",
+        "data",
+        "benchmark",
+        "inference",
+        "transcription",
+        "dictionary",
+        "microphone",
+        "renderer",
+        "latency",
+        "pipeline",
+    ];
+
+    #[test]
+    fn echo_filter_drops_a_whole_recited_list() {
+        let three = words(&["OpenWhispr", "Parakeet", "Alcahest"]);
+        for echo in [
+            "OpenWhispr, Parakeet, Alcahest",
+            "OpenWhispr, Parakeet, Alcahest.",
+            "openwhispr, parakeet, alcahest",
+            "OpenWhispr Parakeet Alcahest",
+            "OpenWhispr,  Parakeet,  Alcahest",
+            "OpenWhispr, Parakeet, Alcahest, OpenWhispr, Parakeet, Alcahest",
+        ] {
+            assert_eq!(strip_vocabulary_echo(echo, &three), "", "{echo}");
+        }
+        for said in [
+            "I just installed OpenWhispr and it works great",
+            "OpenWhispr, Parakeet",
+            "The quick brown fox jumps over the lazy dog",
+        ] {
+            assert_eq!(strip_vocabulary_echo(said, &three), said, "{said}");
+        }
+        let nato = words(&[
+            "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India",
+            "Juliet",
+        ]);
+        assert_eq!(
+            strip_vocabulary_echo(
+                "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet the",
+                &nato
+            ),
+            ""
+        );
+        let accents = words(&["Müller", "François", "José"]);
+        assert_eq!(
+            strip_vocabulary_echo("Müller, François, José", &accents),
+            ""
+        );
+        assert_eq!(
+            strip_vocabulary_echo("muller francois jose", &accents),
+            "muller francois jose"
+        );
+        assert_eq!(
+            strip_vocabulary_echo("東京, 大阪, 京都", &words(&["東京", "大阪", "京都"])),
+            ""
+        );
+    }
+
+    #[test]
+    fn echo_filter_drops_looped_and_dangling_fragments_only() {
+        let large = words(LARGE);
+        for echo in [
+            "data, data, data, data,",
+            "testing,",
+            "testing, ",
+            "OpenWhispr, OpenWhispr, OpenWhispr",
+            "TypeScript, Electron, testing, data, benchmark",
+        ] {
+            assert_eq!(strip_vocabulary_echo(echo, &large), "", "{echo}");
+        }
+        for said in [
+            "OpenWhispr is working",
+            "hello there",
+            "testing",
+            "Electron renderer latency",
+            "OpenWhispr Parakeet Alcahest Chromium",
+            "Electron, renderer",
+            "testing, data",
+            "OpenWhispr, OpenWhispr",
+            "benchmark, TypeScript, data, Electron, testing",
+            "yes, no, maybe, dunno,",
+            "",
+            "...",
+        ] {
+            assert_eq!(strip_vocabulary_echo(said, &large), said, "{said}");
+        }
+        assert_eq!(
+            strip_vocabulary_echo("OpenWhispr", &words(&["OpenWhispr"])),
+            "OpenWhispr"
+        );
+        assert_eq!(strip_vocabulary_echo("testing,", &[]), "testing,");
+    }
+
+    #[test]
+    fn echo_filter_strips_a_recited_tail_and_keeps_speech() {
+        let two = words(&["OpenWhispr", "n8n"]);
+        assert_eq!(
+            strip_vocabulary_echo(
+                "Appreciate the time. Thanks, all. Thanks, you. OpenWhispr, n8n.",
+                &two
+            ),
+            "Appreciate the time. Thanks, all. Thanks, you."
+        );
+        let six = words(&[
+            "OpenWhispr",
+            "n8n",
+            "Traefik",
+            "Tailscale",
+            "Claude Code",
+            "kubectl",
+        ]);
+        assert_eq!(
+            strip_vocabulary_echo(
+                "All right. Appreciate the time. Thanks, you. OpenWhispr, n8n, Traefik, Tailscale, Claude Code, kubectl",
+                &six
+            ),
+            "All right. Appreciate the time. Thanks, you."
+        );
+        assert_eq!(
+            strip_vocabulary_echo("Ship it today! openwhispr, n8n, traefik,", &six),
+            "Ship it today!"
+        );
+        let eight = words(&[
+            "OpenWhispr",
+            "n8n",
+            "Traefik",
+            "Tailscale",
+            "Claude Code",
+            "kubectl",
+            "Qwen",
+            "Ollama",
+        ]);
+        assert_eq!(
+            strip_vocabulary_echo(
+                "We shipped it. Tailscale, Claude Code, kubectl, Qwen, Ollama.",
+                &eight
+            ),
+            "We shipped it."
+        );
+        for said in [
+            "Here are the tools I use. Traefik, Tailscale.",
+            "We shipped it. kubectl, Qwen, Ollama.",
+            "We shipped it. n8n, Traefik, Tailscale, Claude Code, kubectl.",
+            "Which ones did you pick? Tailscale, Traefik, n8n.",
+            "Tools. OpenWhispr, Traefik, Tailscale.",
+            "The VPN was flaky, so we moved it to Tailscale.",
+            "That was flaky. Tailscale.",
+            "OpenWhispr, n8n. Those are the two tools I set up today.",
+            "Today I wired OpenWhispr, n8n and Traefik together.",
+            "It is ready. OpenWhispr, then n8n.",
+            "Use the tools e.g. OpenWhispr, n8n",
+            "Ask Mr. OpenWhispr, n8n",
+            "Step 1. OpenWhispr, n8n",
+            "So... OpenWhispr, n8n",
+            "Wir nutzen Tools, z.B. OpenWhispr, n8n.",
+        ] {
+            assert_eq!(strip_vocabulary_echo(said, &eight), said, "{said}");
+        }
+        assert_eq!(
+            strip_vocabulary_echo("We shipped in 2026. OpenWhispr, n8n.", &two),
+            "We shipped in 2026."
+        );
+        let names = words(&["St. Louis", "Chicago", "J. R. R. Tolkien"]);
+        assert_eq!(
+            strip_vocabulary_echo("Done. St. Louis, Chicago", &names),
+            "Done."
+        );
+        assert_eq!(
+            strip_vocabulary_echo("I read it. Louis, Chicago", &names),
+            "I read it. Louis, Chicago"
         );
     }
 }
