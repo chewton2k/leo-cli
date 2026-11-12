@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
@@ -10,13 +10,14 @@ use transcribe_cpp::{Backend, RunOptions};
 
 use super::library::Selected;
 use super::protocol::DeviceSelector;
-use super::supervisor::{EngineSupervisor, Fed, LoadSpec};
+use super::supervisor::{lock, EngineError, EngineSupervisor, Fed, LoadSpec};
 use super::vad::{detector, CaptureVad, VAD_OFFLINE_HANGOVER_MS};
 
 const QUEUED: usize = 8;
 const SHADERS_MARKER: &str = "speech-shaders-ready";
 const IDLE: Duration = Duration::from_secs(5 * 60);
 const POLL: Duration = Duration::from_millis(20);
+const CANCEL_POLL: Duration = Duration::from_millis(50);
 const CONTROL_LIMIT: Duration = Duration::from_secs(5);
 const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 const MOST_FEEDS: usize = 300 * 16_000 / 512 + 2;
@@ -42,6 +43,8 @@ struct Job {
     chunks: VecDeque<Vec<f32>>,
     text: Vec<String>,
     priority: Priority,
+    words: Vec<String>,
+    cancels: u64,
     reply: mpsc::SyncSender<Result<String>>,
 }
 
@@ -50,6 +53,8 @@ enum Message {
     Warm(Selected),
     Stream {
         selected: Selected,
+        words: Vec<String>,
+        cancels: u64,
         audio: mpsc::Receiver<Option<Vec<f32>>>,
         text: Box<dyn FnMut(String, String) + Send>,
         reply: mpsc::SyncSender<Result<String>>,
@@ -71,6 +76,8 @@ pub struct Engine {
     dictating: Arc<AtomicUsize>,
     stopped: AtomicBool,
     admitted: Arc<AtomicUsize>,
+    dictation_cancels: Arc<AtomicU64>,
+    serving_dictation: Arc<Mutex<bool>>,
 }
 
 pub struct Pin(Arc<AtomicUsize>);
@@ -93,13 +100,20 @@ impl Default for Engine {
 
 impl Engine {
     pub fn new() -> Self {
+        Self::with(heard_speech)
+    }
+
+    fn with(hears: fn(&[f32], f32) -> Result<bool>) -> Self {
         let (requests, queue) = mpsc::sync_channel(QUEUED);
         let supervisor =
             EngineSupervisor::new(!cfg!(all(target_os = "macos", target_arch = "x86_64")));
         let pins = Arc::new(AtomicUsize::new(0));
         let dictating = Arc::new(AtomicUsize::new(0));
+        let dictation_cancels = Arc::new(AtomicU64::new(0));
+        let serving_dictation = Arc::new(Mutex::new(false));
         let (worker, held, first) = (supervisor.clone(), pins.clone(), dictating.clone());
-        std::thread::spawn(move || run(queue, worker, held, first));
+        let (cancels, serving) = (dictation_cancels.clone(), serving_dictation.clone());
+        std::thread::spawn(move || run(queue, worker, held, first, cancels, serving, hears));
         Self {
             requests,
             supervisor,
@@ -107,6 +121,8 @@ impl Engine {
             dictating,
             stopped: AtomicBool::new(false),
             admitted: Arc::new(AtomicUsize::new(0)),
+            dictation_cancels,
+            serving_dictation,
         }
     }
 
@@ -128,7 +144,11 @@ impl Engine {
         self.supervisor.loaded().is_some()
     }
     pub fn cancel(&self) {
-        self.supervisor.cancel();
+        let serving = lock(&self.serving_dictation);
+        self.dictation_cancels.fetch_add(1, Ordering::AcqRel);
+        if *serving {
+            self.supervisor.cancel();
+        }
     }
 
     pub fn transcribe(
@@ -136,7 +156,9 @@ impl Engine {
         selected: Selected,
         pcm: Vec<f32>,
         priority: Priority,
+        words: Vec<String>,
     ) -> Result<String> {
+        let cancels = self.dictation_cancels.load(Ordering::Acquire);
         ensure!(
             !self.stopped.load(Ordering::Acquire),
             "The speech engine is stopping. Reopen Leo to transcribe again."
@@ -155,11 +177,13 @@ impl Engine {
         };
         let chunks = speech_chunks(pcm, gain)?.into();
         let (reply, answer) = mpsc::sync_channel(1);
-        self.requests.try_send(Message::Run(Job { _admission: admission, selected, gain, chunks, text: Vec::new(), priority, reply }))
+        self.requests.try_send(Message::Run(Job { _admission: admission, selected, gain, chunks, text: Vec::new(), priority, words, cancels, reply }))
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Your recorded audio is kept; try again in a moment."))?;
-        answer.recv_timeout(ANSWER_LIMIT).context(
-            "Transcription took too long. Your audio is kept; try a faster speech model.",
-        )?
+        wait_for(&answer, || {
+            priority == Priority::Dictation
+                && self.dictation_cancels.load(Ordering::Acquire) != cancels
+        })
+        .context("Transcription took too long. Your audio is kept; try a faster speech model.")?
     }
 
     pub fn warm(&self, selected: Selected) {
@@ -184,8 +208,10 @@ impl Engine {
     pub fn stream(
         &self,
         selected: Selected,
+        words: Vec<String>,
         text: impl FnMut(String, String) + Send + 'static,
     ) -> Result<DictationStream> {
+        let cancels = self.dictation_cancels.load(Ordering::Acquire);
         ensure!(
             !self.stopped.load(Ordering::Acquire),
             "The speech engine is stopping. Reopen Leo."
@@ -195,12 +221,19 @@ impl Engine {
         self.requests
             .try_send(Message::Stream {
                 selected,
+                words,
+                cancels,
                 audio,
                 text: Box::new(text),
                 reply,
             })
             .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again."))?;
-        Ok(DictationStream { feed, answer })
+        Ok(DictationStream {
+            feed,
+            answer,
+            cancels,
+            dictation_cancels: self.dictation_cancels.clone(),
+        })
     }
 
     pub fn edit_model(
@@ -283,9 +316,45 @@ fn send_control_before<T>(
     }
 }
 
+fn wait_for<T>(
+    answer: &mpsc::Receiver<Result<T>>,
+    cancelled: impl Fn() -> bool,
+) -> Result<Result<T>, mpsc::RecvTimeoutError> {
+    let deadline = Instant::now() + ANSWER_LIMIT;
+    loop {
+        match answer
+            .recv_timeout(CANCEL_POLL.min(deadline.saturating_duration_since(Instant::now())))
+        {
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {
+                if cancelled() {
+                    return Ok(Err(EngineError::Cancelled.into()));
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+fn cancelled_dictation(job: &Job, dictation_cancels: &AtomicU64) -> bool {
+    job.priority == Priority::Dictation && job.cancels != dictation_cancels.load(Ordering::Acquire)
+}
+
+fn run_options(selected: &Selected, words: Vec<String>, supports_vocabulary: bool) -> RunOptions {
+    RunOptions {
+        language: (selected.language != "auto").then(|| selected.language.clone()),
+        vocabulary: words
+            .into_iter()
+            .filter(|word| supports_vocabulary && !word.contains('\0'))
+            .collect(),
+        ..RunOptions::default()
+    }
+}
+
 pub struct DictationStream {
     feed: mpsc::SyncSender<Option<Vec<f32>>>,
     answer: mpsc::Receiver<Result<String>>,
+    cancels: u64,
+    dictation_cancels: Arc<AtomicU64>,
 }
 impl DictationStream {
     pub fn feed(&self, pcm: Vec<f32>) -> bool {
@@ -295,9 +364,10 @@ impl DictationStream {
         self.feed.try_send(None).map_err(|_| {
             anyhow::anyhow!("Live transcription fell behind. Finishing from the recorded audio.")
         })?;
-        self.answer
-            .recv_timeout(ANSWER_LIMIT)
-            .context("Live transcription did not finish. Try a smaller model.")?
+        wait_for(&self.answer, || {
+            self.dictation_cancels.load(Ordering::Acquire) != self.cancels
+        })
+        .context("Live transcription did not finish. Try a smaller model.")?
     }
 }
 
@@ -390,11 +460,21 @@ fn padded(mut pcm: Vec<f32>) -> Vec<f32> {
     pcm
 }
 
+fn nudged(mut pcm: Vec<f32>) -> Vec<f32> {
+    if !pcm.is_empty() && (pcm.len() / 160).is_multiple_of(8) {
+        pcm.resize(pcm.len() + 160, 0.0);
+    }
+    pcm
+}
+
 fn run(
     queue: mpsc::Receiver<Message>,
     supervisor: EngineSupervisor,
     pins: Arc<AtomicUsize>,
     dictating: Arc<AtomicUsize>,
+    dictation_cancels: Arc<AtomicU64>,
+    serving: Arc<Mutex<bool>>,
+    hears: fn(&[f32], f32) -> Result<bool>,
 ) {
     let mut pending: Vec<Job> = Vec::new();
     let mut last_work = Instant::now();
@@ -428,6 +508,8 @@ fn run(
                 }
                 Message::Stream {
                     selected,
+                    words,
+                    cancels,
                     audio,
                     mut text,
                     reply,
@@ -441,12 +523,19 @@ fn run(
                             })?;
                             model = Some(selected.path.clone());
                         }
+                        {
+                            let mut serving = lock(&serving);
+                            ensure!(
+                                dictation_cancels.load(Ordering::Acquire) == cancels,
+                                EngineError::Cancelled
+                            );
+                            *serving = true;
+                        }
+                        let vocabulary = supervisor
+                            .loaded()
+                            .is_some_and(|info| info.supports_vocabulary);
                         let stream = supervisor.start_stream(
-                            RunOptions {
-                                language: (selected.language != "auto")
-                                    .then_some(selected.language),
-                                ..Default::default()
-                            },
+                            run_options(&selected, words, vocabulary),
                             Default::default(),
                             move |progress| {
                                 if let Some(snapshot) = progress.text {
@@ -458,6 +547,10 @@ fn run(
                         let mut heard = Heard::default();
                         let mut open = true;
                         while open || !heard.queued.is_empty() {
+                            ensure!(
+                                dictation_cancels.load(Ordering::Acquire) == cancels,
+                                EngineError::Cancelled
+                            );
                             ensure!(
                                 started.elapsed() < Duration::from_secs(310),
                                 "Dictation reached five minutes. Start another dictation."
@@ -492,6 +585,7 @@ fn run(
                             .map(|f| f.text.full)
                             .unwrap_or_default())
                     })();
+                    *lock(&serving) = false;
                     let _ = reply.send(result);
                     last_work = Instant::now();
                 }
@@ -540,7 +634,10 @@ fn run(
             }
         }
         if pending.is_empty() {
-            if pins.load(Ordering::Acquire) == 0 && last_work.elapsed() >= IDLE {
+            if pins.load(Ordering::Acquire) == 0
+                && dictating.load(Ordering::Acquire) == 0
+                && last_work.elapsed() >= IDLE
+            {
                 supervisor.unload().wait();
                 model = None;
             }
@@ -551,6 +648,10 @@ fn run(
             continue;
         }
         let mut job = pending.remove(0);
+        if cancelled_dictation(&job, &dictation_cancels) {
+            let _ = job.reply.send(Err(EngineError::Cancelled.into()));
+            continue;
+        }
         let result = (|| -> Result<()> {
             if model.as_ref() != Some(&job.selected.path) || supervisor.loaded().is_none() {
                 supervisor.load(LoadSpec {
@@ -564,19 +665,29 @@ fn run(
                 let pcm = if job.priority == Priority::Dictation {
                     padded(chunk)
                 } else {
-                    if heard_speech(&chunk, job.gain)? {
+                    if hears(&chunk, job.gain)? {
                         chunk
                     } else {
                         Vec::new()
                     }
                 };
                 if !pcm.is_empty() {
-                    let run = RunOptions {
-                        language: (job.selected.language != "auto")
-                            .then(|| job.selected.language.clone()),
-                        ..RunOptions::default()
+                    let mark = {
+                        let mut serving = lock(&serving);
+                        ensure!(
+                            !cancelled_dictation(&job, &dictation_cancels),
+                            EngineError::Cancelled
+                        );
+                        *serving = job.priority == Priority::Dictation;
+                        supervisor.cancel_mark()
                     };
-                    job.text.push(supervisor.transcribe(pcm, run)?.text);
+                    let vocabulary = supervisor
+                        .loaded()
+                        .is_some_and(|info| info.supports_vocabulary);
+                    let run = run_options(&job.selected, job.words.clone(), vocabulary);
+                    let heard = supervisor.transcribe_since(mark, nudged(pcm), run);
+                    *lock(&serving) = false;
+                    job.text.push(heard?.text);
                 }
             }
             Ok(())
@@ -765,7 +876,7 @@ mod tests {
                     streaming: false,
                     live: true,
                 };
-                let result = engine.transcribe(selected, Vec::new(), Priority::Segment);
+                let result = engine.transcribe(selected, Vec::new(), Priority::Segment, Vec::new());
                 let _ = send.send(result);
             }));
         }
@@ -891,5 +1002,139 @@ mod heard_tests {
             long.take(vec![0.0; 16_000]).unwrap();
         }
         assert!(long.take(vec![0.0; 1]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod option_tests {
+    use super::*;
+
+    #[test]
+    fn lengths_that_lose_parakeet_text_get_one_more_hop() {
+        assert!(nudged(Vec::new()).is_empty());
+        assert_eq!(nudged(vec![0.5; 1_280]).len(), 1_440);
+        assert_eq!(nudged(vec![0.5; 1_439]).len(), 1_599);
+        assert_eq!(nudged(vec![0.5; 1_440]).len(), 1_440);
+        assert_eq!(nudged(padded(vec![0.5; 4_000])).len(), SHORT_CLIP_PADDED);
+    }
+
+    #[test]
+    fn custom_words_reach_only_models_that_take_vocabulary() {
+        let selected = Selected {
+            id: "test".into(),
+            language: "auto".into(),
+            path: "unused".into(),
+            streaming: false,
+            live: false,
+        };
+        let words = vec!["Leo".to_string()];
+        let damaged = vec!["Leo".to_string(), "a\0b".to_string()];
+        assert_eq!(run_options(&selected, damaged, true).vocabulary, words);
+        assert_eq!(
+            run_options(&selected, words.clone(), true).vocabulary,
+            words
+        );
+        let run = run_options(&selected, words, false);
+        assert!(run.vocabulary.is_empty());
+        assert_eq!(run.language, None);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod cancel_tests {
+    use super::super::supervisor::fake_tests::{fake, ENV};
+    use super::*;
+
+    fn appears(path: &Path) {
+        let started = Instant::now();
+        while !path.exists() {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn selected(dir: &Path, mode: &str) -> Selected {
+        Selected {
+            id: "test".into(),
+            language: "en".into(),
+            path: dir.join(mode),
+            streaming: false,
+            live: false,
+        }
+    }
+
+    fn start(
+        engine: &Arc<Engine>,
+        selected: Selected,
+        priority: Priority,
+    ) -> std::thread::JoinHandle<Result<String>> {
+        let engine = engine.clone();
+        std::thread::spawn(move || {
+            engine.transcribe(selected, vec![0.2; 1_600], priority, Vec::new())
+        })
+    }
+
+    fn cancelled(answer: Result<String>) -> bool {
+        matches!(
+            answer.unwrap_err().downcast_ref::<EngineError>(),
+            Some(EngineError::Cancelled)
+        )
+    }
+
+    #[test]
+    fn a_dictation_cancel_leaves_a_recording_call_running() {
+        let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = fake();
+        let engine = Arc::new(Engine::with(|_, _| Ok(true)));
+        let segment = start(&engine, selected(dir.path(), "waits"), Priority::Segment);
+        appears(&dir.path().join("running"));
+        engine.cancel();
+        std::fs::write(dir.path().join("go"), "").unwrap();
+        assert_eq!(segment.join().unwrap().unwrap(), "local words");
+        engine.stop().unwrap();
+        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
+    }
+
+    #[test]
+    fn a_dictation_waiting_behind_a_recording_call_cancels_at_once() {
+        let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = fake();
+        let engine = Arc::new(Engine::with(|_, _| Ok(true)));
+        let segment = start(&engine, selected(dir.path(), "waits"), Priority::Segment);
+        appears(&dir.path().join("running"));
+        let dictation = start(&engine, selected(dir.path(), "waits"), Priority::Dictation);
+        while engine.admitted.load(Ordering::Acquire) < 2 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let asked = Instant::now();
+        engine.cancel();
+        assert!(cancelled(dictation.join().unwrap()));
+        assert!(asked.elapsed() < Duration::from_millis(200));
+        std::fs::write(dir.path().join("go"), "").unwrap();
+        assert_eq!(segment.join().unwrap().unwrap(), "local words");
+        engine.stop().unwrap();
+        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
+    }
+
+    #[test]
+    fn a_dictation_cancelled_while_its_model_loads_is_never_transcribed() {
+        let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = fake();
+        let engine = Arc::new(Engine::with(|_, _| Ok(true)));
+        let dictation = start(
+            &engine,
+            selected(dir.path(), "loadwaits"),
+            Priority::Dictation,
+        );
+        appears(&dir.path().join("loading"));
+        engine.cancel();
+        assert!(cancelled(dictation.join().unwrap()));
+        std::fs::write(dir.path().join("go"), "").unwrap();
+        engine
+            .edit_model("unused".into(), false, || Ok(serde_json::json!({})))
+            .unwrap();
+        assert!(!dir.path().join("running").exists());
+        engine.stop().unwrap();
+        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
     }
 }

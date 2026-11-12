@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
 use transcribe_cpp::{
-    Backend, BackendMask, DeviceType, Feature, Model, ModelOptions, Session, Stream,
+    Backend, BackendMask, DeviceType, ErrorKind, Feature, Model, ModelOptions, Session, Stream,
 };
 
 pub(super) const LOG_LINE_PREFIX: &str = "\u{1}";
@@ -96,7 +96,7 @@ pub fn run() -> i32 {
                     inject_fault("run", info.on_gpu);
                     match session.run(&pcm, &options) {
                         Ok(transcript) => Response::Transcript(transcript),
-                        Err(e) => Response::Error(e.to_string()),
+                        Err(e) => run_error(e),
                     }
                 }
                 None => not_loaded(),
@@ -114,7 +114,7 @@ pub fn run() -> i32 {
                         }
                         continue;
                     }
-                    Err(e) => Response::Error(e.to_string()),
+                    Err(e) => run_error(e),
                 },
                 None => not_loaded(),
             },
@@ -172,7 +172,7 @@ fn serve_stream(
                             .then(|| stream.text());
                         (Response::Fed { update, text }, false)
                     }
-                    Err(e) => (Response::Error(e.to_string()), false),
+                    Err(e) => (run_error(e), false),
                 }
             }
             Request::Finalize { want_language } => {
@@ -194,7 +194,7 @@ fn serve_stream(
                             true,
                         )
                     }
-                    Err(e) => (Response::Error(e.to_string()), true),
+                    Err(e) => (run_error(e), true),
                 }
             }
             Request::StreamReset => {
@@ -216,6 +216,14 @@ fn serve_stream(
 
 fn not_loaded() -> Response {
     Response::Error("no model loaded".to_string())
+}
+
+fn run_error(e: transcribe_cpp::Error) -> Response {
+    if e.kind() == ErrorKind::Backend {
+        Response::BackendError(e.to_string())
+    } else {
+        Response::Error(e.to_string())
+    }
 }
 
 fn load(

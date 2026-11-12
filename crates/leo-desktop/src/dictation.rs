@@ -369,12 +369,16 @@ impl Dictation {
         let this = self.clone();
         let mut stream = if live {
             engine()
-                .stream(selected.clone(), move |committed, tentative| {
-                    this.change(id, |state| {
-                        state["committed"] = json!(newest(&committed));
-                        state["tentative"] = json!(newest(&tentative));
-                    });
-                })
+                .stream(
+                    selected.clone(),
+                    settings.custom_words.clone(),
+                    move |committed, tentative| {
+                        this.change(id, |state| {
+                            state["committed"] = json!(newest(&committed));
+                            state["tentative"] = json!(newest(&tentative));
+                        });
+                    },
+                )
                 .ok()
         } else {
             None
@@ -473,7 +477,12 @@ impl Dictation {
                 } else {
                     kept
                 };
-                engine().transcribe(selected.clone(), audio, Priority::Dictation)?
+                engine().transcribe(
+                    selected.clone(),
+                    audio,
+                    Priority::Dictation,
+                    settings.custom_words.clone(),
+                )?
             }
         };
         ensure!(self.generation.current(id), "Dictation cancelled.");
