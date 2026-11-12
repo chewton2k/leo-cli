@@ -264,6 +264,53 @@ pub fn draft_prompt(
     })
 }
 
+fn untitled(reply: &str) -> bool {
+    reply.starts_with("## ")
+        && reply
+            .lines()
+            .skip(1)
+            .find(|l| !l.trim().is_empty())
+            .is_none_or(|l| {
+                ["- ", "* ", "#", ">", "|", "```", "$$", "1. "]
+                    .iter()
+                    .any(|m| l.starts_with(m))
+            })
+}
+
+fn commitments_kept(body: String, commitments: &str) -> String {
+    let flat = body.to_lowercase();
+    let missing: Vec<&str> = commitments
+        .lines()
+        .filter(|l| {
+            let text = l.trim().trim_start_matches(['-', '*', ' ']);
+            let text = text
+                .trim_start_matches("[ ]")
+                .trim_start_matches("[x]")
+                .trim();
+            !text.is_empty() && !flat.contains(&text.to_lowercase())
+        })
+        .collect();
+    if missing.is_empty() {
+        return body;
+    }
+    let mut lines: Vec<&str> = body.lines().collect();
+    let find = |lines: &[&str], heading: &str| lines.iter().position(|l| l.trim() == heading);
+    match (
+        find(&lines, "## Action items"),
+        find(&lines, "## Check yourself"),
+    ) {
+        (Some(i), _) => drop(lines.splice(i + 1..i + 1, missing)),
+        (None, Some(k)) => {
+            let section = std::iter::once("## Action items")
+                .chain(missing)
+                .chain([""]);
+            drop(lines.splice(k..k, section));
+        }
+        (None, None) => lines.extend(["", "## Action items"].into_iter().chain(missing)),
+    }
+    lines.join("\n").trim().to_string()
+}
+
 fn close_with_drafts(
     parts: &[Part],
     points: &[Jotted],
@@ -276,8 +323,9 @@ fn close_with_drafts(
     let mut covered = parts.iter().take_while(|p| p.index < drafted.upto).count();
     let mut notes = drafted.notes.trim().to_string();
     let mut commitments = drafted.commitments.trim().to_string();
+    let mut problems = Vec::new();
     progress(0, 1);
-    let closing = loop {
+    let (prompt, rest) = loop {
         let rest = text_from(parts, covered, parts.len());
         let from = covered.checked_sub(1).map_or(0, |i| parts[i].end_secs);
         let prompt = chat::build_close_prompt(
@@ -287,26 +335,44 @@ fn close_with_drafts(
             &points_between(points, from, None),
         );
         if fits(&prompt, budget) {
-            break Ok((prompt, rest));
+            break (prompt, rest);
         }
         let (draft, n) = draft_prompt(&parts[covered..], &notes, points, budget)?;
-        let reply = match chat_fn(draft, super::STRUCTURE_MAX_TOKENS) {
-            Ok(reply) => reply,
-            Err(e) => break Err((e, rest)),
-        };
-        let (more, found) = split_drafted(&chat::clean_reply(&reply));
-        notes = joined(&notes, &more);
-        commitments = joined(&commitments, &found).replace("\n\n", "\n");
+        let drafted = chat_fn(draft, super::STRUCTURE_MAX_TOKENS)
+            .map(|reply| split_drafted(&chat::clean_reply(&reply)))
+            .map_err(|e| super::writing_error(&e))
+            .and_then(|(more, found)| {
+                if more.is_empty() && found.is_empty() {
+                    Err("The AI returned an empty part.".to_string())
+                } else {
+                    Ok((more, found))
+                }
+            });
+        match drafted {
+            Ok((more, found)) => {
+                notes = joined(&notes, &more);
+                commitments = joined(&commitments, &found).replace("\n\n", "\n");
+            }
+            Err(why) => {
+                let (start, end) = (parts[covered].start_secs, parts[covered + n - 1].end_secs);
+                problems.push(format!(
+                    "{why} The transcript from {} to {} is saved as it is.",
+                    clock(start),
+                    clock(end)
+                ));
+                notes = joined(
+                    &notes,
+                    &raw(&[], "Transcript", &text_from(parts, covered, covered + n)),
+                );
+            }
+        }
         covered += n;
     };
-    let (reply, rest) = match closing {
-        Ok((prompt, rest)) => (chat_fn(prompt, super::STRUCTURE_MAX_TOKENS), rest),
-        Err((e, rest)) => (Err(e), rest),
-    };
+    let reply = chat_fn(prompt, super::STRUCTURE_MAX_TOKENS);
     progress(1, 1);
-    let (title, body, problems, writer_failed) = match reply.map(|r| chat::clean_reply(&r)) {
+    let (title, body, writer_failed) = match reply.map(|r| chat::clean_reply(&r)) {
         Ok(reply) if !reply.is_empty() => {
-            let (title, body) = if reply.starts_with("## ") {
+            let (title, body) = if untitled(&reply) {
                 (fallback_title.to_string(), reply)
             } else {
                 chat::split_title_body(&reply)
@@ -318,7 +384,7 @@ fn close_with_drafts(
             let summary: Vec<&str> = body.lines().take(at).collect();
             let sections: Vec<&str> = body.lines().skip(at).collect();
             let body = joined(&joined(&summary.join("\n"), &notes), &sections.join("\n"));
-            (title, body, Vec::new(), false)
+            (title, commitments_kept(body, &commitments), false)
         }
         outcome => {
             let why = match outcome {
@@ -332,14 +398,10 @@ fn close_with_drafts(
             if !rest.trim().is_empty() {
                 body = joined(&body, &raw(&[], "Transcript", &rest));
             }
-            (
-                fallback_title.to_string(),
-                body,
-                vec![format!(
-                    "{why} The notes written during the recording are kept, and the rest of the transcript is saved as it is."
-                )],
-                true,
-            )
+            problems.push(format!(
+                "{why} The notes written during the recording are kept, and the rest of the transcript is saved as it is."
+            ));
+            (fallback_title.to_string(), body, true)
         }
     };
     Some(Structured {
@@ -348,6 +410,17 @@ fn close_with_drafts(
         problems,
         writer_failed,
     })
+}
+
+pub fn room_after_profile(
+    budget: super::budget::Budget,
+    profile: &leo_core::recording::Profile,
+) -> super::budget::Budget {
+    let added = profile.context.chars().count() + profile.wants.chars().count() * 2 + 600;
+    super::budget::Budget {
+        words: budget.words.saturating_sub(added.div_ceil(6)),
+        ..budget
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1367,7 +1440,120 @@ mod tests {
         let (prompt, n) = draft_prompt(&parts, &notes, &points, ollama).unwrap();
         assert_eq!(n, 1);
         assert!(prompt.user.contains("slide slide") && prompt.user.contains("a539"));
-        assert!(!prompt.user.contains(&notes_context(&notes, ollama.chars() / 3)));
+        assert!(!prompt
+            .user
+            .contains(&notes_context(&notes, ollama.chars() / 3)));
+    }
+
+    #[test]
+    fn drafted_commitments_are_kept_when_the_close_leaves_them_out() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let mut early = drafted(1, "## Layout\n- a");
+        early.commitments = "- [ ] HW 4 due Friday".into();
+        let chat = |_: Prompt, _: u32| -> Result<String> {
+            Ok("T\n\nS.\n\n## Caching\n- c\n\n## Check yourself\n> q".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&early),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(
+            s.body
+                .ends_with("## Action items\n- [ ] HW 4 due Friday\n\n## Check yourself\n> q"),
+            "{}",
+            s.body
+        );
+        let chat = |_: Prompt, _: u32| -> Result<String> {
+            Ok("T\n\nS.\n\n## Action items\n- [ ] Quiz Monday".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&early),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(
+            s.body
+                .contains("## Action items\n- [ ] HW 4 due Friday\n- [ ] Quiz Monday"),
+            "{}",
+            s.body
+        );
+        assert_eq!(s.body.matches("## Action items").count(), 1);
+    }
+
+    #[test]
+    fn an_empty_catch_up_draft_keeps_that_stretch_as_transcript() {
+        let parts = [part(0, 900, "a"), part(1, 900, "b"), part(2, 900, "c")];
+        let window = Budget {
+            words: 1_700,
+            at_once: 1,
+        };
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            Ok(if p.system.contains("finish study notes") {
+                "T\n\nS.\n\n## Caching\n- c".into()
+            } else {
+                "## Check yourself\n> q".into()
+            })
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "R",
+            &chat,
+            &|_, _| {},
+            window,
+        );
+        assert!(!s.writer_failed);
+        assert!(
+            s.body.contains("b0 b1") && s.body.contains("c0 c1") && s.body.contains("## Caching")
+        );
+        assert!(!s.problems.is_empty());
+    }
+
+    #[test]
+    fn a_title_written_as_a_heading_is_still_the_title() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let chat = |_: Prompt, _: u32| -> Result<String> {
+            Ok("## Disk Scheduling\n\nHow the arm is scheduled.\n\n## Seek time\n- s".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout")),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert_eq!(s.title, "Disk Scheduling");
+        assert!(s.body.starts_with("How the arm is scheduled."));
+    }
+
+    #[test]
+    fn what_the_profile_adds_is_taken_out_of_the_room() {
+        let profile = leo_core::recording::Profile {
+            context: "x".repeat(6_000),
+            wants: "w".repeat(600),
+        };
+        let room = room_after_profile(TEST, &profile);
+        assert!(room.chars() <= TEST.chars() - 7_200 - 600);
+        assert_eq!(
+            room_after_profile(TEST, &Default::default()).words,
+            TEST.words - 100
+        );
     }
 
     #[test]

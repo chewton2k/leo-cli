@@ -539,11 +539,11 @@ impl ChatProvider for OpenAiChat {
         req: &ChatRequest,
         stopped: &dyn Fn() -> bool,
     ) -> ProviderResult<String> {
-        if crate::ai::loopback(&self.base_url) {
-            return self.stream_until(req, &mut |_| {}, stopped);
-        }
         if stopped() {
             return Err(ProviderError::Fatal("The answer was stopped.".into()));
+        }
+        if crate::ai::loopback(&self.base_url) {
+            return self.stream_until(req, &mut |_| {}, stopped);
         }
         self.complete(req)
     }
@@ -739,15 +739,22 @@ mod tests {
 
     #[test]
     fn a_local_answer_stops_between_streamed_lines_when_asked() {
-        let stream =
-            "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: [DONE]\n\n";
+        let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" stay\"}}]}\n\ndata: [DONE]\n\n";
         let provider = local(refuse_once("200 OK", stream));
-        match provider.complete_until(&ask(), &|| true) {
+        let asked = std::cell::Cell::new(0);
+        let later = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 2
+        };
+        match provider.complete_until(&ask(), &later) {
             Err(ProviderError::Fatal(message)) => assert!(message.contains("stopped")),
             other => panic!("expected a stop, got {other:?}"),
         }
         let provider = local(refuse_once("200 OK", stream));
-        assert_eq!(provider.complete_until(&ask(), &|| false).unwrap(), "Heaps");
+        assert_eq!(
+            provider.complete_until(&ask(), &|| false).unwrap(),
+            "Heaps stay"
+        );
     }
 
     #[test]

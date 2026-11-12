@@ -214,7 +214,8 @@ impl Drafter {
         let (notes, commitments) = self.done.as_ref().map_or_else(Default::default, |d| {
             (d.notes.clone(), d.commitments.clone())
         });
-        let Some((prompt, n)) = draft_prompt(&fresh, &notes, &points, self.budget) else {
+        let room = crate::ai::long::room_after_profile(self.budget, &profile);
+        let Some((prompt, n)) = draft_prompt(&fresh, &notes, &points, room) else {
             self.ended = true;
             session.trace(
                 "draft-ended",
@@ -933,7 +934,7 @@ pub fn write_up(
             })
         },
         progress,
-        crate::ai::writing_budget(),
+        crate::ai::long::room_after_profile(crate::ai::writing_budget(), &session.manifest.profile),
     );
     let notice = session::failure_notice(&assembled.failed, dir);
     let body = if notice.is_empty() {
@@ -1132,6 +1133,7 @@ mod tests {
             started.store(true, Ordering::SeqCst);
             while !release.load(Ordering::SeqCst) {
                 if stopped() {
+                    release.store(true, Ordering::SeqCst);
                     anyhow::bail!("stopped")
                 }
                 std::thread::sleep(Duration::from_millis(5));
@@ -1350,7 +1352,10 @@ mod tests {
         drafter.finish(&AtomicBool::new(true), &|event| {
             said.lock().unwrap().push(event)
         });
-        assert!(!release.load(Ordering::SeqCst));
+        assert!(
+            release.load(Ordering::SeqCst),
+            "the draft saw the stop before finish returned"
+        );
         assert!(!session.dir.join(DRAFTS).exists());
         assert!(matches!(
             &said.lock().unwrap()[..],
