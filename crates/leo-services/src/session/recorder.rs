@@ -183,6 +183,12 @@ impl Drafter {
             self.ended = segments.first().is_some_and(|s| {
                 s.index == upto && matches!(s.state, session::SegmentState::Failed(_))
             });
+            if self.ended {
+                session.trace(
+                    "draft-ended",
+                    "a part of the recording could not be transcribed",
+                );
+            }
             return;
         }
         let fresh = session::assemble(&run, session.manifest.segment_secs).parts;
@@ -210,6 +216,10 @@ impl Drafter {
         });
         let Some((prompt, n)) = draft_prompt(&fresh, &notes, &points, self.budget) else {
             self.ended = true;
+            session.trace(
+                "draft-ended",
+                "the next stretch is too long for the writing AI",
+            );
             return;
         };
         let Ok(lease) = leo_core::activity::global().begin() else {
@@ -660,6 +670,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         input,
         draft,
     } = request;
+    let drafting = draft.is_some() && append_to.is_none();
     let mut drafter = draft
         .filter(|_| append_to.is_none())
         .map(|chat| Drafter::new(chat, crate::ai::writing_budget()));
@@ -673,6 +684,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         }
         let session = Session::create(&root, manifest)?;
         session.trace("capture", "Recording started");
+        session.trace("drafting", if drafting { "on" } else { "off" });
         let lock = session.lock()?;
         let opened = Capture::start(&session.dir, 0, session.manifest.segment_secs, input);
         match opened {
@@ -1256,6 +1268,8 @@ mod tests {
         let mut drafter = Drafter::new(counting(&calls, "## A"), budget());
         drafter.tick(&failed, 0);
         assert!(drafter.ended);
+        let trace = std::fs::read_to_string(failed.dir.join("trace.jsonl")).unwrap();
+        assert!(trace.contains("draft-ended"));
         let session = drafting_session(root.path(), &[("seg-00000.txt", "words")]);
         let mut drafter = Drafter::new(counting(&calls, ""), budget());
         drafter.tick(&session, 0);
