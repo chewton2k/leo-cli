@@ -274,7 +274,7 @@ fn close_with_drafts(
     let mut notes = drafted.notes.trim().to_string();
     let mut commitments = drafted.commitments.trim().to_string();
     progress(0, 1);
-    let (prompt, rest) = loop {
+    let closing = loop {
         let rest = text_from(parts, covered, parts.len());
         let from = covered.checked_sub(1).map_or(0, |i| parts[i].end_secs);
         let prompt = chat::build_close_prompt(
@@ -284,16 +284,22 @@ fn close_with_drafts(
             &points_between(points, from, None),
         );
         if fits(&prompt, budget) {
-            break (prompt, rest);
+            break Ok((prompt, rest));
         }
         let (draft, n) = draft_prompt(&parts[covered..], &notes, points, budget)?;
-        let reply = chat_fn(draft, super::STRUCTURE_MAX_TOKENS).ok()?;
+        let reply = match chat_fn(draft, super::STRUCTURE_MAX_TOKENS) {
+            Ok(reply) => reply,
+            Err(e) => break Err((e, rest)),
+        };
         let (more, found) = split_drafted(&chat::clean_reply(&reply));
         notes = joined(&notes, &more);
         commitments = joined(&commitments, &found).replace("\n\n", "\n");
         covered += n;
     };
-    let reply = chat_fn(prompt, super::STRUCTURE_MAX_TOKENS);
+    let (reply, rest) = match closing {
+        Ok((prompt, rest)) => (chat_fn(prompt, super::STRUCTURE_MAX_TOKENS), rest),
+        Err((e, rest)) => (Err(e), rest),
+    };
     progress(1, 1);
     let (title, body, problems, writer_failed) = match reply.map(|r| chat::clean_reply(&r)) {
         Ok(reply) if !reply.is_empty() => {
@@ -1252,6 +1258,30 @@ mod tests {
         assert_eq!(
             s.body,
             "S.\n\n## Layout\n- a\n\n## Seeking\n- b\n\n## Caching\n- c"
+        );
+    }
+
+    #[test]
+    fn a_failed_catch_up_draft_keeps_the_drafts_and_the_rest() {
+        let parts = [part(0, 900, "a"), part(1, 900, "b"), part(2, 900, "c")];
+        let window = Budget {
+            words: 1_700,
+            at_once: 1,
+        };
+        let chat = |_: Prompt, _: u32| -> Result<String> { anyhow::bail!("busy") };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "R",
+            &chat,
+            &|_, _| {},
+            window,
+        );
+        assert!(s.writer_failed);
+        assert!(
+            s.body.starts_with("## Layout\n- a") && s.body.contains("b0") && s.body.contains("c0")
         );
     }
 

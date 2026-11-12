@@ -90,15 +90,16 @@ exists), keyed over the drafted parts' texts, the points typed in them and the p
 Earlier notes reach a draft through `long::notes_context` (≤ 8,000 chars: the most recent
 headings plus the last 4,000 chars) and the close at a third of the budget. At Stop the
 running draft is joined after the tail is transcribed; Finish now stops it (agent CLIs are
-killed; an OpenAI-compatible request runs to its own timeout) and still joins.
+killed; a loopback OpenAI-compatible stream such as Ollama's stops between lines) and still
+joins.
 `write_up` uses `drafts_for` (key must match; never for an append, including a resumed
 session whose drafts.json still matches) and `structure_recording` makes one closing call
 (`chat::build_close_prompt`: notes so far, every commitment, the rest of the transcript) that
 writes the title, summary, the remaining sections, Action items and Check yourself; the note
 is summary, drafts, then those sections. When the rest is too long for one close (a small
 local budget), the rest is drafted first, one stretch at a time, then closed; a stretch that
-cannot fit at all means the one-pass path. A failed close keeps the drafts, their action
-items and the raw rest (`writer_failed`). Live (synthetic 9.3-min EE116, Stop to note):
+cannot fit at all means the one-pass path. A failed close or catch-up draft keeps the
+drafts, their action items and the raw rest (`writer_failed`). Live (synthetic 9.3-min EE116, Stop to note):
 Codex 53.3 s → 37.8 s, Claude Code Opus 5.5 91.9 s → 39.0 s. Recordings under one segment,
 appends, two-track call recordings and `recover` keep the one-pass path. `Session::finish` deletes the folder
 unless a segment failed (then `saved: true` keeps the audio). Unfinished
