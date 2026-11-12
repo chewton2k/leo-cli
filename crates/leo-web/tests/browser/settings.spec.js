@@ -196,7 +196,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = pageCss();
-  const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
+  const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector), ON_MAC=true;
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)}, saving={drafts:()=>[]};
