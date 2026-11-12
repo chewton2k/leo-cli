@@ -490,7 +490,7 @@ fn resume_retained(
 
 fn draft_fn() -> Option<recorder::DraftFn> {
     leo_services::ai::writing_ready().then(|| -> recorder::DraftFn {
-        Arc::new(|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value))
+        Arc::new(|prompt, max, stopped| leo_services::ai::chat_outcome_until(prompt, max, stopped))
     })
 }
 

@@ -21,8 +21,10 @@ total).
 model) → `ai::long::structure_recording` runs the `[chat]` chain → note saved.
 While recording, `recorder::Drafter` (injected `Request.draft`; tests pass None)
 drafts each finished stretch into `drafts.json`, one call at a time, never while
-speech is behind; after Stop one closing call writes the rest around the drafts
-(`drafts_for` key must match, else the one-pass path). Details in docs/behaviour.md.
+speech is behind; Finish now cancels a running draft and Stop always joins it.
+After Stop one closing call writes the rest around the drafts and every drafted
+action item (`drafts_for` key must match, else the one-pass path; a rest too long
+for the budget is drafted first). Details in docs/behaviour.md.
 
 Each chain skips unavailable providers silently, advances past retryable errors
 (402/408/429/5xx, refused connections) and aborts on fatal ones

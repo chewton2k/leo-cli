@@ -109,11 +109,19 @@ fn caught<T>(work: impl FnOnce() -> T) -> Result<T, String> {
     })
 }
 
-pub type DraftFn =
-    Arc<dyn Fn(crate::ai::chat::Prompt, u32) -> anyhow::Result<String> + Send + Sync>;
+pub type DraftFn = Arc<
+    dyn Fn(
+            crate::ai::chat::Prompt,
+            u32,
+            &dyn Fn() -> bool,
+        ) -> anyhow::Result<crate::ai::chain::ChainOutcome<String>>
+        + Send
+        + Sync,
+>;
 
 const DRAFTS: &str = "drafts.json";
 const DRAFT_EVERY: Duration = Duration::from_secs(2);
+const MOST_DRAFT_FAILURES: usize = 2;
 
 pub struct Drafter {
     chat: DraftFn,
@@ -121,6 +129,8 @@ pub struct Drafter {
     done: Option<Drafted>,
     profile: leo_core::recording::Profile,
     running: Option<std::thread::JoinHandle<Option<Drafted>>>,
+    cancel: Arc<AtomicBool>,
+    failures: usize,
     ended: bool,
 }
 
@@ -132,6 +142,8 @@ impl Drafter {
             done: None,
             profile: Default::default(),
             running: None,
+            cancel: Default::default(),
+            failures: 0,
             ended: false,
         }
     }
@@ -140,7 +152,10 @@ impl Drafter {
         if self.running.as_ref().is_some_and(|run| run.is_finished()) {
             match self.running.take().map(|run| run.join()) {
                 Some(Ok(Some(drafted))) => self.done = Some(drafted),
-                _ => self.ended = true,
+                _ => {
+                    self.failures += 1;
+                    self.ended = self.failures >= MOST_DRAFT_FAILURES;
+                }
             }
         }
         if self.ended || self.running.is_some() || backlog > 0 {
@@ -175,24 +190,24 @@ impl Drafter {
         let points = session.manifest.jotted();
         let profile = self.profile.clone();
         let dir = session.dir.clone();
-        if fresh.iter().all(|p| p.text.trim().is_empty()) {
+        let (start, end) = (fresh[0].start_secs, fresh[fresh.len() - 1].end_secs);
+        let typed = points.iter().any(|p| p.at_secs >= start && p.at_secs < end);
+        if !typed && fresh.iter().all(|p| p.text.trim().is_empty()) {
             if let Some(done) = self.done.take() {
                 let upto = upto + run.len() as u32;
                 let next = Drafted {
                     upto,
                     key: draft_key(&all, &points, &profile, upto),
-                    notes: done.notes,
+                    ..done
                 };
                 keep_draft(&dir, &next);
                 self.done = Some(next);
             }
             return;
         }
-        let notes = self
-            .done
-            .as_ref()
-            .map_or("", |d| d.notes.as_str())
-            .to_string();
+        let (notes, commitments) = self.done.as_ref().map_or_else(Default::default, |d| {
+            (d.notes.clone(), d.commitments.clone())
+        });
         let Some((prompt, n)) = draft_prompt(&fresh, &notes, &points, self.budget) else {
             self.ended = true;
             return;
@@ -203,42 +218,71 @@ impl Drafter {
         let upto = fresh[n - 1].index + 1;
         let key = draft_key(&all, &points, &profile, upto);
         let chat = self.chat.clone();
+        let cancel = self.cancel.clone();
         let prompt = crate::ai::long::with_profile(prompt, &profile);
         self.running = Some(std::thread::spawn(move || {
             let _lease = lease;
-            let reply = caught(|| chat(prompt, crate::ai::STRUCTURE_MAX_TOKENS))
-                .ok()?
-                .ok()?;
-            let reply = crate::ai::chat::clean_reply(&reply);
-            if reply.is_empty() {
+            let stopped = || cancel.load(Ordering::Relaxed);
+            let reply = match caught(|| chat(prompt, crate::ai::STRUCTURE_MAX_TOKENS, &stopped)) {
+                Ok(Ok(outcome)) => {
+                    draft_trace(
+                        &dir,
+                        "draft-provider",
+                        &format!(
+                            "{}; {} fallback(s)",
+                            outcome.provider,
+                            outcome.fallbacks.len()
+                        ),
+                    );
+                    outcome.value
+                }
+                Ok(Err(e)) => {
+                    draft_trace(&dir, "draft-failed", &crate::ai::writing_error(&e));
+                    return None;
+                }
+                Err(panic) => {
+                    draft_trace(&dir, "draft-failed", &panic);
+                    return None;
+                }
+            };
+            let (more, found) =
+                crate::ai::long::split_drafted(&crate::ai::chat::clean_reply(&reply));
+            if more.is_empty() && found.is_empty() {
+                draft_trace(&dir, "draft-failed", "the AI returned an empty draft");
                 return None;
             }
             let drafted = Drafted {
                 upto,
                 key,
-                notes: [notes.trim(), reply.as_str()]
-                    .iter()
-                    .filter(|s| !s.is_empty())
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join("\n\n"),
+                notes: crate::ai::long::joined(&notes, &more),
+                commitments: crate::ai::long::joined(&commitments, &found).replace("\n\n", "\n"),
             };
             keep_draft(&dir, &drafted);
             Some(drafted)
         }));
     }
 
-    pub fn finish(mut self, wait: bool, emit: &dyn Fn(Event)) {
+    pub fn finish(mut self, finish_now: &AtomicBool, emit: &dyn Fn(Event)) {
         let Some(run) = self.running.take() else {
             return;
         };
-        if wait {
-            emit(Event::Progress {
-                label: "Writing the notes so far".to_string(),
-                steps: None,
-            });
-            let _ = run.join();
+        emit(Event::Progress {
+            label: "Writing the notes so far".to_string(),
+            steps: None,
+        });
+        while !run.is_finished() {
+            if finish_now.load(Ordering::Relaxed) {
+                self.cancel.store(true, Ordering::Relaxed);
+            }
+            std::thread::sleep(POLL);
         }
+        let _ = run.join();
+    }
+}
+
+fn draft_trace(dir: &Path, kind: &str, message: &str) {
+    if let Ok(session) = Session::open(dir) {
+        session.trace(kind, message);
     }
 }
 
@@ -783,7 +827,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         &controls.finish_now,
     );
     if let Some(drafter) = drafter {
-        drafter.finish(!controls.finish_now.load(Ordering::Relaxed), emit);
+        drafter.finish(&controls.finish_now, emit);
     }
 }
 
@@ -1050,15 +1094,46 @@ mod tests {
         session
     }
 
+    fn answer(text: &str) -> anyhow::Result<crate::ai::chain::ChainOutcome<String>> {
+        Ok(crate::ai::chain::ChainOutcome {
+            value: text.to_string(),
+            provider: "fake".into(),
+            fallbacks: Vec::new(),
+            spent: None,
+        })
+    }
+
     fn counting(calls: &Arc<std::sync::atomic::AtomicUsize>, reply: &'static str) -> DraftFn {
         let calls = calls.clone();
-        Arc::new(move |_, _| {
+        Arc::new(move |_, _, _| {
             calls.fetch_add(1, Ordering::SeqCst);
             if reply.is_empty() {
                 anyhow::bail!("busy")
             }
-            Ok(reply.to_string())
+            answer(reply)
         })
+    }
+
+    fn gated(release: &Arc<AtomicBool>, started: &Arc<AtomicBool>, reply: &'static str) -> DraftFn {
+        let (release, started) = (release.clone(), started.clone());
+        Arc::new(move |_, _, stopped| {
+            started.store(true, Ordering::SeqCst);
+            while !release.load(Ordering::SeqCst) {
+                if stopped() {
+                    anyhow::bail!("stopped")
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            answer(reply)
+        })
+    }
+
+    fn wait_for(flag: &AtomicBool) {
+        let until = Instant::now() + Duration::from_secs(10);
+        while !flag.load(Ordering::SeqCst) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(flag.load(Ordering::SeqCst));
     }
 
     fn settle(drafter: &mut Drafter, session: &Session) {
@@ -1067,6 +1142,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
             drafter.tick(session, 1);
         }
+        assert!(drafter.running.is_none());
     }
 
     fn budget() -> crate::ai::budget::Budget {
@@ -1085,7 +1161,10 @@ mod tests {
             ],
         );
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mut drafter = Drafter::new(counting(&calls, "## Platters\n- spin"), budget());
+        let mut drafter = Drafter::new(
+            counting(&calls, "## Platters\n- spin\n\n## Action items\n- [ ] HW 4 due Friday\n\n## Check yourself\n> q"),
+            budget(),
+        );
         drafter.tick(&session, 1);
         assert_eq!(calls.load(Ordering::SeqCst), 0, "speech still behind");
         drafter.tick(&session, 0);
@@ -1093,35 +1172,44 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let done = drafter.done.clone().unwrap();
         assert_eq!((done.upto, done.notes.as_str()), (1, "## Platters\n- spin"));
+        assert_eq!(done.commitments, "- [ ] HW 4 due Friday");
         let parts = session.assemble().parts;
         assert_eq!(drafts_for(&session, &parts, None), Some(done));
         assert_eq!(drafts_for(&session, &parts, Some("old")), None);
         let mut changed = Session::open(&session.dir).unwrap();
         changed.manifest.profile.wants = "proofs only".into();
         assert_eq!(drafts_for(&changed, &parts, None), None);
+        std::fs::write(session.dir.join(DRAFTS), b"{not json").unwrap();
+        assert_eq!(drafts_for(&session, &parts, None), None);
+        let trace = std::fs::read_to_string(session.dir.join("trace.jsonl")).unwrap();
+        assert!(trace.contains("draft-provider") && trace.contains("fake"));
     }
 
     #[test]
     fn one_draft_runs_at_a_time_and_the_next_continues_the_notes() {
         let root = tempfile::tempdir().unwrap();
         let session = drafting_session(root.path(), &[("seg-00000.txt", "first stretch")]);
-        let release = Arc::new(AtomicBool::new(false));
+        let (release, started) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (gate, count) = (release.clone(), calls.clone());
-        let chat: DraftFn = Arc::new(move |prompt: crate::ai::chat::Prompt, _| {
+        let (gate, count, seen) = (release.clone(), calls.clone(), started.clone());
+        let chat: DraftFn = Arc::new(move |prompt: crate::ai::chat::Prompt, _, _| {
             let n = count.fetch_add(1, Ordering::SeqCst);
+            seen.store(true, Ordering::SeqCst);
             while !gate.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(5));
             }
             if n == 1 {
                 assert!(prompt.user.contains("## One"));
             }
-            Ok(format!("## {}\n- x", ["One", "Two"][n]))
+            answer(&format!("## {}\n- x", ["One", "Two"][n]))
         });
         let mut drafter = Drafter::new(chat, budget());
         drafter.tick(&session, 0);
+        wait_for(&started);
         std::fs::write(session.dir.join("seg-00001.txt"), "second stretch").unwrap();
-        std::thread::sleep(Duration::from_millis(50));
         drafter.tick(&session, 0);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         release.store(true, Ordering::SeqCst);
@@ -1137,7 +1225,31 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_segment_or_a_failed_draft_ends_drafting() {
+    fn a_changed_wish_starts_the_drafts_over() {
+        let root = tempfile::tempdir().unwrap();
+        let mut session = drafting_session(root.path(), &[("seg-00000.txt", "first stretch")]);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let prompts = seen.clone();
+        let chat: DraftFn = Arc::new(move |prompt: crate::ai::chat::Prompt, _, _| {
+            prompts.lock().unwrap().push(prompt.user.clone());
+            answer("## Fresh\n- y")
+        });
+        let mut drafter = Drafter::new(chat, budget());
+        drafter.tick(&session, 0);
+        settle(&mut drafter, &session);
+        session.manifest.profile.wants = "proofs only".into();
+        std::fs::write(session.dir.join("seg-00001.txt"), "second stretch").unwrap();
+        drafter.tick(&session, 0);
+        settle(&mut drafter, &session);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[1].contains("first stretch") && seen[1].contains("proofs only"));
+        assert!(!seen[1].contains("## Fresh"));
+        assert_eq!(drafter.done.as_ref().unwrap().notes, "## Fresh\n- y");
+    }
+
+    #[test]
+    fn a_failed_segment_two_failed_drafts_or_a_stretch_too_big_end_drafting() {
         let root = tempfile::tempdir().unwrap();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = drafting_session(root.path(), &[("seg-00000.err", "x")]);
@@ -1148,17 +1260,29 @@ mod tests {
         let mut drafter = Drafter::new(counting(&calls, ""), budget());
         drafter.tick(&session, 0);
         settle(&mut drafter, &session);
-        std::fs::write(session.dir.join("seg-00001.txt"), "more").unwrap();
+        assert!(!drafter.ended, "one failure is retried");
         drafter.tick(&session, 0);
+        settle(&mut drafter, &session);
         assert!(drafter.ended);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drafter.tick(&session, 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(!session.dir.join(DRAFTS).exists());
+        let trace = std::fs::read_to_string(session.dir.join("trace.jsonl")).unwrap();
+        assert!(trace.contains("draft-failed"));
+        let tiny = crate::ai::budget::Budget {
+            words: 10,
+            at_once: 1,
+        };
+        let mut drafter = Drafter::new(counting(&calls, "## A"), tiny);
+        drafter.tick(&session, 0);
+        assert!(drafter.ended && drafter.running.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn a_silent_stretch_moves_the_draft_on_without_a_call() {
+    fn a_silent_stretch_moves_on_without_a_call_unless_points_were_typed_in_it() {
         let root = tempfile::tempdir().unwrap();
-        let session = drafting_session(root.path(), &[("seg-00000.txt", "words")]);
+        let mut session = drafting_session(root.path(), &[("seg-00000.txt", "words")]);
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut drafter = Drafter::new(counting(&calls, "## A\n- a"), budget());
         drafter.tick(&session, 0);
@@ -1169,25 +1293,54 @@ mod tests {
         assert_eq!(drafter.done.as_ref().unwrap().upto, 2);
         let parts = session.assemble().parts;
         assert!(drafts_for(&session, &parts, None).is_some_and(|d| d.upto == 2));
+        session.manifest.points = vec![Point {
+            at_secs: 700,
+            text: "board work matters".into(),
+        }];
+        std::fs::write(session.dir.join("seg-00002.txt"), "").unwrap();
+        drafter.tick(&session, 0);
+        settle(&mut drafter, &session);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(drafter.done.as_ref().unwrap().upto, 3);
     }
 
     #[test]
     fn a_draft_that_lands_after_the_session_is_gone_writes_nothing() {
         let root = tempfile::tempdir().unwrap();
         let session = drafting_session(root.path(), &[("seg-00000.txt", "words")]);
-        let release = Arc::new(AtomicBool::new(false));
-        let gate = release.clone();
-        let chat: DraftFn = Arc::new(move |_, _| {
-            while !gate.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Ok("## A".into())
-        });
-        let mut drafter = Drafter::new(chat, budget());
+        let (release, started) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut drafter = Drafter::new(gated(&release, &started, "## A"), budget());
         drafter.tick(&session, 0);
-        std::fs::remove_dir_all(&session.dir).unwrap();
+        wait_for(&started);
+        std::fs::remove_file(session.dir.join("session.json")).unwrap();
         release.store(true, Ordering::SeqCst);
-        drafter.finish(true, &|_| {});
-        assert!(!session.dir.exists());
+        drafter.finish(&AtomicBool::new(false), &|_| {});
+        assert!(!session.dir.join(DRAFTS).exists());
+    }
+
+    #[test]
+    fn finish_now_stops_a_running_draft_and_waits_for_it() {
+        let root = tempfile::tempdir().unwrap();
+        let session = drafting_session(root.path(), &[("seg-00000.txt", "words")]);
+        let (release, started) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut drafter = Drafter::new(gated(&release, &started, "## A"), budget());
+        drafter.tick(&session, 0);
+        wait_for(&started);
+        let said = Mutex::new(Vec::new());
+        drafter.finish(&AtomicBool::new(true), &|event| {
+            said.lock().unwrap().push(event)
+        });
+        assert!(!release.load(Ordering::SeqCst));
+        assert!(!session.dir.join(DRAFTS).exists());
+        assert!(matches!(
+            &said.lock().unwrap()[..],
+            [Event::Progress { .. }]
+        ));
     }
 }

@@ -123,6 +123,15 @@ pub fn chat_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Chai
     outcome_with(Config::clone, prompt, max_tokens)
 }
 
+pub fn chat_outcome_until(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+    stopped: &dyn Fn() -> bool,
+) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    chat::complete_until(&cfg, &store, prompt, max_tokens, stopped)
+}
+
 fn outcome_with(
     derive: fn(&Config) -> Config,
     prompt: chat::Prompt,

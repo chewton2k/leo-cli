@@ -115,9 +115,12 @@ pub struct Drafted {
     pub upto: u32,
     pub key: String,
     pub notes: String,
+    #[serde(default)]
+    pub commitments: String,
 }
 
 const DRAFT_TAIL_CHARS: usize = 4_000;
+const DRAFT_CONTEXT_CHARS: usize = 8_000;
 
 fn boundary(parts: &[Part], upto: u32) -> u64 {
     parts
@@ -153,20 +156,62 @@ pub fn draft_key(
     )
 }
 
-pub fn notes_context(notes: &str, budget: super::budget::Budget) -> String {
-    if notes.chars().count() <= budget.chars() / 3 {
+pub fn notes_context(notes: &str, cap: usize) -> String {
+    if notes.chars().count() <= cap {
         return notes.trim().to_string();
     }
-    let headings: Vec<&str> = notes.lines().filter(|l| l.starts_with("## ")).collect();
     let chars: Vec<char> = notes.chars().collect();
-    let tail: String = chars[chars.len().saturating_sub(DRAFT_TAIL_CHARS)..]
-        .iter()
+    let tail_len = DRAFT_TAIL_CHARS.min(cap / 2);
+    let tail: String = chars[chars.len() - tail_len..].iter().collect();
+    let mut room = cap - tail_len;
+    let mut headings: Vec<&str> = notes
+        .lines()
+        .filter(|l| l.starts_with("## "))
+        .rev()
+        .take_while(|h| {
+            let fits = h.chars().count() < room;
+            room = room.saturating_sub(h.chars().count() + 1);
+            fits
+        })
         .collect();
+    headings.reverse();
     format!(
         "Headings so far:\n{}\n\nThe last part of the notes:\n…{}",
         headings.join("\n"),
         tail.trim_end()
     )
+}
+
+pub fn split_drafted(reply: &str) -> (String, String) {
+    let (mut notes, mut commitments) = (Vec::new(), Vec::new());
+    let mut into = 0;
+    for line in reply.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            into = match heading.trim().to_lowercase().as_str() {
+                "action items" => 1,
+                "check yourself" => 2,
+                _ => 0,
+            };
+            if into > 0 {
+                continue;
+            }
+        }
+        match into {
+            0 => notes.push(line),
+            1 if !line.trim().is_empty() => commitments.push(line),
+            _ => {}
+        }
+    }
+    (notes.join("\n").trim().to_string(), commitments.join("\n"))
+}
+
+pub fn joined(first: &str, second: &str) -> String {
+    [first.trim(), second.trim()]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn text_from(parts: &[Part], from: usize, to: usize) -> String {
@@ -200,19 +245,18 @@ pub fn draft_prompt(
     budget: super::budget::Budget,
 ) -> Option<(Prompt, usize)> {
     let start = new_parts.first()?.start_secs;
-    let context = notes_context(notes, budget);
+    let context = notes_context(notes, (budget.chars() / 3).min(DRAFT_CONTEXT_CHARS));
     (1..=new_parts.len()).rev().find_map(|n| {
         let end = new_parts[n - 1].end_secs;
         let text = new_parts[..n]
             .iter()
             .fold(String::new(), |out, p| super::live::stitch(&out, &p.text));
+        let typed = points_between(points, start, Some(end));
+        if text.trim().is_empty() && typed.is_empty() {
+            return None;
+        }
         let span = format!("{}–{}", clock(start), clock(end));
-        let prompt = chat::build_draft_prompt(
-            &context,
-            &text,
-            &points_between(points, start, Some(end)),
-            &span,
-        );
+        let prompt = chat::build_draft_prompt(&context, &text, &typed, &span);
         fits(&prompt, budget).then_some((prompt, n))
     })
 }
@@ -226,48 +270,59 @@ fn close_with_drafts(
     progress: Progress<'_>,
     budget: super::budget::Budget,
 ) -> Option<Structured> {
-    let covered = parts.iter().take_while(|p| p.index < drafted.upto).count();
-    let rest = text_from(parts, covered, parts.len());
-    let from = boundary(parts, drafted.upto);
-    let prompt = chat::build_close_prompt(
-        &notes_context(&drafted.notes, budget),
-        &rest,
-        &points_between(points, from, None),
-    );
-    if !fits(&prompt, budget) {
-        return None;
-    }
+    let mut covered = parts.iter().take_while(|p| p.index < drafted.upto).count();
+    let mut notes = drafted.notes.trim().to_string();
+    let mut commitments = drafted.commitments.trim().to_string();
     progress(0, 1);
+    let (prompt, rest) = loop {
+        let rest = text_from(parts, covered, parts.len());
+        let from = covered.checked_sub(1).map_or(0, |i| parts[i].end_secs);
+        let prompt = chat::build_close_prompt(
+            &notes_context(&notes, budget.chars() / 3),
+            &commitments,
+            &rest,
+            &points_between(points, from, None),
+        );
+        if fits(&prompt, budget) {
+            break (prompt, rest);
+        }
+        let (draft, n) = draft_prompt(&parts[covered..], &notes, points, budget)?;
+        let reply = chat_fn(draft, super::STRUCTURE_MAX_TOKENS).ok()?;
+        let (more, found) = split_drafted(&chat::clean_reply(&reply));
+        notes = joined(&notes, &more);
+        commitments = joined(&commitments, &found).replace("\n\n", "\n");
+        covered += n;
+    };
     let reply = chat_fn(prompt, super::STRUCTURE_MAX_TOKENS);
     progress(1, 1);
-    let notes = drafted.notes.trim();
-    let (title, body, problems, writer_failed) = match reply {
-        Ok(reply) if !chat::clean_reply(&reply).is_empty() => {
-            let (title, body) = chat::split_title_body(&reply);
+    let (title, body, problems, writer_failed) = match reply.map(|r| chat::clean_reply(&r)) {
+        Ok(reply) if !reply.is_empty() => {
+            let (title, body) = if reply.starts_with("## ") {
+                (fallback_title.to_string(), reply)
+            } else {
+                chat::split_title_body(&reply)
+            };
             let at = body
                 .lines()
                 .position(|l| l.starts_with("## "))
                 .unwrap_or(usize::MAX);
             let summary: Vec<&str> = body.lines().take(at).collect();
             let sections: Vec<&str> = body.lines().skip(at).collect();
-            let joined = [summary.join("\n"), notes.to_string(), sections.join("\n")]
-                .iter()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            (title, joined, Vec::new(), false)
+            let body = joined(&joined(&summary.join("\n"), &notes), &sections.join("\n"));
+            (title, body, Vec::new(), false)
         }
         outcome => {
             let why = match outcome {
                 Err(e) => super::writing_error(&e),
                 Ok(_) => "The AI returned an empty ending.".to_string(),
             };
-            let body = if rest.trim().is_empty() {
-                notes.to_string()
-            } else {
-                format!("{notes}\n\n{}", raw(&[], "Transcript", &rest))
-            };
+            let mut body = notes.clone();
+            if !commitments.is_empty() {
+                body = joined(&body, &format!("## Action items\n{commitments}"));
+            }
+            if !rest.trim().is_empty() {
+                body = joined(&body, &raw(&[], "Transcript", &rest));
+            }
             (
                 fallback_title.to_string(),
                 body,
@@ -279,11 +334,7 @@ fn close_with_drafts(
         }
     };
     Some(Structured {
-        title: if title.trim().is_empty() {
-            fallback_title.to_string()
-        } else {
-            title
-        },
+        title,
         body: points_kept(body, points),
         problems,
         writer_failed,
@@ -930,6 +981,7 @@ mod tests {
             upto,
             key: String::new(),
             notes: notes.to_string(),
+            commitments: String::new(),
         }
     }
 
@@ -1100,19 +1152,179 @@ mod tests {
         assert!(draft_prompt(&parts, "", &[], tiny).is_none());
         assert!(prompt
             .system
-            .contains("Leave \"## Action items\" and \"## Check yourself\" to the end"));
+            .contains("Leave \"## Check yourself\" to the end of the recording"));
     }
 
     #[test]
-    fn long_drafts_are_cut_to_their_headings_and_tail() {
-        let notes = format!("## One\n{}\n## Two\n- end", "x".repeat(20_000));
-        let small = Budget {
-            words: 3_000,
+    fn long_drafts_are_cut_to_their_most_recent_headings_and_tail() {
+        let many: String = (0..2_000)
+            .map(|i| format!("## Heading {i}\n- x\n"))
+            .collect();
+        let notes = format!("{many}## Last\n- end");
+        let context = notes_context(&notes, 6_000);
+        assert!(context.contains("## Heading 1999") && context.contains("## Last\n- end"));
+        assert!(!context.contains("## Heading 0\n"));
+        assert!(
+            context.chars().count() < 6_100,
+            "{}",
+            context.chars().count()
+        );
+        assert_eq!(notes_context("## A\n- a", 6_000), "## A\n- a");
+    }
+
+    #[test]
+    fn a_draft_reply_keeps_its_commitments_apart_and_drops_its_questions() {
+        let (notes, found) = split_drafted(
+            "## Seeking\n- arm moves\n\n## Action items\n- [ ] HW 4 due Friday\n\n## Check yourself\n> q\n> a",
+        );
+        assert_eq!(notes, "## Seeking\n- arm moves");
+        assert_eq!(found, "- [ ] HW 4 due Friday");
+    }
+
+    #[test]
+    fn early_commitments_reach_the_close_even_when_the_drafts_are_cut() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let mut early = drafted(1, &"## Long\n- words\n".repeat(2_000));
+        early.commitments = "- [ ] HW 4 due Friday".into();
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            assert!(p.user.contains("HW 4 due Friday"));
+            assert!(p.user.contains("Headings so far"));
+            Ok("T\n\nS.\n\n## Action items\n- [ ] HW 4 due Friday".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&early),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(!s.writer_failed);
+        let failing = |_: Prompt, _: u32| -> Result<String> { anyhow::bail!("busy") };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&early),
+            "R",
+            &failing,
+            &|_, _| {},
+            TEST,
+        );
+        assert!(s.writer_failed && s.body.contains("## Action items\n- [ ] HW 4 due Friday"));
+    }
+
+    #[test]
+    fn a_rest_too_long_for_one_close_is_drafted_first_then_closed() {
+        let parts = [part(0, 900, "a"), part(1, 900, "b"), part(2, 900, "c")];
+        let window = Budget {
+            words: 1_700,
             at_once: 1,
         };
-        let context = notes_context(&notes, small);
-        assert!(context.contains("## One") && context.contains("## Two\n- end"));
-        assert!(context.chars().count() < 4_200);
-        assert_eq!(notes_context("## A\n- a", small), "## A\n- a");
+        let seen = std::sync::Mutex::new(Vec::new());
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            let closing = p.system.contains("finish study notes");
+            seen.lock()
+                .unwrap()
+                .push((closing, p.user.contains("b0 "), p.user.contains("c0 ")));
+            Ok(if closing {
+                "T\n\nS.\n\n## Caching\n- c".into()
+            } else {
+                "## Seeking\n- b".into()
+            })
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "R",
+            &chat,
+            &|_, _| {},
+            window,
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [(false, true, false), (true, false, true)]
+        );
+        assert_eq!(
+            s.body,
+            "S.\n\n## Layout\n- a\n\n## Seeking\n- b\n\n## Caching\n- c"
+        );
+    }
+
+    #[test]
+    fn a_stretch_that_cannot_fit_at_all_falls_back_to_the_one_pass_write_up() {
+        let parts = [part(0, 20, "a"), part(1, 900, "b")];
+        let tiny = Budget {
+            words: 900,
+            at_once: 1,
+        };
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            assert!(!p.user.contains("notes_so_far"));
+            Ok("T\n\nS.\n\n## All\n- x".into())
+        };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "R",
+            &chat,
+            &|_, _| {},
+            tiny,
+        );
+        assert!(!s.body.contains("## Layout"));
+    }
+
+    #[test]
+    fn the_close_reads_the_overlap_between_stretches_once() {
+        let mut second = part(1, 20, "b");
+        second.text = format!("a12 a13 a14 a15 a16 a17 a18 a19 {}", second.text);
+        let parts = [part(0, 20, "a"), second];
+        let chat = |p: Prompt, _: u32| -> Result<String> {
+            let rest = p.user.split("<transcript>").nth(1).unwrap();
+            assert!(rest.trim_start().starts_with("b0"), "{rest}");
+            Ok("T\n\nS.".into())
+        };
+        structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout")),
+            "R",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+    }
+
+    #[test]
+    fn a_close_reply_without_a_title_keeps_its_first_section() {
+        let parts = [part(0, 20, "a"), part(1, 20, "b")];
+        let chat = |_: Prompt, _: u32| -> Result<String> { Ok("## Caching\n- c".into()) };
+        let s = structure_recording(
+            &parts,
+            &[],
+            None,
+            Some(&drafted(1, "## Layout\n- a")),
+            "Recording",
+            &chat,
+            &|_, _| {},
+            TEST,
+        );
+        assert_eq!(s.title, "Recording");
+        assert_eq!(s.body, "## Layout\n- a\n\n## Caching\n- c");
+    }
+
+    #[test]
+    fn a_silent_start_with_no_points_is_never_drafted_alone() {
+        let parts = [part(0, 0, "a"), part(1, 20, "b")];
+        let (prompt, n) = draft_prompt(&parts, "", &[], TEST).unwrap();
+        assert_eq!(n, 2);
+        assert!(prompt.user.contains("b0"));
+        assert!(draft_prompt(&parts[..1], "", &[], TEST).is_none());
     }
 }

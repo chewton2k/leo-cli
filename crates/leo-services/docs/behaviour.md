@@ -80,18 +80,27 @@ Drafting while recording (2026-11-11, for every writing provider): the time afte
 one call decoding the whole note (EE116, 12 min, Codex gpt-6.1-sol: 57.8 s for 2,585 output
 tokens). `recorder::Drafter` writes each finished stretch of segments in the background
 (`chat::build_draft_prompt`, the longest contiguous Done prefix that fits the budget; one call
-at a time; only while no segment waits for speech; a Failed segment, a draft error or a
-stretch that cannot fit ends drafting; silent stretches advance without a call; a changed
-"wants" starts over). It keeps one cumulative `long::Drafted` in `drafts.json` (written only
-while `session.json` exists), keyed over the drafted parts' texts, the points typed in them
-and the profile. At Stop the running draft is joined after the tail is transcribed (not when
-Finish now was pressed). `write_up` uses `drafts_for` (key must still match; never for an
-append) and `structure_recording` makes one closing call (`chat::build_close_prompt`: notes
-so far, capped by `long::notes_context`, plus the rest of the transcript) that writes the
-title, summary, the remaining sections, Action items and Check yourself; the note is summary,
-drafts, then those sections. Measured close on EE116 (last 4.3 min): 29.1 s. A failed close
-keeps the drafts plus the raw rest (`writer_failed`). Recordings under one segment, appends,
-two-track call recordings and recovered sessions keep the one-pass path. `Session::finish` deletes the folder
+at a time through `ai::chat_outcome_until`; only while no segment waits for speech). A Failed
+segment, a second failed draft or a stretch that cannot fit ends drafting; each draft's
+provider or failure is traced (`draft-provider`, `draft-failed`). Silent stretches with no
+typed point advance without a call; a changed "wants" starts over. A draft's "## Action items"
+go to `Drafted.commitments` and its "## Check yourself" is dropped (`long::split_drafted`).
+One cumulative `long::Drafted` lives in `drafts.json` (written only while `session.json`
+exists), keyed over the drafted parts' texts, the points typed in them and the profile.
+Earlier notes reach a draft through `long::notes_context` (≤ 8,000 chars: the most recent
+headings plus the last 4,000 chars) and the close at a third of the budget. At Stop the
+running draft is joined after the tail is transcribed; Finish now stops it (agent CLIs are
+killed; an OpenAI-compatible request runs to its own timeout) and still joins.
+`write_up` uses `drafts_for` (key must match; never for an append, including a resumed
+session whose drafts.json still matches) and `structure_recording` makes one closing call
+(`chat::build_close_prompt`: notes so far, every commitment, the rest of the transcript) that
+writes the title, summary, the remaining sections, Action items and Check yourself; the note
+is summary, drafts, then those sections. When the rest is too long for one close (a small
+local budget), the rest is drafted first, one stretch at a time, then closed; a stretch that
+cannot fit at all means the one-pass path. A failed close keeps the drafts, their action
+items and the raw rest (`writer_failed`). Live (synthetic 9.3-min EE116, Stop to note):
+Codex 53.3 s → 37.8 s, Claude Code Opus 5.5 91.9 s → 39.0 s. Recordings under one segment,
+appends, two-track call recordings and `recover` keep the one-pass path. `Session::finish` deletes the folder
 unless a segment failed (then `saved: true` keeps the audio). Unfinished
 sessions are resumed by the app (`recorder::resume`).
 `session/stress.rs` simulates 3 h and (ignored) 24 h with a flaky provider and
