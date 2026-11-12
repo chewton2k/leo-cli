@@ -220,7 +220,8 @@ Decided: the owner's motion list (2026-11-06); only quick functional motion.
   Never two rows highlighted. Saved open folders (`leo-side-folders`) hold only
   folders the user opened; reveals (`side.revealed`) are never saved.
   Beside Filter: a sort menu (Name, Last edited, Created; only open tasks) and a
-  flip button that reverses it, both driving `/api/notes` `sort`/`show` for every
+  flip button that reverses it (its icon shows the order: a down arrow beside
+  A–Z/Z–A letters or wide/narrow bars, 2026-11-12), both driving `/api/notes` `sort`/`show` for every
   folder's notes (folders stay by name), saved as `leo-side-order` (2026-11-11).
 - Quick Leo opens with Cmd/Ctrl+K only (Cmd/Ctrl+F removed 2026-11-09); Cmd/Ctrl+N
   makes a note in the current folder, never inside a sheet, an inline edit, while
