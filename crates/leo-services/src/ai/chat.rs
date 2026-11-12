@@ -78,6 +78,14 @@ How to shape the notes so they are understood and remembered:
 const POINTS_RULE: &str = "\
 The listener typed points while recording; they show what mattered most to them. Put each one in the section where its topic belongs, in the listener's exact words: copy it as written, as a bullet or a sentence of that section, and build your explanation from the recording around it. Never reword, shorten, merge or drop a typed point. Do not give them a section of their own, do not mark them out, and do not add times. If the transcript never mentions one, put it with the closest topic and explain it from your own knowledge.";
 
+fn points_rule(points: &[Jotted]) -> String {
+    if points.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{POINTS_RULE}")
+    }
+}
+
 /// The typed points as the user message lists them.
 fn points_block(points: &[Jotted]) -> String {
     if points.is_empty() {
@@ -90,11 +98,7 @@ fn points_block(points: &[Jotted]) -> String {
 /// The prompt that turns a recording into a new note. Typed points, when there
 /// are any, are woven into the sections they belong to.
 pub fn build_structure_prompt_with(transcript: &str, points: &[Jotted]) -> Prompt {
-    let key_points = if points.is_empty() {
-        String::new()
-    } else {
-        format!("\n\n{POINTS_RULE}")
-    };
+    let key_points = points_rule(points);
     let system = format!(
         "You turn lecture and meeting transcripts into study notes in Markdown.
 
@@ -125,11 +129,7 @@ pub fn build_append_prompt_with(
     existing_body: &str,
     points: &[Jotted],
 ) -> Prompt {
-    let key_points = if points.is_empty() {
-        String::new()
-    } else {
-        format!("\n\n{POINTS_RULE}")
-    };
+    let key_points = points_rule(points);
     let system = format!(
         "You add to an existing set of notes in Markdown, from a new transcript.
 
@@ -161,11 +161,7 @@ pub fn build_part_prompt(
     parts: usize,
     span: &str,
 ) -> Prompt {
-    let key_points = if points.is_empty() {
-        String::new()
-    } else {
-        format!("\n\n{POINTS_RULE}")
-    };
+    let key_points = points_rule(points);
     let system = format!(
         "You turn one part of a long lecture or meeting transcript into study notes in Markdown.
 
@@ -184,6 +180,73 @@ Reply with the notes for this part only: no preamble, no remarks after them, and
         "{}<transcript>\n{transcript}\n</transcript>\n\n\
          Write the notes for this part ({span}) in interpretable language: ## sections only, no \
          title.",
+        points_block(points)
+    );
+    Prompt { system, user }
+}
+
+pub fn build_draft_prompt(
+    notes_so_far: &str,
+    transcript: &str,
+    points: &[Jotted],
+    span: &str,
+) -> Prompt {
+    let key_points = points_rule(points);
+    let system = format!(
+        "You write study notes in Markdown from a lecture or meeting while it is still being recorded, one stretch at a time.
+
+{READING_A_TRANSCRIPT}
+
+The notes already written for the earlier part of the recording are in <notes_so_far> (empty at the start); they stay as they are. The transcript of the next stretch ({span}) is in <transcript>. The recording goes on after it, so:
+- No title and no summary: those are written when the recording ends.
+- ## sections for the topics in <transcript> only, in the order they came up, with bullet points (- ). Continue from where <notes_so_far> stops; never repeat what it already covers.
+{FORMATTING}
+
+{LEARNING}{key_points}
+
+Leave \"## Check yourself\" to the end of the recording: do not write it now. Put only the commitments stated in this stretch in the final \"## Action items\", as above; they are gathered into the finished note.
+
+Reply with the new sections only: no preamble, no remarks after them, and do not wrap them in a code block."
+    );
+    let user = format!(
+        "{}<notes_so_far>\n{notes_so_far}\n</notes_so_far>\n\n<transcript>\n{transcript}\n</transcript>\n\n\
+         Write the notes for this stretch ({span}) in interpretable language: ## sections only, \
+         continuing the notes so far.",
+        points_block(points)
+    );
+    Prompt { system, user }
+}
+
+pub fn build_close_prompt(
+    notes_so_far: &str,
+    commitments: &str,
+    transcript: &str,
+    points: &[Jotted],
+) -> Prompt {
+    let key_points = points_rule(points);
+    let system = format!(
+        "You finish study notes in Markdown for a lecture or meeting whose start is already written up.
+
+{READING_A_TRANSCRIPT}
+
+The notes for the start of the recording are in <notes_so_far>; they stay as they are. The transcript of the rest of the recording is in <transcript> (it may be empty).
+
+Shape of the reply:
+1. The first line is the title of the whole recording, as plain text: no \"Title:\", no #, no quotes, no bold.
+2. A blank line, then a 2-3 sentence summary of the whole recording.
+3. ## sections for the topics in <transcript> only, in the order they came up, with bullet points (- ). Continue from where <notes_so_far> stops; never repeat what it already covers.
+{FORMATTING}
+
+{LEARNING}{key_points}
+
+\"## Action items\" gathers the commitments already found, in <commitments_so_far>, with any in <transcript>, and \"## Check yourself\" covers the whole recording, the notes so far included.
+
+Reply with the title, the summary and the new sections only: no preamble, no remarks after them, and do not wrap them in a code block."
+    );
+    let user = format!(
+        "{}<notes_so_far>\n{notes_so_far}\n</notes_so_far>\n\n<commitments_so_far>\n{commitments}\n</commitments_so_far>\n\n<transcript>\n{transcript}\n</transcript>\n\n\
+         Finish the notes in interpretable language: the title alone on the first line, then the \
+         summary, then the sections for this transcript only.",
         points_block(points)
     );
     Prompt { system, user }
@@ -363,6 +426,8 @@ mod tests {
             build_structure_prompt_with("t", &[]),
             build_append_prompt_with("t", "body", &[]),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+            build_draft_prompt("n", "t", &[], "0:00-5:00"),
+            build_close_prompt("n", "", "t", &[]),
             build_summary_prompt("notes"),
         ];
         for prompt in prompts {
@@ -380,6 +445,8 @@ mod tests {
             build_structure_prompt_with("t", &[]),
             build_append_prompt_with("t", "body", &[]),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+            build_draft_prompt("n", "t", &[], "0:00-5:00"),
+            build_close_prompt("n", "", "t", &[]),
         ] {
             assert!(prompt.system.contains(LEARNING), "{}", prompt.system);
         }
@@ -394,6 +461,8 @@ mod tests {
             build_structure_prompt_with("t", &[]),
             build_append_prompt_with("t", "body", &[]),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+            build_draft_prompt("n", "t", &[], "0:00-5:00"),
+            build_close_prompt("n", "", "t", &[]),
         ] {
             let after = prompt.user.rsplit("</transcript>").next().unwrap();
             assert!(after.contains("interpretable language"), "{after}");

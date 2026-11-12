@@ -74,7 +74,34 @@ unless the error is a rate limit. `Session::assemble` stitches segment texts in
 order. `recover_parts` seals a crash's `.part.wav` and clears `.err` for retry.
 `ai::long::structure_recording` groups parts by a `words_per_group` limit (`long::groups`), one
 request per group plus a title/summary request; every failure falls back to
-the raw transcript, so it cannot fail. `Session::finish` deletes the folder
+the raw transcript, so it cannot fail.
+
+Drafting while recording (2026-11-11, for every writing provider): the time after Stop was
+one call decoding the whole note (EE116, 12 min, Codex gpt-6.1-sol: 57.8 s for 2,585 output
+tokens). `recorder::Drafter` writes each finished stretch of segments in the background
+(`chat::build_draft_prompt`, the longest contiguous Done prefix that fits the budget; one call
+at a time through `ai::chat_outcome_until`; only while no segment waits for speech). A Failed
+segment, a second failed draft or a stretch that cannot fit ends drafting; each draft's
+provider or failure is traced (`draft-provider`, `draft-failed`). Silent stretches with no
+typed point advance without a call; a changed "wants" starts over. A draft's "## Action items"
+go to `Drafted.commitments` and its "## Check yourself" is dropped (`long::split_drafted`).
+One cumulative `long::Drafted` lives in `drafts.json` (written only while `session.json`
+exists), keyed over the drafted parts' texts, the points typed in them and the profile.
+Earlier notes reach a draft through `long::notes_context` (≤ 8,000 chars: the most recent
+headings plus the last 4,000 chars) and the close at a third of the budget. At Stop the
+running draft is joined after the tail is transcribed; Finish now stops it (agent CLIs are
+killed; a loopback OpenAI-compatible stream such as Ollama's stops between lines) and still
+joins.
+`write_up` uses `drafts_for` (key must match; never for an append; a resumed session uses
+its drafts.json when it still matches) and `structure_recording` makes one closing call
+(`chat::build_close_prompt`: notes so far, every commitment, the rest of the transcript) that
+writes the title, summary, the remaining sections, Action items and Check yourself; the note
+is summary, drafts, then those sections. When the rest is too long for one close (a small
+local budget), the rest is drafted first, one stretch at a time, then closed; a stretch that
+cannot fit at all means the one-pass path. A failed close or catch-up draft keeps the
+drafts, their action items and the raw rest (`writer_failed`). Live (synthetic 9.3-min EE116, Stop to note):
+Codex 53.3 s → 37.8 s, Claude Code Opus 5.5 91.9 s → 39.0 s. Recordings under one segment,
+appends, two-track call recordings and `recover` keep the one-pass path. `Session::finish` deletes the folder
 unless a segment failed (then `saved: true` keeps the audio). Unfinished
 sessions are resumed by the app (`recorder::resume`).
 `session/stress.rs` simulates 3 h and (ignored) 24 h with a flaky provider and
@@ -432,7 +459,11 @@ every native session): `--ignore-user-config --ignore-rules` when `sub --help` l
 else every `enabled` MCP server from `codex --disable <CODEX_OFF> mcp list --json` (run in
 the room, never cached, ~0.9 s, `enabled: true` names only; a name that is not a bare TOML
 key is a named failure the user sees) is switched off with `-c
-mcp_servers.<name>.enabled=false`, plus `notify=[]`, `skills.include_instructions=false`
+mcp_servers.<name>.enabled=false` and a dummy transport of its listed type
+(`url="http://127.0.0.1:9/"` for `streamable_http`, else `command="false"`; never run, the
+server is off): servers a Codex plugin provides have no table in config.toml, and
+`enabled=false` alone makes one with no transport, which `app-server` and `mcp list` refuse
+("invalid transport", seen 2026-11-11), plus `notify=[]`, `skills.include_instructions=false`
 `model_provider="openai"` and `web_search="cached"`. Help and feature caches key on canonical path and mtime.
 `memories` is in `CODEX_OFF`. A failed native start is logged through `diag` and shown in
 Health ("Felix and Codex"). `ask_codex` runs a bare `app-server`: no thread, no tools.

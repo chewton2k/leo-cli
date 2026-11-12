@@ -451,8 +451,13 @@ impl OpenAiChat {
     }
 }
 
-impl ChatProvider for OpenAiChat {
-    fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
+impl OpenAiChat {
+    fn stream_until(
+        &self,
+        req: &ChatRequest,
+        sink: Sink<'_>,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
         let client = self.client(&CLIENT_300)?;
 
         let resp = self
@@ -474,6 +479,9 @@ impl ChatProvider for OpenAiChat {
 
         let reader = std::io::BufReader::new(resp);
         for line in capped_lines(reader) {
+            if stopped() {
+                return Err(ProviderError::Fatal("The answer was stopped.".into()));
+            }
             let line = line.map_err(|e| {
                 // A stream that dies partway is retryable: the next provider may
                 // manage it, and any text already delivered is still useful.
@@ -518,6 +526,26 @@ impl ChatProvider for OpenAiChat {
             "{}: streamed an empty response",
             self.name
         )))
+    }
+}
+
+impl ChatProvider for OpenAiChat {
+    fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
+        self.stream_until(req, sink, &|| false)
+    }
+
+    fn complete_until(
+        &self,
+        req: &ChatRequest,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
+        if stopped() {
+            return Err(ProviderError::Fatal("The answer was stopped.".into()));
+        }
+        if crate::ai::loopback(&self.base_url) {
+            return self.stream_until(req, &mut |_| {}, stopped);
+        }
+        self.complete(req)
     }
 
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
@@ -707,6 +735,26 @@ mod tests {
         let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" stay ordered.\"}}]}\n\ndata: [DONE]\n\n";
         let provider = local(refuse_once("200 OK", stream));
         assert_eq!(provider.complete(&ask()).unwrap(), "Heaps stay ordered.");
+    }
+
+    #[test]
+    fn a_local_answer_stops_between_streamed_lines_when_asked() {
+        let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Heaps\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" stay\"}}]}\n\ndata: [DONE]\n\n";
+        let provider = local(refuse_once("200 OK", stream));
+        let asked = std::cell::Cell::new(0);
+        let later = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 2
+        };
+        match provider.complete_until(&ask(), &later) {
+            Err(ProviderError::Fatal(message)) => assert!(message.contains("stopped")),
+            other => panic!("expected a stop, got {other:?}"),
+        }
+        let provider = local(refuse_once("200 OK", stream));
+        assert_eq!(
+            provider.complete_until(&ask(), &|| false).unwrap(),
+            "Heaps stay"
+        );
     }
 
     #[test]

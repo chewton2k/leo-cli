@@ -249,9 +249,16 @@ fn scope_from_listing(listing: &str) -> ProviderResult<Vec<String>> {
                 "Codex has a tool server named \"{name}\" that Leo cannot switch off safely. Rename or remove it in Codex, then try again."
             )));
         }
+        let transport = if server["transport"]["type"].as_str() == Some("streamable_http") {
+            format!("mcp_servers.{name}.url=\"http://127.0.0.1:9/\"")
+        } else {
+            format!("mcp_servers.{name}.command=\"false\"")
+        };
         args.extend([
             "-c".to_string(),
             format!("mcp_servers.{name}.enabled=false"),
+            "-c".to_string(),
+            transport,
         ]);
     }
     for setting in [
@@ -1702,9 +1709,9 @@ mod tests {
     #[test]
     fn without_the_flags_every_enabled_tool_server_is_switched_off_by_name() {
         let listing = r#"[
-            {"name":"context7","enabled":true,"transport":{"http_headers":{"K":"secret"}}},
+            {"name":"context7","enabled":true,"transport":{"type":"streamable_http","http_headers":{"K":"secret"}}},
             {"name":"computer-use","enabled":false},
-            {"name":"node_repl","enabled":true}
+            {"name":"node_repl","enabled":true,"transport":{"type":"stdio"}}
         ]"#;
         let args = scope_from_listing(listing).unwrap();
         let pairs: Vec<&str> = args
@@ -1718,7 +1725,9 @@ mod tests {
             pairs,
             [
                 "mcp_servers.context7.enabled=false",
+                "mcp_servers.context7.url=\"http://127.0.0.1:9/\"",
                 "mcp_servers.node_repl.enabled=false",
+                "mcp_servers.node_repl.command=\"false\"",
                 "notify=[]",
                 "otel.exporter=\"none\"",
                 "otel.trace_exporter=\"none\"",
@@ -1733,6 +1742,9 @@ mod tests {
         assert!(scope_from_listing(r#"[{"name":"unknown_shape"}]"#)
             .unwrap()
             .contains(&"mcp_servers.unknown_shape.enabled=false".to_string()));
+        assert!(scope_from_listing(r#"[{"name":"unknown_shape"}]"#)
+            .unwrap()
+            .contains(&"mcp_servers.unknown_shape.command=\"false\"".to_string()));
     }
 
     #[test]
@@ -1784,6 +1796,11 @@ mod tests {
         assert!(exec.contains("--sandbox") && exec.contains("--ephemeral"));
         let scope = codex_scope(&codex, "app-server", home.path()).unwrap();
         println!("scope: {scope:?}");
+        if !scope.iter().any(|a| a == "--ignore-user-config") {
+            assert!(scope
+                .iter()
+                .any(|a| a == "mcp_servers.fake.command=\"false\""));
+        }
         if !scope.iter().any(|a| a == "--ignore-user-config") {
             let mut args: Vec<&str> = scope.iter().map(String::as_str).collect();
             args.extend(["mcp", "list", "--json"]);
