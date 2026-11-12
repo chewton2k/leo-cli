@@ -252,6 +252,15 @@ pub fn reads_stay_here(cfg: &Config) -> bool {
         && !cloud
 }
 
+fn dictation_config(cfg: Config, quick: bool) -> Config {
+    let chosen = if quick {
+        quick_config(&cfg)
+    } else {
+        cfg.clone()
+    };
+    without_tools(chosen, &cfg)
+}
+
 pub fn dictation_outcome(
     prompt: chat::Prompt,
     max_tokens: u32,
@@ -259,7 +268,7 @@ pub fn dictation_outcome(
     stopped: &dyn Fn() -> bool,
 ) -> Result<chain::ChainOutcome<String>> {
     let (cfg, store) = context();
-    let cfg = if quick { quick_config(&cfg) } else { cfg };
+    let cfg = dictation_config(cfg, quick);
     chat::complete_until(&cfg, &*store, prompt, max_tokens, stopped)
 }
 
@@ -508,6 +517,17 @@ mod tests {
         let quick = super::toolless_config(&chained("claude_code"));
         assert!(quick.provider("claude_code").unwrap().no_tools);
         assert!(quick.provider("claude_code").unwrap().model.is_some());
+    }
+
+    #[test]
+    fn the_dictation_chain_has_no_tools() {
+        for quick in [false, true] {
+            let cfg = super::dictation_config(chained("codex"), quick);
+            assert_eq!(cfg.chat.chain.len(), 3);
+            for name in &cfg.chat.chain {
+                assert!(cfg.provider(name).unwrap().no_tools, "{name} quick={quick}");
+            }
+        }
     }
 
     #[test]

@@ -505,6 +505,7 @@ impl Dictation {
                 settings.writing,
                 language,
                 app.as_deref(),
+                &settings.custom_words,
                 Arc::new(move || !this.generation.current(id)),
             ) {
                 Ok(polished) => polished,
