@@ -418,6 +418,10 @@ static YOU_KNOW_OPENING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(^|[.!?]\s+)you know,\s*(\p{L})").unwrap());
 static YOU_KNOW_CLOSING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(\byou know)?,\s*you know([.!?]|$)").unwrap());
+static ABBREVIATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?iu)(?:(?:^|[\s(])(?:etc|vs|mrs?|ms|dr|st|jr|sra?|prof|incl|esp|approx|cf|vgl|bzw|usw)|\p{L}\.\p{L})$")
+        .unwrap()
+});
 static SCRATCH_THAT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(?:^|[.!?]\s+)scratch that(?:[.!?,]\s*|$)").unwrap());
 
@@ -431,7 +435,7 @@ fn remove_spoken_asides(text: &str) -> String {
                 !head
                     .get(found.start()..)
                     .is_some_and(|rest| rest.starts_with('.'))
-                    || !NON_TERMINAL_PERIOD.is_match(head.get(..found.start()).unwrap_or_default())
+                    || !ABBREVIATION.is_match(head.get(..found.start()).unwrap_or_default())
             })
             .last()
             .and_then(|found| head.get(..found.end()))
@@ -1151,6 +1155,10 @@ mod tests {
         assert_eq!(
             clean("Ask Dr. Lee today. Scratch that, ask Sam."),
             "Ask Sam."
+        );
+        assert_eq!(
+            clean("He said no. Lunch at noon. Scratch that. Lunch at one."),
+            "He said no. Lunch at one."
         );
         for kept in [
             "I like it",
