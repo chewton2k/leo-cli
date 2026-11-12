@@ -11,15 +11,22 @@ pub enum Pasted {
 
 fn paste_error(e: &str) -> String {
     log::warn!("[reliable-paste] {e}");
-    if e.starts_with("The clipboard") || e.starts_with("A clipboard") {
-        format!("{e} Copy your text from Recent dictations.")
-    } else {
+    if e.to_lowercase().contains("failed") {
         "Automatic paste could not preserve your clipboard. Copy your text from Recent dictations."
             .into()
+    } else if e.contains("Recent dictations") {
+        e.into()
+    } else {
+        format!("{e} Copy your text from Recent dictations.")
     }
 }
 
 pub fn copy(app: &AppHandle, text: &str) -> Result<(), String> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(|_| "The clipboard could not be opened. Try Copy again.".into())
+}
+pub(crate) fn copy_private(app: &AppHandle, text: &str) -> Result<(), String> {
     app.clipboard()
         .write_secret(text)
         .map(|()| crate::paste_tx::copied())
@@ -34,7 +41,7 @@ pub fn paste(
         return Ok(Pasted::Done);
     }
     if !crate::permissions::accessibility() || crate::permissions::elevated_target() {
-        copy(app, text)?;
+        copy_private(app, text)?;
         return Ok(Pasted::Manual(if cfg!(target_os="macos") { "Press ⌘V. Allow Leo in System Settings → Privacy & Security → Accessibility for automatic paste." } else { "Press Ctrl+V. Windows cannot paste into this elevated window automatically." }.into()));
     }
     crate::input::wait_for_modifiers_up();
@@ -52,7 +59,10 @@ pub fn paste(
             if abandoned.load(std::sync::atomic::Ordering::Acquire) || !current() { let _=done.send(Ok(None)); return; }
             let result = (|| {
                 if app.try_state::<crate::input::EnigoState>().is_none() {
-                    app.manage(crate::input::EnigoState::new()?);
+                    app.manage(crate::input::EnigoState::new().map_err(|e| {
+                        log::warn!("[reliable-paste] {e}");
+                        "Keyboard input could not start. Try again."
+                    })?);
                 }
                 let input = app.state::<crate::input::EnigoState>();
                 input.0.with(|enigo| crate::paste_tx::try_reliable_paste(
@@ -95,6 +105,24 @@ mod tests {
         assert_eq!(
             super::paste_error("A clipboard format could not be preserved."),
             "A clipboard format could not be preserved. Copy your text from Recent dictations."
+        );
+        assert_eq!(
+            super::paste_error("Keyboard input is busy. Try again."),
+            "Keyboard input is busy. Try again. Copy your text from Recent dictations."
+        );
+        assert_eq!(
+            super::paste_error("Keyboard input could not start. Try again."),
+            "Keyboard input could not start. Try again. Copy your text from Recent dictations."
+        );
+        assert_eq!(
+            super::paste_error(
+                "Automatic paste took too long. Copy your text from Recent dictations."
+            ),
+            "Automatic paste took too long. Copy your text from Recent dictations."
+        );
+        assert_eq!(
+            super::paste_error("OpenClipboard failed: Access is denied."),
+            "Automatic paste could not preserve your clipboard. Copy your text from Recent dictations."
         );
         assert_eq!(
             super::paste_error("declareTypes:owner: failed"),

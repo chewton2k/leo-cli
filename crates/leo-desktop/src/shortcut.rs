@@ -26,7 +26,8 @@ pub fn validate(raw: &str) -> Result<(), String> {
         return Err("Escape cancels dictation. Record another shortcut.".into());
     }
     if hotkey.key.is_none()
-        && (Modifiers::CMD.contains(hotkey.modifiers) || Modifiers::CTRL.contains(hotkey.modifiers))
+        && ((cfg!(target_os = "macos") && Modifiers::CMD.contains(hotkey.modifiers))
+            || (cfg!(windows) && Modifiers::CTRL.contains(hotkey.modifiers)))
     {
         return Err("This key is used to paste. Record another shortcut.".into());
     }
@@ -476,21 +477,29 @@ mod tests {
         assert!(!tapped("ctrl+space", false, false, false), "no permission");
     }
 
+    #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn paste_modifiers_alone_are_refused_and_a_bad_saved_shortcut_loads_the_default() {
         use super::{loaded, validate};
-        for raw in ["cmd", "cmd_left", "ctrl", "ctrl_right"] {
+        #[cfg(target_os = "macos")]
+        let (paste, other) = (["cmd", "cmd_left"], ["ctrl", "ctrl_right"]);
+        #[cfg(windows)]
+        let (paste, other) = (["ctrl", "ctrl_right"], ["cmd", "cmd_left"]);
+        for raw in paste {
             assert_eq!(
                 validate(raw),
                 Err("This key is used to paste. Record another shortcut.".into()),
                 "{raw}"
             );
         }
-        for raw in ["cmd+k", "option", "ctrl+shift", "fn"] {
+        for raw in ["cmd+k", "option", "ctrl+shift", "fn"]
+            .into_iter()
+            .chain(other)
+        {
             assert!(validate(raw).is_ok(), "{raw}");
         }
         assert_eq!(loaded("fn".into()), ("fn".into(), String::new()));
-        let (shortcut, note) = loaded("cmd".into());
+        let (shortcut, note) = loaded(paste[0].into());
         assert_eq!(
             shortcut,
             leo_services::dictation::settings::Settings::default().shortcut

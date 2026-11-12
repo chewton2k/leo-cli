@@ -246,6 +246,7 @@ unsafe fn settle_clipboard(shared: &WinTxShared) {
     }
     render_text(shared);
     let _ = CloseClipboard();
+    super::copied();
     info!("[reliable-paste] left transcript on clipboard as plain text");
 }
 

@@ -70,7 +70,7 @@ function shortcutContext(shortcut = {}, saved = 'option+space') {
     app: { addEventListener() {}, querySelectorAll: () => [hidden] },
     window: { addEventListener: (type, fn, capture) => { handlers[type] = { fn, capture }; } },
     ICON: {}, esc: (value) => value, document: { activeElement: null, addEventListener() {} },
-    state: { view: 'settings', dictation: { settings: { shortcut: saved }, shortcut, recent: [] } }, seq: 1,
+    state: { view: 'settings', section: 'dictation', dictation: { settings: { shortcut: saved }, shortcut, recent: [] } }, seq: 1,
     setTimeout: (fn, ms) => { delays.push(ms); }, clearTimeout() {}, appVisible: () => true, pulse() {}, refreshPanel() {}, fail: (e) => { throw e; },
     $: (selector) => ({ '#dictation-shortcut-status': status, '#dictation-shortcut-field': field, '[data-dictation="shortcut"]': hidden, '#dictation-result': { classList: { remove() {}, add() {} } }, '#dictation-recent': {} })[selector] || null,
     api: async (url, options = {}) => {
@@ -97,7 +97,7 @@ test('a captured chord saves at once, says so, and is not saved twice', async ()
   await settle();
   assert.deepEqual(calls, [{ action: 'save', settings: { shortcut: 'command+shift+k' } }]);
   assert.equal(hidden.value, 'command+shift+k');
-  assert.equal(status.textContent, 'Saved. Hold \u2318 \u21e7 K to dictate.');
+  assert.equal(status.textContent, 'Saved. Hold or press \u2318 \u21e7 K to dictate.');
   assert.ok(status.classes.has('ok') && !status.classes.has('bad'));
   context.updateDictationStatus(captured);
   await settle();
@@ -106,6 +106,32 @@ test('a captured chord saves at once, says so, and is not saved twice', async ()
   context.updateDictationStatus(captured);
   await settle();
   assert.equal(calls.length, 2);
+});
+test('the saved message follows the activation mode and the captured chord wins over a stale field', async () => {
+  for (const [mode, text] of [['hold', 'Saved. Hold \u2318 K to dictate.'], ['tap', 'Saved. Press \u2318 K to start and stop.'], ['both', 'Saved. Hold or press \u2318 K to dictate.']]) {
+    const { context, calls, status } = shortcutContext({ recording: true, held: '' });
+    context.state.dictation.settings.mode = mode;
+    context.app.querySelectorAll = () => [{ dataset: { dictation: 'shortcut' }, value: 'option+space' }];
+    context.updateDictationStatus(context.state.dictation);
+    context.updateDictationStatus({ settings: { shortcut: 'option+space', mode }, shortcut: { recording: false, captured: 'command+k' } });
+    await settle();
+    assert.equal(calls[0].settings.shortcut, 'command+k');
+    assert.equal(status.textContent, text);
+  }
+});
+test('leaving Settings or hiding the window forgets a recording, so a later chord is not saved', async () => {
+  const left = (context) => { context.state.view = 'notes'; return context.pollDictation(1, vm.runInContext('dictationGeneration', context)); };
+  const hidden = (context, handlers) => { context.appVisible = () => false; handlers['leo-visibility'].fn(); };
+  for (const leave of [left, hidden]) {
+    const { context, calls, handlers } = shortcutContext({ recording: true, held: '' });
+    context.updateDictationStatus(context.state.dictation);
+    await leave(context, handlers);
+    context.state.view = 'settings';
+    context.appVisible = () => true;
+    context.updateDictationStatus({ settings: { shortcut: 'option+space' }, shortcut: { recording: false, captured: 'fn' } });
+    await settle();
+    assert.deepEqual(calls, []);
+  }
 });
 test('a chord left over from before this page saw a recording is never saved', async () => {
   const { context, calls } = shortcutContext();
@@ -206,6 +232,8 @@ test('edit offers skip known words, punctuation-only changes and cap at three', 
   assert.deepEqual(offers('x y', 'x Noarlunga y', []), ['Noarlunga']);
   assert.deepEqual(offers('x y', 'x Q y Zed', []), ['Zed']);
   assert.deepEqual(offers('x y', 'x Zed y zed', []), ['Zed']);
+  assert.deepEqual(offers('x y', 'x 東京 y', []), ['東京']);
+  assert.deepEqual(offers('x y', 'x 京 y Bb', []), []);
 });
 test('an edited dictation keeps its original behind a Show original toggle', () => {
   const { context, panel } = editContext([], [{ id: 7, text: 'Ship the Noarlunga deck.', edited: true, original: 'Ship the no longer deck.' }, { id: 8, text: 'Plain', edited: true, original: null }, { id: 9, text: 'Fresh' }]);
@@ -375,3 +403,23 @@ for (const debounced of [false, true]) {
     assert.equal(context.state.dictation, undefined);
   });
 }
+
+test('a debounced custom-words save sends the shortcut saved since, not the one it was typed with', async () => {
+  const listeners = {}, timers = [], calls = [];
+  const field = { dataset: { dictation: 'custom_words' }, value: 'Charlton' };
+  const context = {
+    app: { addEventListener: (name, listener) => { listeners[name] = listener; }, querySelectorAll: () => [field] },
+    state: { view: 'settings', dictation: { settings: { shortcut: 'fn' } } }, seq: 1,
+    clearTimeout() {}, setTimeout: callback => { timers.push(callback); },
+    api: async (url, options) => { calls.push(options.body); return { settings: options.body.settings }; },
+    fail: error => { throw error; },
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/dictation.js'), 'utf8'), context);
+  listeners.input({ target: field });
+  context.state.dictation.settings = { shortcut: 'command+k' };
+  timers.shift()();
+  context.state.view = 'notes';
+  await vm.runInContext('dictationSaving', context);
+  assert.deepEqual(plain(calls[0].settings), { shortcut: 'command+k', custom_words: ['Charlton'] });
+});

@@ -168,9 +168,10 @@ the user turns on the AI writing switch (2026-11-02, the user's call; off by def
   `dictation/text.rs` and, where the speech model supports it, are passed to it
   as vocabulary (a recited-list echo is stripped); the AI check refuses changed
   words, numbers and added symbols; filler rules follow a `whatlang` guess of the
-  text. The echo filter and self-correction rules follow OpenWhispr's ideas,
-  written in leo's own words. Robustness details: leo-desktop, leo-services and
-  leo-web CLAUDE.md "Dictation".
+  text. The echo filter ports OpenWhispr's `dictionaryEchoFilter.js` and the
+  Recent-dictations everyday-word list its `correctionLearner.js` (MIT, credited
+  in NOTICE); the self-correction rules are leo's own. Robustness details:
+  leo-desktop, leo-services and leo-web CLAUDE.md "Dictation".
 - Recording is captured in Rust, including two native tracks for calls; hiding
   the window cannot stop it. App Nap is held while recording. Missing models
   leave audio pending and recoverable; the app can resume native sessions.

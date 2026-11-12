@@ -350,6 +350,14 @@ fn run_options(selected: &Selected, words: Vec<String>, supports_vocabulary: boo
     }
 }
 
+fn without_echo(text: String, vocabulary: &[String]) -> String {
+    if vocabulary.is_empty() {
+        text
+    } else {
+        crate::dictation::text::strip_vocabulary_echo(&text, vocabulary)
+    }
+}
+
 pub struct DictationStream {
     feed: mpsc::SyncSender<Option<Vec<f32>>>,
     answer: mpsc::Receiver<Result<String>>,
@@ -534,15 +542,14 @@ fn run(
                         let vocabulary = supervisor
                             .loaded()
                             .is_some_and(|info| info.supports_vocabulary);
-                        let stream = supervisor.start_stream(
-                            run_options(&selected, words, vocabulary),
-                            Default::default(),
-                            move |progress| {
+                        let run = run_options(&selected, words, vocabulary);
+                        let echo = run.vocabulary.clone();
+                        let stream =
+                            supervisor.start_stream(run, Default::default(), move |progress| {
                                 if let Some(snapshot) = progress.text {
                                     text(snapshot.committed, snapshot.tentative);
                                 }
-                            },
-                        )?;
+                            })?;
                         let started = Instant::now();
                         let mut heard = Heard::default();
                         let mut open = true;
@@ -580,10 +587,13 @@ fn run(
                             }
                             heard.send(|part| stream.feed(part))?;
                         }
-                        Ok(stream
-                            .finalize(false)?
-                            .map(|f| f.text.full)
-                            .unwrap_or_default())
+                        Ok(without_echo(
+                            stream
+                                .finalize(false)?
+                                .map(|f| f.text.full)
+                                .unwrap_or_default(),
+                            &echo,
+                        ))
                     })();
                     *lock(&serving) = false;
                     let _ = reply.send(result);
@@ -685,9 +695,10 @@ fn run(
                         .loaded()
                         .is_some_and(|info| info.supports_vocabulary);
                     let run = run_options(&job.selected, job.words.clone(), vocabulary);
+                    let echo = run.vocabulary.clone();
                     let heard = supervisor.transcribe_since(mark, nudged(pcm), run);
                     *lock(&serving) = false;
-                    job.text.push(heard?.text);
+                    job.text.push(without_echo(heard?.text, &echo));
                 }
             }
             Ok(())
@@ -1038,12 +1049,32 @@ mod option_tests {
         assert!(run.vocabulary.is_empty());
         assert_eq!(run.language, None);
     }
+
+    #[test]
+    fn an_echo_is_stripped_only_from_runs_that_were_given_vocabulary() {
+        let list = ["OpenWhispr", "Parakeet", "Alcahest"].map(String::from);
+        let echo = "OpenWhispr, Parakeet, Alcahest".to_string();
+        assert_eq!(without_echo(echo.clone(), &list), "");
+        assert_eq!(without_echo(echo.clone(), &[]), echo);
+        let names = ["Leo", "Felix", "Claude", "Codex"].map(String::from);
+        assert_eq!(
+            without_echo("Leo Felix Claude".into(), &names),
+            "Leo Felix Claude"
+        );
+    }
 }
 
 #[cfg(all(test, unix))]
 mod cancel_tests {
     use super::super::supervisor::fake_tests::{fake, ENV};
     use super::*;
+
+    struct Worker;
+    impl Drop for Worker {
+        fn drop(&mut self) {
+            std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
+        }
+    }
 
     fn appears(path: &Path) {
         let started = Instant::now();
@@ -1084,6 +1115,7 @@ mod cancel_tests {
     #[test]
     fn a_dictation_cancel_leaves_a_recording_call_running() {
         let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let _worker = Worker;
         let dir = fake();
         let engine = Arc::new(Engine::with(|_, _| Ok(true)));
         let segment = start(&engine, selected(dir.path(), "waits"), Priority::Segment);
@@ -1092,18 +1124,20 @@ mod cancel_tests {
         std::fs::write(dir.path().join("go"), "").unwrap();
         assert_eq!(segment.join().unwrap().unwrap(), "local words");
         engine.stop().unwrap();
-        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
     }
 
     #[test]
     fn a_dictation_waiting_behind_a_recording_call_cancels_at_once() {
         let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let _worker = Worker;
         let dir = fake();
         let engine = Arc::new(Engine::with(|_, _| Ok(true)));
         let segment = start(&engine, selected(dir.path(), "waits"), Priority::Segment);
         appears(&dir.path().join("running"));
         let dictation = start(&engine, selected(dir.path(), "waits"), Priority::Dictation);
+        let admitting = Instant::now();
         while engine.admitted.load(Ordering::Acquire) < 2 {
+            assert!(admitting.elapsed() < Duration::from_secs(5));
             std::thread::sleep(Duration::from_millis(1));
         }
         let asked = Instant::now();
@@ -1113,12 +1147,12 @@ mod cancel_tests {
         std::fs::write(dir.path().join("go"), "").unwrap();
         assert_eq!(segment.join().unwrap().unwrap(), "local words");
         engine.stop().unwrap();
-        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
     }
 
     #[test]
     fn a_dictation_cancelled_while_its_model_loads_is_never_transcribed() {
         let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let _worker = Worker;
         let dir = fake();
         let engine = Arc::new(Engine::with(|_, _| Ok(true)));
         let dictation = start(
@@ -1135,6 +1169,5 @@ mod cancel_tests {
             .unwrap();
         assert!(!dir.path().join("running").exists());
         engine.stop().unwrap();
-        std::env::remove_var("LEO_TRANSCRIBE_WORKER_EXE");
     }
 }

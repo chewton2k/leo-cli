@@ -118,8 +118,8 @@ per-dictation counter and kills the worker call only while a dictation is being
 served, so recording segments and live passes keep running; waiting dictations
 return Cancelled within 50 ms and the actor re-checks after model load and
 between chunks. Custom words go to `RunOptions::vocabulary` when the model
-supports it. Offline clips whose `(len/160)%8` is 0 get 160 zeros (padding
-guard, until transcribe-cpp 0.4.2 is on crates.io). A transcribe.cpp backend
+supports it, and only those runs' text goes through the echo filter. Offline
+clips whose `(len/160)%8` is 0 get 160 zeros (padding guard, until transcribe-cpp 0.4.2 is on crates.io). A transcribe.cpp backend
 error counts as a lost worker (one fresh GPU retry, then CPU); `loaded()` is
 cleared when a worker is lost, and idle unload waits for a dictation. One actor owns supervisor
 and model. Recording pins it; otherwise idle unload is five minutes. Stop and
@@ -361,7 +361,9 @@ filler language comes from a `whatlang` guess (`TextDetected`: confidence ≥ 0.
 and ≥ 20 characters) before the model's language. Custom-word matching has
 guards (hyphens, plurals/possessives, casing); quoted text, code and URLs are
 kept; `meaningful()` rejects text with no letter or digit. A vocabulary echo
-(the model reciting the custom words) is stripped first.
+(the model reciting the custom words) is stripped in `speech/engine.rs`, only
+from runs that were given vocabulary; a whole-list drop needs at least eight
+words, and text with any word outside the list is never dropped.
 
 `polish.rs` is the optional AI step (`Writing`: off by default, `quick` 12 s,
 `selected` 30 s). It is told only the frontmost app's name (never window titles

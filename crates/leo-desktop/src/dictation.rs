@@ -595,8 +595,6 @@ impl Dictation {
                 .and_then(|m| m.languages.first().map(String::as_str))
         };
         ensure!(text.len() <= 100_000, TOO_LONG);
-        let text =
-            leo_services::dictation::text::strip_vocabulary_echo(&text, &settings.custom_words);
         let text = std::panic::catch_unwind(|| {
             leo_services::dictation::text::clean(&text, settings, language)
         })
@@ -763,7 +761,10 @@ fn outcome(
         (None, _) => Finish::Notice(NOTHING_HEARD, NOTHING.into()),
         (Some(Pasted::Manual(message)), _) => Finish::Problem(message),
         (Some(Pasted::Unsure(message)), _) => Finish::Notice(CHECK_PASTE, message),
-        (Some(Pasted::Done), _) if stopped => Finish::Notice(MICROPHONE, MIC_STOPPED.into()),
+        (Some(Pasted::Done), Some(reason)) if stopped => {
+            Finish::Notice(MICROPHONE, format!("{MIC_STOPPED} {reason}"))
+        }
+        (Some(Pasted::Done), None) if stopped => Finish::Notice(MICROPHONE, MIC_STOPPED.into()),
         (Some(Pasted::Done), Some(reason)) => Finish::Notice(WITHOUT_AI, reason.into()),
         (Some(Pasted::Done), None) => Finish::Done,
     }
@@ -874,6 +875,10 @@ mod tests {
         );
         assert_eq!(
             outcome(Some(Pasted::Done), Some("x"), true, true),
+            Finish::Notice(MICROPHONE, format!("{MIC_STOPPED} x"))
+        );
+        assert_eq!(
+            outcome(Some(Pasted::Done), None, true, true),
             Finish::Notice(MICROPHONE, MIC_STOPPED.into())
         );
         assert_eq!(

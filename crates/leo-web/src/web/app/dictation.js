@@ -70,7 +70,7 @@ function dictationWordOffers(before, after, known) {
   }
   if (run.length) runs.push(run);
   const lower = new Set(known.map((word) => word.toLowerCase()));
-  const ordinary = (word) => { const bare = word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); return [...bare].length < 3 || DICTATION_COMMON_WORDS.has(bare); };
+  const ordinary = (word) => { const bare = word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); return [...bare].length < (/[^\p{Script=Latin}\p{N}]/u.test(bare) ? 2 : 3) || DICTATION_COMMON_WORDS.has(bare); };
   const phrases = runs.map((r) => r.join(' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter((phrase) => {
     const key = phrase.toLowerCase();
     if (!phrase || phrase.split(/\s+/).every(ordinary) || before.includes(phrase) || lower.has(key)) return false;
@@ -162,13 +162,14 @@ function stopDictationRecording() {
 }
 async function captureDictationShortcut(keys) {
   dictationCaptureArmed = false;
-  const field = $('[data-dictation="shortcut"]'), before = field.value;
-  field.value = keys;
+  const field = $('[data-dictation="shortcut"]'), before = field && field.value;
+  if (field) field.value = keys;
   try {
-    await saveDictation();
-    dictationShortcutNote = { text: `Saved. Hold ${shortcutParts(keys).join(' ')} to dictate.`, ok: true };
+    await saveDictation(Object.assign(dictationDraft(), { shortcut: keys }));
+    const shown = shortcutParts(keys).join(' '), mode = state.dictation && state.dictation.settings && state.dictation.settings.mode;
+    dictationShortcutNote = { text: mode === 'hold' ? `Saved. Hold ${shown} to dictate.` : mode === 'tap' ? `Saved. Press ${shown} to start and stop.` : `Saved. Hold or press ${shown} to dictate.`, ok: true };
   } catch (e) {
-    field.value = before;
+    if (field) field.value = before;
     await dictationChange({ action: 'resume_shortcut' }).catch(() => {});
     dictationShortcutNote = { text: e.message, ok: false };
   }
@@ -191,10 +192,15 @@ function updateDictationStatus(view) {
   }
   if (shortcut.captured && !shortcut.recording && dictationCaptureArmed) captureDictationShortcut(shortcut.captured).catch(fail);
 }
+function dictationPolling(mine, generation) {
+  const here = state.view === 'settings' && state.section === 'dictation' && appVisible();
+  if (!here) dictationCaptureArmed = false;
+  return here && mine === seq && generation === dictationGeneration && !!state.dictation;
+}
 async function pollDictation(mine, generation) {
-  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !state.dictation || !appVisible()) return;
+  if (!dictationPolling(mine, generation)) return;
   await new Promise((resolve) => setTimeout(resolve, dictationRecording() ? 150 : 600));
-  if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings' || !appVisible()) return;
+  if (!dictationPolling(mine, generation)) return;
   try {
     const view = await api('/api/dictation');
     if (mine !== seq || generation !== dictationGeneration || state.view !== 'settings') return;
@@ -206,10 +212,11 @@ async function pollDictation(mine, generation) {
   pollDictation(mine, generation);
 }
 let dictationSaving = Promise.resolve(), dictationTyping = null, dictationSavedTimer = null;
-function saveDictation(settings = state.dictation && dictationDraft(), mine = seq) {
+function saveDictation(settings = state.dictation && dictationDraft(), mine = seq, current = false) {
   if (!settings) return dictationSaving;
   clearTimeout(dictationTyping);
-  dictationSaving = dictationSaving.catch(() => {}).then(() => dictationChange({ action: 'save', settings }, mine));
+  const now = () => current && state.dictation && state.dictation.settings ? Object.assign({}, settings, { shortcut: state.dictation.settings.shortcut }) : settings;
+  dictationSaving = dictationSaving.catch(() => {}).then(() => dictationChange({ action: 'save', settings: now() }, mine));
   return dictationSaving;
 }
 app.addEventListener('change', (e) => {
@@ -236,7 +243,7 @@ app.addEventListener('input', (e) => {
   if (e.target.dataset?.dictation !== 'custom_words') return;
   clearTimeout(dictationTyping);
   const settings = dictationDraft(), mine = seq;
-  dictationTyping = setTimeout(() => saveDictation(settings, mine).catch(fail), 700);
+  dictationTyping = setTimeout(() => saveDictation(settings, mine, true).catch(fail), 700);
 });
 if (typeof window !== 'undefined' && window.addEventListener) {
   const holdKeys = (e) => {
@@ -245,6 +252,9 @@ if (typeof window !== 'undefined' && window.addEventListener) {
     e.stopImmediatePropagation();
     if (e.type === 'keydown' && e.key === 'Escape') stopDictationRecording();
   };
+  const forgetCapture = () => { if (!appVisible()) dictationCaptureArmed = false; };
+  window.addEventListener('leo-visibility', forgetCapture);
+  if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', forgetCapture);
   window.addEventListener('keydown', holdKeys, true);
   window.addEventListener('keyup', holdKeys, true);
   window.addEventListener('click', (e) => {

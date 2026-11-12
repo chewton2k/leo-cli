@@ -413,11 +413,11 @@ fn remove_filler_matches(text: &str, pattern: &Regex) -> String {
 }
 
 static YOU_KNOW_BETWEEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i),\s*you know\s*,").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)(\byou know)?,\s*you know\s*,").unwrap());
 static YOU_KNOW_OPENING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(^|[.!?]\s+)you know,\s*(\p{L})").unwrap());
 static YOU_KNOW_CLOSING: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i),\s*you know([.!?]|$)").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)(\byou know)?,\s*you know([.!?]|$)").unwrap());
 static SCRATCH_THAT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(?:^|[.!?]\s+)scratch that(?:[.!?,]\s*|$)").unwrap());
 
@@ -425,9 +425,17 @@ fn remove_spoken_asides(text: &str) -> String {
     let mut text = text.to_string();
     while let Some(found) = SCRATCH_THAT.find(&text) {
         let head = text.get(..found.start()).unwrap_or_default();
-        let kept = head
-            .rfind(['.', '!', '?'])
-            .and_then(|at| head.get(..=at))
+        let kept = SENTENCE_BREAK
+            .find_iter(head)
+            .filter(|found| {
+                !head
+                    .get(found.start()..)
+                    .is_some_and(|rest| rest.starts_with('.'))
+                    || !NON_TERMINAL_PERIOD.is_match(head.get(..found.start()).unwrap_or_default())
+            })
+            .last()
+            .and_then(|found| head.get(..found.end()))
+            .map(str::trim_end)
             .unwrap_or_default();
         let mut tail = String::new();
         push_restoring_capital(
@@ -441,11 +449,25 @@ fn remove_spoken_asides(text: &str) -> String {
             _ => tail,
         };
     }
-    let text = YOU_KNOW_BETWEEN.replace_all(&text, ",");
+    let text = YOU_KNOW_BETWEEN.replace_all(&text, |caps: &regex::Captures| {
+        if caps.get(1).is_some() {
+            caps[0].to_string()
+        } else {
+            ",".to_string()
+        }
+    });
     let text = YOU_KNOW_OPENING.replace_all(&text, |caps: &regex::Captures| {
         format!("{}{}", &caps[1], caps[2].to_uppercase())
     });
-    YOU_KNOW_CLOSING.replace_all(&text, "$1").into_owned()
+    YOU_KNOW_CLOSING
+        .replace_all(&text, |caps: &regex::Captures| {
+            if caps.get(1).is_some() {
+                caps[0].to_string()
+            } else {
+                caps[2].to_string()
+            }
+        })
+        .into_owned()
 }
 
 type Patterns = std::sync::Arc<[Regex]>;
@@ -624,21 +646,21 @@ fn is_prompt_fragment(text: &str, prompt: &str) -> bool {
     let continues_prompt_shape = looped
         || (TRAILING_DELIMITER.is_match(text) && normalized.chars().count() <= 30)
         || (PROMPT_DELIMITER.is_match(text) && consecutive_term_run(&words, prompt));
-    matched as f64 / unique as f64 >= 0.9 && continues_prompt_shape
+    matched == unique && continues_prompt_shape
 }
 
 fn is_whole_prompt(text: &str, prompt: &str) -> bool {
     let (normalized, normalized_prompt) = (echo_normalize(text), echo_normalize(prompt));
-    if normalized.is_empty() || normalized_prompt.is_empty() {
+    let words: Vec<&str> = normalized.split(' ').collect();
+    if normalized_prompt.is_empty() || words.len() < 8 {
         return false;
     }
     if normalized == normalized_prompt {
         return true;
     }
-    let words: Vec<&str> = normalized.split(' ').collect();
     let vocabulary = normalized_prompt.split(' ').collect();
     let (matched, unique) = overlap(&words, &vocabulary);
-    matched as f64 / unique as f64 >= 0.9 && matched as f64 / vocabulary.len() as f64 >= 0.7
+    matched == unique && matched as f64 / vocabulary.len() as f64 >= 0.7
 }
 
 fn strip_trailing_echo<'a>(text: &'a str, words: &[String]) -> &'a str {
@@ -1121,6 +1143,15 @@ mod tests {
             "Hi. Lunch at one."
         );
         assert_eq!(clean("Lunch at noon. Scratch that"), "");
+        assert_eq!(clean("I paid 3.5 dollars. Scratch that."), "");
+        assert_eq!(
+            clean("Hi there. I paid 3.5 dollars. Scratch that. Four dollars."),
+            "Hi there. Four dollars."
+        );
+        assert_eq!(
+            clean("Ask Dr. Lee today. Scratch that, ask Sam."),
+            "Ask Sam."
+        );
         for kept in [
             "I like it",
             "do you know the way",
@@ -1129,6 +1160,7 @@ mod tests {
             "I need to scratch that.",
             "Scratch that itch for me.",
             "you know what I mean",
+            "If you know, you know.",
         ] {
             assert_eq!(clean(kept), kept);
         }
@@ -1330,9 +1362,7 @@ mod tests {
             "OpenWhispr, Parakeet, Alcahest",
             "OpenWhispr, Parakeet, Alcahest.",
             "openwhispr, parakeet, alcahest",
-            "OpenWhispr Parakeet Alcahest",
             "OpenWhispr,  Parakeet,  Alcahest",
-            "OpenWhispr, Parakeet, Alcahest, OpenWhispr, Parakeet, Alcahest",
         ] {
             assert_eq!(strip_vocabulary_echo(echo, &three), "", "{echo}");
         }
@@ -1340,20 +1370,36 @@ mod tests {
             "I just installed OpenWhispr and it works great",
             "OpenWhispr, Parakeet",
             "The quick brown fox jumps over the lazy dog",
+            "OpenWhispr Parakeet Alcahest",
         ] {
             assert_eq!(strip_vocabulary_echo(said, &three), said, "{said}");
         }
+        let names = words(&["Leo", "Felix", "Claude", "Codex"]);
+        assert_eq!(
+            strip_vocabulary_echo("Leo Felix Claude", &names),
+            "Leo Felix Claude"
+        );
         let nato = words(&[
             "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India",
             "Juliet",
         ]);
         assert_eq!(
             strip_vocabulary_echo(
-                "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet the",
+                "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet",
                 &nato
             ),
             ""
         );
+        assert_eq!(
+            strip_vocabulary_echo("Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel", &nato),
+            ""
+        );
+        for said in [
+            "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet the",
+            "Alpha Bravo Charlie Delta Echo Foxtrot Golf",
+        ] {
+            assert_eq!(strip_vocabulary_echo(said, &nato), said, "{said}");
+        }
         let accents = words(&["Müller", "François", "José"]);
         assert_eq!(
             strip_vocabulary_echo("Müller, François, José", &accents),

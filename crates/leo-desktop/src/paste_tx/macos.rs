@@ -103,7 +103,7 @@ fn settle(pending: &Arc<Mutex<MacPending>>, app_handle: &AppHandle) {
     if !still_ours {
         info!("[reliable-paste] clipboard changed externally; leaving it untouched");
     } else if preserve_transcript {
-        let _ = crate::clipboard::copy(app_handle, &transcript);
+        let _ = crate::clipboard::copy_private(app_handle, &transcript);
         info!("[reliable-paste] left transcript on clipboard as plain text");
     } else {
         restore(

@@ -135,9 +135,9 @@ Accessibility changes. Recording a binding pauses global registration and suppor
 modifier-only/Fn. The recorder reports the held keys, saves the largest chord
 captured when the keys are released, Escape cancels, and it expires after 30 s
 with "no keys were pressed". `configure` answers only after registration and
-keeps the previous shortcut when the new one is taken; a bare Cmd or Ctrl is
-refused, and a saved invalid shortcut loads (in memory) as the default with a
-problem, so Settings shows the one in use. A held binding (handy-keys or system
+keeps the previous shortcut when the new one is taken; the bare paste modifier
+(Cmd on macOS, Ctrl on Windows) is refused, and a saved invalid shortcut loads
+(in memory) as the default with a problem, so Settings shows the one in use. A held binding (handy-keys or system
 shortcut) is released before a rebuild; if the macOS key feed fails the system
 shortcut takes over; key events are stamped when the feed sees them and dropped
 inputs log. Secure Input uses the Carbon fallback
@@ -157,9 +157,10 @@ permissions, unavailable registration and uncovered Secure Input chords.
 before the chord, waits for post-injection reads and a 200 ms quiet period, with
 an 8 s cap. A failed chord is an error and leaves the text on the clipboard; a
 paste no app read is reported as unsure. Restoration checks ownership again; a
-newer copy wins. The clipboard/paste preference types are gone. Copy writes with
-`write_secret` (marked private), and a concealed or transient snapshot is not
-restored unless it is Leo's own copy (the pasteboard change count or clipboard
+newer copy wins. The clipboard/paste preference types are gone. Explicit copies
+(Recent dictations, tray) write plain text; the manual-paste fallback and a
+failed chord leave the text as Leo's own copy (`write_secret`, marked private,
+on macOS), and a concealed or transient snapshot is not restored unless it is Leo's own copy (the pasteboard change count or clipboard
 sequence number after the copy is compared). A pending restore is flushed on exit.
 macOS snapshots every pasteboard item/type. Windows opens the clipboard with its
 own owner window and retries, skips private formats, retains memory formats and
