@@ -448,7 +448,7 @@ impl Dictation {
                 anyhow::bail!(problem);
             }
         }
-        let raw = pcm?;
+        let raw = pcm?.pcm;
         ensure!(self.generation.current(id), "Dictation cancelled.");
         self.phase(
             id,

@@ -54,10 +54,11 @@ mod tests {
         let sound = gate.sound().unwrap();
         let worker = gate.clone();
         let (done, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
         let thread = std::thread::spawn(move || {
             let recording = worker.recording().unwrap();
             done.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(40));
+            released.recv().unwrap();
             drop(recording);
         });
         assert!(ready.recv_timeout(Duration::from_millis(30)).is_err());
@@ -66,6 +67,7 @@ mod tests {
         ready.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(now.elapsed() < Duration::from_secs(1));
         assert!(gate.sound().is_none());
+        release.send(()).unwrap();
         thread.join().unwrap();
         assert!(gate.sound().is_some());
     }
