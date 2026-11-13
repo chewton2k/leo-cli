@@ -3480,7 +3480,7 @@ test('Settings chooses light or dark for this browser, or follows the device', a
 
 test('Settings changes Quick Leo and New note keys, refuses reserved and taken ones, and resets', async ({ page }) => {
   await page.goto('/#/settings/shortcuts');
-  const mac = await page.evaluate(() => ON_MAC);
+  const mac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent));
   const label = (key) => (mac ? `⌘${key}` : `Ctrl+${key}`);
   const row = (name) => page.locator(`[data-find="shortcut-${name}"]`);
   const change = (name) => row(name).locator('[data-action="shortcut-record"]');
