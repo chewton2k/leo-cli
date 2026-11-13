@@ -22,12 +22,14 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
   const core = read('app/core.js');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const motion = core.slice(core.indexOf('const LEAVE_MS'), core.indexOf('function rel('));
+  const shortcuts = core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('async function dictateHint'));
   const fixtureScript = `const $=(selector,root=document)=>root.querySelector(selector);
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const enc=encodeURIComponent;
     class Locked extends Error {}
     ${icons}
     ${motion}
+    ${shortcuts}
     let seq=0;
     const state={view:'note',session:null};
     window.errors=[];

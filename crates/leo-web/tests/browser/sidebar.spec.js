@@ -48,6 +48,7 @@ async function sidebarFixture(browser, run) {
     ${read('app/refresh.js')}
     ${core.slice(core.indexOf('const MOTION_MS'), core.indexOf('function stillMotion'))}
     ${core.slice(core.indexOf('const moving'), core.indexOf('function rel('))}
+    ${core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('async function dictateHint'))}
     const overlapOut=()=>{};
     ${read('app/motion.js')}
     ${read('app/popup-menu.js')}
