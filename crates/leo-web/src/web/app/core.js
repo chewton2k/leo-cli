@@ -30,7 +30,10 @@ const ICON = {
   list: svg('<path d="M9 6h11M9 12h11M9 18h11M4 6h.1M4 12h.1M4 18h.1"/>'),
   readThrough: svg('<path d="M4 7h9M4 12h9M4 17h6"/><circle class="dot" cx="18.5" cy="12" r="2.6"/>'),
   sort: svg('<path d="M4 6h16M4 12h11M4 18h6"/>'),
-  flip: svg('<path d="M7 20V4M3 8l4-4 4 4M17 4v16M13 16l4 4 4-4"/>'),
+  sortAZ: svg('<path d="m3 16 4 4 4-4M7 20V4M20 8h-5M15 10V6.5a2.5 2.5 0 0 1 5 0V10M15 14h5l-5 6h5"/>'),
+  sortZA: svg('<path d="m3 16 4 4 4-4M7 4v16M15 4h5l-5 6h5M15 20v-3.5a2.5 2.5 0 0 1 5 0V20M20 18h-5"/>'),
+  sortWide: svg('<path d="m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4"/>'),
+  sortNarrow: svg('<path d="m3 16 4 4 4-4M7 20V4M11 4h4M11 8h7M11 12h10"/>'),
   bolt: svg('<path d="M13.5 2.5L5 13.5h6l-1.5 8 8.5-11h-6z"/>'),
   filter: svg('<path d="M4 5h16l-6.2 7.6V18l-3.6 2v-7.4z"/>'),
   close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
@@ -701,7 +704,7 @@ async function showWorkspace(dir = null) {
   document.body.classList.remove('on-note');
   chrome({});
   swap('workspace', () => {
-    app.innerHTML = `<section class="workspace-empty"><label class="quick-bar home-ask">${ICON.search}<input id="home-ask" placeholder="Ask Felix, search, or jot something…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Ask Felix, search, or jot something"><kbd>${quickLabel}</kbd></label><p class="hint home-dictate" hidden></p>${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
+    app.innerHTML = `<section class="workspace-empty"><label class="quick-bar home-ask">${ICON.search}<input id="home-ask" placeholder="Ask Felix, search, or jot something…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Ask Felix, search, or jot something"><kbd>${shortcutText(shortcutKeys('quick'))}</kbd></label><p class="hint home-dictate" hidden></p>${sideActive() ? empty(ICON.note, 'Pick a note on the left', 'Or start a new one. Notes are Markdown files on this computer.') : empty(ICON.note, 'Choose a note or create one', 'Your folders and notes are in Folders.')}<button class="btn primary" data-action="new">${ICON.filePlus}New note</button>${!sideWide() ? '<button class="btn plain" data-action="folders">Folders</button>' : ''}</section>`;
     wireHomeAsk();
     dictateHint($('.home-dictate'));
     scrollToTop();
@@ -714,6 +717,31 @@ function shortcutParts(keys) {
 }
 function shortcutText(keys) {
   return shortcutParts(keys).join(ON_MAC ? '' : '+');
+}
+const SHORTCUTS = { quick: ['Quick Leo', 'k'], new: ['New note', 'n'], ask: ['Ask Felix about a selection', 'shift+e'] };
+function shortcutDefault(name) {
+  return `${ON_MAC ? 'cmd' : 'ctrl'}+${SHORTCUTS[name][1]}`;
+}
+function shortcutKeys(name) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('leo-shortcuts'))?.[name];
+    if (typeof saved === 'string' && /(^|\+)(cmd|ctrl)\+./.test(saved)) return saved;
+  } catch (e) {}
+  return shortcutDefault(name);
+}
+function chordOf(e, modifiers) {
+  let key = String(e.key || '').toLowerCase();
+  const code = /^(?:Key|Digit)(.)$/.exec(e.code || '')?.[1].toLowerCase();
+  if (code && ((ON_MAC && e.altKey) || (e.shiftKey && /\d/.test(code)))) key = code;
+  const held = [e.metaKey && 'cmd', e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift'].filter(Boolean);
+  if (!key || /^(meta|control|alt|shift)$/.test(key)) return modifiers ? held.join('+') : '';
+  return held.concat(key === ' ' ? 'space' : key).join('+');
+}
+function pressed(e, name) {
+  return chordOf(e) === shortcutKeys(name);
+}
+function shortcutAria(keys) {
+  return keys.split('+').map((key) => ({ cmd: 'Meta', ctrl: 'Control', alt: 'Alt', shift: 'Shift' })[key] || key.toUpperCase()).join('+');
 }
 async function dictateHint(el) {
   try {

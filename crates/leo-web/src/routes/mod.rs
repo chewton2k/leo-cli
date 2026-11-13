@@ -123,6 +123,12 @@ pub(crate) fn router(state: AppState) -> Router {
             )),
         )
         .route(
+            "/api/notes/{id}/margin/threads/{thread}/weave",
+            post(margin::weave).layer(axum::extract::DefaultBodyLimit::max(
+                crate::margin::BODY_BYTES,
+            )),
+        )
+        .route(
             "/api/margin",
             get(margin::settings).post(margin::change_settings),
         )

@@ -220,11 +220,19 @@ Decided: the owner's motion list (2026-11-06); only quick functional motion.
   Never two rows highlighted. Saved open folders (`leo-side-folders`) hold only
   folders the user opened; reveals (`side.revealed`) are never saved.
   Beside Filter: a sort menu (Name, Last edited, Created; only open tasks) and a
-  flip button that reverses it, both driving `/api/notes` `sort`/`show` for every
+  flip button that reverses it (its icon shows the order: a down arrow beside
+  A–Z/Z–A letters or wide/narrow bars, 2026-11-12), both driving `/api/notes` `sort`/`show` for every
   folder's notes (folders stay by name), saved as `leo-side-order` (2026-11-11).
 - Quick Leo opens with Cmd/Ctrl+K only (Cmd/Ctrl+F removed 2026-11-09); Cmd/Ctrl+N
   makes a note in the current folder, never inside a sheet, an inline edit, while
-  composing or when locked.
+  composing or when locked. These two and Ask Felix (Cmd/Ctrl+Shift+E) are the
+  defaults of three customizable page shortcuts (Settings → Shortcuts): `SHORTCUTS`
+  in `core.js`, saved per window as `leo-shortcuts` in localStorage (like the
+  appearance keys), read with `shortcutKeys`/`pressed`, and shown through
+  `shortcutText`. Every label is built at draw time. While one is being recorded a
+  window capture-phase keydown listener swallows every key; reserved keys
+  (Cmd/Ctrl + q w r c v x z y a s b i u `,` and Shift+Z), another page shortcut and
+  the dictation shortcut are refused with the reason.
   `leo-last-place` restores only on a new window session.
 - Explorer reads: 100 per page, four concurrent reads with ten-second aborts, 64
   cached folders, 32 automatic visible reads; late reads check generation and
@@ -386,6 +394,11 @@ Felix (2026-10-19).
   (3) threads per part, each reply capped at `THROUGH_TOKENS` (700); a run ends
   at the page's `THROUGH_MOST` (12) notes. Undo DELETE
   `.../threads/{id}` is 409 `replying`/`replied`.
+- Add to note weaves: POST `.../threads/{id}/weave` rewrites the quote's
+  blank-line block with `toolless_chat` (`WEAVE_SYSTEM`, `margin::woven` refuses a
+  rewrite under half or over 3× + 400 of the block or with a new link),
+  version-checked before and after the AI; only a lost, code or long passage falls
+  back to `/insert`.
 - The model's quote must be in the note now; `margin::crowded` allows one open
   note per sentence. The server anchors on prefix + quote + suffix exactly and
   never falls back to another occurrence. Asks: 3 to `MOST_ASKED` (1,000)
@@ -550,7 +563,8 @@ a modal.
   not. Detect language is hidden for a model that cannot detect language, and
   setup picks the system language, else `en`, for such a model.
 - Settings search: `SETTINGS_INDEX` entries (`{section, label, keywords, id}`)
-  and the row's `data-find` attribute are added together;
+  and the row's `data-find` attribute are added together (the Shortcuts section
+  passes its ids as literals to `shortcutRow`, so the test finds them);
   `settings-navigation.test.js` fails on an unknown section, a duplicate id or
   an id no source draws. Routes stay `#/settings/<section>`; `#/trash` still
   works and a bare `#/settings` never reopens Trash.

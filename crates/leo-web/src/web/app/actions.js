@@ -11,6 +11,8 @@ const actions = {
   'onboarding-use': onboardingUse,
   'onboarding-sign-in': onboardingSignIn,
   'writing-sign-in': writingSignIn,
+  'shortcut-record': (el) => shortcutRecord(el.dataset.name),
+  'shortcut-reset': (el) => shortcutReset(el.dataset.name),
   'dictation-record': () => dictationChange({action:'record_shortcut'}),
   'dictation-original': toggleDictationOriginal,
   'dictation-clear': clearDictationsAsk, 'dictation-clear-now': clearDictationsNow,

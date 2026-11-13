@@ -983,12 +983,97 @@ document.addEventListener('change', (e) => {
   if (body && !stillMotion()) body.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: MOTION_MS, easing: EASE_OUT });
 });
 
+const shortcutRec = { name: '', on: false, held: '', hint: '', bad: false };
+const SHORTCUT_RESERVED = { q: 'quit', w: 'closing the window', r: 'reload', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo', a: 'select all', s: 'save', b: 'bold', i: 'italic', u: 'underline', p: 'print', h: 'hiding leo', m: 'minimizing', ',': 'settings' };
+function shortcutRow(name, find) {
+  const mine = shortcutRec.name === name, on = mine && shortcutRec.on, label = SHORTCUTS[name][0];
+  const hint = on ? 'Esc to cancel' : mine ? shortcutRec.hint : '';
+  return `<div class="set-row column" data-find="${find}"><div class="set-line"><span class="set-label">${label}</span><span class="set-shortcut"><span class="shortcut-field${on ? ' recording' : ''}" role="group" aria-label="${label} shortcut">${dictationShortcutField({ recording: on, held: shortcutRec.held }, shortcutKeys(name))}</span>${shortcutKeys(name) !== shortcutDefault(name) ? `<button class="btn plain sm" data-action="shortcut-reset" data-name="${name}" aria-label="Reset ${label} shortcut">Reset</button>` : ''}<button class="btn plain sm" data-action="shortcut-record" data-name="${name}" aria-label="Change ${label} shortcut">Change</button></span></div><span class="hint${mine && shortcutRec.bad && !on ? ' bad' : ''}" aria-live="polite">${esc(hint)}</span></div>`;
+}
+function shortcutsCard() {
+  return `<section class="set-card"><header><h3>Keyboard shortcuts</h3></header><p class="hint">Click Change, then press the new keys. Esc cancels.</p>
+    ${shortcutRow('quick', 'shortcut-quick')}${shortcutRow('new', 'shortcut-new')}${shortcutRow('ask', 'shortcut-ask')}
+    <div class="set-row column" data-find="shortcut-dictation"><div class="set-line"><span class="set-label">Dictation (works in any app)</span><span class="set-shortcut"><span class="shortcut-field" role="group" aria-label="Dictation shortcut">${dictationKeycaps(state.dictation?.settings?.shortcut)}</span><a href="#/settings/dictation">Change in Dictation</a></span></div></div>
+  </section>`;
+}
+function shortcutRefusal(name, chord) {
+  const mod = ON_MAC ? 'cmd' : 'ctrl', parts = chord.split('+'), text = shortcutText(chord);
+  if (!parts.includes(mod) && !(ON_MAC && parts.includes('ctrl'))) return `Use ${ON_MAC ? '⌘' : 'Ctrl'} with a key.`;
+  const reserved = parts[0] === mod && parts.length === 2 ? SHORTCUT_RESERVED[parts[1]] : chord === `${mod}+shift+z` ? 'redo' : '';
+  if (reserved) return `${text} is reserved for ${reserved}.`;
+  const other = Object.keys(SHORTCUTS).find((key) => key !== name && shortcutKeys(key) === chord);
+  if (other) return `Already used by ${SHORTCUTS[other][0]}.`;
+  const dictation = state.dictation?.settings?.shortcut;
+  return dictation && shortcutText(dictation) === text ? 'Already used by Dictation.' : '';
+}
+function shortcutSave(name, chord) {
+  try {
+    const all = JSON.parse(localStorage.getItem('leo-shortcuts')) || {};
+    if (chord) all[name] = chord; else delete all[name];
+    localStorage.setItem('leo-shortcuts', JSON.stringify(all));
+    return '';
+  } catch (e) {
+    return 'This browser would not save the shortcut.';
+  }
+}
+function shortcutStop() {
+  window.removeEventListener('keydown', shortcutKey, true);
+  window.removeEventListener('pointerdown', shortcutAway, true);
+  window.removeEventListener('hashchange', shortcutStop);
+  shortcutRec.on = false;
+}
+function shortcutDrawn() {
+  drawSettings(state.settings);
+  $(`[data-action="shortcut-record"][data-name="${shortcutRec.name}"]`)?.focus();
+}
+function shortcutCancel() {
+  shortcutRec.hint = '';
+  shortcutStop();
+  shortcutDrawn();
+}
+function shortcutKey(e) {
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.key === 'Escape') return shortcutCancel();
+  const chord = chordOf(e);
+  if (!chord) {
+    const held = chordOf(e, true);
+    if (held !== shortcutRec.held) { shortcutRec.held = held; drawSettings(state.settings); }
+    return;
+  }
+  const why = shortcutRefusal(shortcutRec.name, chord) || shortcutSave(shortcutRec.name, chord);
+  Object.assign(shortcutRec, { hint: why || 'Saved', bad: !!why });
+  shortcutStop();
+  shortcutDrawn();
+  drawSide();
+}
+function shortcutAway(e) {
+  if (e.target.closest('[data-action^="shortcut-"]')) shortcutStop();
+  else if (!e.target.closest('.shortcut-field.recording')) shortcutCancel();
+}
+function shortcutRecord(name) {
+  shortcutStop();
+  Object.assign(shortcutRec, { name, on: true, held: '', hint: '', bad: false });
+  window.addEventListener('keydown', shortcutKey, true);
+  window.addEventListener('pointerdown', shortcutAway, true);
+  window.addEventListener('hashchange', shortcutStop);
+  drawSettings(state.settings);
+}
+function shortcutReset(name) {
+  shortcutStop();
+  const why = shortcutSave(name, '');
+  Object.assign(shortcutRec, { name, held: '', hint: why || 'Back to the default', bad: !!why });
+  drawSettings(state.settings);
+  drawSide();
+}
+
 function drawSettings(page) {
   const fields = keepSettingsFields(), segments = keepSegmented();
   state.settings = page;
   const section = state.section || 'general';
   let content = '';
   if (section === 'general') content = themeCard() + `<div id="app-general">${nativeGeneralCard(desktopApp)}</div>`;
+  else if (section === 'shortcuts') content = shortcutsCard();
   else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the leo app to set up dictation.</section>'}</div>`;
   else if (section === 'models') content = `<div id="speech-library">${speechCards(state.speech)}</div>`;
   else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);

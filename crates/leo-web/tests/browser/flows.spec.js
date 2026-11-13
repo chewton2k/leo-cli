@@ -3478,6 +3478,69 @@ test('Settings chooses light or dark for this browser, or follows the device', a
   await expect.poll(background).toBe(light);
 });
 
+test('Settings changes Quick Leo and New note keys, refuses reserved and taken ones, and resets', async ({ page }) => {
+  await page.goto('/#/settings/shortcuts');
+  const mac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent));
+  const label = (key) => (mac ? `⌘${key}` : `Ctrl+${key}`);
+  const row = (name) => page.locator(`[data-find="shortcut-${name}"]`);
+  const change = (name) => row(name).locator('[data-action="shortcut-record"]');
+  const hint = (name) => row(name).locator('.hint');
+  const search = page.locator('[data-action="quick-leo"]');
+  const quick = page.locator('.scrim:not(.scrim-gone) .quick-leo');
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('K')})`);
+
+  await change('quick').click();
+  await expect(row('quick').locator('.shortcut-field')).toHaveClass(/recording/);
+  await page.keyboard.press('Escape');
+  await expect(row('quick').locator('.shortcut-field')).not.toHaveClass(/recording/);
+  await expect(row('quick').getByRole('button', { name: 'Reset' })).toHaveCount(0);
+
+  await change('quick').click();
+  await page.keyboard.press('ControlOrMeta+b');
+  await expect(hint('quick')).toContainText('reserved for bold');
+  await expect(hint('quick')).toHaveClass(/bad/);
+  await change('quick').click();
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect(hint('quick')).toHaveText('Already used by New note.');
+  await change('quick').click();
+  await page.keyboard.press('j');
+  await expect(hint('quick')).toHaveText(`Use ${mac ? '⌘' : 'Ctrl'} with a key.`);
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('K')})`);
+
+  await change('quick').click();
+  await page.keyboard.press('ControlOrMeta+j');
+  await expect(hint('quick')).toHaveText('Saved');
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('J')})`);
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.waitForTimeout(300);
+  await expect(page.locator('.quick-leo'), 'the old keys no longer open Quick Leo').toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+j');
+  await expect(quick).toBeVisible();
+  await expect(quick.locator('.quick-bar kbd')).toHaveText(label('J'));
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+
+  await change('new').click();
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await expect(hint('new')).toHaveText('Saved');
+  await expect(page.locator('.side-new')).toHaveAttribute('aria-keyshortcuts', `${mac ? 'Meta' : 'Control'}+Shift+M`);
+  await page.keyboard.press('ControlOrMeta+n');
+  await page.waitForTimeout(300);
+  await expect(page).toHaveURL(/#\/settings\/shortcuts$/);
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/new');
+  await page.goto('/#/settings/shortcuts');
+  await expect(row('new').locator('.shortcut-field')).toContainText('M');
+
+  await row('quick').getByRole('button', { name: 'Reset' }).click();
+  await expect(row('quick').getByRole('button', { name: 'Reset' })).toHaveCount(0);
+  await expect(search).toHaveAttribute('title', `Search, ask, remind or jot anything (${label('K')})`);
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(quick).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.scrim:not(.scrim-gone)')).toHaveCount(0);
+});
+
 test('a calendar is connected in Settings by pasting one link, and can be removed', async ({ page }) => {
   let linked = [];
   let posted = null;
@@ -3931,6 +3994,14 @@ test.describe('passages', () => {
     });
     await page.route('**/margin/threads/stub-thread/reply', (route) => route.fulfill({ json: { ...thread, messages: [...thread.messages, said('you', 'So hash it?'), said('felix', 'Yes. Argon2id, then verify at login.')] } }));
     await page.route('**/margin/threads/stub-thread', (route) => route.fulfill({ json: { ...thread, status: 'resolved' } }));
+    const weaves = [];
+    await page.route('**/margin/threads/stub-thread/weave', async (route) => {
+      weaves.push(route.request().postDataJSON());
+      const now = await (await page.request.get(`/api/notes/${note.id}`)).json();
+      const body = now.body.replace('Then login just checks if it matches, I think', 'Then login checks it against the Argon2id hash.');
+      const saved = await (await page.request.patch(`/api/notes/${note.id}`, { data: { body, base: now.version } })).json();
+      await route.fulfill({ json: { ...saved, before: now.body, from: 3, to: 3 } });
+    });
     await page.goto(`/#/n/${note.id}`);
     await expect(page.locator('#margin-mode')).toHaveText('When you ask');
     await page.locator('#margin-mode').click();
@@ -3984,8 +4055,10 @@ test.describe('passages', () => {
     await reply.press('Enter');
     await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
     await page.locator('.margin-note').getByRole('button', { name: 'Add to note' }).click();
-    await expect(page.locator('.toast')).toContainText('Added to note');
-    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toContain('Yes. Argon2id, then verify at login.');
+    await expect(page.locator('.toast')).toContainText('Worked into the note');
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('Save the password in the users table.\n\nThen login checks it against the Argon2id hash.');
+    expect(weaves).toHaveLength(1);
+    expect(weaves[0].request).toBeTruthy();
     await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
     await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).not.toContain('Argon2id');
   });
@@ -4010,10 +4083,11 @@ test.describe('passages', () => {
     await reply.press('Enter');
     await expect(page.locator('.margin-note .margin-felix').last()).toContainText('Argon2id');
     await page.locator('.margin-note').getByRole('button', { name: 'Add to note' }).dblclick();
-    await expect(page.locator('.toast')).toContainText('Added to note');
+    await expect(page.locator('.toast')).toContainText('Worked into the note');
     const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
     await expect.poll(body).toContain('Argon2id');
     expect((await body()).match(/Argon2id/g)).toHaveLength(1);
+    expect(await body()).not.toContain('just checks');
     const left = async () => (await (await page.request.get(`/api/notes/${note.id}/margin`)).json()).threads.length;
     await expect.poll(left).toBe(0);
     await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
@@ -4055,7 +4129,7 @@ test.describe('passages', () => {
   });
 
   for (const [title, later, says] of [
-    ['re-finds its passage when the note changed underneath it', 'A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nLast.', 'Added to note'],
+    ['re-finds its passage when the note changed underneath it', 'A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nLast.', 'Worked into the note'],
     ['says so when its passage is gone', 'Everything was rewritten.', 'went at the end of the note'],
   ]) {
     test(`Add to note ${title}`, async ({ page }) => {
@@ -4066,7 +4140,7 @@ test.describe('passages', () => {
       await page.goto(`/#/n/${note.id}`);
       await expect(page.locator('.margin-note')).toBeVisible();
       let refused = 0;
-      await page.route('**/insert', async (route) => {
+      await page.route('**/weave', async (route) => {
         if (refused++) return route.continue();
         await page.request.patch(`/api/notes/${note.id}`, { data: { body: later } });
         await route.fulfill({ status: 409, json: { error: 'changed' } });
@@ -4077,9 +4151,9 @@ test.describe('passages', () => {
       const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
       await expect.poll(body).toContain('Argon2id');
       await expect(page.locator('.margin-note')).toHaveCount(0);
-      if (says === 'Added to note') {
+      if (says === 'Worked into the note') {
         await expect(page.locator('#doc .blk-glow').first()).toBeVisible();
-        expect(await body()).toBe('A new first line.\n\nFirst.\n\nThe quoted words stay here.\n\nYes. Argon2id, then verify at login.\n\nLast.');
+        expect(await body()).toBe('A new first line.\n\nFirst.\n\nYes. Argon2id, then verify at login.\n\nLast.');
       } else {
         expect(await body()).toBe('Everything was rewritten.\n\nYes. Argon2id, then verify at login.\n');
         await page.waitForTimeout(300);

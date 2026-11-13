@@ -2,6 +2,7 @@
 const SETTINGS_SECTIONS = [
   { group: 'leo', items: [
     ['general', 'General', 'sliders', 'Appearance, and how leo starts with your computer.'],
+    ['shortcuts', 'Shortcuts', 'command', 'Keys for the things you do most.'],
     ['dictation', 'Dictation', 'keyboard', 'Speak into any app with a shortcut. Speech stays on this computer.'],
     ['models', 'Speech models', 'wave', 'The local model that turns speech into text.'],
     ['writing', 'Writing AI', 'pen', 'The AI that writes your notes and powers Felix.'],
@@ -27,6 +28,10 @@ const SETTINGS_INDEX = [
   { section: 'general', id: 'felix-lettering', label: "Felix's lettering", keywords: 'appearance font typeface serif letters notes writing felix own' },
   { section: 'general', id: 'open-at-login', label: 'Open at login', keywords: 'start startup boot launch computer' },
   { section: 'general', id: 'menu-bar', label: 'Show in menu bar', keywords: 'system tray icon start' },
+  { section: 'shortcuts', id: 'shortcut-quick', label: 'Quick Leo shortcut', keywords: 'keyboard hotkey keys bind search ask jot change' },
+  { section: 'shortcuts', id: 'shortcut-new', label: 'New note shortcut', keywords: 'keyboard hotkey keys bind create change' },
+  { section: 'shortcuts', id: 'shortcut-ask', label: 'Ask Felix shortcut', keywords: 'keyboard hotkey keys bind selection margin change' },
+  { section: 'shortcuts', id: 'shortcut-dictation', label: 'Dictation shortcut (any app)', keywords: 'keyboard hotkey keys bind speak record' },
   { section: 'dictation', id: 'dictation-shortcut', label: 'Dictation shortcut', keywords: 'keys hotkey record speak keyboard' },
   { section: 'dictation', id: 'dictation-activation', label: 'Activation', keywords: 'hold tap press dictation shortcut' },
   { section: 'dictation', id: 'dictation-microphone', label: 'Microphone', keywords: 'dictation input device audio mic' },
@@ -69,6 +74,7 @@ const SETTINGS_INDEX = [
 ];
 const SETTINGS_ICON_PATHS = {
   sliders: '<path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16.5" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/>',
+  command: '<path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/>',
   keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>',
   wave: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>',
   pen: '<path d="M4 20h4L18.5 9.5a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13 7l4 4"/>',

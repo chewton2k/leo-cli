@@ -13,7 +13,7 @@ use crate::AppState;
 
 pub(crate) const MOST_INSERT: usize = 200_000;
 const REMEMBERED: usize = 32;
-const MOST_REQUEST: usize = 64;
+pub(crate) const MOST_REQUEST: usize = 64;
 
 static DONE: Mutex<VecDeque<(String, String, serde_json::Value)>> = Mutex::new(VecDeque::new());
 
@@ -51,14 +51,14 @@ pub(crate) fn inserted(body: &str, text: &str, line: Option<usize>) -> String {
     }
 }
 
-fn remembered(note: &str, request: &str) -> Option<serde_json::Value> {
+pub(crate) fn remembered(note: &str, request: &str) -> Option<serde_json::Value> {
     let done = DONE.lock().unwrap_or_else(|e| e.into_inner());
     done.iter()
         .find(|(n, r, _)| n == note && r == request)
         .map(|(_, _, v)| v.clone())
 }
 
-fn remember(note: &str, request: &str, value: &serde_json::Value) {
+pub(crate) fn remember(note: &str, request: &str, value: &serde_json::Value) {
     let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
     done.push_back((note.to_string(), request.to_string(), value.clone()));
     while done.len() > REMEMBERED {

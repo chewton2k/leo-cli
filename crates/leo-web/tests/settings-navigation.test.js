@@ -11,7 +11,7 @@ function helpers(listeners = {}) {
 }
 test('all grouped Settings routes resolve, with Keeping and Trash under Data', () => {
   const h = helpers();
-  for (const section of ['general', 'dictation', 'models', 'writing', 'calendar', 'keeping', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
+  for (const section of ['general', 'shortcuts', 'dictation', 'models', 'writing', 'calendar', 'keeping', 'trash', 'health', 'updates']) assert.equal(h.settingsSection(section), section);
   assert.equal(h.settingsSection(''), 'dictation');
   assert.equal(h.settingsSection('../bad'), 'general');
   const html = h.settingsFrame('keeping', '<section>Keeping content</section>');
@@ -22,8 +22,8 @@ test('all grouped Settings routes resolve, with Keeping and Trash under Data', (
   assert.ok(html.includes('<h1>Keeping</h1>'));
   assert.ok(html.includes('<span class="settings-nav-pill" aria-hidden="true"></span>'));
   assert.ok(html.includes('class="settings-section arrive"'));
-  assert.equal((html.match(/class="settings-link/g) || []).length, 10);
-  assert.equal((html.match(/<svg>/g) || []).length, 7, 'the search icon and every section without a shared icon draw their own');
+  assert.equal((html.match(/class="settings-link/g) || []).length, 11);
+  assert.equal((html.match(/<svg>/g) || []).length, 8, 'the search icon and every section without a shared icon draw their own');
   assert.ok(html.includes('<nav class="settings-nav" aria-label="Settings sections">'));
   assert.ok(html.includes('id="settings-search" type="text" role="combobox" aria-label="Search settings"'));
   assert.ok(html.includes('<div class="settings-results" id="settings-results"></div>'));
@@ -47,7 +47,7 @@ test('switches stay checkboxes and segmented choices carry their value', () => {
 });
 test('every Settings section names its current page in the same breadcrumb', () => {
   const h = helpers();
-  for (const [id, title] of [['general', 'General'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['keeping', 'Keeping'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
+  for (const [id, title] of [['general', 'General'], ['shortcuts', 'Shortcuts'], ['dictation', 'Dictation'], ['models', 'Speech models'], ['writing', 'Writing AI'], ['calendar', 'Calendar'], ['keeping', 'Keeping'], ['trash', 'Trash'], ['health', 'Health'], ['updates', 'Updates &amp; about']]) {
     assert.equal(h.settingsCrumbs(id), `<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button aria-current="page">${title}</button>`);
   }
 });
@@ -138,4 +138,30 @@ test('Settings motion asks stillMotion, the one place that reads Reduced Motion'
   const source = fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8');
   assert.ok(!source.includes('prefers-reduced-motion'));
   assert.ok(source.includes('stillMotion()'));
+});
+
+test('a chord is read from the key event in a fixed modifier order, and aria names it', () => {
+  const core = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
+  const load = (context) => {
+    vm.createContext(context);
+    vm.runInContext(core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('async function dictateHint')), context);
+    return context;
+  };
+  for (const [mac, event, chord] of [
+    [true, { key: 'K', metaKey: true }, 'cmd+k'],
+    [true, { key: 'E', code: 'KeyE', metaKey: true, shiftKey: true }, 'cmd+shift+e'],
+    [true, { key: '∫', code: 'KeyB', metaKey: true, altKey: true }, 'cmd+alt+b'],
+    [false, { key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true }, 'ctrl+shift+1'],
+    [false, { key: ' ', ctrlKey: true }, 'ctrl+space'],
+    [false, { key: 'Shift', shiftKey: true }, ''],
+  ]) {
+    const context = load({ ON_MAC: mac, localStorage: { getItem: () => JSON.stringify({ quick: 'ctrl+j' }) } });
+    assert.equal(context.chordOf(event), chord);
+    assert.equal(context.pressed({ key: 'j', ctrlKey: true }, 'quick'), true);
+    assert.equal(context.pressed({ key: 'k', ctrlKey: true }, 'quick'), false);
+    assert.equal(context.shortcutKeys('new'), mac ? 'cmd+n' : 'ctrl+n');
+  }
+  const blocked = load({ ON_MAC: true, localStorage: { getItem: () => { throw new Error('blocked'); } } });
+  assert.equal(blocked.shortcutKeys('quick'), 'cmd+k');
+  assert.equal(blocked.shortcutAria('cmd+ctrl+alt+shift+k'), 'Meta+Control+Alt+Shift+K');
 });

@@ -23,6 +23,8 @@ function harness() {
     noAi: globalThis.leoChat.noAi, esc: (text) => String(text), choiceCards: (options) => JSON.stringify(options), segmented: () => '', settingsSwitch: () => '',
   };
   vm.createContext(context);
+  const core = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
+  vm.runInContext(core.slice(core.indexOf('const SHORTCUT_KEYS'), core.indexOf('async function dictateHint')), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/margin-notes.js'), 'utf8'), context);
   const state = vm.runInContext('marginPage', context);
   const session = () => ({ note: { id: 'a', version: 'abc' }, doc: { source: () => 'A changed paragraph long enough to read.' } });
@@ -243,7 +245,7 @@ test('a new edit leaves a failure status alone', () => {
 });
 
 test('When you ask says how to ask, with the real shortcut and no promise of automatic reading', () => {
-  for (const [mac, keys] of [[true, 'Cmd+Shift+E'], [false, 'Ctrl+Shift+E']]) {
+  for (const [mac, keys] of [[true, '⌘⇧E'], [false, 'Ctrl+Shift+E']]) {
     const h = harness();
     h.context.ON_MAC = mac;
     const html = h.context.felixSettingsCards({ gap: 90, gaps: [10, 15, 30, 90, 180], cap: 40, caps: [20, 40, 80, 0], today: 0, default_mode: 'ask', layout: 'right', pace: 'regular' }, { tasks: [] });
@@ -256,8 +258,7 @@ test('When you ask says how to ask, with the real shortcut and no promise of aut
 test('the page keeps only the asking affordances it really has', () => {
   const passages = fs.readFileSync(path.join(__dirname, '../src/web/app/passages.js'), 'utf8');
   assert.match(passages, /<span>Ask Felix<\/span>/);
-  assert.match(passages, /e\.shiftKey/);
-  assert.match(passages, /\(e\.metaKey \|\| e\.ctrlKey\)/);
+  assert.match(passages, /pressed\(e, 'ask'\)/);
 });
 
 test('the mascot, the tether and the reading stub are gone from the margin script and styles', () => {

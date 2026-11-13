@@ -13,14 +13,12 @@ window.addEventListener('keydown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
-  const chord = (ON_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey;
-  const letter = e.key.toLowerCase();
-  if (chord && letter === 'k') {
+  if (pressed(e, 'quick')) {
     e.preventDefault();
     toggleQuickLeo();
     return;
   }
-  if (chord && letter === 'n') {
+  if (pressed(e, 'new')) {
     if (e.isComposing || $('.scrim') || $('.inline-edit') || state.view === 'locked') return;
     if (typing && !typing.matches('.line-edit, #title, #chat-input') || $('#rec-point-text')?.value.trim()) return;
     e.preventDefault();

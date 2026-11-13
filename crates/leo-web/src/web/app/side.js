@@ -25,7 +25,7 @@ try {
 } catch (e) {}
 
 const SIDE_ORDER_KEY = 'leo-side-order';
-const SIDE_SORTS = { title: { text: 'Name', orders: ['title', 'title-desc'], ways: ['A to Z', 'Z to A'] }, updated: { text: 'Last edited', orders: ['updated', 'oldest'], ways: ['Newest first', 'Oldest first'] }, created: { text: 'Created', orders: ['created', 'created-asc'], ways: ['Newest first', 'Oldest first'] } };
+const SIDE_SORTS = { title: { text: 'Name', orders: ['title', 'title-desc'], ways: ['A to Z', 'Z to A'], icons: ['sortAZ', 'sortZA'] }, updated: { text: 'Last edited', orders: ['updated', 'oldest'], ways: ['Newest first', 'Oldest first'], icons: ['sortWide', 'sortNarrow'] }, created: { text: 'Created', orders: ['created', 'created-asc'], ways: ['Newest first', 'Oldest first'], icons: ['sortWide', 'sortNarrow'] } };
 
 try {
   const kept = JSON.parse(localStorage.getItem(SIDE_ORDER_KEY) || '{}');
@@ -64,10 +64,6 @@ const sideResize = window.leoPaneResize.create({
   enabled: () => sideWide() && !side.mini && !document.body.classList.contains('side-folding') && state.view !== 'locked',
   onChange: () => window.dispatchEvent(new Event('resize')),
 });
-
-const shortcutLabel = ON_MAC ? '⌘K' : 'Ctrl K';
-const newNoteLabel = ON_MAC ? '⌘N' : 'Ctrl N';
-const quickLabel = shortcutLabel;
 
 function sideRow(action, icon, label, { on = false, attrs = '', count = '', hint = label } = {}) {
   const tail = count === '' ? '' : `<span class="side-count side-label">${esc(String(count))}</span>`;
@@ -132,7 +128,7 @@ function drawSide() {
     </div>
     <div class="side-rail">
       <nav class="side-rail-main" aria-label="Leo tools">
-        ${sideRow('quick-leo', ICON.search, 'Search', { hint: `Search, ask, remind or jot anything (${shortcutLabel})` })}
+        ${sideRow('quick-leo', ICON.search, 'Search', { hint: `Search, ask, remind or jot anything (${shortcutText(shortcutKeys('quick'))})` })}
         ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
         ${sideRow('boards', ICON.board, 'Boards', { on: here === 'boards', hint: 'Boards · track tasks from To do to Done' })}
         ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(actionDir)}"` })}
@@ -144,9 +140,9 @@ function drawSide() {
       </nav>
     </div>
     <div class="side-explorer" id="side-explorer">
-      <button class="side-row side-new" data-action="new" data-dir="${esc(actionDir)}" aria-label="New note" aria-keyshortcuts="${ON_MAC ? 'Meta+N' : 'Control+N'}" title="New note${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.filePlus}<span class="side-label">New note</span><kbd aria-hidden="true">${newNoteLabel}</kbd></button>
+      <button class="side-row side-new" data-action="new" data-dir="${esc(actionDir)}" aria-label="New note" aria-keyshortcuts="${shortcutAria(shortcutKeys('new'))}" title="New note${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.filePlus}<span class="side-label">New note</span><kbd aria-hidden="true">${shortcutText(shortcutKeys('new'))}</kbd></button>
       <div class="side-group" data-drop-dir="" title="Drop a folder or note here to move it to the top level"><span>Folders</span><span class="side-group-tools"><button class="side-add" data-action="new-folder" data-parent="${esc(actionDir)}" aria-label="New folder" title="New folder${actionDir ? ` in ${esc(folderLabel(actionDir))}` : ''}">${ICON.folderPlus}</button></span></div>
-      <div class="side-filter-row"><label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label><button class="side-add side-sort${side.sort !== 'title' || side.tasks ? ' on' : ''}" data-action="side-sort" aria-label="Sort notes" title="${esc(`Sorted by ${SIDE_SORTS[side.sort].text.toLowerCase()}${side.tasks ? ', open tasks only' : ''}`)}" aria-haspopup="menu" aria-expanded="${Boolean(popup?.owner.matches('[data-action="side-sort"]'))}">${ICON.sort}</button><button class="side-add side-flip${side.flip ? ' on' : ''}" data-action="side-flip" aria-label="Reverse order" aria-pressed="${side.flip}" title="${esc(SIDE_SORTS[side.sort].ways[side.flip ? 1 : 0])}">${ICON.flip}</button></div>
+      <div class="side-filter-row"><label class="field side-filter">${ICON.search}<input id="side-filter" type="search" placeholder="Filter" aria-label="Filter loaded notes" autocomplete="off" spellcheck="false" value="${esc(side.filter || '')}"></label><button class="side-add side-sort${side.sort !== 'title' || side.tasks ? ' on' : ''}" data-action="side-sort" aria-label="Sort notes" title="${esc(`Sorted by ${SIDE_SORTS[side.sort].text.toLowerCase()}${side.tasks ? ', open tasks only' : ''}`)}" aria-haspopup="menu" aria-expanded="${Boolean(popup?.owner.matches('[data-action="side-sort"]'))}">${ICON.sort}</button><button class="side-add side-flip${side.flip ? ' on' : ''}" data-action="side-flip" data-way="${SIDE_SORTS[side.sort].icons[side.flip ? 1 : 0]}" aria-label="Reverse order, now ${esc(SIDE_SORTS[side.sort].ways[side.flip ? 1 : 0])}" aria-pressed="${side.flip}" title="${esc(SIDE_SORTS[side.sort].ways[side.flip ? 1 : 0])}">${ICON[SIDE_SORTS[side.sort].icons[side.flip ? 1 : 0]]}</button></div>
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="" tabindex="0">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
