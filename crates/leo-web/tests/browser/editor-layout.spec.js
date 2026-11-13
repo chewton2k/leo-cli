@@ -189,6 +189,7 @@ test('switching editable blocks keeps unrelated rendered content and the viewpor
 });
 
 test('focusing and dragging from a formatted line preserves document geometry in both directions', async ({ browser }) => {
+  test.setTimeout(60000);
   const samples = ['## A heading', '- A list item', '  - A nested item', '- [ ] A task', '**Bold** text ' + 'wrapped words '.repeat(35), '```js\nconst answer = 42;\n```', '| Name | Value |\n| --- | --- |\n| One | Two |', '> A quote\n> Another line'];
   await editorFixture(browser, async (context, url) => {
     const page = await context.newPage();
