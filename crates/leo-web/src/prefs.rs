@@ -11,6 +11,7 @@ use serde::Deserialize;
 use crate::AppState;
 
 const FILE: &str = "ui-prefs.json";
+const CONTENT: [&str; 2] = ["leo-chat-v1", "leo-search"];
 const MOST_VALUE: usize = 16 * 1024;
 const MOST_TOTAL: usize = 128 * 1024;
 pub(crate) const BODY_BYTES: usize = MOST_TOTAL + 64 * 1024;
@@ -35,6 +36,7 @@ fn key_ok(key: &str) -> bool {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
     }) && !key.starts_with("leo-draft")
+        && !CONTENT.contains(&key)
 }
 
 fn size_of(prefs: &Prefs) -> usize {
@@ -73,10 +75,14 @@ fn merge(mut prefs: Prefs, change: Change) -> Option<Prefs> {
         prefs.remove(key);
     }
     for (key, value) in change.set {
-        if !key_ok(&key) || value.len() > MOST_VALUE {
+        if !key_ok(&key) {
             return None;
         }
-        prefs.insert(key, value);
+        if value.len() > MOST_VALUE {
+            prefs.remove(&key);
+        } else {
+            prefs.insert(key, value);
+        }
     }
     (size_of(&prefs) <= MOST_TOTAL).then_some(prefs)
 }
@@ -158,6 +164,8 @@ mod tests {
             "leo_a",
             "leo-draft-v1",
             "leo-draft",
+            "leo-chat-v1",
+            "leo-search",
             &format!("leo-{}", "a".repeat(49)),
         ] {
             assert!(!key_ok(bad), "{bad}");
@@ -176,8 +184,10 @@ mod tests {
         assert_eq!(kept["leo-c"], "4");
 
         let big = "x".repeat(MOST_VALUE + 1);
+        apply(dir.path(), change(&[("leo-a", &big)], &[])).unwrap();
+        let kept = load(dir.path());
+        assert_eq!(kept.keys().collect::<Vec<_>>(), ["leo-c"]);
         for refused in [
-            change(&[("leo-big", &big)], &[]),
             change(&[("leo-draft-v1", "1")], &[]),
             change(&[("leo-ok", "1"), ("Bad", "1")], &[]),
             change(&[], &["../x"]),

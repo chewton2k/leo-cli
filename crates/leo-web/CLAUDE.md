@@ -105,11 +105,12 @@ Decided: one app, window only (2026-10-31).
   anything. Page toolbars share one 760 px maximum width.
 - UI preferences survive a port change (2026-11-14): localStorage is per origin and
   the engine port drifts when the saved one is busy, so every `leo-*` key (not
-  `leo-draft*`) is mirrored in `<data>/ui-prefs.json` (`prefs.rs`: keys
+  `leo-draft*`, `leo-chat-v1` or `leo-search`: content, not settings) is mirrored in `<data>/ui-prefs.json` (`prefs.rs`: keys
   `^leo-[a-z0-9-]{1,48}$`, 16 KB per value, 128 KB total, temp file + rename,
   merged per key under a lock). `/prefs.js` (behind the session gate, `no-store`,
-  loads before `/theme.js`) seeds localStorage from the file (the file wins unless
-  it is empty, then the page uploads its keys once), patches `Storage` `setItem`
+  loads before `/theme.js`) seeds localStorage from the file (the file's keys win; keys it lacks are
+  left alone; an empty file makes the page upload its keys once; an oversize
+  value removes the stored copy; a failed PUT is queued again), patches `Storage` `setItem`
   and `removeItem` to send a debounced `PUT /api/ui-prefs` and flushes on
   `pagehide` and hidden. `LEO_NO_UI_PREFS=1` turns it off (the browser tests'
   shared server sets it so one test's choices never reach the next;
