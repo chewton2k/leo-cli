@@ -505,7 +505,7 @@ function marginElement(t) {
   el.className = 'margin-note';
   el.dataset.id = t.id;
   el.setAttribute('aria-label', `Felix, about “${t.quote.slice(0, 80)}”`);
-  el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}">${ICON.close}</button><button type="button" class="margin-chat" data-margin-act="chat" aria-label="Ask in chat" title="Ask in chat">${ICON.chat}</button><div class="margin-said"></div><div class="margin-pending" hidden></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
+  el.innerHTML = `<button type="button" class="margin-toggle" aria-expanded="false" aria-controls="${esc(more)}">${ICON.close}</button><button type="button" class="margin-chat" data-margin-act="chat" aria-label="Ask in chat" title="Ask in chat">${ICON.chat}</button><button type="button" class="margin-pin" data-margin-act="pin" aria-pressed="false">${ICON.pin}</button><div class="margin-said"></div><div class="margin-pending" hidden></div><div class="margin-more" id="${esc(more)}" aria-hidden="true" inert><div class="margin-more-body">
     <form class="margin-reply"><textarea rows="1" maxlength="1000" aria-label="Reply to Felix" placeholder="Reply"></textarea><button type="submit" class="margin-send" aria-label="Send" disabled>${ICON.send}</button></form>
     <p class="margin-problem" role="status" hidden></p>
     <div class="margin-acts"><button type="button" class="msg-act" data-margin-act="resolve">Resolve</button><button type="button" class="msg-act" data-margin-act="dismiss">Dismiss</button><button type="button" class="msg-act icon-act" data-action="diagram-expand" data-reply="all" aria-label="See it larger" title="See it larger">${ICON.expand}</button><button type="button" class="margin-add" data-margin-act="add">Add to note</button></div></div></div>`;
@@ -565,6 +565,12 @@ function marginFill(el, t, arriving) {
   const toggle = $('.margin-toggle', el);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', `${open ? 'Close' : 'Open'} Felix’s note on “${t.quote.slice(0, 80)}”`);
+  const pin = $('.margin-pin', el);
+  pin.hidden = draft;
+  pin.setAttribute('aria-pressed', String(Boolean(t.pinned)));
+  pin.setAttribute('aria-label', t.pinned ? 'Unpin' : 'Pin open');
+  pin.title = t.pinned ? 'Unpin' : 'Pin open';
+  el.toggleAttribute('data-pinned', Boolean(t.pinned));
   $('.margin-add', el).hidden = draft || !marginNow(t);
   $('[data-margin-act="resolve"]', el).hidden = draft;
   const dismiss = $('[data-margin-act="dismiss"]', el);
@@ -881,7 +887,8 @@ function marginClick(e) {
   if (action) {
     const t = marginThread(id);
     if (!t) return;
-    if (action.dataset.marginAct === 'add') marginAdd(t).catch(fail);
+    if (action.dataset.marginAct === 'pin') marginPin(t).catch(fail);
+    else if (action.dataset.marginAct === 'add') marginAdd(t).catch(fail);
     else if (action.dataset.marginAct === 'chat') marginToChat(t);
     else if (action.dataset.marginAct === 'resolve') marginStatus(t, 'resolved').catch(fail);
     else if (t.id === 'draft') marginClose();
@@ -1034,6 +1041,14 @@ async function marginAskOn(s, t, question) {
   const replies = fresh && [...fresh.querySelectorAll('.margin-felix')];
   if (replies?.length) marginAnswer(replies[replies.length - 1], marginNow(done), true);
   $('textarea', fresh)?.focus();
+}
+
+async function marginPin(t) {
+  const s = marginPage.s;
+  const done = await api(`/api/notes/${enc(s.note.id)}/margin/threads/${enc(t.id)}`, { method: 'PATCH', body: { pinned: !t.pinned } });
+  if (marginPage.s !== s) return;
+  marginPage.threads = marginPage.threads.map((old) => (old.id === done.id ? done : old));
+  marginDraw();
 }
 
 async function marginStatus(t, status) {

@@ -375,6 +375,11 @@ Felix (2026-10-19).
   (`MOST_REPLY` 4,000, `MOST_MESSAGES`, the last 8 sent).
 - A thread whose passage is gone is not shown (2026-11-09; there is no lost-place
   box).
+- Fold unless pinned (2026-11-14): `margin_threads.pinned` (guarded `ALTER`,
+  db `VERSION` 4, in `margin.json`), PATCH `.../threads/{id}` `{pinned}`. A
+  closed note that is not pinned or focused shows only its first line and dims
+  to .7 until lit; hover undims but never unfolds (no restack under the
+  pointer). An open thread's messages sit right of a 1 px `--line` rule.
 - Deletes: a trashed note keeps its threads; deleting from the trash removes them
   (`forget_notes`). `sweep_store` waits `SWEEP_AFTER_DAYS` (7) and never runs
   while no notes loaded or a file is unreadable. Export adds `leo/margin.json`

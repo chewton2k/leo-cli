@@ -114,7 +114,9 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route(
             "/api/notes/{id}/margin/threads/{thread}",
-            post(margin::set_status).delete(margin::forget),
+            post(margin::set_status)
+                .patch(margin::pin)
+                .delete(margin::forget),
         )
         .route(
             "/api/notes/{id}/margin/threads/{thread}/reply",

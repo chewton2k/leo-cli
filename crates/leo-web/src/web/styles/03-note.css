@@ -75,7 +75,11 @@
 .margin-said-aloud { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .margin-note { position: absolute; left: 0; top: 0; width: var(--margin-w); color: var(--text); border-radius: var(--r-md); }
 .margin-note[hidden] { display: none; }
-.margin-note { transition: background-color .14s ease-out, box-shadow .14s ease-out; }
+.margin-note { transition: background-color .14s ease-out, box-shadow .14s ease-out, opacity .14s ease-out; }
+.margin-note:not([data-open], [data-pinned], [data-active]) { opacity: .7; }
+.margin-note:not([data-open], [data-pinned], :focus-within) .margin-said { max-height: calc(15px * var(--read) * 1.46); overflow: hidden; }
+.margin-note:not([data-open], [data-pinned], :focus-within) .margin-foot { display: none; }
+.margin-note[data-open] :is(.margin-said, .margin-pending) { border-left: 1px solid var(--line); padding-left: 10px; }
 .margin-note[data-active]:not([data-open]) { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 9%, transparent); }
 .margin-waiting { position: absolute; left: 0; top: 0; pointer-events: none !important; transition: opacity .12s ease-out; }
 .margin-waiting.leaving { opacity: 0; }
@@ -91,12 +95,14 @@
 .margin-toggle svg { display: none; width: 16px; height: 16px; color: var(--muted); }
 .margin-note[data-open] .margin-toggle svg { display: block; }
 .margin-note[data-open] .margin-toggle:hover svg { color: var(--text); }
-.margin-note[data-open] .margin-said > :first-child { padding-right: 50px; }
-.margin-chat { display: none; }
-.margin-note[data-open] .margin-chat { position: absolute; z-index: 2; top: -6px; right: 20px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-tile); background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
-.margin-chat:hover { color: var(--text); }
-.margin-chat:focus-visible, .margin-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.margin-chat svg { width: 15px; height: 15px; }
+.margin-note[data-open] .margin-said > :first-child { padding-right: 70px; }
+.margin-chat, .margin-pin { display: none; }
+.margin-note[data-open] :is(.margin-chat, .margin-pin) { position: absolute; z-index: 2; top: -6px; right: 20px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-tile); background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.margin-note[data-open] .margin-pin { right: 48px; }
+.margin-chat:hover, .margin-pin:hover { color: var(--text); }
+.margin-note[data-open] .margin-pin[aria-pressed="true"] { color: var(--accent); }
+.margin-chat:focus-visible, .margin-pin:focus-visible, .margin-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.margin-chat svg, .margin-pin svg { width: 15px; height: 15px; }
 .margin-note.arriving .margin-felix figure { animation: fade .3s var(--ease-arrive) both; }
 .margin-note[data-open] { z-index: 2; }
 .margin-note[data-open] .margin-said { max-height: min(420px, calc(100dvh - 260px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
@@ -159,7 +165,7 @@ figure.drawing.inked img { filter: none !important; }
 .margin-note .drawing-row p { font-size: calc(14px * var(--read)); }
 .margin-note .drawing-title { font-size: calc(16px * var(--read)); }
 .margin-note .drawing-sub { font-size: calc(12.5px * var(--read)); }
-.margin-note[data-open] .margin-said > :first-child > .drawing-row:not(:first-child) { margin-right: -50px; }
+.margin-note[data-open] .margin-said > :first-child > .drawing-row:not(:first-child) { margin-right: -70px; }
 
 .margin-reply textarea::placeholder { color: var(--muted); }
 .margin-problem { margin: 7px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }

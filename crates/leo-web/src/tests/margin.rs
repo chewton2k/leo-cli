@@ -917,6 +917,51 @@ async fn a_weave_refuses_when_the_note_changed_while_felix_wrote() {
 }
 
 #[tokio::test]
+async fn a_pin_is_kept_on_the_thread_through_reloads_and_the_export() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Pinned", PASSAGE).await;
+    let thread = thread_on(&engine, &id).await;
+    let path = format!("/api/notes/{id}/margin/threads/{thread}");
+    let pin = |body: &str| engine.send_as(&engine.cookie, "PATCH", &path, Some(body.into()));
+    let view = format!("/api/notes/{id}/margin");
+    assert_eq!(engine.get(&view).await.1["threads"][0]["pinned"], false);
+    let (code, pinned) = pin(r#"{"pinned":true}"#).await;
+    assert_eq!((code, &pinned["pinned"]), (200, &serde_json::json!(true)));
+    assert_eq!(engine.get(&view).await.1["threads"][0]["pinned"], true);
+    assert!(margin::every(&engine.chats())[0].pinned);
+    let parts = crate::export::Parts {
+        chats: true,
+        ..Default::default()
+    };
+    let mut zip = std::io::Cursor::new(Vec::new());
+    crate::export::write_zip(
+        &mut zip,
+        &engine.dir.path().join("notes"),
+        &engine.chats(),
+        parts,
+    )
+    .unwrap();
+    zip.set_position(0);
+    let mut archive = zip::ZipArchive::new(zip).unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_reader(archive.by_name("leo/margin.json").unwrap()).unwrap();
+    assert_eq!(exported["threads"][0]["pinned"], true);
+    assert_eq!(pin(r#"{"pinned":false}"#).await.1["pinned"], false);
+    assert_eq!(pin(r#"{"pinned":"yes"}"#).await.0, 422);
+    let wrong = format!("/api/notes/{id}/margin/threads/{}", uuid::Uuid::new_v4());
+    let (missing, _) = engine
+        .send_as(
+            &engine.cookie,
+            "PATCH",
+            &wrong,
+            Some(r#"{"pinned":true}"#.into()),
+        )
+        .await;
+    assert_eq!(missing, 404);
+    engine.stop().await;
+}
+
+#[tokio::test]
 async fn dismissing_and_resolving_take_a_thread_off_the_page_and_undo_brings_it_back() {
     let engine = Engine::with(Powers::default()).await;
     let (id, _) = engine.note("Done", PASSAGE).await;

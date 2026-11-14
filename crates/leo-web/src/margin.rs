@@ -66,6 +66,8 @@ pub struct Thread {
     pub messages: Vec<Message>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -197,6 +199,7 @@ pub fn new_thread(
         messages,
         created_at: now,
         updated_at: now,
+        pinned: false,
     }
 }
 
@@ -219,11 +222,12 @@ fn thread_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         messages: serde_json::from_str(&messages).unwrap_or_default(),
         created_at: time(8)?,
         updated_at: time(9)?,
+        pinned: row.get(10)?,
     })
 }
 
 const COLUMNS: &str =
-    "id, note, quote, prefix, suffix, status, source, messages, created_at, updated_at";
+    "id, note, quote, prefix, suffix, status, source, messages, created_at, updated_at, pinned";
 
 pub fn open_on(chats: &Path, note: &str) -> Vec<Thread> {
     db_of(chats)
@@ -286,8 +290,8 @@ pub fn put(chats: &Path, thread: &Thread) -> bool {
     db_of(chats)
         .with(|c| {
             let added = c.execute(
-                "INSERT OR IGNORE INTO margin_threads (id, note, quote, prefix, suffix, status, source, messages, created_at, updated_at)
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+                "INSERT OR IGNORE INTO margin_threads (id, note, quote, prefix, suffix, status, source, messages, created_at, updated_at, pinned)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?12
                  WHERE ?6 != 'open'
                     OR (SELECT count(*) FROM margin_threads WHERE note = ?2 AND status = 'open') < ?11",
                 params![
@@ -302,6 +306,7 @@ pub fn put(chats: &Path, thread: &Thread) -> bool {
                     thread.created_at.to_rfc3339(),
                     thread.updated_at.to_rfc3339(),
                     MOST_OPEN as i64,
+                    thread.pinned,
                 ],
             )?;
             prune_closed(c, &thread.note)?;
@@ -368,6 +373,18 @@ pub fn set_status(chats: &Path, note: &str, id: &str, status: &str) -> Status {
         }
     });
     done.unwrap_or(Status::Missing)
+}
+
+pub fn set_pinned(chats: &Path, note: &str, id: &str, pinned: bool) -> Option<Thread> {
+    let changed = db_of(chats)
+        .with(|c| {
+            c.execute(
+                "UPDATE margin_threads SET pinned = ?1 WHERE id = ?2 AND note = ?3",
+                params![pinned, id, note],
+            )
+        })
+        .ok()?;
+    (changed > 0).then(|| one(chats, note, id)).flatten()
 }
 
 pub fn remove(chats: &Path, id: &str) -> bool {
@@ -1940,6 +1957,7 @@ mod tests {
             messages: vec![felix_says(text)],
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            pinned: false,
         }
     }
 
@@ -1994,6 +2012,7 @@ mod tests {
             messages: vec![felix_says(&"word ".repeat(200))],
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            pinned: false,
         };
         let all: Vec<Thread> = (0..30).map(thread).collect();
         let text = context(&all, 100_000);

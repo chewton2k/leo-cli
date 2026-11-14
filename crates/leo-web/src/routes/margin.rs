@@ -51,6 +51,11 @@ pub(crate) struct StatusBody {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct PinBody {
+    pinned: bool,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct ModeBody {
     mode: Option<String>,
     persona: Option<String>,
@@ -1013,6 +1018,22 @@ pub(crate) async fn weave(
             "The note changed while Felix was working this in. Try once more.",
         ),
         Err(code) => code.into_response(),
+    }
+}
+
+pub(crate) async fn pin(
+    State(state): State<AppState>,
+    Path((id, thread)): Path<(String, String)>,
+    Json(body): Json<PinBody>,
+) -> Response {
+    if !margin::valid_note(&id) || !margin::valid_note(&thread) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let chats = state.chats.clone();
+    match blocking(move || margin::set_pinned(&chats, &id, &thread, body.pinned)).await {
+        Ok(Some(found)) => Json(found).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(refused) => *refused,
     }
 }
 

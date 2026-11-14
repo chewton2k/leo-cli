@@ -50,6 +50,7 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
       if(url==='/api/margin')return {layout:fake.layout,pace:'regular',default_mode:'ask'};
       if(url.endsWith('/margin')&&method==='GET')return {mode:fake.mode,threads:structuredClone(fake.threads)};
       if(url.endsWith('/margin/threads')&&method==='POST'){fake.posts.push(body);return {id:'t9',quote:body.quote,prefix:body.prefix,suffix:body.suffix,status:'open',source:'ask',messages:[{from:'felix',text:'A fake answer.'}]};}
+      if(method==='PATCH'&&url.includes('/margin/threads/')){fake.posts.push(body);const t=fake.threads.find(x=>url.endsWith('/'+x.id));t.pinned=body.pinned;return structuredClone(t);}
       if(url.endsWith('/margin/read')){fake.posts.push(body);return new Promise(r=>{fake.answer=r;});}
       if(url.endsWith('/margin')&&method==='POST'){fake.posts.push(body);if(fake.failMode){const e=new Error('Try again.');e.status=503;throw e;}fake.mode=body.mode;return {mode:body.mode};}
       throw new Error('No fake for '+method+' '+url);
@@ -327,6 +328,33 @@ test.describe('reading pencil', () => {
       await page.evaluate(() => fake.answer({ note: null }));
       await expect(pencil(page)).toHaveCount(0);
     }, { mode: 'along', threads: [], context: { reducedMotion: 'reduce' } });
+  });
+});
+
+test.describe('folding and pins', () => {
+  const LONG = { ...THREADS.short, messages: [{ from: 'felix', text: 'Hash it before you store it. Use a slow hash such as Argon2id with a unique salt for each user, and verify at login by hashing the attempt the same way.' }] };
+  test('a closed unpinned note folds to its first line and dims; opening shows the conversation right of a thin rule, and a pin keeps it unfolded', async ({ browser }) => {
+    await fixture(browser, async (page) => {
+      const note = page.locator('.margin-note[data-id="t1"]');
+      const said = note.locator('.margin-said');
+      const line = await note.locator('.margin-felix').evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+      const height = () => said.evaluate((el) => el.getBoundingClientRect().height);
+      const opacity = () => note.evaluate((el) => Number(getComputedStyle(el).opacity));
+      await expect.poll(height).toBeLessThanOrEqual(line + 1);
+      await expect.poll(opacity).toBeCloseTo(0.7, 2);
+      await note.locator('.margin-toggle').click();
+      await expect(note).toHaveAttribute('data-open', '');
+      expect(await height()).toBeGreaterThan(line * 2);
+      expect(await said.evaluate((el) => [getComputedStyle(el).borderLeftWidth, getComputedStyle(el).borderLeftStyle])).toEqual(['1px', 'solid']);
+      await note.getByRole('button', { name: 'Pin open' }).click();
+      await expect(note.getByRole('button', { name: 'Unpin' })).toHaveAttribute('aria-pressed', 'true');
+      expect(await page.evaluate(() => fake.posts.at(-1))).toEqual({ pinned: true });
+      await page.mouse.click(5, 5);
+      await expect(note).not.toHaveAttribute('data-open', '');
+      await expect(note).toHaveAttribute('data-pinned', '');
+      expect(await height()).toBeGreaterThan(line * 2);
+      await expect.poll(opacity).toBe(1);
+    }, { threads: [LONG] });
   });
 });
 

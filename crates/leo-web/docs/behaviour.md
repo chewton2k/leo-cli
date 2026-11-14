@@ -912,8 +912,12 @@ target. Check the page sequence after loading preferences.
   shows the problem and lets the user type a question (2026-11-06, the user's call).
   Replies show the sent text and the mark the same way; a failed one restores the text. The box stays editable
   while Felix thinks and only Send waits (2026-11-06).
-  Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
-  Add to note. A closed thread with more messages says "N more" (marks get a ring).
+  Every open thread has an Ask in chat icon and a pin (Pin open / Unpin, `aria-pressed`) beside ×; actions read Resolve, Dismiss,
+  Add to note. Threads fold unless pinned (2026-11-14): a closed note that is not pinned shows its first line only
+  (no "N more") and dims to .7 until it is hovered, focused or opened; keyboard focus inside unfolds it, hover does not,
+  so nothing restacks under the pointer. A pin (PATCH `.../threads/{id}` `{pinned}`, `margin_threads.pinned`, exported in
+  `margin.json`) keeps the closed note whole and undimmed. Open, its messages and the waiting mark sit right of a 1 px
+  `--line` rule. A pinned closed thread with more messages says "N more" (marks get a ring either way).
   Word arrival animates colour only, never opacity (blur on WebKit); positions are rounded. With Felix open, under
   3 or over `MOST_ASKED` (1,000) characters, it goes to the chat as before (2026-11-08; read-along and `add_margin_note` quotes stay at `MOST_QUOTE`, 600). The server anchors on
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
