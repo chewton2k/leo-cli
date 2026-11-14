@@ -177,8 +177,9 @@ pub fn run() {
                     }
                 }
                 if let WindowEvent::Resized(_) = event {
-                    if !handle.is_fullscreen().unwrap_or(false) {
-                        finish_close(&handle);
+                    let closing = CLOSING.load(std::sync::atomic::Ordering::Relaxed);
+                    if closing != 0 && !handle.is_fullscreen().unwrap_or(false) {
+                        finish_close_after(&handle, closing, Duration::from_millis(300));
                     }
                 }
                 if let WindowEvent::Focused(_) | WindowEvent::Resized(_) = event {
@@ -288,7 +289,7 @@ pub(crate) fn show(app: &AppHandle) {
             return;
         }
         if let Some(window) = app.get_webview_window(MAIN) {
-            LEAVING_FULLSCREEN.store(false, std::sync::atomic::Ordering::Relaxed);
+            CLOSING.store(0, std::sync::atomic::Ordering::Relaxed);
             let _ = window.unminimize();
             let _ = window.show();
             set_visible(&window, true);
@@ -300,30 +301,40 @@ pub(crate) fn show(app: &AppHandle) {
     });
 }
 
-static LEAVING_FULLSCREEN: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static CLOSING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CLOSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn hide_window(window: &tauri::WebviewWindow) {
     let _ = window.hide();
     set_visible(window, false);
 }
 
-fn finish_close(window: &tauri::WebviewWindow) {
-    if LEAVING_FULLSCREEN.swap(false, std::sync::atomic::Ordering::Relaxed) {
-        hide_window(window);
-    }
+fn finish_close_after(window: &tauri::WebviewWindow, close: u64, wait: Duration) {
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(wait);
+        if CLOSING
+            .compare_exchange(
+                close,
+                0,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            hide_window(&window);
+        }
+    });
 }
 
 fn leave_fullscreen_then_hide(window: &tauri::WebviewWindow) {
-    if LEAVING_FULLSCREEN.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    if CLOSING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         return;
     }
+    let close = CLOSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    CLOSING.store(close, std::sync::atomic::Ordering::Relaxed);
     let _ = window.set_fullscreen(false);
-    let window = window.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(1));
-        finish_close(&window);
-    });
+    finish_close_after(window, close, Duration::from_millis(1200));
 }
 
 fn set_visible(window: &tauri::WebviewWindow, visible: bool) {
