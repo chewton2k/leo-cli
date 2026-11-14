@@ -35,7 +35,7 @@ let personaDetails = false;
 const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null, tethers: new Map() };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null, tethers: new Map(), newest: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -571,6 +571,7 @@ function marginFill(el, t, arriving) {
   pin.setAttribute('aria-label', t.pinned ? 'Unpin' : 'Pin open');
   pin.title = t.pinned ? 'Unpin' : 'Pin open';
   el.toggleAttribute('data-pinned', Boolean(t.pinned));
+  el.toggleAttribute('data-newest', marginPage.newest === t.id);
   $('.margin-add', el).hidden = draft || !marginNow(t);
   $('[data-margin-act="resolve"]', el).hidden = draft;
   const dismiss = $('[data-margin-act="dismiss"]', el);
@@ -1346,6 +1347,7 @@ async function marginRead(s) {
     const blocks = marginKit.changedBlocks(marginPage.baseline, source);
     if (!blocks.length) return;
     marginPage.nextRead = Date.now() + (marginPrefs?.gap ?? READ_GAP_SECONDS) * 1000;
+    marginPage.newest = null;
     marginShowReading(s, source, blocks);
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;
@@ -1358,6 +1360,7 @@ async function marginRead(s) {
     if (got?.note) {
       marginPage.threads.push(got.note);
       marginPage.arriving.add(got.note.id);
+      marginPage.newest = got.note.id;
       const voice = $('.margin-said-aloud', marginPage.layer);
       if (voice) voice.textContent = `Felix: ${marginNow(got.note)}`;
       marginRedraw();

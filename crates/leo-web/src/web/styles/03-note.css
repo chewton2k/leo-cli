@@ -76,9 +76,9 @@
 .margin-note { position: absolute; left: 0; top: 0; width: var(--margin-w); color: var(--text); border-radius: var(--r-md); }
 .margin-note[hidden] { display: none; }
 .margin-note { transition: background-color .14s ease-out, box-shadow .14s ease-out, opacity .14s ease-out; }
-.margin-note:not([data-open], [data-pinned], [data-active]) { opacity: .7; }
-.margin-note:not([data-open], [data-pinned], :focus-within) .margin-said { max-height: calc(15px * var(--read) * 1.46); overflow: hidden; }
-.margin-note:not([data-open], [data-pinned], :focus-within) .margin-foot { display: none; }
+.margin-note:not([data-open], [data-pinned], [data-newest], [data-active]) { opacity: .7; }
+.margin-note:not([data-open], [data-pinned], [data-newest], :focus-within) .margin-said { max-height: calc(15px * var(--read) * 1.46); overflow: hidden; }
+.margin-note:not([data-open], [data-pinned], [data-newest], :focus-within) .margin-foot { display: none; }
 .margin-note[data-open] :is(.margin-said, .margin-pending) { border-left: 1px solid var(--line); padding-left: 10px; }
 .margin-note[data-active]:not([data-open]) { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 9%, transparent); }
 .margin-waiting { position: absolute; left: 0; top: 0; pointer-events: none !important; transition: opacity .12s ease-out; }
