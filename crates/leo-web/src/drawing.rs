@@ -7,18 +7,28 @@ const LEAST_PARTS: usize = 3;
 const STEP_WORDS: [&str; 7] = [
     "first", "then", "next", "after", "finally", "before", "once",
 ];
-const SEE_WORDS: [&str; 6] = [
+const SEE_WORDS: [&str; 12] = [
     "draw",
+    "drawing",
     "diagram",
-    "visuali",
+    "diagrams",
+    "visualize",
+    "visualise",
+    "visualization",
+    "visualisation",
     "sketch",
+    "illustrate",
+    "illustration",
     "picture",
-    "illustrat",
 ];
 
 pub(crate) fn asks_to_see(message: &str) -> bool {
     let lower = message.to_lowercase();
-    SEE_WORDS.iter().any(|word| lower.contains(word))
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).collect();
+    words.iter().enumerate().any(|(i, word)| {
+        SEE_WORDS.contains(word)
+            && (*word != "picture" || matches!(words.get(i + 1), Some(&"it" | &"this" | &"that")))
+    })
 }
 
 pub(crate) fn needs(reply: &str) -> bool {
@@ -90,6 +100,26 @@ pub(crate) fn drawn(writer: &crate::graph::Writer, asked: &str, reply: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_request_to_see_it_asks_for_a_drawing() {
+        for yes in [
+            "Can you draw this?",
+            "Visualize the steps",
+            "picture it for me",
+            "A diagram please",
+        ] {
+            assert!(asks_to_see(yes), "{yes}");
+        }
+        for no in [
+            "What's in this picture?",
+            "Any drawbacks?",
+            "He withdrew",
+            "Explain recursion",
+        ] {
+            assert!(!asks_to_see(no), "{no}");
+        }
+    }
 
     fn long(body: &str) -> String {
         format!(
