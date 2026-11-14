@@ -424,8 +424,12 @@ Felix (2026-10-19).
   eighth of the note room) with a fence stable while content is (prefix caches).
 - Load margin prefs and reserve their space before positioning search matches or
   restoring reading; check the page sequence after loading. Read completion
-  checks session and request identity. Margin waiting dots are never a
-  `.margin-note` and never in `threads`.
+  checks session and request identity. While a read runs, the `#leo-mark`
+  symbol (`.margin-waiting`, breathing by opacity) and a pencil under the
+  changed block (`path.pencil` per line within `DRAWER_MS`, one side line for
+  4+ lines) are never a `.margin-note` and never in `threads`; the read's end,
+  an edit and leaving clear them (`marginReadingDone`, `marginPencilGone`). A lit
+  note's tether (`path.tether`) crosses only the gap beside the text.
 - Tests: `src/tests/margin.rs` drives the real engine over TCP with fake powers.
 
 Decided: margin threads never in files (2026-11-04); read-along default for new

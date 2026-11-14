@@ -50,6 +50,7 @@ async function fixture(browser, run, { width = 1280, height = 800, layout = 'rig
       if(url==='/api/margin')return {layout:fake.layout,pace:'regular',default_mode:'ask'};
       if(url.endsWith('/margin')&&method==='GET')return {mode:fake.mode,threads:structuredClone(fake.threads)};
       if(url.endsWith('/margin/threads')&&method==='POST'){fake.posts.push(body);return {id:'t9',quote:body.quote,prefix:body.prefix,suffix:body.suffix,status:'open',source:'ask',messages:[{from:'felix',text:'A fake answer.'}]};}
+      if(url.endsWith('/margin/read')){fake.posts.push(body);return new Promise(r=>{fake.answer=r;});}
       if(url.endsWith('/margin')&&method==='POST'){fake.posts.push(body);if(fake.failMode){const e=new Error('Try again.');e.status=503;throw e;}fake.mode=body.mode;return {mode:body.mode};}
       throw new Error('No fake for '+method+' '+url);
     }
@@ -249,7 +250,103 @@ test.describe('arriving underline', () => {
   });
 });
 
+test.describe('reading pencil', () => {
+  const startRead = (page, marker) => page.evaluate((m) => {
+    marginPage.baseline = leoMargin.blocksOf(session.doc.source()).filter((block) => !block.includes(m));
+    marginRead(session).catch(fail);
+  }, marker);
+  const shapeOf = (page, marker) => page.evaluate((m) => {
+    const source = session.doc.source();
+    const block = leoMargin.blocksOf(source).find((b) => b.includes(m));
+    const at = source.indexOf(block);
+    const rects = session.doc.spanRects(at, at + block.length);
+    const box = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
+    return {
+      bottoms: [...new Set(rects.map((r) => Math.round(r.bottom)))].sort((a, b) => a - b),
+      left: Math.min(...rects.map((r) => r.left)),
+      paths: [...document.querySelectorAll('.margin-ink path.pencil')].map(box),
+      draws: document.getAnimations().filter((run) => run.animationName === 'pencil-draw').map((run) => run.effect.getComputedTiming().endTime),
+    };
+  }, marker);
+  const pencil = (page) => page.locator('.margin-ink path.pencil');
+
+  test('a short passage gets one pencil line under each line, drawn within the drawer tier, and the mark breathes; silence clears both', async ({ browser }) => {
+    await fixture(browser, async (page) => {
+      await startRead(page, 'plain text');
+      await expect(pencil(page).first()).toBeAttached();
+      await expect(page.locator('.margin-waiting svg.margin-drop use[href="#leo-mark"]')).toHaveCount(1);
+      expect(await page.locator('.margin-waiting .margin-drop').evaluate((el) => getComputedStyle(el).animationName)).toBe('margin-breathe');
+      const shape = await shapeOf(page, 'plain text');
+      expect(shape.paths.length).toBe(shape.bottoms.length);
+      expect(shape.paths.length).toBeLessThan(4);
+      shape.paths.forEach((line, i) => expect(line.top).toBeGreaterThanOrEqual(shape.bottoms[i]));
+      for (const end of shape.draws) expect(end).toBeLessThanOrEqual(241);
+      await page.evaluate(() => fake.answer({ note: null }));
+      await expect(pencil(page)).toHaveCount(0);
+      await expect(page.locator('.margin-waiting')).toHaveCount(0);
+    }, { mode: 'along', threads: [] });
+  });
+
+  test('four or more lines get one side line left of the text, and a note or a failure removes it at once', async ({ browser }) => {
+    for (const answer of [{ note: { id: 't5', quote: 'A long paragraph begins here', prefix: '\n\n', suffix: ' and', status: 'open', messages: [{ from: 'felix', text: 'Long.' }] } }, { note: null, failed: true }]) {
+      await fixture(browser, async (page) => {
+        await startRead(page, 'word0');
+        await expect(pencil(page)).toHaveCount(1);
+        const shape = await shapeOf(page, 'word0');
+        expect(shape.bottoms.length).toBeGreaterThanOrEqual(4);
+        const [side] = shape.paths;
+        expect(side.height).toBeGreaterThan(side.width * 4);
+        expect(side.right).toBeLessThanOrEqual(shape.left);
+        await page.evaluate((got) => fake.answer(got), answer);
+        await expect(pencil(page)).toHaveCount(0);
+        await expect(page.locator('.margin-waiting')).toHaveCount(0);
+      }, { mode: 'along', threads: [] });
+    }
+  });
+
+  test('editing during a read takes the pencil and mark away and the late answer brings no stray line', async ({ browser }) => {
+    await fixture(browser, async (page) => {
+      await startRead(page, 'plain text');
+      await expect(pencil(page).first()).toBeAttached();
+      await page.evaluate(() => marginEdited(session));
+      await expect(pencil(page)).toHaveCount(0);
+      await expect(page.locator('.margin-waiting')).toHaveCount(0);
+      await page.evaluate(() => fake.answer({ note: null }));
+      await page.waitForTimeout(300);
+      await expect(pencil(page)).toHaveCount(0);
+      await expect(page.locator('.margin-waiting')).toHaveCount(0);
+    }, { mode: 'along', threads: [] });
+  });
+
+  test('reduced motion draws the pencil and the mark still', async ({ browser }) => {
+    await fixture(browser, async (page) => {
+      await startRead(page, 'plain text');
+      await expect(pencil(page).first()).toBeAttached();
+      await expect(page.locator('.margin-waiting')).toHaveCount(1);
+      expect(await page.evaluate(() => document.getAnimations().filter((run) => run.playState === 'running').length)).toBe(0);
+      await page.evaluate(() => fake.answer({ note: null }));
+      await expect(pencil(page)).toHaveCount(0);
+    }, { mode: 'along', threads: [], context: { reducedMotion: 'reduce' } });
+  });
+});
+
 test.describe('passage states', () => {
+  test('a lit note draws a thin tether across the gap only, never over text or the note', async ({ browser }) => {
+    await fixture(browser, async (page) => {
+      const tether = page.locator('.margin-ink path.tether[data-id="t1"]');
+      await expect(tether).toHaveCSS('opacity', '0');
+      await page.locator('.margin-note[data-id="t1"]').hover();
+      await expect.poll(() => tether.evaluate((p) => Number(getComputedStyle(p).opacity))).toBeGreaterThan(0.3);
+      const line = await tether.boundingBox();
+      const article = await page.locator('article.note').boundingBox();
+      const note = await page.locator('.margin-note[data-id="t1"]').boundingBox();
+      expect(line.x).toBeGreaterThanOrEqual(article.x + article.width);
+      expect(line.x + line.width).toBeLessThanOrEqual(note.x);
+      await page.mouse.move(5, 5);
+      await expect.poll(() => tether.evaluate((p) => Number(getComputedStyle(p).opacity))).toBe(0);
+    }, { threads: [THREADS.short] });
+  });
+
   test('quiet dotted at rest, solid underline and a subtle wash when open, hovered or focused', async ({ browser }) => {
     await fixture(browser, async (page) => {
       const rest = await page.evaluate(stateOf, 't1');
@@ -682,7 +779,8 @@ test('every open thread offers the chat fallback, Add to note comes last, and an
     });
     const draft = page.locator('.margin-note[data-id="draft"]');
     await expect(draft.getByRole('button', { name: 'Ask in chat' })).toBeVisible();
-    await expect(draft.locator('.margin-pending .margin-dots')).toBeVisible();
+    await expect(draft.locator('.margin-pending .margin-thinking svg.margin-drop use[href="#leo-mark"]')).toHaveCount(1);
+    await expect(draft.getByRole('status', { name: 'Felix is thinking' })).toBeVisible();
     await expect(draft.getByRole('button', { name: 'Cancel' })).toBeHidden();
     const answered = page.locator('.margin-note[data-id="t9"]');
     await expect(answered.locator('.margin-felix')).toHaveText('A fake answer.');

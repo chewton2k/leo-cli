@@ -261,12 +261,12 @@ test('the page keeps only the asking affordances it really has', () => {
   assert.match(passages, /pressed\(e, 'ask'\)/);
 });
 
-test('the mascot, the tether and the reading stub are gone from the margin script and styles', () => {
+test('the mascot and the reading stub are gone from the margin script and styles', () => {
   const script = fs.readFileSync(path.join(__dirname, '../src/web/app/margin-notes.js'), 'utf8');
   const page = pageHtml();
   assert.match(page, /\.settings-layout[\s\S]*<\/html>/);
-  for (const dead of ['tether', 'felix.felix', 'margin-head', 'margin-face', 'readFace']) assert.equal(script.includes(dead), false, dead);
-  for (const dead of ['.tether', '.margin-reading', '.margin-head', 'margin-reveal', '@keyframes margin-draw', '.chat-history-new', '.settings-layout::before']) assert.equal(page.includes(dead), false, dead);
+  for (const dead of ['felix.felix', 'margin-head', 'margin-face', 'readFace']) assert.equal(script.includes(dead), false, dead);
+  for (const dead of ['.margin-reading', '.margin-head', 'margin-reveal', '@keyframes margin-draw', '.chat-history-new', '.settings-layout::before']) assert.equal(page.includes(dead), false, dead);
 });
 
 test('leaving with a queued hover lets the next note schedule and paint its own hover', () => {

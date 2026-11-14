@@ -857,11 +857,16 @@ target. Check the page sequence after loading preferences.
   A refused read waits for the next edit; a stale-version refusal resets the page's
   retry delay to the normal typing pause, while provider cooldowns stay bounded.
   The model's quote must be in the note now, or the note is dropped. Before `crowded`, read-along and Read through grow it to the whole sentence or sentences it touches inside its block (`margin::whole_sentences`, 2026-11-14): a sentence must end on `.`, `!` or `?` (before a space or the end) or `。！？`; a line break or the end of an unpunctuated line is no ending, so such a quote, or a span over `MOST_QUOTE`, stays as the model wrote it. One note per sentence (2026-11-09, the user's call: three notes stacked on one phrase): `margin::crowded` drops a found note whose sentence (ended by `.`, `!` or `?` before a space, a line break, or `。！？`) holds an open thread's quote, or which lies in an open quote's sentence, in read-along and Read through alike; resolved and dismissed threads do not count. There is no Reading… status
-  (2026-11-07, the user's call): 200 ms into a read, dots (`.margin-waiting`, never a `.margin-note`, never in
-  `threads`) sit in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
-  move for them (free spot on the right, else the left in Both, else below what blocks them), or its gutter mark pulses in Marks only;
-  a comment replaces them (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
-  failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path.
+  (2026-11-07, the user's call): 200 ms into a read, the leo mark (`#leo-mark` in `.margin-waiting`, never a `.margin-note`, never in
+  `threads`; it breathes by opacity only, still under Reduced Motion) sits in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
+  move for it (free spot on the right, else the left in Both, else below what blocks it), or is the gutter mark in Marks only.
+  A pencil underlines that block meanwhile (2026-11-14): one wavy `path.pencil` 2 px under each line, drawn in order within
+  `DRAWER_MS` (240 ms, `pathLength` 1 and a dash offset), or for 4+ lines one side line 4 px left of the block; it never crosses text.
+  A comment replaces mark and pencil (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
+  failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path; an edit
+  during the read fades them (`marginEdited`), and leaving the note removes the layer.
+- A lit note (open, hovered or focused) washes its passage lines and draws a thin tether (`path.tether`, accent at .45)
+  from the text column's edge to the note, across the gap only, never over text; Marks only draws none.
 - Read through (2026-11-08, the user's call): `#margin-through` beside the mode button reads the whole saved note once, in either mode and on any note. It is free: it never checks or spends Reads a day. `margin.js` `passes` cuts the note into parts of at most 6 blocks and 8,000 characters (blocks of 20+ characters without an open thread; blocks over 4,000 are cut); a note with more than 8 parts keeps 8 spread evenly through it (`spread: true`, status "This note is long, so Felix read parts from all through it."). The page POSTs each part to `.../margin/analyze` (`{version, blocks, most}`) and glows the part being read. The engine keeps the version, streaming-reply, overlap and `MOST_OPEN` guards and skips the along, `edited`, gap and daily checks. A part saves up to `MOST_PER_PASS` (3) `source: "read"` threads through `placed` (`THROUGH_SYSTEM`, `parsed_many`, which checks `notes` first and still takes a single object). A run ends at `THROUGH_MOST` (12, `app/margin-notes.js`) notes (each part's reply is capped at `margin::THROUGH_TOKENS`, 700 tokens), on Stop (the page aborts the part's request at once and shows nothing from it), or on a refusal or failure; read-along waits while it runs. Threads are held until the run ends, then revealed together top to bottom over the note: 80 ms apart, the whole stagger capped at 640 ms; Reduced Motion shows them at once, still. Leaving mid-run draws nothing. Undo DELETEs the run's threads (`DELETE .../threads/{id}`): 409 `replying` while Felix is answering that thread, 409 `replied` once you have replied.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
@@ -887,12 +892,12 @@ target. Check the page sequence after loading preferences.
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
   only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this
   passage…", 2026-11-09): Enter sends the typed question (empty Enter asks generally), Escape or blur closes it;
-  when the margin cannot take the passage the pill goes to the chat as before. The draft shows dots (`.margin-pending`, filled from
+  when the margin cannot take the passage the pill goes to the chat as before. The draft shows the breathing leo mark (`.margin-pending .margin-thinking`, `role=status` "Felix is thinking", filled from
   `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
   (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
   leaves the thread closed when it lands, and a closed failure toasts. An open failure
   shows the problem and lets the user type a question (2026-11-06, the user's call).
-  Replies show the sent text and dots the same way; a failed one restores the text. The box stays editable
+  Replies show the sent text and the mark the same way; a failed one restores the text. The box stays editable
   while Felix thinks and only Send waits (2026-11-06).
   Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
   Add to note. A closed thread with more messages says "N more" (marks get a ring).
@@ -944,7 +949,7 @@ target. Check the page sequence after loading preferences.
   click and close handlers from dismissing it. Each note remains a labelled article with an
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
   mascot on the text. Straight dotted underlines reveal in about 500 ms; there is
-  no default tether. Hovering a passage washes its margin note with the passage's accent (`.margin-note[data-active]`). Reduced Motion stills the reveal and word arrivals.
+  no default tether (only a lit note draws one). Hovering a passage washes its margin note with the passage's accent (`.margin-note[data-active]`). Reduced Motion stills the reveal and word arrivals.
 - Open replies have no card surface or boxed textarea outline. Their retained
   controls expand/collapse over 240 ms, become inert/aria-hidden on close and snap
   under Reduced Motion. Diagram size changes relayout the bounded thread stack.

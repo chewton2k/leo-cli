@@ -35,7 +35,7 @@ let personaDetails = false;
 const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -82,7 +82,7 @@ function marginLeave() {
   columns?.style.removeProperty('--anchor-gutter');
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -553,7 +553,7 @@ function marginFill(el, t, arriving) {
         you.textContent = waiting.text;
         pending.append(you);
       }
-      pending.insertAdjacentHTML('beforeend', '<div class="margin-dots" role="status" aria-label="Felix is thinking"><i></i><i></i><i></i></div>');
+      pending.insertAdjacentHTML('beforeend', '<div class="margin-thinking" role="status" aria-label="Felix is thinking"><svg class="margin-drop" aria-hidden="true"><use href="#leo-mark"/></svg></div>');
     }
   }
   pending.hidden = !waiting || !open;
@@ -722,6 +722,7 @@ function marginDraw() {
   }
   const reading = marginReadingBox(origin);
   if (reading) boxes.push(reading);
+  marginPencil(origin);
   marginPage.roomy?.classList.remove('margin-room');
   marginPage.roomy = null;
   if (margins) marginPlaceInMargin(boxes, layout, page, origin);
@@ -762,7 +763,7 @@ function marginPlaceInMargin(boxes, layout, page, origin) {
     side.reading = spot.side;
     tops.reading = spot.top;
   }
-  for (const { t, el } of boxes) {
+  for (const { t, el, rects } of boxes) {
     const on = side[t.id];
     const x = on === 'right' ? right + marginKit.MARGIN_GAP : left - marginKit.MARGIN_GAP - marginKit.MARGIN_WIDTH;
     el.hidden = false;
@@ -772,10 +773,21 @@ function marginPlaceInMargin(boxes, layout, page, origin) {
     el.classList.toggle('arriving', marginPage.arriving.has(t.id));
     marginPage.marks.get(t.id)?.remove();
     marginPage.marks.delete(t.id);
+    if (t.id === 'reading') continue;
+    const mid = (rects[0].top + rects[0].bottom) / 2;
+    const from = on === 'right' ? right + 2 : left - 2;
+    const to = on === 'right' ? x - 2 : x + marginKit.MARGIN_WIDTH + 2;
+    const top = tops[t.id] + 10;
+    const bend = (from + to) / 2;
+    marginPath(t.id, 'tether').setAttribute('d', `M${from.toFixed(1)} ${mid.toFixed(1)} C${bend.toFixed(1)} ${mid.toFixed(1)} ${bend.toFixed(1)} ${top.toFixed(1)} ${to.toFixed(1)} ${top.toFixed(1)}`);
   }
 }
 
 function marginPlaceAsMarks(boxes, page, origin) {
+  for (const { t } of boxes) {
+    marginPage.paths.get(`${t.id}:tether:0`)?.remove();
+    marginPage.paths.delete(`${t.id}:tether:0`);
+  }
   const marks = boxes.map(({ t, rects }) => {
     const mark = marginMark(t);
     mark.toggleAttribute('data-more', (t.messages || []).length > 1);
@@ -1162,6 +1174,8 @@ function marginAsk(s, picked, question = '') {
 
 function marginEdited(s) {
   if (s !== marginPage.s) return;
+  clearTimeout(marginPage.faceTimer);
+  if (marginPage.readingAt !== null || marginPage.readingEl) marginReadingDone(true);
   marginRedraw();
   if (marginPage.brief) marginSetStatus('');
   if (s.note.id && !marginPage.loaded) marginLoad(s).catch(() => {});
@@ -1177,6 +1191,7 @@ function marginShowReading(s, source, blocks) {
   marginPage.faceTimer = setTimeout(() => {
     if (!marginPage.reading || marginPage.s !== s) return;
     marginPage.readingAt = at;
+    marginPage.readingSpan = { from: at, to: at + blocks[blocks.length - 1].length };
     const voice = $('.margin-said-aloud', marginPage.layer);
     if (voice) voice.textContent = 'Felix is reading.';
     marginRedraw();
@@ -1186,14 +1201,92 @@ function marginShowReading(s, source, blocks) {
 function marginReadingDone(fade = false) {
   const el = marginPage.readingEl;
   marginPage.readingAt = null;
+  marginPage.readingSpan = null;
   marginPage.readingEl = null;
   marginPage.marks.get('reading')?.remove();
   marginPage.marks.delete('reading');
+  marginPencilGone(fade);
   if (el && fade && !stillMotion()) {
     el.classList.add('leaving');
     setTimeout(() => el.remove(), READING_FADE_MS);
   } else el?.remove();
   marginRedraw();
+}
+
+function marginPencilGone(fade) {
+  for (const [key, path] of marginThreadPaths('reading')) {
+    marginPage.paths.delete(key);
+    if (fade && !stillMotion()) {
+      path.classList.add('leaving');
+      setTimeout(() => path.remove(), READING_FADE_MS);
+    } else path.remove();
+  }
+}
+
+function marginLines(rects) {
+  const lines = [];
+  for (const r of [...rects].sort((a, b) => a.top - b.top)) {
+    const last = lines[lines.length - 1];
+    if (last && r.top < last.bottom - 2) Object.assign(last, { left: Math.min(last.left, r.left), right: Math.max(last.right, r.right), bottom: Math.max(last.bottom, r.bottom) });
+    else lines.push({ ...r });
+  }
+  const left = Math.min(...lines.map((l) => l.left));
+  const right = Math.max(...lines.map((l) => l.right));
+  const out = [];
+  for (const line of lines) {
+    const tall = line.bottom - line.top;
+    const prev = out[out.length - 1];
+    for (let top = prev ? prev.bottom : Infinity; tall > 0 && top + tall <= line.top + 2; top += tall) out.push({ left, right, top, bottom: top + tall });
+    out.push(line);
+  }
+  return out;
+}
+
+function marginWobble(x, y, length, down = false) {
+  const steps = Math.max(1, Math.round(length / 26));
+  const w = (length / steps).toFixed(1);
+  const half = (length / steps / 2).toFixed(1);
+  let d = `M${x.toFixed(1)} ${y.toFixed(1)}`;
+  for (let i = 0; i < steps; i++) {
+    const bend = i % 2 ? 0.7 : -0.7;
+    d += down ? ` q${bend} ${half} 0 ${w}` : ` q${half} ${bend} ${w} 0`;
+  }
+  return d;
+}
+
+function marginPencil(origin) {
+  const span = marginPage.readingSpan;
+  const block = span && marginPage.s.doc.blockAt(span.from);
+  const rects = block ? marginPage.s.doc.spanRects(span.from, span.to).map((r) => ({ left: r.left - origin.left, right: r.right - origin.left, top: r.top - origin.top, bottom: r.bottom - origin.top })) : [];
+  if (!rects.length) return marginPencilGone(false);
+  const lines = marginLines(rects);
+  const top = lines[0].top;
+  const bottom = lines[lines.length - 1].bottom;
+  const strokes = lines.length >= 4
+    ? [{ d: marginWobble(block.getBoundingClientRect().left - origin.left - 4, top, bottom - top, true), size: bottom - top }]
+    : lines.map((l) => ({ d: marginWobble(l.left, l.bottom + 2, Math.max(1, l.right - l.left)), size: Math.max(1, l.right - l.left) }));
+  const total = strokes.reduce((sum, stroke) => sum + stroke.size, 0);
+  let before = 0;
+  strokes.forEach((stroke, line) => {
+    const fresh = !marginPage.paths.has(`reading:pencil:${line}`);
+    const path = marginPath('reading', 'pencil', line);
+    path.setAttribute('d', stroke.d);
+    if (fresh) {
+      path.setAttribute('pathLength', '1');
+      if (!stillMotion()) {
+        path.style.setProperty('--pencil-d', `${Math.round((DRAWER_MS * before) / total)}ms`);
+        path.style.setProperty('--pencil-t', `${Math.max(1, Math.round((DRAWER_MS * stroke.size) / total))}ms`);
+        path.classList.add('sketching');
+      }
+    }
+    before += stroke.size;
+  });
+  for (const [key, path] of marginThreadPaths('reading')) {
+    if (Number(path.dataset.line) >= strokes.length) {
+      path.remove();
+      marginPage.paths.delete(key);
+    }
+  }
 }
 
 function marginReadingBox(origin) {
