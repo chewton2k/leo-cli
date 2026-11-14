@@ -393,7 +393,7 @@ test('R2 slowed arrival: the dotted underline reveals left to right in place', a
   const read = await startRead(page, note);
   await expect.poll(() => read.requested(), { timeout: 12000 }).not.toBeNull();
   await expect(page.locator('.margin-waiting')).toBeVisible({ timeout: 5000 });
-  await page.addStyleTag({ content: '.line-edit { caret-color: transparent !important; }' });
+  await page.addStyleTag({ content: '.line-edit { caret-color: transparent !important; } .margin-ink path.pencil { display: none !important; }' });
   const block = await page.locator('#doc .blk').last().boundingBox();
   const clip = { x: Math.max(0, block.x - 4), y: Math.max(0, block.y - 4), width: Math.min(1600 - Math.max(0, block.x - 4), block.width + 8), height: Math.min(890 - block.y, block.height + 14) };
   const base = (await page.screenshot({ scale: 'css', clip })).toString('base64');

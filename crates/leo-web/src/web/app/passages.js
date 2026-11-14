@@ -105,15 +105,17 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (state.view !== 'note') return;
-  if (pressed(e, 'ask')) {
-    e.preventDefault();
-    askAboutSelection();
-  } else if (e.key === 'Enter' && (ON_MAC ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && !askFloat.hidden && !e.target.closest?.('.margin-layer, .chat, .scrim, .ask-field')) {
-    e.preventDefault();
-    askAboutSelection(ASK_PRESETS.this);
-  }
+  if (state.view !== 'note' || !pressed(e, 'ask')) return;
+  e.preventDefault();
+  askAboutSelection();
 });
+
+document.addEventListener('keydown', (e) => {
+  if (state.view !== 'note' || e.key !== 'Enter' || !(ON_MAC ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || askFloat.hidden || e.target.closest?.('.margin-layer, .chat, .scrim, .ask-field')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  askAboutSelection(ASK_PRESETS.this);
+}, true);
 
 window.addEventListener('scroll', hideAskFloat, { passive: true, capture: true });
 
