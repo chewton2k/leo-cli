@@ -58,6 +58,9 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
   .settings-section .segmented { flex: 0 1 auto; min-width: 0; grid-auto-columns: 1fr; }
   .settings-section .segment { padding: 0 14px; }
 }
+.settings-section label.set-row:has(> .switch), .settings-section .set-row.column:has(> .set-line > .switch) { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--raised); }
+.settings-section label.set-row:has(> .switch) + label.set-row:has(> .switch) { margin-top: 8px; }
+.set-desc { display: block; margin-top: 2px; font-size: var(--fs-sm); font-weight: 400; line-height: 1.4; color: var(--muted); }
 .settings-section .set-row.column > .btn { align-self: flex-start; }
 .settings-section .btn { white-space: nowrap; }
 .set-shortcut { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 1 auto; min-width: 0; }

@@ -255,6 +255,15 @@ test('When you ask says how to ask, with the real shortcut and no promise of aut
   }
 });
 
+test('Reading pace is a row of picture cards that carry the pause and save to the pace field', () => {
+  const html = harness().context.felixSettingsCards({ gap: 90, gaps: [90], cap: 40, caps: [40], today: 0, default_mode: 'ask', layout: 'right', pace: 'slow' }, { tasks: [] });
+  const cards = JSON.parse(html.match(/<span class="set-label">Reading pace<\/span>(\{.*?\})<\/div>/)[1]);
+  assert.equal(cards.field, 'data-margin-pref="pace"');
+  assert.equal(cards.current, 'slow');
+  assert.deepEqual(cards.choices.map(([value, title, about]) => [value, title, about]), [['fast', 'Fast', 'After 2 sec of quiet.'], ['regular', 'Regular', 'After 4 sec of quiet.'], ['slow', 'Slow', 'After 8 sec of quiet.']]);
+  assert.ok(cards.choices.every((choice) => choice[3].includes('<svg')));
+});
+
 test('the page keeps only the asking affordances it really has', () => {
   const passages = fs.readFileSync(path.join(__dirname, '../src/web/app/passages.js'), 'utf8');
   for (const label of ['<span>Felix this</span>', '>Ask Felix</button>', '>Visualize</button>']) assert.ok(passages.includes(label), label);

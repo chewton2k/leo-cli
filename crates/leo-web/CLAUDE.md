@@ -596,7 +596,14 @@ a modal.
   reports it, Esc (or a click elsewhere) cancels, and a note says Saved or why
   not. Detect language is hidden for a model that cannot detect language, and
   setup picks the system language, else `en`, for such a model.
-- Settings search: `SETTINGS_INDEX` entries (`{section, label, keywords, id}`)
+- Settings look (2026-11-14): a choice of two or three that reads better as a
+  picture is `choiceCards` (theme, Felix, width, text size, lettering, margin
+  layout, new-note mode, Reading pace); long and numeric lists stay `segmented`.
+  A switch row is a bordered box with a one-line `.set-desc`. The Dictation
+  shortcut lives only in Settings → Shortcuts (`dictationShortcutRow`, its Change
+  button runs the native `record_shortcut` flow; `dictationSection` keeps
+  `pollDictation` running on both pages) and Health's shortcut check points there.
+ (`{section, label, keywords, id}`)
   and the row's `data-find` attribute are added together (the Shortcuts section
   passes its ids as literals to `shortcutRow`, so the test finds them);
   `settings-navigation.test.js` fails on an unknown section, a duplicate id or
