@@ -135,6 +135,14 @@
 :is(.margin-note, .msg.leo > .prose, .viewer-diagram.from-margin, .viewer-diagram.from-chat) .diagram-art .node rect { rx: 8px; ry: 8px; }
 :is(.margin-note, .msg.leo > .prose, .viewer-diagram.from-margin, .viewer-diagram.from-chat) .diagram-art .cluster rect { fill: transparent !important; stroke: var(--muted) !important; stroke-width: 1.5px !important; }
 .margin-note .drawing, .viewer-diagram.from-margin .drawing { background: transparent; box-shadow: none; padding: 0; }
+figure.drawing.inked img { filter: none !important; }
+.drawing-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: 6px; font-size: var(--fs-xs); color: var(--muted); text-align: left; }
+.drawing-steps button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.drawing-steps button:hover:not(:disabled) { background: var(--tint); color: var(--text); }
+.drawing-steps button:disabled { opacity: .4; cursor: default; }
+.drawing-steps button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.drawing-count { font-variant-numeric: tabular-nums; }
+.drawing-caption { flex-basis: 100%; line-height: 1.4; }
 .margin-note .drawing img, .viewer-diagram.from-margin img, .viewer-diagram .drawing-row img, .msg.leo > .prose .drawing-row img { filter: grayscale(1); }
 :root[data-theme="dark"] :is(.margin-note .drawing img, .viewer-diagram.from-margin img, .viewer-diagram .drawing-row img, .msg.leo > .prose .drawing-row img) { filter: grayscale(1) invert(1); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) :is(.margin-note .drawing img, .viewer-diagram.from-margin img, .viewer-diagram .drawing-row img, .msg.leo > .prose .drawing-row img) { filter: grayscale(1) invert(1); } }

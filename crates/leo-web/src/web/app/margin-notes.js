@@ -874,6 +874,7 @@ function marginClose() {
 }
 
 function marginClick(e) {
+  if (e.target.closest('[data-step-go]')) return;
   const action = e.target.closest('[data-margin-act]');
   const id = e.target.closest('[data-id]')?.dataset.id;
   if (!id) return;

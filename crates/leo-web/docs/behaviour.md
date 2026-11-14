@@ -292,6 +292,16 @@ Highlight, cleared after five seconds or navigation without changing editor DOM.
   `-`/`+` dropdowns), ```mermaid (`diagrams.js`), math (`math.js`), ```svg as
   a sandboxed `<img src="data:…">`, and local pictures (`/api/image`; outside
   images stay links). `interactive: false` makes task boxes read-only.
+- Stepped drawings (2026-11-14): `diagrams.js` `stepDrawings` decodes an ```svg
+  figure's data URL when it names `var(--…)` colours or `data-step` groups, parses it
+  with `DOMParser` (never inserted into the page), builds one variant per step
+  (top-level `<g data-step="n" data-caption="…">`; later steps `opacity="0"`, at most 12
+  steps), fills in only `--text`, `--muted`, `--faint`, `--line`, `--accent`,
+  `--accent-soft` and `--surface` (anything else becomes `--text`) from the theme, and
+  shows it again as an `<img>` data URL (`figure.drawing.inked`, no grayscale filter).
+  Outside a note, a drawing with steps gets ‹ k/n › and ↻ with the step's caption
+  (`textContent`); in a note it shows complete. A theme change repaints; See it larger
+  shows the complete drawing; an svg that does not parse stays the plain image.
 
 - Picture sizes (2026-10-19, the user's request, like Google Docs): a
   picture's width is kept in the Obsidian style, `![alt|400](path)` or
@@ -507,7 +517,7 @@ list continuation with keydown Enter. Shift+Enter and composition keep their own
 paths. Heading previews and menus use 240 ms motion (192 ms out), a taller hover peak, and
 outside clicks dismiss the heading list without swallowing the destination click.
 
-The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Diagram replies prefer sparse monochrome SVG sketches with serif labels for pictorial subjects; Mermaid stays strict and SVG stays an inert image. Felix draws one diagram without being asked once a reply, lesson step or quiz has three or more steps, three or more linked parts, a layout in space or memory, or a comparison of three or more things, and never draws with text characters; margin reads and replies follow the same threshold (2026-11-09, the user's call: "a complexity threshold"). `BASE` stays under 4,500 bytes.
+The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Felix draws only when the user asks to see, draw or visualize something (2026-11-14, the user's call, replacing the 2026-11-09 complexity threshold): one stepped ```svg (320 wide, theme colour tokens, `data-step` groups), never Mermaid and never text characters. Margin reads never draw; margin replies and asks draw on request (Visualize). The after-reply drawing pass (`drawing::drawn`) runs only when the user's message asks for a drawing (`drawing::asks_to_see`). User-written ```mermaid in notes and old replies still renders strictly, and SVG stays an inert image. `BASE` stays under 4,500 bytes.
 
 
 ## Felix
@@ -759,7 +769,7 @@ The heading disclosure opens on mouse hover without taking focus, stays open acr
   chat), passages (Ask Felix on a selection, ⌘⇧E by default, customizable in Settings → Shortcuts; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
   Save as note, chat history (`chats.rs`, local naming), cost line
-  (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).
+  (`spent`), drawings (stepped SVG, only when asked; old Mermaid replies still render).
 
 Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies

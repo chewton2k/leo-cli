@@ -352,10 +352,14 @@ the web (root CLAUDE.md).
 - Files for Felix (`chat_files`): ≤10 per chat, text only, deleted with the
   chat. Add to note (`routes/insert.rs`) is version-checked and request ids
   dedupe. Chat titles are local; history shows titles only.
-- Felix draws one diagram unasked once a reply, lesson step or quiz has three
-  or more steps, linked parts, a layout in space or memory, or a comparison of
-  three or more things, never with text characters; margin reads and replies
-  use the same threshold (2026-11-09). `BASE` stays under 4,500 bytes.
+- Felix draws only when asked to see, draw or visualize something (2026-11-14,
+  replacing the 2026-11-09 threshold): one stepped ```svg (viewBox 320 wide,
+  `var(--text|muted|accent|accent-soft)`, top-level `<g data-step data-caption>`),
+  never Mermaid or text characters; margin reads never draw; `drawing::drawn`
+  runs only when `drawing::asks_to_see` the user's message. `diagrams.js`
+  `stepDrawings` parses it with `DOMParser` only to build step variants and fill
+  in theme colours, and shows them as `<img>` data URLs, never in the page.
+  User-written ```mermaid still renders. `BASE` stays under 4,500 bytes.
 - `REPLY_STYLE` is not changed by prompt-size work. Escape belongs to the owner
   inside the page first; an open sheet always wins.
 

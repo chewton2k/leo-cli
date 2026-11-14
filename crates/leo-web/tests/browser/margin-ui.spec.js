@@ -16,6 +16,41 @@ test('the leo mark is one symbol that the brand uses', async ({ page }) => {
   await expect(page.locator('.side-head .brand')).toHaveAccessibleName('leo');
 });
 
+test('a stepped drawing steps through its parts with captions and theme colours, and stays an image', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Stepped', body: 'Words.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toBeVisible();
+  await page.evaluate(() => {
+    const stepped = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120"><title>Heat</title><g data-step="1" data-caption="Hot side"><circle cx="61" cy="60" r="30" style="stroke: var(--accent); fill: none"/></g><g data-step="2" data-caption="Heat moves"><path d="M100 60h120" style="stroke: var(--text)"/></g></svg>';
+    const broken = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80"><g data-step="1"><path d="M0 0h9"></svg>';
+    for (const [id, svg] of [['stepped', stepped], ['broken', broken]]) {
+      const box = document.createElement('div');
+      box.className = 'msg leo';
+      box.id = id;
+      box.innerHTML = `<div class="prose">${window.leoMarkdown.render('```svg\n' + svg + '\n```')}</div>`;
+      document.querySelector('#app').append(box);
+    }
+  });
+  const fig = page.locator('#stepped figure.drawing.inked');
+  const src = async () => decodeURIComponent(await fig.locator('img').getAttribute('src'));
+  await expect(fig.locator('.drawing-count')).toHaveText('1/2');
+  await expect(fig.locator('.drawing-caption')).toHaveText('Hot side');
+  await expect(fig.getByRole('button', { name: 'Previous step' })).toBeDisabled();
+  expect(await src()).not.toContain('var(--');
+  expect(await src()).toContain('opacity="0"');
+  await fig.getByRole('button', { name: 'Next step' }).click();
+  await expect(fig.locator('.drawing-count')).toHaveText('2/2');
+  await expect(fig.locator('.drawing-caption')).toHaveText('Heat moves');
+  await expect(fig.getByRole('button', { name: 'Next step' })).toBeDisabled();
+  expect(await src()).not.toContain('opacity="0"');
+  await fig.getByRole('button', { name: 'Start again' }).click();
+  await expect(fig.locator('.drawing-count')).toHaveText('1/2');
+  await expect(fig.locator('img')).toHaveCSS('filter', 'none');
+  expect(await page.locator('circle[cx="61"]').count()).toBe(0);
+  await expect(page.locator('#broken figure.drawing img')).toHaveCount(1);
+  await expect(page.locator('#broken figure.drawing.inked, #broken .drawing-steps')).toHaveCount(0);
+});
+
 test('note reading modes sit beside the save state, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: 'Reading modes', body: 'Words about a passage.' } })).json();
   await page.goto(`/#/n/${note.id}`);
