@@ -523,8 +523,10 @@ is hidden or the capture activity gate is busy.
   keeps a default span (`CAL_DUE_MIN`, 78 min). Under an hour a block takes `inline`:
   title, time on one line. Today is a filled accent circle in the mini calendar,
   week header and month.
-- A folded Tasks pill in `#dock` opens on hover (`tasksWin.hovering`, never
-  saved); a click within `TASKS_PIN_MS` of that opening pins it open.
+- The Tasks card in `#dock` is folded to a badge at every start and opens only
+  while hovered or holding keyboard focus (CSS `:hover`/`:focus-within`, the card is
+  focusable); nothing is saved and a click never pins it (mouse presses on it do
+  not take focus).
 - Export adds `tasks.json`; POST `/api/tasks/import` (ids dedupe; a newer local
   copy is kept).
 

@@ -209,7 +209,7 @@ h2.cal-peek-title { margin-left: 0; padding: 4px 0; }
 .tasks-window[hidden] { display: none; }
 @media (max-width: 599px) { .tasks-window { display: none; } }
 .tasks-head { display: flex; align-items: center; }
-.tasks-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 11px 6px 11px 14px; font: inherit; font-size: 13.5px; font-weight: 650; color: var(--text); text-align: left; cursor: pointer; }
+.tasks-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 11px 6px 11px 14px; font-size: 13.5px; font-weight: 650; color: var(--text); }
 .tasks-toggle .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tasks-count { margin-left: 4px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tasks-icon { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); flex: none; }
@@ -227,9 +227,12 @@ h2.cal-peek-title { margin-left: 0; padding: 4px 0; }
 .tasks-row.done .tasks-title { color: var(--muted); text-decoration: line-through; }
 .tasks-when { flex: none; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .tasks-foot { padding: 8px 16px 12px; font-size: var(--fs-sm); }
-.tasks-window.folded { align-self: flex-start; border-radius: 50%; overflow: visible; }
-.tasks-pill { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: none; color: var(--text); cursor: pointer; }
-.tasks-pill .tasks-icon { width: 26px; height: 26px; }
-.tasks-pill .tasks-icon svg { width: 15px; height: 15px; }
-.tasks-badge { position: absolute; top: -4px; right: -4px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-text); font-size: 11.5px; font-weight: 700; line-height: 19px; text-align: center; font-variant-numeric: tabular-nums; }
+.tasks-window:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tasks-badge { display: none; position: absolute; top: -4px; right: -4px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-text); font-size: 11.5px; font-weight: 700; line-height: 19px; text-align: center; font-variant-numeric: tabular-nums; }
+.tasks-window:not(:hover, :focus-within) { align-self: flex-start; border-radius: 50%; overflow: visible; }
+.tasks-window:not(:hover, :focus-within) :is(.tasks-body, .tasks-foot, .tasks-new, .tasks-toggle .grow) { display: none; }
+.tasks-window:not(:hover, :focus-within) .tasks-toggle { position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+.tasks-window:not(:hover, :focus-within) .tasks-icon { width: 26px; height: 26px; }
+.tasks-window:not(:hover, :focus-within) .tasks-icon svg { width: 15px; height: 15px; }
+.tasks-window:not(:hover, :focus-within) .tasks-badge { display: block; }
 .tasks-badge.late { background: var(--danger); }
