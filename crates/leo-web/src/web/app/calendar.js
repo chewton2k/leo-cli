@@ -1530,6 +1530,14 @@ dock().prepend(tasksBox);
 tasksBox.addEventListener('mousedown', (e) => {
   if (!e.target.closest('input, textarea, select, [contenteditable]')) e.preventDefault();
 });
+let tasksOpenedAt = 0;
+tasksBox.addEventListener('pointerenter', () => { tasksOpenedAt = performance.now(); });
+tasksBox.addEventListener('click', (e) => {
+  if (performance.now() - tasksOpenedAt < CAL_HOLD_MS && !e.target.closest('.tasks-head')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}, true);
 
 function tasksGroups(tasks, finishing = false) {
   const today = S.dayKey(new Date());

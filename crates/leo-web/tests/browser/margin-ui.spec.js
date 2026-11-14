@@ -62,7 +62,7 @@ test('the selection menu offers Felix this, Ask Felix and Visualize, and the two
   });
   await page.goto(`/#/n/${note.id}`);
   const select = async () => {
-    await page.locator('#doc .blk').nth(1).click();
+    await page.locator('#doc .blk', { hasText: 'Heat flows' }).click();
     const area = page.locator('#doc textarea.line-edit');
     await expect(area).toHaveCount(1);
     await area.evaluate((a) => {
