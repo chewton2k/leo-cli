@@ -73,9 +73,9 @@
 .margin-note[data-active]:not([data-open]) { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 9%, transparent); }
 .margin-waiting { position: absolute; left: 0; top: 0; pointer-events: none !important; transition: opacity .12s ease-out; }
 .margin-waiting.leaving { opacity: 0; }
-.margin-waiting .margin-dots i { width: 6px; height: 6px; background: var(--accent); }
+.margin-drop { display: block; width: 16px; height: 16px; margin: 4px 0; color: var(--accent); }
 .margin-mark.reading { pointer-events: none; }
-.margin-mark.reading .margin-anchor { animation: margin-dot 1.1s ease-in-out infinite both; }
+.margin-mark .margin-drop { width: 12px; height: 12px; margin: 0; }
 .margin-toggle { position: absolute; inset: -4px; z-index: 1; padding: 0; border: 0; border-radius: var(--r-md); background: none; cursor: pointer; }
 .margin-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .margin-note[data-open] .margin-toggle { inset: -6px -8px auto auto; width: 28px; height: 28px; border-radius: var(--r-tile); display: grid; place-items: center; }
@@ -232,7 +232,7 @@
 .choice-diagram .d-mark { fill: var(--accent); }
 .choice-diagram .d-head { stroke: var(--muted); stroke-width: 4; stroke-linecap: round; }
 @media (prefers-reduced-motion: reduce) {
-  .margin-ink path.squiggle.arriving, .margin-note.arriving .margin-felix figure, .ink-word, .margin-dots i, .margin-mark.reading .margin-anchor { animation: none; }
+  .margin-ink path.squiggle.arriving, .margin-note.arriving .margin-felix figure, .ink-word, .margin-dots i, .margin-drop { animation: none; }
   .margin-ink path, .margin-anchor, .margin-mode > svg:last-child, .margin-note, .margin-waiting { transition: none; }
 }
 @media (forced-colors: active) {

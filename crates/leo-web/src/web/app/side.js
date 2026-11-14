@@ -124,7 +124,7 @@ function drawSide() {
   const paint = () => refreshPanel(box, `
     <div class="side-head" data-tauri-drag-region="deep">
       <button class="icon-btn side-fold" data-action="side-fold" aria-label="${side.mini ? 'Show folders' : 'Hide folders'}" title="${side.mini ? 'Show folders' : 'Hide folders'}" aria-expanded="${!side.mini}" aria-controls="side-explorer">${ICON.sidebar}</button>
-      <button class="brand side-label" data-action="home">leo</button>
+      <button class="brand side-label" data-action="home"><svg class="brand-mark" aria-hidden="true"><use href="#leo-mark"/></svg>leo</button>
     </div>
     <div class="side-rail">
       <nav class="side-rail-main" aria-label="Leo tools">

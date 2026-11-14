@@ -625,7 +625,7 @@ function marginMark(t) {
     mark.className = 'margin-mark';
     mark.dataset.id = t.id;
     mark.setAttribute('aria-label', `Felix’s note on “${t.quote.slice(0, 80)}”`);
-    mark.innerHTML = '<span class="margin-anchor" aria-hidden="true"></span>';
+    mark.innerHTML = t.id === 'reading' ? '<svg class="margin-drop" aria-hidden="true"><use href="#leo-mark"/></svg>' : '<span class="margin-anchor" aria-hidden="true"></span>';
     if (t.id === 'reading') {
       mark.classList.add('reading');
       mark.tabIndex = -1;
@@ -1205,7 +1205,7 @@ function marginReadingBox(origin) {
     el.className = 'margin-waiting';
     el.dataset.id = 'reading';
     el.setAttribute('aria-hidden', 'true');
-    el.innerHTML = '<div class="margin-dots"><i></i><i></i><i></i></div>';
+    el.innerHTML = '<svg class="margin-drop"><use href="#leo-mark"/></svg>';
     marginPage.layer.appendChild(el);
     marginPage.readingEl = el;
   }

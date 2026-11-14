@@ -7,6 +7,15 @@ test.beforeEach(async ({ page }) => {
 
 const quiet = (page) => expect.poll(() => page.evaluate(() => document.getAnimations().filter((run) => run.playState === 'running' && run.effect && run.effect.getComputedTiming().iterations !== Infinity).length)).toBe(0);
 
+test('the leo mark is one symbol that the brand uses', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/');
+  await expect(page.locator('svg.sprite symbol#leo-mark')).toHaveCount(1);
+  await expect(page.locator('.bar .brand svg use[href="#leo-mark"]')).toHaveCount(1);
+  await expect(page.locator('.side-head .brand svg use[href="#leo-mark"]')).toHaveCount(1);
+  await expect(page.locator('.side-head .brand')).toHaveAccessibleName('leo');
+});
+
 test('note reading modes sit beside the save state, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: 'Reading modes', body: 'Words about a passage.' } })).json();
   await page.goto(`/#/n/${note.id}`);
