@@ -12,6 +12,7 @@ use crate::chats::db_of;
 
 pub const MOST_QUOTE: usize = 600;
 pub const LEAST_QUOTE: usize = 3;
+const LEAST_TAIL: usize = 6;
 pub const MOST_TEXT: usize = 500;
 pub const MOST_REPLY: usize = 4_000;
 pub const MOST_ASK: usize = 1_000;
@@ -847,7 +848,10 @@ pub fn whole_sentences(body: &str, quote: &str, within: &[String]) -> String {
                 .iter()
                 .find_map(|task| span.strip_prefix(task))
                 .unwrap_or(span);
-            quotable(span, MOST_QUOTE).then(|| span.to_string())
+            let to = end + stop.len_utf8();
+            let from = to - span.len();
+            let tail = body[..from].chars().count().max(body[to..].chars().count());
+            (quotable(span, MOST_QUOTE) && tail >= LEAST_TAIL).then(|| span.to_string())
         })
         .unwrap_or_else(|| quote.to_string())
 }
@@ -1651,15 +1655,20 @@ mod tests {
             "Heat flows from hot to cold."
         );
         assert_eq!(whole_sentences(body, "stop here", &[]), "stop here");
+        assert_eq!(whole_sentences("Last words here.", "words", &[]), "words");
         assert_eq!(
-            whole_sentences("Last words here.", "words", &[]),
+            whole_sentences("Intro. Last words here.", "words", &[]),
             "Last words here."
         );
         assert_eq!(
             whole_sentences("Ends without a stop", "without", &[]),
             "without"
         );
-        assert_eq!(whole_sentences("一二三。四五六。", "四五", &[]), "四五六。");
+        assert_eq!(
+            whole_sentences("一二三四五六七。八九十。", "八九", &[]),
+            "八九十。"
+        );
+        assert_eq!(whole_sentences("一二三。四五六。", "四五", &[]), "四五");
         assert_eq!(
             whole_sentences("- [ ] Buy the milk today.", "milk", &[]),
             "Buy the milk today."
