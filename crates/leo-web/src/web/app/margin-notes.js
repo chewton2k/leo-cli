@@ -703,6 +703,7 @@ function marginDraw() {
   const { s, layer } = marginPage;
   if (!s || !layer) return;
   if (!layer.isConnected) return marginLeave();
+  marginPage.tethers = new Map([...marginPage.tethers.keys()].map((id) => [id, '']));
   const columns = layer.parentElement;
   const source = s.doc.source();
   const threads = marginPage.draft ? [...marginPage.threads, marginPage.draft] : marginPage.threads;
@@ -741,7 +742,6 @@ function marginDraw() {
   marginPencil(origin);
   marginPage.roomy?.classList.remove('margin-room');
   marginPage.roomy = null;
-  marginPage.tethers = new Map([...marginPage.tethers.keys()].map((id) => [id, '']));
   if (margins) marginPlaceInMargin(boxes, layout, page, origin);
   else {
     marginPage.sides = {};
@@ -1348,6 +1348,7 @@ async function marginRead(s) {
     if (!blocks.length) return;
     marginPage.nextRead = Date.now() + (marginPrefs?.gap ?? READ_GAP_SECONDS) * 1000;
     marginPage.newest = null;
+    for (const path of marginPage.svg?.querySelectorAll('path.pencil.leaving') || []) path.remove();
     marginShowReading(s, source, blocks);
     const got = await api(`/api/notes/${enc(s.note.id)}/margin/read`, { method: 'POST', body: { version: s.note.version, blocks } });
     if (s !== marginPage.s) return;

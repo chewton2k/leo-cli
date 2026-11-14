@@ -1080,9 +1080,9 @@ compact anchors stay in a separate gutter, never a mascot over the passage.
   marks anything else `position: fixed` with `data-print-off`.
 
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
-  top). A folded Tasks pill opens while the mouse is over it and folds when it
-  leaves (`tasksWin.hovering`, never saved); a click within `TASKS_PIN_MS` of that
-  opening pins it open, so the click never lands on the row under the pill.
+  top). The Tasks card starts folded every time and opens only while the mouse
+  is over it or keyboard focus is inside it (`:hover`, `:focus-within`); nothing
+  is saved and a click never pins it open.
 
 PDF export keeps Windows' native print function (Tauri calls it internally),
 uses the native bridge on macOS, and reports bridge errors without losing the

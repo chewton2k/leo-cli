@@ -309,7 +309,7 @@ function calAllDay(days, plan) {
 }
 
 function calLeast(item) {
-  return item.type === 'task' ? (item.task.end ? CAL_SNAP : CAL_DUE_MIN) : CAL_SNAP * 2;
+  return item.type === 'task' && !item.task.end ? CAL_DUE_MIN : CAL_SNAP * 2;
 }
 
 function calColumn(key, plan, today, room = Infinity) {
@@ -1527,7 +1527,9 @@ tasksBox.hidden = true;
 tasksBox.tabIndex = 0;
 tasksBox.setAttribute('aria-label', 'Tasks');
 dock().prepend(tasksBox);
-tasksBox.addEventListener('mousedown', (e) => e.preventDefault());
+tasksBox.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('input, textarea, select, [contenteditable]')) e.preventDefault();
+});
 
 function tasksGroups(tasks, finishing = false) {
   const today = S.dayKey(new Date());
