@@ -1,8 +1,8 @@
 ::highlight(leo-search) { background: var(--accent); color: var(--accent-text); }
 :root {
-  --bg: #f7f7f5;
-  --surface: #ffffff;
-  --surface-2: #f0efec;
+  --bg: #f6f5f1;
+  --surface: #faf9f6;
+  --surface-2: #efede7;
   --text: #1c1c1a;
   --muted: #5c5b56;
   --faint: #696863;
@@ -10,18 +10,18 @@
   --fam-openai-1: #0d8a6a; --fam-openai-2: #0a5a46; --fam-openai-3: #3c7d22;
   --fam-claude-1: #c4613f; --fam-claude-2: #8a3a1c; --fam-claude-3: #b0485f;
   --fam-local-1: #66707f; --fam-local-2: #2c323c; --fam-local-3: #4e6a9e;
-  --line: #e6e5e1;
+  --line: #e3e1db;
   --accent: #4f46e5;
   --accent-soft: #eceafd;
   --accent-text: #ffffff;
   --danger: #bd2e27;
   --good: #187040;
   --mark: #fff1a8;
-  --code-bg: #f3f2ef;
-  --ground: #f2f1ec;
-  --page: #f9f8f5;
-  --raised: #ffffff;
-  --tint: #eeede8;
+  --code-bg: #f1efea;
+  --ground: #f0eee8;
+  --page: #faf9f6;
+  --raised: #fcfbf8;
+  --tint: #ece9e2;
   --voice: ui-serif, "Iowan Old Style", "New York", Georgia, serif;
   --note-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
   --felix-letters: var(--voice);

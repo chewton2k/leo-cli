@@ -292,6 +292,16 @@ Highlight, cleared after five seconds or navigation without changing editor DOM.
   `-`/`+` dropdowns), ```mermaid (`diagrams.js`), math (`math.js`), ```svg as
   a sandboxed `<img src="data:…">`, and local pictures (`/api/image`; outside
   images stay links). `interactive: false` makes task boxes read-only.
+- Stepped drawings (2026-11-14): `diagrams.js` `stepDrawings` decodes an ```svg
+  figure's data URL when it names `var(--…)` colours or `data-step` groups, parses it
+  with `DOMParser` (never inserted into the page), builds one variant per step
+  (top-level `<g data-step="n" data-caption="…">`; later steps `opacity="0"`, at most 12
+  steps), fills in only `--text`, `--muted`, `--faint`, `--line`, `--accent`,
+  `--accent-soft` and `--surface` (anything else becomes `--text`) from the theme, and
+  shows it again as an `<img>` data URL (`figure.drawing.inked`, no grayscale filter).
+  Outside a note, a drawing with steps gets ‹ k/n › and ↻ with the step's caption
+  (`textContent`); in a note it shows complete. A theme change repaints; See it larger
+  shows the complete drawing; an svg that does not parse stays the plain image.
 
 - Picture sizes (2026-10-19, the user's request, like Google Docs): a
   picture's width is kept in the Obsidian style, `![alt|400](path)` or
@@ -507,7 +517,7 @@ list continuation with keydown Enter. Shift+Enter and composition keep their own
 paths. Heading previews and menus use 240 ms motion (192 ms out), a taller hover peak, and
 outside clicks dismiss the heading list without swallowing the destination click.
 
-The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Diagram replies prefer sparse monochrome SVG sketches with serif labels for pictorial subjects; Mermaid stays strict and SVG stays an inert image. Felix draws one diagram without being asked once a reply, lesson step or quiz has three or more steps, three or more linked parts, a layout in space or memory, or a comparison of three or more things, and never draws with text characters; margin reads and replies follow the same threshold (2026-11-09, the user's call: "a complexity threshold"). `BASE` stays under 4,500 bytes.
+The heading disclosure opens on mouse hover without taking focus, stays open across its summary and menu, and closes on leaving both. Click, keyboard and touch disclosure and outside dismissal remain available. Felix draws only when the user asks to see, draw or visualize something (2026-11-14, the user's call, replacing the 2026-11-09 complexity threshold): one stepped ```svg (320 wide, theme colour tokens, `data-step` groups), never Mermaid and never text characters. Margin reads never draw; margin replies and asks draw on request (Visualize). The after-reply drawing pass (`drawing::drawn`) runs only when the user's message asks for a drawing (`drawing::asks_to_see`) and keeps only one clean ```svg block (`drawing::picked`); a root without `fill` defaults to `var(--text)`, so unpainted text and shapes follow the theme. User-written ```mermaid in notes and old replies still renders strictly, and SVG stays an inert image. `BASE` stays under 4,500 bytes.
 
 
 ## Felix
@@ -759,7 +769,7 @@ The heading disclosure opens on mouse hover without taking focus, stays open acr
   chat), passages (Ask Felix on a selection, ⌘⇧E by default, customizable in Settings → Shortcuts; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
   Save as note, chat history (`chats.rs`, local naming), cost line
-  (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).
+  (`spent`), drawings (stepped SVG, only when asked; old Mermaid replies still render).
 
 Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
@@ -850,18 +860,23 @@ target. Check the page sequence after loading preferences.
   a reply streaming (`Steering::any_open`), the chosen gap between reads of a note,
   overlapping reads and the daily cap (429 with `why`). A useful comment adds no
   separate five-minute lockout. Reads can explain, connect ideas, ask a worthwhile
-  question, correct a mistake or include one small Mermaid diagram.
+  question or correct a mistake, about the passage as a whole thought; they never draw.
   The cap is spent in one transaction after the read is claimed, so failures spend it
   too, and a broken day row counts as spent. Blocks already read are dropped. A failed
   read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
   A refused read waits for the next edit; a stale-version refusal resets the page's
   retry delay to the normal typing pause, while provider cooldowns stay bounded.
-  The model's quote must be in the note now, or the note is dropped. One note per sentence (2026-11-09, the user's call: three notes stacked on one phrase): `margin::crowded` drops a found note whose sentence (ended by `.`, `!` or `?` before a space, a line break, or `。！？`) holds an open thread's quote, or which lies in an open quote's sentence, in read-along and Read through alike; resolved and dismissed threads do not count. There is no Reading… status
-  (2026-11-07, the user's call): 200 ms into a read, dots (`.margin-waiting`, never a `.margin-note`, never in
-  `threads`) sit in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
-  move for them (free spot on the right, else the left in Both, else below what blocks them), or its gutter mark pulses in Marks only;
-  a comment replaces them (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
-  failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path.
+  The model's quote must be in the note now, or the note is dropped. Before `crowded`, read-along and Read through grow it to the whole sentence or sentences it touches inside its block (`margin::whole_sentences`, 2026-11-14): a sentence must end on `.`, `!` or `?` (before a space or the end) or `。！？`; a line break or the end of an unpunctuated line is no ending, so such a quote, or a span over `MOST_QUOTE`, stays as the model wrote it. One note per sentence (2026-11-09, the user's call: three notes stacked on one phrase): `margin::crowded` drops a found note whose sentence (ended by `.`, `!` or `?` before a space, a line break, or `。！？`) holds an open thread's quote, or which lies in an open quote's sentence, in read-along and Read through alike; resolved and dismissed threads do not count. There is no Reading… status
+  (2026-11-07, the user's call): 200 ms into a read, the leo mark (`#leo-mark` in `.margin-waiting`, never a `.margin-note`, never in
+  `threads`; it breathes by opacity only, still under Reduced Motion) sits in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
+  move for it (free spot on the right, else the left in Both, else below what blocks it), or is the gutter mark in Marks only.
+  A pencil underlines that block meanwhile (2026-11-14): one wavy `path.pencil` under each line (where an underline sits, so it never doubles one), drawn in order within
+  `DRAWER_MS` (240 ms, `pathLength` 1 and a dash offset), or for 4+ lines one side line 4 px left of the block; it never crosses text.
+  A comment replaces mark and pencil (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
+  failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path; an edit
+  during the read fades them (`marginEdited`), and leaving the note removes the layer.
+- A lit note (open, hovered or focused) washes its passage lines and draws a thin tether (`path.tether`, accent at .45, only while lit, so an unlit note has none)
+  from the text column's edge to the note, across the gap only, never over text; Marks only draws none.
 - Read through (2026-11-08, the user's call): `#margin-through` beside the mode button reads the whole saved note once, in either mode and on any note. It is free: it never checks or spends Reads a day. `margin.js` `passes` cuts the note into parts of at most 6 blocks and 8,000 characters (blocks of 20+ characters without an open thread; blocks over 4,000 are cut); a note with more than 8 parts keeps 8 spread evenly through it (`spread: true`, status "This note is long, so Felix read parts from all through it."). The page POSTs each part to `.../margin/analyze` (`{version, blocks, most}`) and glows the part being read. The engine keeps the version, streaming-reply, overlap and `MOST_OPEN` guards and skips the along, `edited`, gap and daily checks. A part saves up to `MOST_PER_PASS` (3) `source: "read"` threads through `placed` (`THROUGH_SYSTEM`, `parsed_many`, which checks `notes` first and still takes a single object). A run ends at `THROUGH_MOST` (12, `app/margin-notes.js`) notes (each part's reply is capped at `margin::THROUGH_TOKENS`, 700 tokens), on Stop (the page aborts the part's request at once and shows nothing from it), or on a refusal or failure; read-along waits while it runs. Threads are held until the run ends, then revealed together top to bottom over the note: 80 ms apart, the whole stagger capped at 640 ms; Reduced Motion shows them at once, still. Leaving mid-run draws nothing. Undo DELETEs the run's threads (`DELETE .../threads/{id}`): 409 `replying` while Felix is answering that thread, 409 `replied` once you have replied.
 - Reads use `Powers.toolless`, never `quick`: the quick path gives Claude Code
   WebSearch and Codex its web tool, so `no_tools` passes `--tools ""` and
@@ -885,17 +900,24 @@ target. Check the page sequence after loading preferences.
   when none is set, or `margin::PROBLEM` (no prefix) for a timeout or an unreadable reply; the failed response carries it as `error`.
 - Selection: ⌘⇧E (customizable, stored per window in `leo-shortcuts`) opens a draft in the margin and asks at once, POST
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
-  only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this
+  only Felix's message is stored). A selection shows a small toolbar (`.ask-float`, `role=toolbar`, 2026-11-14, no
+  formatting row): Felix this (⌘↵ / Ctrl+Enter, fixed, only while the toolbar shows and focus is not in the margin, chat,
+  a sheet or the ask field) and Visualize ask at once with "Respond to this passage." / "Draw this step by step." through
+  the same POST, so its guards and the chat fallback apply. Ask Felix first opens a one-line field (`.ask-field`, "Ask about this
   passage…", 2026-11-09): Enter sends the typed question (empty Enter asks generally), Escape or blur closes it;
-  when the margin cannot take the passage the pill goes to the chat as before. The draft shows dots (`.margin-pending`, filled from
+  when the margin cannot take the passage (or it is over `MOST_ASKED`) every action goes to the chat as before. The draft shows the breathing leo mark (`.margin-pending .margin-thinking`, `role=status` "Felix is thinking", filled from
   `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
   (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
   leaves the thread closed when it lands, and a closed failure toasts. An open failure
   shows the problem and lets the user type a question (2026-11-06, the user's call).
-  Replies show the sent text and dots the same way; a failed one restores the text. The box stays editable
+  Replies show the sent text and the mark the same way; a failed one restores the text. The box stays editable
   while Felix thinks and only Send waits (2026-11-06).
-  Every open thread has an Ask in chat icon beside ×; actions read Resolve, Dismiss,
-  Add to note. A closed thread with more messages says "N more" (marks get a ring).
+  Every open thread has an Ask in chat icon and a pin (Pin open / Unpin, `aria-pressed`) beside ×; actions read Resolve, Dismiss,
+  Add to note. Threads fold unless pinned (2026-11-14): a closed note that is not pinned shows its first line only
+  (no "N more") and dims to .7 until it is hovered, focused or opened; keyboard focus inside unfolds it, hover does not,
+  so nothing restacks under the pointer. A pin (PATCH `.../threads/{id}` `{pinned}`, `margin_threads.pinned`, exported in
+  `margin.json`) keeps the closed note whole and undimmed. Open, its messages and the waiting mark sit right of a 1 px
+  `--line` rule. A pinned closed thread with more messages says "N more" (marks get a ring either way).
   Word arrival animates colour only, never opacity (blur on WebKit); positions are rounded. With Felix open, under
   3 or over `MOST_ASKED` (1,000) characters, it goes to the chat as before (2026-11-08; read-along and `add_margin_note` quotes stay at `MOST_QUOTE`, 600). The server anchors on
   prefix + quote + suffix exactly and never falls back to another occurrence. Replies
@@ -944,7 +966,7 @@ target. Check the page sequence after loading preferences.
   click and close handlers from dismissing it. Each note remains a labelled article with an
   accessible margin toggle. Passage anchors use a separate gutter dot, never a
   mascot on the text. Straight dotted underlines reveal in about 500 ms; there is
-  no default tether. Hovering a passage washes its margin note with the passage's accent (`.margin-note[data-active]`). Reduced Motion stills the reveal and word arrivals.
+  no default tether (only a lit note draws one). Hovering a passage washes its margin note with the passage's accent (`.margin-note[data-active]`). Reduced Motion stills the reveal and word arrivals.
 - Open replies have no card surface or boxed textarea outline. Their retained
   controls expand/collapse over 240 ms, become inert/aria-hidden on close and snap
   under Reduced Motion. Diagram size changes relayout the bounded thread stack.
@@ -1058,9 +1080,9 @@ compact anchors stay in a separate gutter, never a mascot over the passage.
   marks anything else `position: fixed` with `data-print-off`.
 
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
-  top). A folded Tasks pill opens while the mouse is over it and folds when it
-  leaves (`tasksWin.hovering`, never saved); a click within `TASKS_PIN_MS` of that
-  opening pins it open, so the click never lands on the row under the pill.
+  top). The Tasks card starts folded every time and opens only while the mouse
+  is over it or keyboard focus is inside it (`:hover`, `:focus-within`); nothing
+  is saved and a click never pins it open.
 
 PDF export keeps Windows' native print function (Tauri calls it internally),
 uses the native bridge on macOS, and reports bridge errors without losing the

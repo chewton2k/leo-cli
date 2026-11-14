@@ -255,18 +255,27 @@ test('When you ask says how to ask, with the real shortcut and no promise of aut
   }
 });
 
+test('Reading pace is a row of picture cards that carry the pause and save to the pace field', () => {
+  const html = harness().context.felixSettingsCards({ gap: 90, gaps: [90], cap: 40, caps: [40], today: 0, default_mode: 'ask', layout: 'right', pace: 'slow' }, { tasks: [] });
+  const cards = JSON.parse(html.match(/<span class="set-label">Reading pace<\/span>(\{.*?\})<\/div>/)[1]);
+  assert.equal(cards.field, 'data-margin-pref="pace"');
+  assert.equal(cards.current, 'slow');
+  assert.deepEqual(cards.choices.map(([value, title, about]) => [value, title, about]), [['fast', 'Fast', 'After 2 sec of quiet.'], ['regular', 'Regular', 'After 4 sec of quiet.'], ['slow', 'Slow', 'After 8 sec of quiet.']]);
+  assert.ok(cards.choices.every((choice) => choice[3].includes('<svg')));
+});
+
 test('the page keeps only the asking affordances it really has', () => {
   const passages = fs.readFileSync(path.join(__dirname, '../src/web/app/passages.js'), 'utf8');
-  assert.match(passages, /<span>Ask Felix<\/span>/);
+  for (const label of ['<span>Felix this</span>', '>Ask Felix</button>', '>Visualize</button>']) assert.ok(passages.includes(label), label);
   assert.match(passages, /pressed\(e, 'ask'\)/);
 });
 
-test('the mascot, the tether and the reading stub are gone from the margin script and styles', () => {
+test('the mascot and the reading stub are gone from the margin script and styles', () => {
   const script = fs.readFileSync(path.join(__dirname, '../src/web/app/margin-notes.js'), 'utf8');
   const page = pageHtml();
   assert.match(page, /\.settings-layout[\s\S]*<\/html>/);
-  for (const dead of ['tether', 'felix.felix', 'margin-head', 'margin-face', 'readFace']) assert.equal(script.includes(dead), false, dead);
-  for (const dead of ['.tether', '.margin-reading', '.margin-head', 'margin-reveal', '@keyframes margin-draw', '.chat-history-new', '.settings-layout::before']) assert.equal(page.includes(dead), false, dead);
+  for (const dead of ['felix.felix', 'margin-head', 'margin-face', 'readFace']) assert.equal(script.includes(dead), false, dead);
+  for (const dead of ['.margin-reading', '.margin-head', 'margin-reveal', '@keyframes margin-draw', '.chat-history-new', '.settings-layout::before']) assert.equal(page.includes(dead), false, dead);
 });
 
 test('leaving with a queued hover lets the next note schedule and paint its own hover', () => {
@@ -432,7 +441,7 @@ function passages(room = true) {
     const on = {};
     const node = {
       hidden: false, dataset: {}, style: {}, value: '', offsetWidth: 200, offsetHeight: 30, focused: false,
-      addEventListener: (kind, fn) => { on[kind] = fn; },
+      setAttribute() {}, addEventListener: (kind, fn) => { on[kind] = fn; },
       fire: (kind, extra = {}) => { const e = { stopped: false, preventDefault() {}, stopPropagation() { e.stopped = true; }, ...extra }; on[kind]?.(e); return e; },
       focus() { node.focused = true; },
       querySelector: () => node.child || (node.child = fake()),
@@ -445,7 +454,7 @@ function passages(room = true) {
   const attached = [];
   const context = {
     document: { createElement: fake, body: { appendChild() {} }, addEventListener() {} },
-    window: { addEventListener() {}, innerHeight: 800 }, ICON: { chat: '' }, state: { view: 'note', session: s },
+    window: { addEventListener() {}, innerHeight: 800 }, ICON: { chat: '' }, ON_MAC: true, state: { view: 'note', session: s },
     $: () => ({ getBoundingClientRect: () => ({ left: 0, right: 600 }) }), toast() {}, cleanTitle: (t) => t,
     marginBeside: () => (room ? { prefix: '', suffix: '' } : null), marginAsk: (...args) => (room ? asked.push(args) > 0 : false),
     chat: { attachSelection: (x) => attached.push(x) },
@@ -454,13 +463,26 @@ function passages(room = true) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/passages.js'), 'utf8'), context);
   const pill = vm.runInContext('askFloat', context);
   const field = vm.runInContext('askField', context);
-  return { pill, field, input: field.child, asked, attached, s, picked };
+  const press = (ask) => pill.fire('click', { target: { closest: () => ({ dataset: { ask } }) } });
+  return { pill, field, input: field.child, asked, attached, s, picked, press };
 }
+
+test('Felix this and Visualize ask about the selection at once with their own message, and go to the chat without room', () => {
+  for (const [kind, question] of [['this', 'Respond to this passage.'], ['draw', 'Draw this step by step.']]) {
+    const p = passages();
+    p.press(kind);
+    assert.equal(p.field.hidden, true);
+    assert.deepEqual([...p.asked[0]], [p.s, p.picked, question]);
+    const none = passages(false);
+    none.press(kind);
+    assert.equal(none.attached[0].text, none.picked.text);
+  }
+});
 
 test('Ask Felix opens a question field: a typed question asks it, an empty Enter asks generally, Escape asks nothing', () => {
   for (const [typed, question] of [['  Why supervision?  ', 'Why supervision?'], ['', '']]) {
     const p = passages();
-    p.pill.fire('click');
+    p.press('ask');
     assert.equal(p.field.hidden, false);
     assert.equal(p.pill.hidden, true);
     assert.equal(p.input.focused, true);
@@ -473,7 +495,7 @@ test('Ask Felix opens a question field: a typed question asks it, an empty Enter
     assert.equal(p.asked[0][2], question);
   }
   const p = passages();
-  p.pill.fire('click');
+  p.press('ask');
   p.input.value = 'never sent';
   assert.equal(p.input.fire('keydown', { key: 'Escape' }).stopped, true);
   assert.equal(p.field.hidden, true);
@@ -483,7 +505,7 @@ test('Ask Felix opens a question field: a typed question asks it, an empty Enter
 
 test('without room in the margin Ask Felix goes straight to the chat with no field', () => {
   const p = passages(false);
-  p.pill.fire('click');
+  p.press('ask');
   assert.equal(p.field.hidden, true);
   assert.equal(p.attached.length, 1);
   assert.equal(p.attached[0].text, p.picked.text);

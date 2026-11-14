@@ -7,6 +7,87 @@ test.beforeEach(async ({ page }) => {
 
 const quiet = (page) => expect.poll(() => page.evaluate(() => document.getAnimations().filter((run) => run.playState === 'running' && run.effect && run.effect.getComputedTiming().iterations !== Infinity).length)).toBe(0);
 
+test('the leo mark is one symbol that the brand uses', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/');
+  await expect(page.locator('svg.sprite symbol#leo-mark')).toHaveCount(1);
+  await expect(page.locator('.bar .brand svg use[href="#leo-mark"]')).toHaveCount(1);
+  await expect(page.locator('.side-head .brand svg use[href="#leo-mark"]')).toHaveCount(1);
+  await expect(page.locator('.side-head .brand')).toHaveAccessibleName('leo');
+});
+
+test('a stepped drawing steps through its parts with captions and theme colours, and stays an image', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Stepped', body: 'Words.' } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toBeVisible();
+  await page.evaluate(() => {
+    const stepped = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120"><title>Heat</title><g data-step="1" data-caption="Hot side"><circle cx="61" cy="60" r="30" style="stroke: var(--accent); fill: none"/></g><g data-step="2" data-caption="Heat moves"><path d="M100 60h120" style="stroke: var(--text)"/></g></svg>';
+    const broken = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80"><g data-step="1"><path d="M0 0h9"></svg>';
+    for (const [id, svg] of [['stepped', stepped], ['broken', broken]]) {
+      const box = document.createElement('div');
+      box.className = 'msg leo';
+      box.id = id;
+      box.innerHTML = `<div class="prose">${window.leoMarkdown.render('```svg\n' + svg + '\n```')}</div>`;
+      document.querySelector('#app').append(box);
+    }
+  });
+  const fig = page.locator('#stepped figure.drawing.inked');
+  const src = async () => decodeURIComponent(await fig.locator('img').getAttribute('src'));
+  await expect(fig.locator('.drawing-count')).toHaveText('1/2');
+  await expect(fig.locator('.drawing-caption')).toHaveText('Hot side');
+  await expect(fig.getByRole('button', { name: 'Previous step' })).toBeDisabled();
+  expect(await src()).not.toContain('var(--');
+  expect(await src()).toContain('opacity="0"');
+  await fig.getByRole('button', { name: 'Next step' }).click();
+  await expect(fig.locator('.drawing-count')).toHaveText('2/2');
+  await expect(fig.locator('.drawing-caption')).toHaveText('Heat moves');
+  await expect(fig.getByRole('button', { name: 'Next step' })).toBeDisabled();
+  expect(await src()).not.toContain('opacity="0"');
+  await fig.getByRole('button', { name: 'Start again' }).click();
+  await expect(fig.locator('.drawing-count')).toHaveText('1/2');
+  await expect(fig.locator('img')).toHaveCSS('filter', 'none');
+  expect(await page.locator('circle[cx="61"]').count()).toBe(0);
+  await expect(page.locator('#broken figure.drawing img')).toHaveCount(1);
+  await expect(page.locator('#broken figure.drawing.inked, #broken .drawing-steps')).toHaveCount(0);
+});
+
+test('the selection menu offers Felix this, Ask Felix and Visualize, and the two quick ones ask with their own message', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Selection menu', body: 'Intro line\n\nHeat flows from the hot side to the cold side.\n\nLast line' } })).json();
+  const asked = [];
+  await page.route(`**/api/notes/${note.id}/margin/threads`, async (route) => {
+    const body = route.request().postDataJSON();
+    asked.push(body);
+    await route.fulfill({ json: { id: `t${asked.length}`, note: note.id, quote: body.quote, prefix: body.prefix, suffix: body.suffix, status: 'open', source: 'ask', messages: [{ from: 'felix', text: 'Here it is.', at: '2026-11-14T10:00:00Z' }], created_at: '2026-11-14T10:00:00Z', updated_at: '2026-11-14T10:00:00Z' } });
+  });
+  await page.goto(`/#/n/${note.id}`);
+  const select = async () => {
+    await page.locator('#doc .blk', { hasText: 'Heat flows' }).click();
+    const area = page.locator('#doc textarea.line-edit');
+    await expect(area).toHaveCount(1);
+    await area.evaluate((a) => {
+      const at = a.value.indexOf('the hot side');
+      a.focus();
+      a.setSelectionRange(at, at + 'the hot side'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+  };
+  await select();
+  const menu = page.getByRole('toolbar', { name: 'Felix and this passage' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('button')).toHaveText([/Felix this/, 'Ask Felix', 'Visualize']);
+  await menu.getByRole('button', { name: 'Visualize' }).click();
+  await expect.poll(() => asked.length).toBe(1);
+  expect(asked[0]).toMatchObject({ quote: 'the hot side', question: 'Draw this step by step.' });
+  await expect(page.locator('.margin-note[data-open] .margin-felix')).toHaveText('Here it is.');
+  await page.keyboard.press('Escape');
+  await select();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect.poll(() => asked.length).toBe(2);
+  expect(asked[1]).toMatchObject({ quote: 'the hot side', question: 'Respond to this passage.' });
+});
+
 test('note reading modes sit beside the save state, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: 'Reading modes', body: 'Words about a passage.' } })).json();
   await page.goto(`/#/n/${note.id}`);

@@ -28,8 +28,8 @@ This file holds the rules. How each screen behaves, area by area, is in
   `the_page_script_parses` runs `node --check` on the whole.
 - Pure helpers are separate files served on their own and node-tested in
   `tests/*.test.js`: `markdown.js`, `editing.js`, `schedule.js`, `saving.js`,
-  `recording.js`, `margin.js`. `chat.js`, `doc.js`, `pane-resize.js` and
-  `theme.js` are separate scripts too.
+  `recording.js`, `margin.js`. `chat.js`, `doc.js`, `pane-resize.js`, `prefs.js`
+  and `theme.js` are separate scripts too.
 - Everything leo-web computes or keeps besides notes and uploads lives in one
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
@@ -103,6 +103,18 @@ Decided: one app, window only (2026-10-31).
 - Layout variables on `body`: `--side`, `--right`, `--mid`. Fixed things
   (toolbar, select bar, toasts, FABs, `#dock`) use them so nothing covers
   anything. Page toolbars share one 760 px maximum width.
+- UI preferences survive a port change (2026-11-14): localStorage is per origin and
+  the engine port drifts when the saved one is busy, so every `leo-*` key (not
+  `leo-draft*`, `leo-chat-v1` or `leo-search`: content, not settings) is mirrored in `<data>/ui-prefs.json` (`prefs.rs`: keys
+  `^leo-[a-z0-9-]{1,48}$`, 16 KB per value, 128 KB total, temp file + rename,
+  merged per key under a lock). `/prefs.js` (behind the session gate, `no-store`,
+  loads before `/theme.js`) seeds localStorage from the file (the file's keys win; keys it lacks are
+  left alone; an empty file makes the page upload its keys once; an oversize
+  value removes the stored copy; a failed PUT is queued again), patches `Storage` `setItem`
+  and `removeItem` to send a debounced `PUT /api/ui-prefs` and flushes on
+  `pagehide` and hidden. `LEO_NO_UI_PREFS=1` turns it off (the browser tests'
+  shared server sets it so one test's choices never reach the next;
+  `prefs.spec.js` starts its own engine without it).
 - Theme: `/theme.js` loads in `<head>` (no inline script under the CSP) and sets
   `html[data-theme]` and the other per-browser `data-*` before paint. Anything
   drawn in JavaScript asks `leoTheme.dark()` and redraws on `leoTheme.onChange`,
@@ -352,10 +364,14 @@ the web (root CLAUDE.md).
 - Files for Felix (`chat_files`): ≤10 per chat, text only, deleted with the
   chat. Add to note (`routes/insert.rs`) is version-checked and request ids
   dedupe. Chat titles are local; history shows titles only.
-- Felix draws one diagram unasked once a reply, lesson step or quiz has three
-  or more steps, linked parts, a layout in space or memory, or a comparison of
-  three or more things, never with text characters; margin reads and replies
-  use the same threshold (2026-11-09). `BASE` stays under 4,500 bytes.
+- Felix draws only when asked to see, draw or visualize something (2026-11-14,
+  replacing the 2026-11-09 threshold): one stepped ```svg (viewBox 320 wide,
+  `var(--text|muted|accent|accent-soft)`, top-level `<g data-step data-caption>`),
+  never Mermaid or text characters; margin reads never draw; `drawing::drawn`
+  runs only when `drawing::asks_to_see` the user's message. `diagrams.js`
+  `stepDrawings` parses it with `DOMParser` only to build step variants and fill
+  in theme colours, and shows them as `<img>` data URLs, never in the page.
+  User-written ```mermaid still renders. `BASE` stays under 4,500 bytes.
 - `REPLY_STYLE` is not changed by prompt-size work. Escape belongs to the owner
   inside the page first; an open sheet always wins.
 
@@ -371,6 +387,13 @@ Felix (2026-10-19).
   (`MOST_REPLY` 4,000, `MOST_MESSAGES`, the last 8 sent).
 - A thread whose passage is gone is not shown (2026-11-09; there is no lost-place
   box).
+- Fold unless pinned (2026-11-14): `margin_threads.pinned` (guarded `ALTER`,
+  db `VERSION` 4, in `margin.json`), PATCH `.../threads/{id}` `{pinned}`. A
+  closed note that is not pinned or focused shows only its first line and dims
+  to .7 until lit; hover undims but never unfolds (no restack under the
+  pointer). The newest read-along note (`marginPage.newest`, `data-newest`)
+  stays whole until the next read starts. An open thread's messages sit right
+  of a 1 px `--line` rule.
 - Deletes: a trashed note keeps its threads; deleting from the trash removes them
   (`forget_notes`). `sweep_store` waits `SWEEP_AFTER_DAYS` (7) and never runs
   while no notes loaded or a file is unreadable. Export adds `leo/margin.json`
@@ -399,11 +422,14 @@ Felix (2026-10-19).
   rewrite under half or over 3× + 400 of the block or with a new link),
   version-checked before and after the AI; only a lost, code or long passage falls
   back to `/insert`.
-- The model's quote must be in the note now; `margin::crowded` allows one open
-  note per sentence. The server anchors on prefix + quote + suffix exactly and
+- The model's quote must be in the note now; reads grow it to the whole
+  terminated sentence(s) it touches (`margin::whole_sentences`, else unchanged),
+  then `margin::crowded` allows one open note per sentence. The server anchors on prefix + quote + suffix exactly and
   never falls back to another occurrence. Asks: 3 to `MOST_ASKED` (1,000)
   characters, else the chat; read-along and `add_margin_note` quotes
-  `MOST_QUOTE` (600).
+  `MOST_QUOTE` (600). The selection toolbar (`passages.js`) has Felix this
+  (fixed ⌘↵/Ctrl+Enter), Ask Felix and Visualize; the two quick ones are asks
+  with a preset question (`ASK_PRESETS`).
 - Reads use `Powers.toolless`, never `quick` (`no_tools`: `--tools ""`,
   `web_search="disabled"`, chain cut to its first provider, so a read fails
   closed). Replies and asks use `Powers.toolless_chat`. Every read is a fresh
@@ -423,8 +449,12 @@ Felix (2026-10-19).
   eighth of the note room) with a fence stable while content is (prefix caches).
 - Load margin prefs and reserve their space before positioning search matches or
   restoring reading; check the page sequence after loading. Read completion
-  checks session and request identity. Margin waiting dots are never a
-  `.margin-note` and never in `threads`.
+  checks session and request identity. While a read runs, the `#leo-mark`
+  symbol (`.margin-waiting`, breathing by opacity) and a pencil under the
+  changed block (`path.pencil` per line within `DRAWER_MS`, one side line for
+  4+ lines) are never a `.margin-note` and never in `threads`; the read's end,
+  an edit and leaving clear them (`marginReadingDone`, `marginPencilGone`). A lit
+  note's tether (`path.tether`) crosses only the gap beside the text.
 - Tests: `src/tests/margin.rs` drives the real engine over TCP with fake powers.
 
 Decided: margin threads never in files (2026-11-04); read-along default for new
@@ -502,8 +532,15 @@ is hidden or the capture activity gate is busy.
 - Calendar page lays out in normal flow beside the rail and explorer, never
   `position: fixed` over `--side`. Saved task times never change for layout;
   a zero-height resize never writes an end. Polls wait during drags (`cal.stale`).
-- A folded Tasks pill in `#dock` opens on hover (`tasksWin.hovering`, never
-  saved); a click within `TASKS_PIN_MS` of that opening pins it open.
+- Task blocks are as tall as their time (min 15 min, 18 px; `calLeast`): 2 to 3 PM
+  ends at the 3 PM line and a resize shrinks the block live. Only a task with no end
+  keeps a default span (`CAL_DUE_MIN`, 78 min). Under an hour a block takes `inline`:
+  title, time on one line. Today is a filled accent circle in the mini calendar,
+  week header and month.
+- The Tasks card in `#dock` is folded to a badge at every start and opens only
+  while hovered or holding keyboard focus (CSS `:hover`/`:focus-within`, the card is
+  focusable); nothing is saved and a click never pins it (mouse presses on it do
+  not take focus).
 - Export adds `tasks.json`; POST `/api/tasks/import` (ids dedupe; a newer local
   copy is kept).
 
@@ -562,7 +599,14 @@ a modal.
   reports it, Esc (or a click elsewhere) cancels, and a note says Saved or why
   not. Detect language is hidden for a model that cannot detect language, and
   setup picks the system language, else `en`, for such a model.
-- Settings search: `SETTINGS_INDEX` entries (`{section, label, keywords, id}`)
+- Settings look (2026-11-14): a choice of two or three that reads better as a
+  picture is `choiceCards` (theme, Felix, width, text size, lettering, margin
+  layout, new-note mode, Reading pace); long and numeric lists stay `segmented`.
+  A switch row is a bordered box with a one-line `.set-desc`. The Dictation
+  shortcut lives only in Settings → Shortcuts (`dictationShortcutRow`, its Change
+  button runs the native `record_shortcut` flow; `dictationSection` keeps
+  `pollDictation` running on both pages) and Health's shortcut check points there.
+ (`{section, label, keywords, id}`)
   and the row's `data-find` attribute are added together (the Shortcuts section
   passes its ids as literals to `shortcutRow`, so the test finds them);
   `settings-navigation.test.js` fails on an unknown section, a duplicate id or

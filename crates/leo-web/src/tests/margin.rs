@@ -320,9 +320,12 @@ async fn a_read_saves_one_note_anchored_in_the_text() {
         .read(&id, &version, &[&format!("{PASSAGE}, I think?")])
         .await;
     assert_eq!(status, 200, "{read}");
-    assert_eq!(read["note"]["quote"], "just checks if it matches");
-    assert_eq!(read["note"]["prefix"], "First.\n\nthen login ");
-    assert_eq!(read["note"]["suffix"], ", I think?");
+    assert_eq!(
+        read["note"]["quote"],
+        "then login just checks if it matches, I think?"
+    );
+    assert_eq!(read["note"]["prefix"], "First.\n\n");
+    assert_eq!(read["note"]["suffix"], "");
     assert_eq!(read["note"]["messages"][0]["text"], "In plain text?");
     assert_eq!(read["note"]["status"], "open");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -914,6 +917,51 @@ async fn a_weave_refuses_when_the_note_changed_while_felix_wrote() {
 }
 
 #[tokio::test]
+async fn a_pin_is_kept_on_the_thread_through_reloads_and_the_export() {
+    let engine = Engine::with(Powers::default()).await;
+    let (id, _) = engine.note("Pinned", PASSAGE).await;
+    let thread = thread_on(&engine, &id).await;
+    let path = format!("/api/notes/{id}/margin/threads/{thread}");
+    let pin = |body: &str| engine.send_as(&engine.cookie, "PATCH", &path, Some(body.into()));
+    let view = format!("/api/notes/{id}/margin");
+    assert_eq!(engine.get(&view).await.1["threads"][0]["pinned"], false);
+    let (code, pinned) = pin(r#"{"pinned":true}"#).await;
+    assert_eq!((code, &pinned["pinned"]), (200, &serde_json::json!(true)));
+    assert_eq!(engine.get(&view).await.1["threads"][0]["pinned"], true);
+    assert!(margin::every(&engine.chats())[0].pinned);
+    let parts = crate::export::Parts {
+        chats: true,
+        ..Default::default()
+    };
+    let mut zip = std::io::Cursor::new(Vec::new());
+    crate::export::write_zip(
+        &mut zip,
+        &engine.dir.path().join("notes"),
+        &engine.chats(),
+        parts,
+    )
+    .unwrap();
+    zip.set_position(0);
+    let mut archive = zip::ZipArchive::new(zip).unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_reader(archive.by_name("leo/margin.json").unwrap()).unwrap();
+    assert_eq!(exported["threads"][0]["pinned"], true);
+    assert_eq!(pin(r#"{"pinned":false}"#).await.1["pinned"], false);
+    assert_eq!(pin(r#"{"pinned":"yes"}"#).await.0, 422);
+    let wrong = format!("/api/notes/{id}/margin/threads/{}", uuid::Uuid::new_v4());
+    let (missing, _) = engine
+        .send_as(
+            &engine.cookie,
+            "PATCH",
+            &wrong,
+            Some(r#"{"pinned":true}"#.into()),
+        )
+        .await;
+    assert_eq!(missing, 404);
+    engine.stop().await;
+}
+
+#[tokio::test]
 async fn dismissing_and_resolving_take_a_thread_off_the_page_and_undo_brings_it_back() {
     let engine = Engine::with(Powers::default()).await;
     let (id, _) = engine.note("Done", PASSAGE).await;
@@ -1477,7 +1525,7 @@ async fn a_part_saves_at_most_its_share_and_drops_what_it_cannot_place() {
         .iter()
         .map(|n| n["quote"].as_str().unwrap())
         .collect();
-    assert_eq!(quotes, ["just checks if it matches"]);
+    assert_eq!(quotes, ["Then login just checks if it matches, I think."]);
     let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
     assert_eq!(view["threads"].as_array().unwrap().len(), 2);
     engine.stop().await;

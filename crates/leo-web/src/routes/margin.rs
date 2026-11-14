@@ -51,6 +51,11 @@ pub(crate) struct StatusBody {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct PinBody {
+    pinned: bool,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct ModeBody {
     mode: Option<String>,
     persona: Option<String>,
@@ -579,17 +584,18 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     let mut quotes = facts.quotes;
     let mut saved = Vec::new();
     for found in founds {
-        if margin::crowded(&now.body, &found.quote, &blocks, &quotes) {
+        let quote = margin::whole_sentences(&now.body, &found.quote, &blocks);
+        if margin::crowded(&now.body, &quote, &blocks, &quotes) {
             continue;
         }
-        let Some(place) = margin::placed(&now.body, &found.quote, &blocks) else {
+        let Some(place) = margin::placed(&now.body, &quote, &blocks) else {
             continue;
         };
         let thread = margin::new_thread(
             &id,
             "read",
             place,
-            &found.quote,
+            &quote,
             vec![margin::felix_says(&found.text)],
         );
         let held = chats.clone();
@@ -600,7 +606,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
         ) {
             break;
         }
-        quotes.push(found.quote);
+        quotes.push(quote);
         saved.push(thread);
     }
     if saved.is_empty() {
@@ -1012,6 +1018,22 @@ pub(crate) async fn weave(
             "The note changed while Felix was working this in. Try once more.",
         ),
         Err(code) => code.into_response(),
+    }
+}
+
+pub(crate) async fn pin(
+    State(state): State<AppState>,
+    Path((id, thread)): Path<(String, String)>,
+    Json(body): Json<PinBody>,
+) -> Response {
+    if !margin::valid_note(&id) || !margin::valid_note(&thread) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let chats = state.chats.clone();
+    match blocking(move || margin::set_pinned(&chats, &id, &thread, body.pinned)).await {
+        Ok(Some(found)) => Json(found).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(refused) => *refused,
     }
 }
 
