@@ -399,8 +399,9 @@ Felix (2026-10-19).
   rewrite under half or over 3× + 400 of the block or with a new link),
   version-checked before and after the AI; only a lost, code or long passage falls
   back to `/insert`.
-- The model's quote must be in the note now; `margin::crowded` allows one open
-  note per sentence. The server anchors on prefix + quote + suffix exactly and
+- The model's quote must be in the note now; reads grow it to the whole
+  terminated sentence(s) it touches (`margin::whole_sentences`, else unchanged),
+  then `margin::crowded` allows one open note per sentence. The server anchors on prefix + quote + suffix exactly and
   never falls back to another occurrence. Asks: 3 to `MOST_ASKED` (1,000)
   characters, else the chat; read-along and `add_margin_note` quotes
   `MOST_QUOTE` (600).

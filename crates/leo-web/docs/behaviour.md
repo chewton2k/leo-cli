@@ -850,13 +850,13 @@ target. Check the page sequence after loading preferences.
   a reply streaming (`Steering::any_open`), the chosen gap between reads of a note,
   overlapping reads and the daily cap (429 with `why`). A useful comment adds no
   separate five-minute lockout. Reads can explain, connect ideas, ask a worthwhile
-  question, correct a mistake or include one small Mermaid diagram.
+  question or correct a mistake, about the passage as a whole thought; they never draw.
   The cap is spent in one transaction after the read is claimed, so failures spend it
   too, and a broken day row counts as spent. Blocks already read are dropped. A failed
   read forgets its blocks and answers `{failed: true}`, so the page keeps its baseline.
   A refused read waits for the next edit; a stale-version refusal resets the page's
   retry delay to the normal typing pause, while provider cooldowns stay bounded.
-  The model's quote must be in the note now, or the note is dropped. One note per sentence (2026-11-09, the user's call: three notes stacked on one phrase): `margin::crowded` drops a found note whose sentence (ended by `.`, `!` or `?` before a space, a line break, or `。！？`) holds an open thread's quote, or which lies in an open quote's sentence, in read-along and Read through alike; resolved and dismissed threads do not count. There is no Reading… status
+  The model's quote must be in the note now, or the note is dropped. Before `crowded`, read-along and Read through grow it to the whole sentence or sentences it touches inside its block (`margin::whole_sentences`, 2026-11-14): a sentence must end on `.`, `!` or `?` (before a space or the end) or `。！？`; a line break or the end of an unpunctuated line is no ending, so such a quote, or a span over `MOST_QUOTE`, stays as the model wrote it. One note per sentence (2026-11-09, the user's call: three notes stacked on one phrase): `margin::crowded` drops a found note whose sentence (ended by `.`, `!` or `?` before a space, a line break, or `。！？`) holds an open thread's quote, or which lies in an open quote's sentence, in read-along and Read through alike; resolved and dismissed threads do not count. There is no Reading… status
   (2026-11-07, the user's call): 200 ms into a read, dots (`.margin-waiting`, never a `.margin-note`, never in
   `threads`) sit in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
   move for them (free spot on the right, else the left in Both, else below what blocks them), or its gutter mark pulses in Marks only;

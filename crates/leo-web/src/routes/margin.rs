@@ -579,17 +579,18 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
     let mut quotes = facts.quotes;
     let mut saved = Vec::new();
     for found in founds {
-        if margin::crowded(&now.body, &found.quote, &blocks, &quotes) {
+        let quote = margin::whole_sentences(&now.body, &found.quote, &blocks);
+        if margin::crowded(&now.body, &quote, &blocks, &quotes) {
             continue;
         }
-        let Some(place) = margin::placed(&now.body, &found.quote, &blocks) else {
+        let Some(place) = margin::placed(&now.body, &quote, &blocks) else {
             continue;
         };
         let thread = margin::new_thread(
             &id,
             "read",
             place,
-            &found.quote,
+            &quote,
             vec![margin::felix_says(&found.text)],
         );
         let held = chats.clone();
@@ -600,7 +601,7 @@ async fn pass(state: &AppState, id: String, body: ReadBody, through: bool) -> Pa
         ) {
             break;
         }
-        quotes.push(found.quote);
+        quotes.push(quote);
         saved.push(thread);
     }
     if saved.is_empty() {

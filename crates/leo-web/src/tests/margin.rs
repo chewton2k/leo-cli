@@ -320,9 +320,12 @@ async fn a_read_saves_one_note_anchored_in_the_text() {
         .read(&id, &version, &[&format!("{PASSAGE}, I think?")])
         .await;
     assert_eq!(status, 200, "{read}");
-    assert_eq!(read["note"]["quote"], "just checks if it matches");
-    assert_eq!(read["note"]["prefix"], "First.\n\nthen login ");
-    assert_eq!(read["note"]["suffix"], ", I think?");
+    assert_eq!(
+        read["note"]["quote"],
+        "then login just checks if it matches, I think?"
+    );
+    assert_eq!(read["note"]["prefix"], "First.\n\n");
+    assert_eq!(read["note"]["suffix"], "");
     assert_eq!(read["note"]["messages"][0]["text"], "In plain text?");
     assert_eq!(read["note"]["status"], "open");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1477,7 +1480,7 @@ async fn a_part_saves_at_most_its_share_and_drops_what_it_cannot_place() {
         .iter()
         .map(|n| n["quote"].as_str().unwrap())
         .collect();
-    assert_eq!(quotes, ["just checks if it matches"]);
+    assert_eq!(quotes, ["Then login just checks if it matches, I think."]);
     let (_, view) = engine.get(&format!("/api/notes/{id}/margin")).await;
     assert_eq!(view["threads"].as_array().unwrap().len(), 2);
     engine.stop().await;
