@@ -900,9 +900,12 @@ target. Check the page sequence after loading preferences.
   when none is set, or `margin::PROBLEM` (no prefix) for a timeout or an unreadable reply; the failed response carries it as `error`.
 - Selection: ⌘⇧E (customizable, stored per window in `leo-shortcuts`) opens a draft in the margin and asks at once, POST
   `.../margin/threads` (no read-along needed) with an empty question (`margin::UNSPOKEN`;
-  only Felix's message is stored). The Ask Felix pill first opens a one-line field (`.ask-field`, "Ask about this
+  only Felix's message is stored). A selection shows a small toolbar (`.ask-float`, `role=toolbar`, 2026-11-14, no
+  formatting row): Felix this (⌘↵ / Ctrl+Enter, fixed, only while the toolbar shows and focus is not in the margin, chat,
+  a sheet or the ask field) and Visualize ask at once with "Respond to this passage." / "Draw this step by step." through
+  the same POST, so its guards and the chat fallback apply. Ask Felix first opens a one-line field (`.ask-field`, "Ask about this
   passage…", 2026-11-09): Enter sends the typed question (empty Enter asks generally), Escape or blur closes it;
-  when the margin cannot take the passage the pill goes to the chat as before. The draft shows the breathing leo mark (`.margin-pending .margin-thinking`, `role=status` "Felix is thinking", filled from
+  when the margin cannot take the passage (or it is over `MOST_ASKED`) every action goes to the chat as before. The draft shows the breathing leo mark (`.margin-pending .margin-thinking`, `role=status` "Felix is thinking", filled from
   `marginPage.thinking`, hidden when closed) and becomes the thread in place on success
   (`marginRekey`, no rebuild); a second ask meanwhile toasts. Closing while he thinks
   leaves the thread closed when it lands, and a closed failure toasts. An open failure

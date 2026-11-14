@@ -3962,7 +3962,7 @@ test.describe('passages', () => {
     });
     const ask = page.locator('.ask-float');
     await expect(ask).toBeVisible();
-    await ask.click();
+    await ask.getByRole('button', { name: 'Ask Felix' }).click();
     await page.getByRole('textbox', { name: 'Ask Felix about this passage' }).press('Enter');
     await page.locator('.margin-note[data-open]').getByRole('button', { name: 'Ask in chat' }).click();
     const chat = page.locator('#chat');

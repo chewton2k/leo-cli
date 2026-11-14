@@ -408,7 +408,9 @@ Felix (2026-10-19).
   then `margin::crowded` allows one open note per sentence. The server anchors on prefix + quote + suffix exactly and
   never falls back to another occurrence. Asks: 3 to `MOST_ASKED` (1,000)
   characters, else the chat; read-along and `add_margin_note` quotes
-  `MOST_QUOTE` (600).
+  `MOST_QUOTE` (600). The selection toolbar (`passages.js`) has Felix this
+  (fixed ⌘↵/Ctrl+Enter), Ask Felix and Visualize; the two quick ones are asks
+  with a preset question (`ASK_PRESETS`).
 - Reads use `Powers.toolless`, never `quick` (`no_tools`: `--tools ""`,
   `web_search="disabled"`, chain cut to its first provider, so a read fails
   closed). Replies and asks use `Powers.toolless_chat`. Every read is a fresh

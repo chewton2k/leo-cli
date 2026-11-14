@@ -51,6 +51,43 @@ test('a stepped drawing steps through its parts with captions and theme colours,
   await expect(page.locator('#broken figure.drawing.inked, #broken .drawing-steps')).toHaveCount(0);
 });
 
+test('the selection menu offers Felix this, Ask Felix and Visualize, and the two quick ones ask with their own message', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Selection menu', body: 'Intro line\n\nHeat flows from the hot side to the cold side.\n\nLast line' } })).json();
+  const asked = [];
+  await page.route(`**/api/notes/${note.id}/margin/threads`, async (route) => {
+    const body = route.request().postDataJSON();
+    asked.push(body);
+    await route.fulfill({ json: { id: `t${asked.length}`, note: note.id, quote: body.quote, prefix: body.prefix, suffix: body.suffix, status: 'open', source: 'ask', messages: [{ from: 'felix', text: 'Here it is.', at: '2026-11-14T10:00:00Z' }], created_at: '2026-11-14T10:00:00Z', updated_at: '2026-11-14T10:00:00Z' } });
+  });
+  await page.goto(`/#/n/${note.id}`);
+  const select = async () => {
+    await page.locator('#doc .blk').nth(1).click();
+    const area = page.locator('#doc textarea.line-edit');
+    await expect(area).toHaveCount(1);
+    await area.evaluate((a) => {
+      const at = a.value.indexOf('the hot side');
+      a.focus();
+      a.setSelectionRange(at, at + 'the hot side'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+  };
+  await select();
+  const menu = page.getByRole('toolbar', { name: 'Felix and this passage' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('button')).toHaveText([/Felix this/, 'Ask Felix', 'Visualize']);
+  await menu.getByRole('button', { name: 'Visualize' }).click();
+  await expect.poll(() => asked.length).toBe(1);
+  expect(asked[0]).toMatchObject({ quote: 'the hot side', question: 'Draw this step by step.' });
+  await expect(page.locator('.margin-note[data-open] .margin-felix')).toHaveText('Here it is.');
+  await page.keyboard.press('Escape');
+  await select();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect.poll(() => asked.length).toBe(2);
+  expect(asked[1]).toMatchObject({ quote: 'the hot side', question: 'Respond to this passage.' });
+});
+
 test('note reading modes sit beside the save state, work in both orders and retain the confirmed mode on failure', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: 'Reading modes', body: 'Words about a passage.' } })).json();
   await page.goto(`/#/n/${note.id}`);
