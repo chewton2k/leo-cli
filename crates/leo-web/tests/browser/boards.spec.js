@@ -773,6 +773,26 @@ test('clicking anywhere in an empty card description shows it as a field with th
   });
 });
 
+test('a dropped card leaves no copy behind when its panel is open, edited and cannot close', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const strays = page.locator('body > .kanban-ghost, body > .kanban-card');
+    await drag(page, page.locator('[data-card="cread00001"]'), page.locator('[data-card="cemail0001"]'), { below: true });
+    await expect(strays).toHaveCount(0);
+    await page.locator('[data-card="cread00001"]').click();
+    await page.locator('#kanban-card-title').fill('Read chapter four');
+    await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cread00001').title)).toBe('Read chapter four');
+    await drag(page, page.locator('[data-card="cread00001"]'), page.locator('.kanban-cards[data-col="kdone00001"]'));
+    await expect(strays).toHaveCount(0);
+    await page.evaluate(() => { window.realClose = kanbanClosePanel; kanbanClosePanel = () => { throw new Error('close failed'); }; window.slow = 100; });
+    await drag(page, page.locator('[data-card="cread00001"]'), page.locator('.kanban-tab[data-kanban-drop="bhome00001"]'));
+    await expect(strays).toHaveCount(0);
+    await page.evaluate(() => { kanbanClosePanel = window.realClose; window.slow = 0; window.errors.length = 0; });
+    await page.evaluate(() => { location.hash = '#/elsewhere'; });
+    await expect(page.locator('#elsewhere')).toBeVisible();
+    await expect(strays).toHaveCount(0);
+  });
+});
+
 test('a card saved from its panel while it is being dragged leaves no copy behind', async ({ browser }) => {
   await boardsFixture(browser, async page => {
     await page.locator('[data-card="cread00001"]').click();
