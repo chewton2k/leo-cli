@@ -35,7 +35,7 @@ let personaDetails = false;
 const PERSONA_ICON_NAMES = { flask: 'Flask', globe: 'Globe', bulb: 'Light bulb', cap: 'Graduation cap', leaf: 'Leaf', compass: 'Compass', code: 'Code', heart: 'Heart', star: 'Star', pen: 'Pen', target: 'Target', thumb: 'Thumbs up' };
 const LEAST_ASKED = 3;
 const MARGIN_AREA_MAX = 140;
-const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null };
+const marginPage = { adding: new Set(), again: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, els: new Map(), paths: new Map(), marks: new Map(), rects: new Map(), open: null, hover: null, focus: null, draft: null, thinking: new Map(), wanted: null, arriving: new Set(), timer: 0, reading: false, through: null, faceTimer: 0, status: '', brief: false, statusTimer: 0, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], nextRead: 0, observer: null, frame: 0, roomy: null, tethers: new Map() };
 let marginPrefs = null;
 
 function marginRemembered() {
@@ -82,7 +82,7 @@ function marginLeave() {
   columns?.style.removeProperty('--anchor-gutter');
   marginPage.layer?.remove();
   marginPage.roomy?.classList.remove('margin-room');
-  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null });
+  Object.assign(marginPage, { loaded: false, s: null, mode: 'ask', threads: [], layer: null, svg: null, open: null, hover: null, focus: null, draft: null, reading: false, through: null, status: '', brief: false, statusToken: null, readingAt: null, readingSpan: null, readingEl: null, sides: {}, persona: 'reader', saved: null, instructions: '', personaToken: null, wantedPersona: null, personaSlide: null, slide: null, gutter: 0, pointer: 0, changing: false, baseline: [], roomy: null, tethers: new Map() });
   marginPage.els.clear();
   marginPage.paths.clear();
   marginPage.marks.clear();
@@ -644,6 +644,15 @@ function marginMark(t) {
 }
 
 function marginPaint() {
+  for (const [id, d] of marginPage.tethers) {
+    const key = `${id}:tether:0`;
+    if (d && marginLit(id)) marginPath(id, 'tether').setAttribute('d', d);
+    else {
+      marginPage.paths.get(key)?.remove();
+      marginPage.paths.delete(key);
+      if (!d) marginPage.tethers.delete(id);
+    }
+  }
   for (const [key, path] of marginPage.paths) path.classList.toggle('on', marginLit(key.slice(0, key.indexOf(':'))));
   for (const [id, el] of marginPage.els) el.toggleAttribute('data-active', marginLit(id));
   for (const [id, mark] of marginPage.marks) mark.toggleAttribute('data-active', marginLit(id));
@@ -731,6 +740,7 @@ function marginDraw() {
   marginPencil(origin);
   marginPage.roomy?.classList.remove('margin-room');
   marginPage.roomy = null;
+  marginPage.tethers = new Map([...marginPage.tethers.keys()].map((id) => [id, '']));
   if (margins) marginPlaceInMargin(boxes, layout, page, origin);
   else {
     marginPage.sides = {};
@@ -785,15 +795,11 @@ function marginPlaceInMargin(boxes, layout, page, origin) {
     const to = on === 'right' ? x - 2 : x + marginKit.MARGIN_WIDTH + 2;
     const top = tops[t.id] + 10;
     const bend = (from + to) / 2;
-    marginPath(t.id, 'tether').setAttribute('d', `M${from.toFixed(1)} ${mid.toFixed(1)} C${bend.toFixed(1)} ${mid.toFixed(1)} ${bend.toFixed(1)} ${top.toFixed(1)} ${to.toFixed(1)} ${top.toFixed(1)}`);
+    marginPage.tethers.set(t.id, `M${from.toFixed(1)} ${mid.toFixed(1)} C${bend.toFixed(1)} ${mid.toFixed(1)} ${bend.toFixed(1)} ${top.toFixed(1)} ${to.toFixed(1)} ${top.toFixed(1)}`);
   }
 }
 
 function marginPlaceAsMarks(boxes, page, origin) {
-  for (const { t } of boxes) {
-    marginPage.paths.get(`${t.id}:tether:0`)?.remove();
-    marginPage.paths.delete(`${t.id}:tether:0`);
-  }
   const marks = boxes.map(({ t, rects }) => {
     const mark = marginMark(t);
     mark.toggleAttribute('data-more', (t.messages || []).length > 1);
@@ -1239,7 +1245,7 @@ function marginPencilGone(fade) {
   }
 }
 
-function marginLines(rects) {
+function marginLines(rects, caret) {
   const lines = [];
   for (const r of [...rects].sort((a, b) => a.top - b.top)) {
     const last = lines[lines.length - 1];
@@ -1252,7 +1258,8 @@ function marginLines(rects) {
   for (const line of lines) {
     const tall = line.bottom - line.top;
     const prev = out[out.length - 1];
-    for (let top = prev ? prev.bottom : Infinity; tall > 0 && top + tall <= line.top + 2; top += tall) out.push({ left, right, top, bottom: top + tall });
+    const even = caret && prev && Math.abs(prev.bottom - prev.top - tall) < 1;
+    for (let top = even ? prev.bottom : Infinity; tall > 0 && top + tall <= line.top + 2; top += tall) out.push({ left, right, top, bottom: top + tall });
     out.push(line);
   }
   return out;
@@ -1275,7 +1282,7 @@ function marginPencil(origin) {
   const block = span && marginPage.s.doc.blockAt(span.from);
   const rects = block ? marginPage.s.doc.spanRects(span.from, span.to).map((r) => ({ left: r.left - origin.left, right: r.right - origin.left, top: r.top - origin.top, bottom: r.bottom - origin.top })) : [];
   if (!rects.length) return marginPencilGone(false);
-  const lines = marginLines(rects);
+  const lines = marginLines(rects, marginPage.s.doc.isEditing() && rects.length === 2);
   const top = lines[0].top;
   const bottom = lines[lines.length - 1].bottom;
   const strokes = lines.length >= 4

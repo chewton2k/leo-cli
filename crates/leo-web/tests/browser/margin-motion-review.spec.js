@@ -305,6 +305,35 @@ test.describe('reading pencil', () => {
     }
   });
 
+  test('a heading with a line under it gets one stroke per line and nothing in the gap between them', async ({ browser }) => {
+    await fixture(browser, async (page) => {
+      await startRead(page, 'A heading here');
+      await expect(pencil(page).first()).toBeAttached();
+      const shape = await shapeOf(page, 'A heading here');
+      expect(shape.bottoms.length).toBe(2);
+      expect(shape.paths.length).toBe(2);
+      shape.paths.forEach((line, i) => expect(line.top).toBeGreaterThanOrEqual(shape.bottoms[i]));
+      await page.evaluate(() => fake.answer({ note: null }));
+      await expect(pencil(page)).toHaveCount(0);
+    }, { mode: 'along', threads: [], source: 'Opening line of the note.\n\n## A heading here\nBody line under the heading.\n\nClosing paragraph of the note.' });
+  });
+
+  test('a block open in its textarea is read like the rendered one: one line under one line, one side line for a long one', async ({ browser }) => {
+    for (const [marker, count] of [['plain text', 1], ['word0', 1]]) {
+      await fixture(browser, async (page) => {
+        await page.locator('#doc .blk', { hasText: marker }).click();
+        await expect(page.locator('#doc textarea')).toHaveCount(1);
+        await startRead(page, marker);
+        await expect(pencil(page)).toHaveCount(count);
+        const [line] = (await shapeOf(page, marker)).paths;
+        if (marker === 'word0') expect(line.height).toBeGreaterThan(line.width * 4);
+        else expect(line.width).toBeGreaterThan(line.height * 4);
+        await page.evaluate(() => fake.answer({ note: null }));
+        await expect(pencil(page)).toHaveCount(0);
+      }, { mode: 'along', threads: [] });
+    }
+  });
+
   test('editing during a read takes the pencil and mark away and the late answer brings no stray line', async ({ browser }) => {
     await fixture(browser, async (page) => {
       await startRead(page, 'plain text');
@@ -362,8 +391,9 @@ test.describe('passage states', () => {
   test('a lit note draws a thin tether across the gap only, never over text or the note', async ({ browser }) => {
     await fixture(browser, async (page) => {
       const tether = page.locator('.margin-ink path.tether[data-id="t1"]');
-      await expect(tether).toHaveCSS('opacity', '0');
+      await expect(tether).toHaveCount(0);
       await page.locator('.margin-note[data-id="t1"]').hover();
+      await expect(tether).toHaveCount(1);
       await expect.poll(() => tether.evaluate((p) => Number(getComputedStyle(p).opacity))).toBeGreaterThan(0.3);
       const line = await tether.boundingBox();
       const article = await page.locator('article.note').boundingBox();
@@ -371,7 +401,7 @@ test.describe('passage states', () => {
       expect(line.x).toBeGreaterThanOrEqual(article.x + article.width);
       expect(line.x + line.width).toBeLessThanOrEqual(note.x);
       await page.mouse.move(5, 5);
-      await expect.poll(() => tether.evaluate((p) => Number(getComputedStyle(p).opacity))).toBe(0);
+      await expect(tether).toHaveCount(0);
     }, { threads: [THREADS.short] });
   });
 
