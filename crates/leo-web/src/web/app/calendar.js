@@ -1531,10 +1531,10 @@ tasksBox.addEventListener('mousedown', (e) => {
   if (!e.target.closest('input, textarea, select, [contenteditable]')) e.preventDefault();
 });
 const TASKS_HOLD_MS = 300;
-let tasksOpenedAt = 0;
-tasksBox.addEventListener('pointerenter', () => { tasksOpenedAt = performance.now(); });
+let tasksOpened = { at: 0, x: 0, y: 0 };
+tasksBox.addEventListener('pointerenter', (e) => { tasksOpened = { at: performance.now(), x: e.clientX, y: e.clientY }; });
 tasksBox.addEventListener('click', (e) => {
-  if (performance.now() - tasksOpenedAt < TASKS_HOLD_MS && !e.target.closest('.tasks-head')) {
+  if (performance.now() - tasksOpened.at < TASKS_HOLD_MS && Math.hypot(e.clientX - tasksOpened.x, e.clientY - tasksOpened.y) < 4 && !e.target.closest('.tasks-head')) {
     e.preventDefault();
     e.stopImmediatePropagation();
   }
