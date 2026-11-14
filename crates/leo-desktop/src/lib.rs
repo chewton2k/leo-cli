@@ -170,8 +170,16 @@ pub fn run() {
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = handle.hide();
-                    set_visible(&handle, false);
+                    if cfg!(target_os = "macos") && handle.is_fullscreen().unwrap_or(false) {
+                        leave_fullscreen_then_hide(&handle);
+                    } else {
+                        hide_window(&handle);
+                    }
+                }
+                if let WindowEvent::Resized(_) = event {
+                    if !handle.is_fullscreen().unwrap_or(false) {
+                        finish_close(&handle);
+                    }
                 }
                 if let WindowEvent::Focused(_) | WindowEvent::Resized(_) = event {
                     let visible = handle.is_visible().unwrap_or(true)
@@ -280,6 +288,7 @@ pub(crate) fn show(app: &AppHandle) {
             return;
         }
         if let Some(window) = app.get_webview_window(MAIN) {
+            LEAVING_FULLSCREEN.store(false, std::sync::atomic::Ordering::Relaxed);
             let _ = window.unminimize();
             let _ = window.show();
             set_visible(&window, true);
@@ -288,6 +297,32 @@ pub(crate) fn show(app: &AppHandle) {
             #[cfg(not(target_os = "macos"))]
             let _ = window.set_focus();
         }
+    });
+}
+
+static LEAVING_FULLSCREEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn hide_window(window: &tauri::WebviewWindow) {
+    let _ = window.hide();
+    set_visible(window, false);
+}
+
+fn finish_close(window: &tauri::WebviewWindow) {
+    if LEAVING_FULLSCREEN.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        hide_window(window);
+    }
+}
+
+fn leave_fullscreen_then_hide(window: &tauri::WebviewWindow) {
+    if LEAVING_FULLSCREEN.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let _ = window.set_fullscreen(false);
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(1));
+        finish_close(&window);
     });
 }
 
