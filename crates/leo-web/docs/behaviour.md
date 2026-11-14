@@ -870,7 +870,7 @@ target. Check the page sequence after loading preferences.
   (2026-11-07, the user's call): 200 ms into a read, the leo mark (`#leo-mark` in `.margin-waiting`, never a `.margin-note`, never in
   `threads`; it breathes by opacity only, still under Reduced Motion) sits in the margin beside the last changed block (`doc.blockAt`), placed by `margin.js` `clear` so notes never
   move for it (free spot on the right, else the left in Both, else below what blocks it), or is the gutter mark in Marks only.
-  A pencil underlines that block meanwhile (2026-11-14): one wavy `path.pencil` 2 px under each line, drawn in order within
+  A pencil underlines that block meanwhile (2026-11-14): one wavy `path.pencil` under each line (where an underline sits, so it never doubles one), drawn in order within
   `DRAWER_MS` (240 ms, `pathLength` 1 and a dash offset), or for 4+ lines one side line 4 px left of the block; it never crosses text.
   A comment replaces mark and pencil (underline wipe, word arrival), silence fades them in 120 ms with no status, and a
   failure or refusal removes them at once and keeps its status. `marginRead`'s `finally` clears them on every path; an edit

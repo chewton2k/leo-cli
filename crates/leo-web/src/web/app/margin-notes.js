@@ -1280,7 +1280,7 @@ function marginPencil(origin) {
   const bottom = lines[lines.length - 1].bottom;
   const strokes = lines.length >= 4
     ? [{ d: marginWobble(block.getBoundingClientRect().left - origin.left - 4, top, bottom - top, true), size: bottom - top }]
-    : lines.map((l) => ({ d: marginWobble(l.left, l.bottom + 2, Math.max(1, l.right - l.left)), size: Math.max(1, l.right - l.left) }));
+    : lines.map((l) => ({ d: marginWobble(l.left, l.bottom + 4, Math.max(1, l.right - l.left)), size: Math.max(1, l.right - l.left) }));
   const total = strokes.reduce((sum, stroke) => sum + stroke.size, 0);
   let before = 0;
   strokes.forEach((stroke, line) => {
