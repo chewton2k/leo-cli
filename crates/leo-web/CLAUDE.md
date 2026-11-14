@@ -518,6 +518,11 @@ is hidden or the capture activity gate is busy.
 - Calendar page lays out in normal flow beside the rail and explorer, never
   `position: fixed` over `--side`. Saved task times never change for layout;
   a zero-height resize never writes an end. Polls wait during drags (`cal.stale`).
+- Task blocks are as tall as their time (min 15 min, 18 px; `calLeast`): 2 to 3 PM
+  ends at the 3 PM line and a resize shrinks the block live. Only a task with no end
+  keeps a default span (`CAL_DUE_MIN`, 78 min). Under an hour a block takes `inline`:
+  title, time on one line. Today is a filled accent circle in the mini calendar,
+  week header and month.
 - A folded Tasks pill in `#dock` opens on hover (`tasksWin.hovering`, never
   saved); a click within `TASKS_PIN_MS` of that opening pins it open.
 - Export adds `tasks.json`; POST `/api/tasks/import` (ids dedupe; a newer local

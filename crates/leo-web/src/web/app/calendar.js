@@ -14,7 +14,7 @@ const CAL_POLL_MS = 150000;
 const CAL_TILE_PX = 64;
 const CAL_MORE_PX = 30;
 const CAL_HOUR_PX = 48;
-const CAL_TASK_PX = 60;
+const CAL_DUE_MIN = Math.ceil(62 / CAL_HOUR_PX * 60);
 const CAL_SNAP = 15;
 const CAL_HOLD_MS = 300;
 const CAL_MONTH_CHIPS = 3;
@@ -243,12 +243,12 @@ function calCheck(task) {
   return `<input type="checkbox" class="cal-check" data-action="task-done" data-id="${esc(task.id)}"${on} aria-label="Done: ${esc(task.title)}"${task.done ? ' checked' : ''}>`;
 }
 
-function calChip(item, day, { style = '', sub = '', extra = '', tall = false } = {}) {
+function calChip(item, day, { style = '', sub = '', extra = '', tall = false, inline = false } = {}) {
   const task = item.type === 'task' ? item.task : null;
   const kind = task ? 'task' : 'event';
   const done = task && task.done ? ' done' : '';
   const peeked = cal.peek && cal.peek.id === (task ? task.id : item.event.id) && (!task || !task.on || cal.peek.on === task.on) ? ' peeked' : '';
-  return `<div class="cal-item ${kind}${done}${peeked}${tall ? ' tall' : ''}" ${calAttrs(item, day)} style="--tone: var(${calTone(item)});${style}">
+  return `<div class="cal-item ${kind}${done}${peeked}${tall ? ' tall' : ''}${inline ? ' inline' : ''}" ${calAttrs(item, day)} style="--tone: var(${calTone(item)});${style}">
     ${task ? calCheck(task) : ''}
     <button type="button" class="cal-open" data-action="cal-open" ${task ? `data-kind="task" data-id="${esc(task.id)}"${task.on ? ` data-on="${esc(task.on)}"` : ''}` : `data-kind="event" data-id="${esc(item.event.id)}"`} title="${esc(calLabel(item))}${sub ? ` · ${esc(sub)}` : ''}"><span class="cal-title">${esc(calLabel(item))}</span>${sub ? `<span class="cal-sub">${esc(sub)}</span>` : ''}</button>${extra}
   </div>`;
@@ -308,11 +308,15 @@ function calAllDay(days, plan) {
   return `<div class="cal-allday" style="--cols: ${days.length}; --rows: ${rows};"><span class="cal-allday-label">All day</span><div class="cal-allday-grid">${cells}${bars}</div></div>`;
 }
 
+function calLeast(item) {
+  return item.type === 'task' ? (item.task.end ? CAL_SNAP : CAL_DUE_MIN) : CAL_SNAP * 2;
+}
+
 function calColumn(key, plan, today, room = Infinity) {
   const day = plan.byDay.get(key) || { timed: [] };
   const items = day.timed.filter(calShown);
-  const spans = items.map((item) => S.spanOn(item, key, item.type === 'task' ? Math.ceil((CAL_TASK_PX + 2) / CAL_HOUR_PX * 60) : CAL_SNAP * 2));
-  const floor = (item) => 1440 - Math.ceil(((item.type === 'task' ? CAL_TASK_PX : 18) + 2) / CAL_HOUR_PX * 60);
+  const spans = items.map((item) => S.spanOn(item, key, calLeast(item)));
+  const floor = (item) => 1440 - (item.type === 'task' && !item.task.end ? CAL_DUE_MIN : Math.ceil(20 / CAL_HOUR_PX * 60));
   const placed = spans.map((s, i) => ({ start: Math.min(s.start, floor(items[i])), end: s.end }));
   const cols = S.dayColumns(placed);
   const more = new Map();
@@ -331,13 +335,13 @@ function calColumn(key, plan, today, room = Infinity) {
     const left = col * step;
     const width = col === n - 1 ? 100 - left : Math.min(100 - left, step * 1.8);
     const top = (placed[i].start / 60) * CAL_HOUR_PX;
-    const height = Math.max(item.type === 'task' ? CAL_TASK_PX : 18, ((end - placed[i].start) / 60) * CAL_HOUR_PX - 2);
-    const short = end - placed[i].start <= 30;
+    const height = Math.max(18, ((end - placed[i].start) / 60) * CAL_HOUR_PX - 2);
+    const length = end - placed[i].start;
     const task = item.type === 'task' ? item.task : null;
-    const sub = short ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
+    const sub = length <= 30 && !task ? '' : task && !task.end ? `Due ${calTime(start)}` : calRange(start, item.type === 'event' ? end : S.minutesOf(task.end));
     const grip = task && task.source === 'leo' && calMovable(task) ? '<span class="cal-grip" data-drag="resize" aria-hidden="true"></span>' : '';
     const rest = more.get(i) ? `<button type="button" class="cal-stack-more" data-action="cal-pick" data-day="${key}" data-to="day" style="top: ${top + 2}px; z-index: ${room + 2};" aria-label="${more.get(i)} more at this time, open the day">+${more.get(i)}</button>` : '';
-    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${area} * ${left / 100} + 2px); width: calc(${area} * ${width / 100} - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90 }) + rest;
+    return calChip(item, key, { style: ` top: ${top}px; height: ${height}px; left: calc(${area} * ${left / 100} + 2px); width: calc(${area} * ${width / 100} - 5px); z-index: ${col + 1};`, sub, extra: grip, tall: end - start >= 90, inline: Boolean(task) && length < 60 }) + rest;
   }).join('');
   let now = '';
   if (key === today) {
@@ -620,7 +624,8 @@ function calFollow() {
     const moved = d.y === d.startY ? 0 : calMinutesIn(d.col, d.y) - d.start - d.offset;
     const end = moved ? Math.max(d.start + CAL_SNAP, Math.min(24 * 60, S.snap(before + moved, CAL_SNAP))) : before;
     d.target = moved ? { day: d.day, minutes: d.start, end } : null;
-    d.source.style.height = `${Math.max(CAL_TASK_PX, ((end - d.start) / 60) * CAL_HOUR_PX - 2)}px`;
+    d.source.style.height = `${Math.max(18, ((end - d.start) / 60) * CAL_HOUR_PX - 2)}px`;
+    d.source.classList.toggle('inline', end - d.start < 60);
     const sub = d.source.querySelector('.cal-sub');
     if (sub) sub.textContent = calRange(d.start, end);
     return;
@@ -836,7 +841,7 @@ document.addEventListener('pointerdown', (e) => {
     const task = calDragTask({ id: item.dataset.id, on: item.dataset.on || null, day: item.dataset.day || null });
     if (!task) return;
     const col = item.closest('.cal-col');
-    const span = col ? S.spanOn({ type: 'task', task }, col.dataset.day, CAL_SNAP * 2) : null;
+    const span = col ? S.spanOn({ type: 'task', task }, col.dataset.day, calLeast({ type: 'task', task })) : null;
     const length = span ? span.end - span.start : task.end && task.time ? S.minutesOf(task.end) - S.minutesOf(task.time) : 60;
     d = { mode: grip ? 'resize' : item.classList.contains('cal-tray-row') ? 'tray' : 'move', id: task.id, on: task.on || null, task, source: item, col, day: item.dataset.day || null, start: span ? span.start : 0, length: Math.max(CAL_SNAP, length), offset: span ? calMinutesIn(col, e.clientY) - span.start : 0 };
   } else if (e.target.classList.contains('cal-col')) {
