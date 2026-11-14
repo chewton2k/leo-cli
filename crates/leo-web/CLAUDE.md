@@ -28,8 +28,8 @@ This file holds the rules. How each screen behaves, area by area, is in
   `the_page_script_parses` runs `node --check` on the whole.
 - Pure helpers are separate files served on their own and node-tested in
   `tests/*.test.js`: `markdown.js`, `editing.js`, `schedule.js`, `saving.js`,
-  `recording.js`, `margin.js`. `chat.js`, `doc.js`, `pane-resize.js` and
-  `theme.js` are separate scripts too.
+  `recording.js`, `margin.js`. `chat.js`, `doc.js`, `pane-resize.js`, `prefs.js`
+  and `theme.js` are separate scripts too.
 - Everything leo-web computes or keeps besides notes and uploads lives in one
   SQLite file, `<data>/leo.db` (`db.rs`; rusqlite bundled, WAL, 0600, never
   synced): chats (+ FTS5), chat documents, review progress, picture captions,
@@ -103,6 +103,17 @@ Decided: one app, window only (2026-10-31).
 - Layout variables on `body`: `--side`, `--right`, `--mid`. Fixed things
   (toolbar, select bar, toasts, FABs, `#dock`) use them so nothing covers
   anything. Page toolbars share one 760 px maximum width.
+- UI preferences survive a port change (2026-11-14): localStorage is per origin and
+  the engine port drifts when the saved one is busy, so every `leo-*` key (not
+  `leo-draft*`) is mirrored in `<data>/ui-prefs.json` (`prefs.rs`: keys
+  `^leo-[a-z0-9-]{1,48}$`, 16 KB per value, 128 KB total, temp file + rename,
+  merged per key under a lock). `/prefs.js` (behind the session gate, `no-store`,
+  loads before `/theme.js`) seeds localStorage from the file (the file wins unless
+  it is empty, then the page uploads its keys once), patches `Storage` `setItem`
+  and `removeItem` to send a debounced `PUT /api/ui-prefs` and flushes on
+  `pagehide` and hidden. `LEO_NO_UI_PREFS=1` turns it off (the browser tests'
+  shared server sets it so one test's choices never reach the next;
+  `prefs.spec.js` starts its own engine without it).
 - Theme: `/theme.js` loads in `<head>` (no inline script under the CSP) and sets
   `html[data-theme]` and the other per-browser `data-*` before paint. Anything
   drawn in JavaScript asks `leoTheme.dark()` and redraws on `leoTheme.onChange`,
