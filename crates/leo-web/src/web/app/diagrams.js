@@ -16,7 +16,8 @@ function drawingSteps(svg) {
   const stepOf = (g) => Number(g.getAttribute('data-step')) || 0;
   const groups = [...root.children].filter((g) => g.localName === 'g' && g.hasAttribute('data-step'));
   const numbers = [...new Set(groups.map(stepOf))].sort((a, b) => a - b);
-  if (!numbers.length || numbers.length > MOST_STEPS) return [{ svg, caption: '' }];
+  if (!root.hasAttribute('fill')) root.setAttribute('fill', 'var(--text)');
+  if (!numbers.length || numbers.length > MOST_STEPS) return [{ svg: new XMLSerializer().serializeToString(root), caption: '' }];
   const kept = new Map(groups.map((g) => [g, g.getAttribute('opacity')]));
   return numbers.map((n) => {
     for (const g of groups) {

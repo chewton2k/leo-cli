@@ -49,12 +49,13 @@ test('each step shows the steps up to it, with its own caption, and keeps a step
   assert.doesNotMatch(steps[1].svg, /opacity="0"/);
   assert.match(steps[1].svg, /opacity=".5"/);
   assert.match(steps[1].svg, /<rect><\/rect>/);
+  assert.match(steps[1].svg, /^<svg viewBox="0 0 320 120" fill="var\(--text\)">/);
 });
 
 test('a drawing without steps stays one picture, and one that does not parse is left as it is', () => {
   const plain = new El('svg', {}, [new El('path', { style: 'stroke: var(--accent)' })]);
   const { drawingSteps } = load((text) => (text === 'bad' ? docOf(new El('html'), true) : docOf(plain)));
-  assert.deepEqual(JSON.parse(JSON.stringify(drawingSteps('<svg>var(--accent)</svg>'))), [{ svg: '<svg>var(--accent)</svg>', caption: '' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(drawingSteps('<svg/>'))), [{ svg: '<svg fill="var(--text)"><path style="stroke: var(--accent)"></path></svg>', caption: '' }]);
   assert.equal(drawingSteps('bad'), null);
   const many = new El('svg', {}, Array.from({ length: 13 }, (_, i) => new El('g', { 'data-step': String(i + 1) })));
   const { drawingSteps: tooMany } = load(() => docOf(many));
